@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Everything Screenshotter does</title>
-<meta name="description" content="Everything Screenshotter does: how a capture becomes a store image, Ask AI, the MCP server and its tools, every backdrop, device and export format.">
+<meta name="description" content="Everything Screenshotter does: how a capture becomes a store image, Animate and App Store preview videos, Ask AI, the MCP server and its tools, every backdrop, device and export format.">
 <meta name="theme-color" content="#070708">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -485,6 +485,12 @@ footer a:hover { color: var(--text); }
   .chip.c3 { display: none; }
   .chip.c4 { display: inline-flex; right: 0; bottom: 7%; }
 }
+/* ============================================================ Animate */
+.anim-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: clamp(30px, 6vw, 80px); align-items: center; }
+.anim-reel { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.anim-reel video { display: block; width: min(100%, 380px); aspect-ratio: 9 / 16; border-radius: 26px; background: #111; box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.95), 0 0 0 1px var(--line), 0 0 80px -20px rgba(124, 207, 157, 0.18); }
+.anim-reel figcaption { font-size: 13px; color: var(--text-3); text-align: center; max-width: 30em; }
+@media (max-width: 980px) { .anim-grid { grid-template-columns: 1fr; } .anim-reel video { width: min(100%, 320px); } }
 </style>
 </head>
 <body>
@@ -496,7 +502,7 @@ footer a:hover { color: var(--text); }
     <nav class="links" aria-label="Sections">
       <a href="index.html">Overview</a>
       <a href="#story">How it works</a>
-      <a href="#ai">Ask AI</a>
+      <a href="#ai">Ask AI</a><a href="#animate">Animate</a>
       <a href="#mcp">For agents</a>
       <a href="#features">Features</a>
       <a href="changelog.html">What's new</a>
@@ -514,7 +520,7 @@ footer a:hover { color: var(--text); }
     <a class="back" href="index.html"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>Overview</a>
     <span class="eyebrow"><i></i>All features</span>
     <h1>Everything Screenshotter <span class="ital grad">does.</span></h1>
-    <p class="lede">The long version: how one capture becomes a store image, how Ask AI and the MCP server work, and every backdrop, device, call-out and export it has.</p>
+    <p class="lede">The long version: how one capture becomes a store image, how Animate turns it into a video, how Ask AI and the MCP server work, and every backdrop, device, call-out and export it has.</p>
   </div>
 </section>
 
@@ -531,7 +537,7 @@ footer a:hover { color: var(--text); }
         <ol class="steps">
           <li class="step"><div class="t"><span class="n">01</span><span>Capture</span></div><p>Grab a real screen from the iOS Simulator, with a clean 9:41 status bar and no permission pop-ups.</p></li>
           <li class="step"><div class="t"><span class="n">02</span><span>Frame</span></div><p>It drops into the matching device: iPhone, iPad, Apple Watch or Mac, in any finish.</p></li>
-          <li class="step"><div class="t"><span class="n">03</span><span>Backdrop</span></div><p>Pick one of 26 looks, your own colours, an Unsplash photo, or an AI image.</p></li>
+          <li class="step"><div class="t"><span class="n">03</span><span>Backdrop</span></div><p>Pick one of 49 looks, your own colours, an Unsplash photo, or an AI image.</p></li>
           <li class="step"><div class="t"><span class="n">04</span><span>Headline</span></div><p>Add the words that sell it. Star a word to paint it in your accent colour.</p></li>
           <li class="step on"><div class="t"><span class="n">05</span><span>Tilt &amp; export</span></div><p>Angle it in 3D, lift out a row, and export at App Store size.</p></li>
         </ol>
@@ -563,7 +569,8 @@ footer a:hover { color: var(--text); }
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Checks its own work.</b> It looks at the render and fixes what's off before you see it.</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Remembers your taste.</b> Say “always Space Black” once; your house style carries into every design.</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>No setup.</b> Uses your Claude Code sign-in, or an API key if you prefer.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>It sees what you see.</b> Claude gets a small preview, your screenshot's colours and its visible text. Your files stay on your Mac.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>It looks when it matters.</b> Claude gets a small preview when your request is about how things look, plus your screenshot's colours and visible text; a plain question goes straight to it. Your files stay on your Mac.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>It animates, across every shot.</b> Describe the motion and Claude writes the timeline. In a video of several shots it sees them all and can change, add or reorder any of them.</span></li>
       </ul>
     </div>
     <div class="ai-demo reveal-scale" data-ai>
@@ -585,6 +592,31 @@ footer a:hover { color: var(--text); }
         <div class="op on"><b>set</b>/textStyle/accentColor <span>"#7ccf9d"</span></div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ============================================================ Animate -->
+<section class="anim-sec pad" id="animate" style="padding-top:0">
+  <div class="wrap anim-grid">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><i></i>Animate · new in 0.5</span>
+      <h2 class="h2">Now it <span class="ital grad">moves.</span></h2>
+      <p class="lede">The same designs, as App Store preview videos and launch clips. Animate is a third mode beside Edit and Preview: a timeline for when everything happens, and shots for videos of several designs.</p>
+      <ul class="checks">
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>A timeline under the canvas.</b> A row for each thing and a bar for each animation: drag a bar to retime it, pull its edge to make it longer, and drag the design itself to set where it ends up.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Enter, change, loop, leave.</b> Fade, zoom, blur or slide in; change size, place, colour or focus part way; float, pulse, spin or orbit for the whole video; then leave.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>A camera.</b> Push in on a detail, glide to the next one, pull back to the whole design. The backdrop can move on its own, too.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Words that arrive.</b> A headline a word or a letter at a time, coming into focus as it lands.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Curves and call-outs on cue.</b> Send anything along a curve you draw. Bring each lift, loupe or circle in exactly when the story gets there.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Shots and transitions.</b> Several designs in one video, joined by a cut, a crossfade, a push, a wipe, an iris, a zoom or a blur. The canvas plays straight through, no export needed.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Made for where it's going.</b> App Store preview sizes for iPhone, iPad and Mac that follow Apple's rules (15 to 30 seconds, 30 fps), plus 9:16, 4:5, 1:1 and 16:9, all in one export.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Ask AI animates too.</b> “Headline first, then push in on the timer.” Claude writes the timeline, looks at the frames it makes, and can change any shot.</span></li>
+      </ul>
+    </div>
+    <figure class="anim-reel reveal-scale">
+      <video src="assets/motion-reel.mp4" poster="assets/motion-reel.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A ten-second preview video of a recipe app in three shots, joined by a push and an iris"></video>
+      <figcaption>Three shots, made in Animate: words into focus, a push, a loupe on cue, an iris.</figcaption>
+    </figure>
   </div>
 </section>
 
@@ -766,9 +798,9 @@ tool_timeout_sec = <span class="s">600</span></pre>
         <div class="cycle strip" style="aspect-ratio:2000/687"><img class="on" style="object-position:center" src="assets/recipes.webp" alt="One screenshot as five finished designs: tilted in 3D, on a painting, a bold hero, a risograph print and an editorial layout" width="2000" height="687" loading="lazy"></div>
       </article>
       <article class="tile span-2 reveal">
-        <h3>Motion, not just stills</h3>
-        <p>Drift, float or push in. Play a real recording inside the frame, with zooms that follow the action and a cursor that clicks.</p>
-        <div class="chips"><span>MP4</span><span>MOV</span><span>WebM</span><span>GIF</span></div>
+        <h3>Video, at every size</h3>
+        <p>Animate anything, play a real recording inside the frame, and export App Store previews for iPhone, iPad and Mac, plus 9:16, 4:5, 1:1 and 16:9.</p>
+        <div class="chips"><span>App Store previews</span><span>MP4</span><span>MOV</span><span>WebM</span><span>GIF</span></div>
         <div class="cycle"><video src="assets/video-drift.mp4" poster="assets/video-drift.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A phone drifting gently over a dinner table"></video></div>
       </article>
       <article class="tile span-2 reveal">
@@ -831,7 +863,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
     <div class="sec-head center reveal">
       <span class="eyebrow"><i></i>The Studio</span>
       <h2 class="h2">A studio you'll <span class="ital grad">enjoy using.</span></h2>
-      <p class="lede">A small Mac app, with its own look. Screens on the left, your design in the middle, every setting on the right, and every design you've made one keystroke away.</p>
+      <p class="lede">A small Mac app, with its own look. Screens on the left, your design in the middle, every setting on the right, a timeline when it moves, and every design you've made one keystroke away.</p>
     </div>
     <div class="window-wrap reveal-scale" data-window>
       <div class="window">
@@ -839,6 +871,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
         <div class="view">
           <img class="on" data-view="edit" src="assets/ui-editor.webp" alt="The Studio: your screens on the left, the canvas in the middle, device settings on the right" width="2880" height="1800" loading="lazy">
           <img data-view="ai" src="assets/ui-ai.webp" alt="The Studio with the Ask AI box open" width="2880" height="1800" loading="lazy">
+          <img data-view="animate" src="assets/ui-animate.webp" alt="The Studio in Animate: a video's three shots across the top of the timeline, a row each for the camera, backdrop, headline and phone, and the headline's word-by-word blur being edited" width="2880" height="1800" loading="lazy">
           <img data-view="preview" src="assets/ui-preview.webp" alt="The Studio showing a rendered preview" width="2880" height="1800" loading="lazy">
           <img data-view="shapes" src="assets/ui-shapes.webp" alt="The Studio's Shapes panel, with a hand-drawn arrow selected on the canvas and its settings on the right" width="2880" height="1800" loading="lazy">
           <img data-view="scenes" src="assets/ui-scenes.webp" alt="The Scenes page: every saved design as a large preview, grouped by when it was last edited" width="2880" height="1800" loading="lazy">
@@ -851,6 +884,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
       <div class="app-tabs" role="tablist" aria-label="Studio views">
         <button role="tab" aria-selected="true" data-show="edit">Edit<i></i></button>
         <button role="tab" aria-selected="false" data-show="ai">Ask AI<i></i></button>
+        <button role="tab" aria-selected="false" data-show="animate">Animate<i></i></button>
         <button role="tab" aria-selected="false" data-show="preview">Preview<i></i></button>
         <button role="tab" aria-selected="false" data-show="shapes">Shapes<i></i></button>
         <button role="tab" aria-selected="false" data-show="scenes">Scenes<i></i></button>
@@ -864,7 +898,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
   <div class="glow" aria-hidden="true"></div>
   <div class="wrap">
     <div class="reveal">
-      <h2>Ship screenshots<br>you're <span class="ital grad">proud of.</span></h2>
+      <h2>Ship screenshots<br>and videos you're <span class="ital grad">proud of.</span></h2>
       <div class="ctas">
         <a class="btn primary lg" href="downloads/Screenshotter.dmg" data-download-file>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
@@ -894,7 +928,7 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/icon.svg" alt="">Screenshotter</a>
     <p>Every image on this page was made with Screenshotter. Mise is a made-up app; its food photos are from <a href="https://unsplash.com" style="text-decoration:underline;text-underline-offset:3px">Unsplash</a>.</p>
-    <nav class="links" aria-label="Footer"><a href="index.html">Overview</a><a href="#ai">Ask AI</a><a href="#mcp">MCP</a><a href="#download">Download</a></nav>
+    <nav class="links" aria-label="Footer"><a href="index.html">Overview</a><a href="#ai">Ask AI</a><a href="#animate">Animate</a><a href="#mcp">MCP</a><a href="#download">Download</a></nav>
   </div>
 </footer>
 
