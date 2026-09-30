@@ -6,14 +6,20 @@
  *   npm run app:dmg                      → build/Screenshotter-<version>.dmg and site/downloads/Screenshotter.dmg
  *   npm run app:dmg -- --bundle-node     builds the app with Node inside first (for Macs without Node)
  *
- * The app is ad-hoc signed. For a public release, sign it with a Developer ID and notarize the
- * disk image, or macOS will ask people to allow it in Privacy & Security on first launch.
+ * With a Developer ID certificate in the keychain, the app and the disk image are signed with it.
+ * With notarization credentials saved too, the image is notarized and stapled, so it opens on any
+ * Mac without a warning. Save them once with:
+ *
+ *   xcrun notarytool store-credentials screenshotter --apple-id <you@example.com> --team-id <TEAMID>
+ *
+ * (it asks for an app-specific password from account.apple.com). See scripts/signing.mjs.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { notaryProfile, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = (cmd, args) => {
@@ -37,8 +43,27 @@ rmSync(dmg, { force: true });
 run("hdiutil", ["create", "-volname", "Screenshotter", "-srcfolder", stage, "-ov", "-format", "ULMO", dmg]);
 rmSync(path.dirname(stage), { recursive: true, force: true });
 
+const identity = signingIdentity();
+let state = "ad-hoc signed";
+if (identity) {
+  run("codesign", ["--force", "--timestamp", "--sign", identity, dmg]);
+  state = "signed";
+  const profile = notaryProfile();
+  if (profile) {
+    console.log("\n▸ Notarizing with Apple (a few minutes)");
+    run("xcrun", ["notarytool", "submit", dmg, "--keychain-profile", profile, "--wait"]);
+    run("xcrun", ["stapler", "staple", dmg]);
+    state = "signed and notarized";
+  }
+}
+
 const site = path.join(root, "site", "downloads");
 mkdirSync(site, { recursive: true });
 copyFileSync(dmg, path.join(site, "Screenshotter.dmg"));
 const mb = (statSync(dmg).size / 1024 / 1024).toFixed(1);
-console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB), copied to site/downloads/Screenshotter.dmg`);
+console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB, ${state}), copied to site/downloads/Screenshotter.dmg`);
+if (identity && state === "signed") {
+  console.log("  Not notarized: macOS will still warn people who download it. To notarize, save credentials once:");
+  console.log("    xcrun notarytool store-credentials screenshotter --apple-id <your Apple ID> --team-id " + (/\(([A-Z0-9]{10})\)$/.exec(identity)?.[1] ?? "<TEAMID>"));
+  console.log("  then run npm run app:dmg again.");
+}

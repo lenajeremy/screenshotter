@@ -342,7 +342,7 @@ npm run site          # preview at http://127.0.0.1:4700
 
 To publish, upload the `site/` folder to any static host (Vercel, Netlify, GitHub Pages, S3). It is set up for Vercel as the `screenshotter` project: `cd site && vercel deploy --prod` (`site/.vercelignore` leaves out `demo/`). The **Download** button links to `downloads/Screenshotter.dmg` next to the page. If you host the disk image elsewhere, such as a GitHub release, change that link in `site/index.html`.
 
-The app is signed ad hoc, so macOS asks people to allow it (System Settings › Privacy & Security › **Open Anyway**) the first time they open it; the page says so. To remove that step, sign the app with an Apple Developer ID and notarize the disk image before you publish it.
+**Signing.** `npm run app:build` and `npm run app:dmg` sign with your **Developer ID Application** certificate when one is in your keychain (Xcode › Settings › Accounts › Manage Certificates), with the hardened runtime, and sign the disk image too. Without one, the build is signed ad hoc. `SCREENSHOTTER_SIGN_IDENTITY` picks a different identity (part of its name), or `-` for ad hoc. A signed app that isn't notarized still makes macOS ask people to allow it (System Settings › Privacy & Security › **Open Anyway**) the first time; the page says so. To remove that step, save notarization credentials once with `xcrun notarytool store-credentials screenshotter --apple-id <your Apple ID> --team-id <TEAMID>` (it asks for an app-specific password from account.apple.com); from then on `npm run app:dmg` notarizes and staples the image. `SCREENSHOTTER_NOTARY_PROFILE` names a different profile.
 
 ## Development
 

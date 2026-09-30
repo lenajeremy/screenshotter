@@ -336,12 +336,13 @@ section { position: relative; }
 .app-tabs { display: flex; justify-content: center; gap: 10px; margin-top: 26px; flex-wrap: wrap; }
 .app-tabs button { position: relative; overflow: hidden; height: 40px; padding: 0 16px; border-radius: 12px; border: 0; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font: 600 14px var(--sans); cursor: pointer; }
 .app-tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-3); }
+@media (max-width: 520px) { .app-tabs { gap: 6px; flex-wrap: nowrap; } .app-tabs button { height: 36px; padding: 0 10px; font-size: 12.5px; border-radius: 10px; } }
 .app-tabs button i { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--lime); }
 .app-tabs button[aria-selected="true"] i { animation: tabbar 5s linear forwards; }
 @keyframes tabbar { to { width: 100%; } }
 .pin-note { position: absolute; z-index: 3; display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 7px 11px 7px 8px; border-radius: 10px; background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 0 0 1px var(--line-2); white-space: nowrap; transition: opacity 300ms ease, transform 400ms var(--ease); }
 .pin-note b { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--lime); color: var(--lime-ink); font-size: 11px; }
-.window:not(.shown) .pin-note { opacity: 0; transform: translateY(6px); }
+.window:not(.shown) .pin-note, .window[data-current]:not([data-current="edit"]) .pin-note { opacity: 0; transform: translateY(6px); }
 .pin-note.p1 { left: 23%; top: 10%; transition-delay: 200ms; }
 .pin-note.p2 { left: 49%; top: 46%; transition-delay: 280ms; }
 .pin-note.p3 { right: 3%; top: 36%; transition-delay: 360ms; }
@@ -432,7 +433,7 @@ footer a:hover { color: var(--text); }
 <section class="hero">
   <div class="wrap">
     <div class="hero-copy">
-      <a class="pill" href="changelog.html"><b>✦ New in 0.2</b>Ask AI now designs like an art director<span aria-hidden="true">→</span></a>
+      <a class="pill" href="changelog.html"><b>✦ New in 0.3</b>Shapes, a Scenes page and one-click designs<span aria-hidden="true">→</span></a>
       <h1 aria-label="Make your app look incredible.">
         <span class="w" style="--i:0">Make</span> <span class="w" style="--i:1">your</span> <span class="w" style="--i:2">app</span> <span class="w" style="--i:3">look</span>
         <span class="line2"><span class="w grad" style="--i:4">incredible.</span></span>
@@ -518,6 +519,7 @@ footer a:hover { color: var(--text); }
       <p class="lede">Describe the change the way you'd brief a designer, or just say “make it amazing”. Claude designs from an art-direction guide, sees your app's colours and words, checks its own render before you do, and every edit is one undo away.</p>
       <ul class="checks">
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Designs, not just edits.</b> Big confident type, colour from your app's own palette, a call-out on what the headline names.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Design it for me.</b> One click and Claude makes three different designs from your screen. Pick the one you like.</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Checks its own work.</b> It looks at the render and fixes what's off before you see it.</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Remembers your taste.</b> Say “always Space Black” once; your house style carries into every design.</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>No setup.</b> Uses your Claude Code sign-in, or an API key if you prefer.</span></li>
@@ -557,7 +559,7 @@ footer a:hover { color: var(--text); }
             <span class="badge-mcp">MCP SERVER</span>
             <h2>Built for your <span class="ital grad">agents.</span></h2>
           </div>
-          <p class="lede">Screenshotter is also an MCP server. Add it to Claude Code, Codex or OpenCode, and your agent can build your app, capture it, and hand you finished store images. It designs from the same art-direction guide as Ask AI, then zooms into details and compares variants before it moves on.</p>
+          <p class="lede">Screenshotter is also an MCP server. Add it to Claude Code, Codex or OpenCode, and your agent can build your app, capture it, and hand you finished store images. It designs from the same art-direction guide as Ask AI, then zooms into details and compares variants before it moves on. It can open the scenes you saved in the Studio and save its own there, where you keep editing by hand.</p>
         </div>
 
         <div class="mcp-grid">
@@ -619,7 +621,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </div>
 
         <div class="stats">
-          <div class="stat"><b>20</b><span>MCP tools</span></div>
+          <div class="stat"><b>24</b><span>MCP tools</span></div>
           <div class="stat"><b>30</b><span>device frames</span></div>
           <div class="stat"><b>49</b><span>built-in looks</span></div>
           <div class="stat"><b>7</b><span>export formats</span></div>
@@ -630,13 +632,15 @@ tool_timeout_sec = <span class="s">600</span></pre>
           <div class="tool"><code>record_simulator</code><p>Screen recordings, with deep links played on a timeline.</p></div>
           <div class="tool"><code>capture_web</code><p>Any URL, in real Mobile Safari or desktop Chrome.</p></div>
           <div class="tool"><code>capture_mac</code><p>A Mac app window by name, or the whole screen.</p></div>
-          <div class="tool"><code>create_mockup</code><p>One finished image: frames, backdrop, effects, call-outs, headline.</p></div>
+          <div class="tool"><code>create_mockup</code><p>One finished image: frames, backdrop, effects, call-outs, shapes, headline.</p></div>
+          <div class="tool"><code>apply_recipe</code><p>A complete, proven design built from your screens and their colours.</p></div>
           <div class="tool"><code>create_mockup_set</code><p>A matching series, like a full App Store set.</p></div>
           <div class="tool"><code>create_video</code><p>The same scene in motion, with zooms that follow the action and a cursor that clicks.</p></div>
           <div class="tool"><code>layout_mockup</code><p>Where everything lands, without rendering, so agents can plan.</p></div>
           <div class="tool"><code>find_text</code><p>On-device text recognition, to aim call-outs at words.</p></div>
           <div class="tool"><code>record_web</code> · <code>record_mac</code><p>Rehearsed click-throughs of a page, with a cursor track; Mac app recordings.</p></div>
           <div class="tool"><code>crop_image</code> · <code>create_grid</code><p>Zoom into details and compare variants side by side, the way a designer checks work.</p></div>
+          <div class="tool"><code>list_scenes</code> · <code>get_scene</code> · <code>save_scene</code><p>Open the designs saved in the Studio, and save new ones there, still editable by hand.</p></div>
           <div class="tool"><code>design_guide</code><p>The art-direction guide: composition, copy, type, colour, call-outs.</p></div>
           <div class="tool"><code>get_house_style</code> · <code>remember_style</code><p>What you like, remembered between sessions and shared with the app.</p></div>
           <div class="tool"><code>simulator_control</code><p>Boot, launch, open links, set appearance and permissions.</p></div>
@@ -708,6 +712,18 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </div>
       </article>
       <article class="tile span-2 reveal">
+        <h3>Arrows, circles and numbers</h3>
+        <p>Drag a shape onto the design and drop it where you want it. Clean or hand-drawn, any fill and stroke, and your agent can place them too.</p>
+        <div class="chips"><span>Arrow</span><span>Circle</span><span>Box</span><span>Number</span><span>Star</span></div>
+        <div class="cycle"><img class="on" style="object-position:center 47%" src="assets/shapes.webp" alt="A hand-drawn ring and arrow pointing at Limes in a grocery list, with numbered steps beside three rows" width="1240" height="1550" loading="lazy"></div>
+      </article>
+      <article class="tile span-4 reveal">
+        <h3>A finished design in one click</h3>
+        <p>Twelve proven designs, each built from your screen and its own colours. Or ask Claude for three and pick one.</p>
+        <div class="chips"><span>3D tilt</span><span>In the gallery</span><span>Bold hero</span><span>Risograph</span><span>Art director</span><span>+ 7 more</span></div>
+        <div class="cycle strip" style="aspect-ratio:2000/687"><img class="on" style="object-position:center" src="assets/recipes.webp" alt="One screenshot as five finished designs: tilted in 3D, on a painting, a bold hero, a risograph print and an editorial layout" width="2000" height="687" loading="lazy"></div>
+      </article>
+      <article class="tile span-2 reveal">
         <h3>Motion, not just stills</h3>
         <p>Drift, float or push in. Play a real recording inside the frame, with zooms that follow the action and a cursor that clicks.</p>
         <div class="chips"><span>MP4</span><span>MOV</span><span>WebM</span><span>GIF</span></div>
@@ -739,7 +755,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
       </article>
       <article class="tile span-3 reveal">
         <h3>A canvas that stays out of your way</h3>
-        <p>Drag, resize and rotate with snapping guides. Double-click any text to retype it.</p>
+        <p>Drag, resize and rotate with snapping guides. Double-click any text to retype it. Focus mode hides the panels when you want the whole canvas.</p>
         <div class="shot-crop" role="img" aria-label="The Studio canvas with a selected iPhone"></div>
       </article>
       <article class="tile span-4 reveal">
@@ -773,7 +789,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
     <div class="sec-head center reveal">
       <span class="eyebrow"><i></i>The Studio</span>
       <h2 class="h2">A studio you'll <span class="ital grad">enjoy using.</span></h2>
-      <p class="lede">A small Mac app, with its own look. Screens on the left, your design in the middle, every setting on the right.</p>
+      <p class="lede">A small Mac app, with its own look. Screens on the left, your design in the middle, every setting on the right, and every design you've made one keystroke away.</p>
     </div>
     <div class="window-wrap reveal-scale" data-window>
       <div class="window">
@@ -782,6 +798,8 @@ tool_timeout_sec = <span class="s">600</span></pre>
           <img class="on" data-view="edit" src="assets/ui-editor.webp" alt="The Studio: your screens on the left, the canvas in the middle, device settings on the right" width="2880" height="1800" loading="lazy">
           <img data-view="ai" src="assets/ui-ai.webp" alt="The Studio with the Ask AI box open" width="2880" height="1800" loading="lazy">
           <img data-view="preview" src="assets/ui-preview.webp" alt="The Studio showing a rendered preview" width="2880" height="1800" loading="lazy">
+          <img data-view="shapes" src="assets/ui-shapes.webp" alt="The Studio's Shapes panel, with a hand-drawn arrow selected on the canvas and its settings on the right" width="2880" height="1800" loading="lazy">
+          <img data-view="scenes" src="assets/ui-scenes.webp" alt="The Scenes page: every saved design as a large preview, grouped by when it was last edited" width="2880" height="1800" loading="lazy">
         </div>
         <span class="pin-note p1"><b>1</b>Capture from Simulator, web or Mac</span>
         <span class="pin-note p2"><b>2</b>Drag, resize, rotate</span>
@@ -792,6 +810,8 @@ tool_timeout_sec = <span class="s">600</span></pre>
         <button role="tab" aria-selected="true" data-show="edit">Edit<i></i></button>
         <button role="tab" aria-selected="false" data-show="ai">Ask AI<i></i></button>
         <button role="tab" aria-selected="false" data-show="preview">Preview<i></i></button>
+        <button role="tab" aria-selected="false" data-show="shapes">Shapes<i></i></button>
+        <button role="tab" aria-selected="false" data-show="scenes">Scenes<i></i></button>
       </div>
     </div>
   </div>
@@ -810,7 +830,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </a>
         <a class="btn ghost lg" href="#mcp">Set up the MCP</a>
       </div>
-      <p class="dl-meta">Version 0.2.0 · <a href="changelog.html">What's new</a> · 27 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
+      <p class="dl-meta">Version 0.3.0 · <a href="changelog.html">What's new</a> · 30 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
     </div>
     <div class="how">
       <ol>
@@ -1020,7 +1040,7 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   const views = $$("[data-view]");
   const vtabs = $$(".app-tabs [data-show]");
   let manual = false, vi = 0;
-  const showView = (name) => { views.forEach((v) => v.classList.toggle("on", v.dataset.view === name)); vtabs.forEach((t) => { t.setAttribute("aria-selected", String(t.dataset.show === name)); const bar = t.querySelector("i"); bar.style.animation = "none"; bar.offsetWidth; bar.style.animation = ""; }); };
+  const showView = (name) => { views.forEach((v) => v.classList.toggle("on", v.dataset.view === name)); const win = views[0]?.closest(".window"); if (win) win.dataset.current = name; vtabs.forEach((t) => { t.setAttribute("aria-selected", String(t.dataset.show === name)); const bar = t.querySelector("i"); bar.style.animation = "none"; bar.offsetWidth; bar.style.animation = ""; }); };
   vtabs.forEach((t, i) => t.addEventListener("click", () => { manual = true; vi = i; showView(t.dataset.show); }));
   if (!reduced) setInterval(() => { if (manual || !isVisible(winWrap)) return; vi = (vi + 1) % vtabs.length; showView(vtabs[vi].dataset.show); }, 5000);
 })();

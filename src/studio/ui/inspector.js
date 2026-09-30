@@ -532,12 +532,14 @@ function ShapeInspector({ id }) {
       <//>
       <${Section} title="Size & position">
         ${line
-          ? html`<div class="grid2">
-                <${Num} label="From X" value=${g.from.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.from = { ...g.from, x: r4(v) }), "fx")} />
+          ? html`<div class="row"><label>From</label><div class="grid2">
+                <${Num} label="X" value=${g.from.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.from = { ...g.from, x: r4(v) }), "fx")} />
                 <${Num} label="Y" value=${g.from.y} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.from = { ...g.from, y: r4(v) }), "fy")} />
-                <${Num} label="To X" value=${g.to.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.to = { ...g.to, x: r4(v) }), "tx")} />
+              </div></div>
+              <div class="row"><label>To</label><div class="grid2">
+                <${Num} label="X" value=${g.to.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.to = { ...g.to, x: r4(v) }), "tx")} />
                 <${Num} label="Y" value=${g.to.y} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.to = { ...g.to, y: r4(v) }), "ty")} />
-              </div>`
+              </div></div>`
           : html`<div class="grid2">
                 <${Num} label="X" value=${g.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.x = r4(v)), "x")} />
                 <${Num} label="Y" value=${g.y} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.y = r4(v)), "y")} />

@@ -398,7 +398,7 @@ export function entityLabel(id, scene = S.scene, layout = S.layout) {
     const e = layout?.entities.find((x) => x.id === id)?.shape;
     if (!sh) return "Shape";
     if (sh.type === "badge") return `Number ${e?.label ?? sh.label ?? ""}`.trim();
-    if (sh.type === "ellipse") return sh.sketch && sh.fill !== undefined && sh.fill === "none" ? "Circled" : (e?.aspect ?? sh.aspect ?? 1.5) === 1 ? "Circle" : "Ellipse";
+    if (sh.type === "ellipse") return (e?.sketch ?? sh.sketch) && (e?.fill ?? sh.fill ?? "none") === "none" ? "Circled" : (e?.aspect ?? sh.aspect ?? 1.5) === 1 ? "Circle" : "Ellipse";
     if (sh.type === "rect") return (e?.fill ?? sh.fill ?? "none") === "none" ? "Box" : (e?.radius ?? sh.radius) >= 0.5 ? "Pill" : "Rectangle";
     return { arrow: "Arrow", line: "Line", triangle: "Triangle", star: "Star" }[sh.type] ?? "Shape";
   }

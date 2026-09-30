@@ -12,6 +12,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, re
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { entitlements, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundleNode = process.argv.includes("--bundle-node");
@@ -109,6 +110,7 @@ writeFileSync(
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSHumanReadableCopyright</key><string>Screenshotter — marketing mockups from your app's real screens.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSAppleEventsUsageDescription</key><string>Screenshotter asks other apps about their windows so it can capture the one you pick.</string>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Screenshot</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
@@ -119,8 +121,20 @@ writeFileSync(
 `,
 );
 
-step("Signing (ad hoc)");
-run("codesign", ["--force", "--deep", "--sign", "-", app]);
+const identity = signingIdentity();
+if (identity) {
+  step(`Signing with ${identity}`);
+  const ent = entitlements();
+  const sign = (target, file) => run("codesign", ["--force", "--options", "runtime", "--timestamp", "--entitlements", file, "--sign", identity, target]);
+  // Inside out: a bundled Node first, then the app around it.
+  const node = path.join(resources, "node");
+  if (existsSync(node)) sign(node, ent.node);
+  sign(app, ent.app);
+  run("codesign", ["--verify", "--deep", "--strict", app]);
+} else {
+  step("Signing (ad hoc: no Developer ID certificate found)");
+  run("codesign", ["--force", "--deep", "--sign", "-", app]);
+}
 
 const size = (p) => {
   const s = statSync(p);

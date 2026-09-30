@@ -1,0 +1,89 @@
+{
+  "devices": [
+    {
+      "screenshot": "/private/tmp/claude-501/-Users-mac-Documents-screenshotter/a0838c8c-2542-4b96-81df-82a8210cb346/scratchpad/site-lib/uploads/mise-groceries.png",
+      "device": "iPhone 17 Pro",
+      "x": 0.56,
+      "y": 0.7,
+      "height": 0.92,
+      "anchor": "center"
+    }
+  ],
+  "canvas": "1080x1350",
+  "background": "cream-grain",
+  "headline": "Don't forget\nthe **limes**",
+  "textStyle": {
+    "x": 0.08,
+    "y": 0.07,
+    "align": "left",
+    "anchor": "top",
+    "width": 0.8,
+    "headlineSize": 0.072,
+    "font": "Fraunces",
+    "headlineWeight": 600,
+    "color": "#1b1712",
+    "accentColor": "#e5372b",
+    "accentItalic": true
+  },
+  "shapes": [
+    {
+      "type": "ellipse",
+      "around": {
+        "text": "Limes",
+        "padding": 0.014
+      },
+      "stroke": "#e5372b",
+      "strokeWidth": 0.006,
+      "sketch": true
+    },
+    {
+      "type": "arrow",
+      "from": {
+        "x": 0.12,
+        "y": 0.335
+      },
+      "to": {
+        "x": 0.345,
+        "y": 0.545
+      },
+      "bend": 0.42,
+      "stroke": "#e5372b",
+      "strokeWidth": 0.0065,
+      "sketch": true
+    },
+    {
+      "type": "badge",
+      "around": {
+        "text": "Fresh ramen noodles",
+        "padding": 0.05
+      },
+      "at": "left",
+      "size": 0.034,
+      "fill": "#e5372b"
+    },
+    {
+      "type": "badge",
+      "around": {
+        "text": "Sesame oil",
+        "padding": 0.05
+      },
+      "at": "left",
+      "size": 0.034,
+      "fill": "#e5372b"
+    },
+    {
+      "type": "badge",
+      "around": {
+        "text": "Nori",
+        "padding": 0.05
+      },
+      "at": "left",
+      "size": 0.034,
+      "fill": "#e5372b"
+    }
+  ],
+  "preview": false,
+  "format": "webp",
+  "deliveryWidth": 1240,
+  "output": "/Users/mac/Documents/screenshotter/site/assets/shapes.webp"
+}
