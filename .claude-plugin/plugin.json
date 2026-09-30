@@ -1,0 +1,11 @@
+{
+  "name": "screenshotter",
+  "version": "0.2.0",
+  "description": "Capture real app, web and Mac screens and turn them into App Store screenshots, device mockups, how-to images and product videos, designed with an art-direction guide.",
+  "mcpServers": {
+    "screenshotter": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"]
+    }
+  }
+}

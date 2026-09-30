@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*screenshotter.*__(create_mockup|create_mockup_set|create_video)",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/design-check.mjs\"" }]
+      }
+    ]
+  }
+}

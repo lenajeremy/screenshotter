@@ -20,6 +20,8 @@ export const TreatmentShape = {
   dim: z.number().min(0).max(1).optional().describe("Darken with black (0–1)."),
 };
 
+export const FINISHES = ["risograph", "newsprint", "halftone", "dither", "oil", "watercolor", "ink", "fluted-glass"] as const;
+
 export const BackgroundObjectSchema = z.object({
   look: z.string().optional().describe("Named preset (see list_mockup_options), e.g. \"meadow-motion\", \"clouds\", \"midnight\". Other fields override it."),
   type: z
@@ -55,6 +57,24 @@ export const BackgroundObjectSchema = z.object({
   focusX: z.number().optional().describe("Photo focus point x (0–1). Default 0.5."),
   focusY: z.number().optional().describe("Photo focus point y (0–1). Default 0.5."),
   ...TreatmentShape,
+  finish: z
+    .union([
+      z.enum(FINISHES),
+      z.object({
+        style: z.enum(FINISHES),
+        colors: z
+          .array(z.string())
+          .max(3)
+          .optional()
+          .describe("risograph: [colour ink, dark ink, paper]. dither: [dark, light]. ink: [paper, ink]. halftone, newsprint, watercolor: [paper]. Hex colours."),
+        scale: z.number().positive().max(4).optional().describe("Size of the dots, grain, strokes or flutes. Default 1."),
+        amount: z.number().min(0).max(1).optional().describe("Blend with the unfinished background (1 = the full finish). Default 1."),
+      }),
+    ])
+    .optional()
+    .describe(
+      "Print or paint the background (never the UI): risograph (two inks with grain), newsprint (faded newspaper dots), halftone (large colour dots), dither (one-bit black and white), oil (thick paint), watercolor, ink (sepia ink wash) or fluted-glass (seen through wide ribbed glass). Works on photos, paintings, gradients and looks.",
+    ),
 });
 
 export const BackgroundSchema = z
@@ -132,8 +152,10 @@ export const ShadowSchema = z
 
 export const HighlightSchema = z.object({
   style: z
-    .enum(["lift", "outline", "blur-rest", "loupe", "spotlight"])
-    .describe("lift: pop the element out, scaled, over a dimmed screen. outline: ring around it. blur-rest: blur everything else. loupe: circular magnifier. spotlight: dim everything else."),
+    .enum(["lift", "outline", "blur-rest", "loupe", "spotlight", "blur", "highlighter", "step", "arrow"])
+    .describe(
+      "lift: pop the element (its row or card) out, scaled, over a dimmed screen. outline: ring around it. blur-rest: blur everything else. loupe: glass magnifier (move it beside the device with offsetX/offsetY; it still magnifies the target). spotlight: dim everything else. blur: blur the element itself, for anything private. highlighter: a marker swipe over text. step: a numbered marker on (or beside) the element, for how-to images. arrow: a thick curved arrow pointing at the element.",
+    ),
   text: z.string().optional().describe("Find the target by visible text (on-device OCR), e.g. \"Add a task\"."),
   match: z.number().int().min(1).optional().describe("Which match of `text` to use (1 = first, top to bottom)."),
   rect: z
@@ -148,14 +170,40 @@ export const HighlightSchema = z.object({
   dim: z.number().min(0).max(1).optional().describe("How strongly the rest of the screen is pushed back (0–1)."),
   washColor: z.string().optional().describe("Colour of that push-back wash. Default #1c1c1e."),
   color: z.string().optional().describe("Outline / loupe ring colour. Default white for loupe, #0a84ff for outline."),
-  size: z.number().positive().optional().describe("Loupe diameter in points. Default 120."),
-  offsetX: z.number().optional().describe("Move the loupe from the target centre (points)."),
-  offsetY: z.number().optional(),
+  size: z.number().positive().optional().describe("loupe: diameter in points (default 120). step: marker diameter (default 30). arrow: line thickness (default 6)."),
+  offsetX: z.number().optional().describe("Points. loupe: move it from the target (it can sit beside the device). step: nudge the marker. arrow: where the arrow starts, relative to the target's centre (default 120, up and to the right)."),
+  offsetY: z.number().optional().describe("Points, positive is down. See offsetX. Arrow default -80."),
+  label: z.string().max(4).optional().describe("step: the marker's number or letter. Default: 1, 2, 3… in the order steps are listed."),
+  at: z.enum(["right", "left", "top", "bottom", "center"]).optional().describe("step: where the marker sits against the element. Default right."),
+  bend: z.number().min(-1).max(1).optional().describe("arrow: curve, from -1 to 1 (0 is straight; the sign picks the side). Default 0.35."),
+  breakout: z.number().min(0).max(0.5).optional().describe("lift: how far the lifted card reaches past each side of the screen, as a fraction of the screen width, for a card wider than the device (0.08 is a clear break). Default 0."),
 });
 
+const MenuBarShape = {
+  app: z.string().max(40).optional().describe("App name, bold after the Apple menu. Default: the captured app (Safari for web pages)."),
+  menus: z.array(z.string().max(24)).max(10).optional().describe("The app's menus. Default File, Edit, View, Window, Help."),
+  style: z.enum(["light", "dark"]).optional().describe("light: dark text on a pale bar. dark: white text on a dark bar. Default: suits the capture."),
+  time: z.string().max(40).optional().describe('The clock. Default "Wed Sep 23  9:41 AM".'),
+  status: z.string().max(60).optional().describe("A menu bar app's status item, drawn highlighted as if its menu is open, e.g. \"Team standup · in 19m\"."),
+  statusX: z.number().optional().describe("Where the status item's centre sits, as a fraction of the bar's width."),
+};
+
+/** A macOS menu bar drawn across the top of the canvas, for menu bar app shots. */
+export const SceneMenuBarSchema = z
+  .object({
+    ...MenuBarShape,
+    size: z.number().positive().max(0.3).optional().describe("Bar height as a fraction of canvas height. Default 0.034 (a whole desktop); 0.06–0.1 for a close, zoomed-in shot."),
+  })
+  .describe(
+    "Draw a macOS menu bar across the top of the canvas: the Apple menu (and app menus if `app` is set), a highlighted `status` item, Control Center, Spotlight, Wi-Fi, battery and the clock. Put a menu bar app's captured menu or popover (frame \"none\") under the status item: devices without a y are hung just below the bar, centred under the status item.",
+  );
+
 export const DeviceInputSchema = z.object({
-  screenshot: z.string().describe("Path to the screenshot PNG/JPEG (e.g. from capture_screenshot or capture_web). For videos, the recording's poster frame."),
-  video: z.string().optional().describe("create_video only: a screen recording (from record_simulator) to play inside the frame."),
+  screenshot: z
+    .string()
+    .optional()
+    .describe("Path to the screenshot PNG/JPEG (e.g. from capture_screenshot or capture_web). Optional when `video` is given: the recording's first frame is used."),
+  video: z.string().optional().describe("A screen recording (from record_simulator, or any MP4/MOV) to play inside the frame in create_video. Stills show its first frame unless `screenshot` is set."),
   frame: z
     .enum(["device", "browser", "window", "card", "none"])
     .optional()
@@ -166,7 +214,19 @@ export const DeviceInputSchema = z.object({
     .describe("Hardware to draw, e.g. \"iPhone 17 Pro\", \"iPhone Air\", \"iPad Pro 13-inch\", \"MacBook Pro 14-inch\", \"Apple Watch 46mm\", or any simulator device type. Default: detected from the capture."),
   color: z.string().optional().describe("Frame finish: model colour (\"Cosmic Orange\"), generic finish (Black, Silver, White, Graphite, Natural, Gold, Blue, Orange) or any hex. Default Black."),
   buttons: z.boolean().optional().describe("Draw side buttons. Default true."),
+  bezel: z
+    .boolean()
+    .optional()
+    .describe("Use Apple's photographic product bezel for this model and colour when one is installed in the bezel folder. Default: yes, except for website captures (Apple's license covers mock-ups of apps for Apple platforms)."),
+  side: z
+    .enum(["front", "back"])
+    .optional()
+    .describe("iPhone: show the back instead of the screen (camera housing, lenses, logo, true to each model). Default front."),
   island: z.enum(["auto", "always", "never"]).optional().describe("Dynamic Island/notch overlay. auto draws it only if the capture lacks it."),
+  menuBar: z
+    .union([z.boolean(), z.object(MenuBarShape)])
+    .optional()
+    .describe("MacBook: the macOS menu bar drawn above an app or web capture (app name, menus, icons, clock). false for none. Full-screen Mac captures keep their own."),
   landscape: z.boolean().optional().describe("Force landscape/portrait. Default: follows the screenshot."),
   x: z.number().optional().describe("Horizontal position as a fraction of canvas width (0 left, 1 right). May bleed outside 0–1."),
   y: z.number().optional().describe("Vertical position of the device's centre as a fraction of canvas height (0 top, 1 bottom)."),
@@ -180,6 +240,21 @@ export const DeviceInputSchema = z.object({
   shadow: ShadowSchema.optional(),
   z: z.number().optional().describe("Stacking order; higher is in front."),
   glare: z.boolean().optional().describe("Subtle diagonal glass reflection."),
+  blur: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Soften the whole device as if the camera focused on something else (depth of field): a fraction of canvas width up to 0.5 (0.003 soft, 0.008 strong), or px above that. Keep the hero device sharp."),
+  fade: z
+    .union([
+      z.number().min(0).max(1),
+      z.object({
+        edge: z.enum(["bottom", "top", "left", "right"]).optional().describe("Which edge dissolves. Default bottom."),
+        extent: z.number().min(0).max(1).optional().describe("How much of the device fades, as a fraction of its size. Default 0.4."),
+      }),
+    ])
+    .optional()
+    .describe("Dissolve the device into the background from one edge: a number is how much of it fades from the bottom (0.4 = the lower 40%), or {edge, extent}. Best over dark or soft backgrounds."),
   highlights: z.array(HighlightSchema).optional().describe("Call out parts of the screen: lift a row, magnify with a loupe, outline, spotlight."),
   crop: z
     .object({ x: z.number().min(0), y: z.number().min(0), width: z.number().positive(), height: z.number().positive() })
@@ -207,6 +282,9 @@ export const TextInputSchema = z.object({
   font: z.string().optional().describe("sf-pro (default), sf-rounded, new-york, sf-mono, or an installed/Google Fonts family."),
   color: z.string().optional(),
   accentColor: z.string().optional().describe("Colour or CSS gradient for **accent** words. Default: textStyle.accentColor; without either, accent words are just bold."),
+  accentFont: z.string().optional().describe("Font for **accent** words. Default: textStyle.accentFont, else the text's own font."),
+  accentWeight: z.number().optional().describe("Weight for **accent** words. Default: textStyle.accentWeight."),
+  accentItalic: z.boolean().optional().describe("Set **accent** words in italic. Default: textStyle.accentItalic."),
   lineHeight: z.number().optional(),
   letterSpacing: z.number().optional().describe("Tracking in em, e.g. -0.02."),
   uppercase: z.boolean().optional(),
@@ -219,9 +297,13 @@ export const TextInputSchema = z.object({
 
 export const TextStyleSchema = z
   .object({
-    font: z.string().optional(),
+    font: z.string().optional().describe("Headline font (and the subheadline's unless subheadlineFont is set): sf-pro (default), sf-rounded, new-york, sf-mono, or a Google Fonts / installed family."),
+    subheadlineFont: z.string().optional().describe("A different font for the subheadline, to pair with the headline's."),
     color: z.string().optional().describe("Default: black or white, whichever reads better on the background."),
-    accentColor: z.string().optional(),
+    accentColor: z.string().optional().describe("Colour or CSS gradient for **accent** words in the caption (and extra text that doesn't set its own)."),
+    accentFont: z.string().optional().describe("Font for **accent** words, e.g. an italic serif inside a sans headline."),
+    accentWeight: z.number().optional().describe("Weight for **accent** words, e.g. 800 inside a 400 headline. Without accentColor, accentFont or accentWeight, accent words are just bold."),
+    accentItalic: z.boolean().optional().describe("Set **accent** words in italic."),
     headlineSize: z.number().positive().optional().describe("px, or fraction of canvas height when < 1."),
     subheadlineSize: z.number().positive().optional().describe("px, or fraction of canvas height when < 1."),
     headlineWeight: z.number().optional(),
@@ -241,7 +323,7 @@ export const TextStyleSchema = z
 
 // ---------------------------------------------------------------------------------------------
 
-export const LAYOUTS = ["hero", "hero-bleed", "text-bottom", "tilted", "floating", "duo", "trio", "split", "stack", "custom"] as const;
+export const LAYOUTS = ["hero", "hero-bleed", "text-bottom", "tilted", "floating", "duo", "trio", "split", "stack", "grid", "staircase", "rising", "custom"] as const;
 
 export const MockupInputShape = {
   devices: z.array(DeviceInputSchema).min(1).max(8).describe("Screenshots to frame and place. Several make a multi-device composition (e.g. MacBook + iPhone)."),
@@ -253,13 +335,22 @@ export const MockupInputShape = {
   layout: z
     .enum(LAYOUTS)
     .optional()
-    .describe("hero (caption top, device below), hero-bleed (big device cropped by the bottom edge), text-bottom, tilted (3D), floating (device only), duo, trio, split (caption beside devices), stack (overlapping multi-device), custom."),
+    .describe("hero (caption top, device below), hero-bleed (big device cropped by the bottom edge), text-bottom, tilted (3D), floating (device only), duo, trio, split (caption beside devices), stack (overlapping multi-device), grid (a mosaic of screens in rows), staircase (screens stepping up to the right, each overlapping the next), rising (the same steps, counter-rotated), custom."),
   background: BackgroundSchema.optional(),
   effects: EffectsSchema,
   headline: z.string().optional().describe("Main caption. **Accent** markup supported."),
   subheadline: z.string().optional(),
   textStyle: TextStyleSchema,
   texts: z.array(TextInputSchema).optional().describe("Extra free-positioned text (badges, ratings, labels)."),
+  menuBar: SceneMenuBarSchema.optional(),
+  camera: z
+    .object({
+      zoom: z.number().min(1).max(8).describe("How far to zoom in: 2 shows half the width and height."),
+      x: z.number().min(0).max(1).optional().describe("The point to zoom into, as a fraction of the canvas width. Default 0.5."),
+      y: z.number().min(0).max(1).optional().describe("As a fraction of the canvas height. Default 0.5."),
+    })
+    .optional()
+    .describe("Zoom the scene (backdrop and devices) in on a point, rendered crisp, for a close-up of part of a device. The caption, extra text and menu bar stay put. Find the point from the entities' positions."),
   fonts: z.array(z.object({ family: z.string(), path: z.string() })).optional().describe("Register local font files."),
   output: z.string().optional().describe("Output file or directory. Default ./screenshots/mockups/."),
   format: z.enum(["png", "jpeg", "webp"]).optional(),

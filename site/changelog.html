@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What's new · Screenshotter</title>
+<meta name="description" content="Every Screenshotter release and what it added.">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@1,6..72,300..500&display=swap">
+<style>
+:root { --bg: #070708; --line: rgba(255,255,255,.08); --text: #f4f4f5; --text-2: #b4b4bc; --text-3: #80808a; --lime: #d2ff4d; --lime-ink: #0d1100;
+  --display: "Newsreader", ui-serif, Georgia, serif; --sans: "Geist", -apple-system, system-ui, sans-serif; --mono: "Geist Mono", ui-monospace, Menlo, monospace; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; }
+.brand img { width: 28px; height: 28px; }
+.dl { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border-radius: 999px; background: var(--lime); color: var(--lime-ink); font-weight: 600; font-size: 14px; text-decoration: none; }
+h1 { font: 400 clamp(40px, 7vw, 64px)/1.05 var(--display); font-style: italic; letter-spacing: -0.02em; margin: 56px 0 10px; }
+.lede { color: var(--text-2); margin: 0 0 48px; }
+.release { padding: 36px 0; border-top: 1px solid var(--line); }
+.release-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.release h2 { margin: 0; font: 700 28px var(--sans); letter-spacing: -0.02em; }
+.date { font: 500 13px var(--mono); color: var(--text-3); }
+.latest { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--lime-ink); background: var(--lime); padding: 3px 8px; border-radius: 999px; }
+.sec + .sec { margin-top: 20px; }
+h3 { margin: 0 0 8px; font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 8px; color: var(--text-2); }
+li::marker { color: var(--lime); }
+li strong { color: var(--text); font-weight: 600; }
+footer { padding: 48px 0 64px; color: var(--text-3); font-size: 13px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><a class="brand" href="./"><img src="assets/icon.svg" alt="">Screenshotter</a><a class="dl" href="downloads/Screenshotter.dmg">Download</a></header>
+<h1>What's new</h1>
+<p class="lede">Every release and what it added. The app shows these notes once after it updates, and anytime from Help › What's New.</p>
+<section class="release" id="v0.2.0">
+  <div class="release-head"><h2>0.2.0</h2><span class="date">30 September 2026</span><span class="latest">Latest</span></div>
+  <div class="sec"><h3>Highlights</h3><ul><li><strong>Ask AI designs like an art director.</strong> It works from a detailed design guide, sees your screenshot&#39;s colours and text, checks its own render and fixes what&#39;s off before you see it. Ask for &quot;make it look amazing&quot; and you get a real redesign.</li><li><strong>House style.</strong> Tell Ask AI what you like (&quot;always Space Black phones&quot;) and it remembers. See and edit it in Settings › House style.</li><li><strong>Print &amp; paint backdrops.</strong> Reprint or repaint any backdrop as a risograph, newsprint, halftone, one-bit dither, oil painting, watercolour or ink wash, or set it behind fluted glass. Your screenshots are never touched.</li><li><strong>Paintings as backdrops.</strong> 15 public-domain paintings and prints, including Hokusai&#39;s Great Wave, Monet&#39;s footbridge and Van Gogh&#39;s wheat field.</li></ul></div>
+  <div class="sec"><h3>Devices</h3><ul><li>A rebuilt Apple Watch, true to Apple&#39;s product photos: the Digital Crown, the Ultra&#39;s orange Action button and crown guard, and band stubs, sized so the whole watch fits.</li><li>iPhone Duo, folded and open.</li><li>Get from Apple now includes iPhone Duo, Apple Watch Series 11 and Ultra 3, iPad Air, iPad mini and iPad. Sets you already have are marked Installed and never downloaded twice.</li><li>Flat Apple Watches use Apple&#39;s own product art; tilted in 3D, MacBooks and watches use the drawn frame with real depth.</li><li>The colour picker separates Apple finishes (photographic, when Apple&#39;s art is installed) from drawn colours.</li><li>Blur a device to put it out of focus behind a sharp one, or fade it into the backdrop.</li></ul></div>
+  <div class="sec"><h3>Call-outs and mark-ups</h3><ul><li>Numbered step markers and curved arrows for how-to images.</li><li>Highlighter swipes, and blur for anything private.</li><li>Lifted cards can break past both sides of the device.</li><li>The loupe can sit beside the device and still magnify its target.</li></ul></div>
+  <div class="sec"><h3>Layouts and type</h3><ul><li>New layouts: grid (a mosaic of screens), staircase and rising pairs.</li><li>Any Google Font, a second font for the subheadline, and accent words with their own colour, font, weight or italic.</li><li>Eight new soft backdrops: cream grain, peach glow, lavender mist, mint to sage, iridescent, coral and periwinkle, indigo fade and ember glow.</li></ul></div>
+  <div class="sec"><h3>Mac</h3><ul><li>MacBook screens draw the real macOS menu bar with the app&#39;s name and menus.</li><li>Menu bar app shots: a drawn menu bar with your app&#39;s status item, and its menu hanging below.</li></ul></div>
+  <div class="sec"><h3>Video</h3><ul><li>Zooms that follow the action: several zooms in a row, gliding from one point to the next.</li><li>A drawn cursor that moves, clicks and drags over the screen.</li></ul></div>
+  <div class="sec"><h3>Library</h3><ul><li>Exports of the same scene stack into one card with their versions. View any version, or restore it as the working design.</li></ul></div>
+  <div class="sec"><h3>For AI agents</h3><ul><li>New tools: crop_image, create_grid, design_guide, get_house_style, remember_style, record_web (a rehearsed click-through of a web page, with its cursor track) and record_mac.</li><li>A camera zoom for close-ups, and a Claude Code skill and plugin with a design check after the first render.</li></ul></div>
+</section>
+<section class="release" id="v0.1.0">
+  <div class="release-head"><h2>0.1.0</h2><span class="date">September 2026</span></div>
+  <div class="sec"><h3>The first release</h3><ul><li>Capture iPhone, iPad and Apple Watch apps from the Simulator, websites and Mac windows.</li><li>Frame them in realistic iPhone, iPad, Apple Watch and MacBook frames, or Apple&#39;s own product art.</li><li>Backdrops, captions, call-outs, 3D tilt, video with motion, App Store sets and the Studio desktop app with Ask AI.</li></ul></div>
+</section>
+<footer><a href="./">← Back to Screenshotter</a></footer>
+</div>
+</body>
+</html>

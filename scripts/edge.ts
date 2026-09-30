@@ -156,7 +156,8 @@ await check("zero or negative device height is rejected by the schema", async ()
 
 await check("landscape capture renders with the device turned", async () => {
   const r = await createMockup({ devices: [{ screenshot: landscapeShot }], quality: "preview", preview: false, output: path.join(out, "landscape.jpg") });
-  assert(r.devices[0].device === "iPhone 17 Pro", String(r.devices[0].device));
+  // A 1206 × 2622 capture with no metadata gets the newest phone with that screen.
+  assert(r.devices[0].device === "iPhone 18 Pro", String(r.devices[0].device));
 });
 
 await check("stack layout keeps devices below the caption", async () => {
@@ -303,7 +304,7 @@ await check("3D tilt at full size keeps the screen and the whole background (no 
   }
 });
 
-await check("a MacBook shows a web page below the notch; a full-screen Mac capture keeps its own menu bar", async () => {
+await check("a MacBook shows a web page below a drawn menu bar; a full-screen Mac capture keeps its own", async () => {
   // Notched Macs never draw content under the notch: a page's nav would be hidden by it.
   const { readBmp } = await import("../src/util/png.js");
   const { run } = await import("../src/util/exec.js");
@@ -329,13 +330,78 @@ await check("a MacBook shows a web page below the notch; a full-screen Mac captu
   };
   const web = await sample(page, "mac-web");
   assert(web.bar && web.bar > 0.03 && web.bar < 0.05, `menu-bar strip is ${web.bar}`);
-  assert(web.top < 30, `the strip beside the notch should be black, got ${web.top.toFixed(0)}`);
+  // A light page gets a light macOS menu bar (not the page itself, and not a black strip).
+  assert(web.top > 120 && web.top < 250, `the menu bar beside the notch should be drawn light, got ${web.top.toFixed(0)}`);
   assert(web.below > 225, `the page should start below the strip, got ${web.below.toFixed(0)}`);
   const full = path.join(out, "mac-fullscreen-3024x1964.png");
   writeFileSync(full, readFileSync(page));
   writeFileSync(`${full}.json`, JSON.stringify({ kind: "mac", scale: 2, width: 3024, height: 1964 }));
   const screen = await sample(full, "mac-full");
   assert(!screen.bar && screen.top > 225, `a full-screen Mac capture should fill the screen (strip ${screen.bar}, top ${screen.top.toFixed(0)})`);
+});
+
+await check("iPhone 18 Pro renders in its own finishes, front and back", async () => {
+  for (const [color, side] of [["Burgundy", "front"], ["Glacier", "back"]] as const) {
+    const r = await createMockup({ ...base, devices: [{ screenshot: shot, device: "iPhone 18 Pro", color, side, rotateY: -20 }], output: path.join(out, `18pro-${side}.jpg`) } as never);
+    assert(r.devices[0].device === "iPhone 18 Pro", `${side}: ${r.devices[0].device}`);
+  }
+});
+
+await check("an installed product bezel frames the screenshot (edge from the art, screen in its opening)", async () => {
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const dir = path.join(out, "bezels", "iPhone 17 Pro");
+  mkdirSync(dir, { recursive: true });
+  // A stand-in bezel: a solid magenta device with a transparent rounded opening the size of the screen.
+  await renderHtml(
+    `<!doctype html><body style="margin:0;background:transparent"><div style="position:absolute;inset:0;border-radius:90px;background:#ff00ff;-webkit-mask:radial-gradient(#000 0 0) 0 0/100% 100% no-repeat, linear-gradient(#000 0 0) 40px 40px/402px 874px no-repeat;-webkit-mask-composite:xor"></div></body>`,
+    path.join(dir, "iPhone 17 Pro - Silver - Portrait.png"),
+    482,
+    954,
+    { scale: 1, format: "png", transparent: true, outWidth: 482, outHeight: 954 },
+  );
+  process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "bezels");
+  try {
+    const file = path.join(out, "bezel.png");
+    await createMockup({ devices: [{ screenshot: shot, device: "iPhone 17 Pro", color: "Silver" }], canvas: "600x1000", layout: "floating", background: "#000000", preview: false, output: file } as never);
+    await run("sips", ["-s", "format", "bmp", file, "--out", path.join(out, "bezel.bmp")]);
+    const img = readBmp(readFileSync(path.join(out, "bezel.bmp")));
+    const at = (fx: number, fy: number) => {
+      const i = (Math.round(fy * (img.height - 1)) * img.width + Math.round(fx * (img.width - 1))) * 4;
+      return [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]];
+    };
+    // Somewhere on the left edge of the device is the art's magenta; the middle is the (light) screenshot.
+    const edge = Array.from({ length: 60 }, (_, k) => at(0.05 + k * 0.004, 0.5)).find(([r, g, b]) => r > 200 && g < 60 && b > 200);
+    assert(edge, "the bezel art isn't drawn");
+    const mid = at(0.5, 0.5);
+    assert(mid[0] > 200 && mid[1] > 200, `the screenshot isn't in the opening (${mid})`);
+  } finally {
+    delete process.env.SCREENSHOTTER_BEZELS_DIR;
+  }
+});
+
+await check("Apple's art files are told apart by model, colour and orientation", async () => {
+  const { classify } = await import("../src/render/bezels.js");
+  const root = "/art";
+  const is = (rel: string, model: string, color: string, landscape = false) => {
+    const e = classify(path.join(root, rel), root);
+    assert(e && e.model === model && e.color === color && e.landscape === landscape, `${rel} → ${JSON.stringify(e)}`);
+  };
+  is("PNG/MacBook Pro M5 16-inch Silver.png", "macbook-pro-16", "Silver");
+  is("PNG/MacBook Pro M5 14-inch Space Black.png", "macbook-pro-14", "Space Black");
+  is("PNG/iPhone 17 Pro Max/iPhone 17 Pro Max - Cosmic Orange - Landscape.png", "iphone-17-pro-max", "Cosmic Orange", true);
+  is("PNG/iPhone 17 Pro/iPhone 17 Pro - Deep Blue - Portrait.png", "iphone-17-pro", "Deep Blue");
+  is("PNG/iPhone 17/iPhone 17 - Mist Blue - Portrait.png", "iphone-17", "Mist Blue");
+  is("PNG/iPhone 18 Pro/iPhone 18 Pro - Burgundy - Portrait.png", "iphone-18-pro", "Burgundy");
+});
+
+await check("a device with only a recording shows the recording's first frame", async () => {
+  const { spawnSync } = await import("node:child_process");
+  if (spawnSync("ffmpeg", ["-version"]).status !== 0) return;
+  const clip = path.join(out, "red-clip.mp4");
+  spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=402x874:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
+  const r = await createMockup({ devices: [{ video: clip, frame: "none" }], canvas: "500x1000", layout: "floating", background: "#000000", quality: "preview", format: "png", preview: false, output: path.join(out, "video-only.png") } as never);
+  assert(r.width > 0, "no image");
 });
 
 await check("a trailing newline in text doesn't add an empty line", async () => {

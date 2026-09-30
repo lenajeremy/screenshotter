@@ -1,4 +1,4 @@
-import { createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import http from "node:http";
 import path from "node:path";
@@ -23,6 +23,10 @@ import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, editScene, AIEditSchema } from "./ai.js";
 import { backgroundPreview, loadState, lookThumbnail, saveState, searchUnsplash, thumbnail } from "./assets.js";
+import { houseStyle, updateHouseStyle } from "../util/style.js";
+import { SUGGESTED_SETS, bezelJob, bezelSets, bezelSummary, bezelsDir, getAppleBezels, importBezels } from "../render/bezels.js";
+import { deleteScene, duplicateScene, getScene, listScenes, saveScene } from "./scenes.js";
+import { markSeen, whatsNew } from "./whatsnew.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +35,19 @@ function findAsset(name: string): string {
   const hit = candidates.find((p) => existsSync(p));
   if (!hit) throw new Error(`Missing studio asset ${name}`);
   return hit;
+}
+
+/** This build's version, from its package.json. */
+let appVersion: string | undefined;
+function version(): string {
+  if (!appVersion) {
+    try {
+      appVersion = (JSON.parse(readFileSync(findAsset("package.json"), "utf8")) as { version?: string }).version ?? "0.0.0";
+    } catch {
+      appVersion = "0.0.0";
+    }
+  }
+  return appVersion;
 }
 
 /** The Studio UI folder: dist/studio/ui when built, src/studio/ui when run with tsx. */
@@ -105,19 +122,41 @@ async function json<T>(req: http.IncomingMessage): Promise<T> {
 
 function allowedFile(p: string): boolean {
   const resolved = path.resolve(p);
-  return [outputRoot(), cacheDir("")].some((root) => resolved === root || resolved.startsWith(root + path.sep));
+  return [outputRoot(), cacheDir(""), bezelsDir()].some((root) => resolved === root || resolved.startsWith(root + path.sep));
+}
+
+/** The Studio scene an export came from, kept in its request sidecar, for the library's history. */
+function exportScene(file: string): { id: string; name: string } | undefined {
+  try {
+    const meta = JSON.parse(readFileSync(`${file}.mockup.json`, "utf8")) as { studio?: { sceneId?: string; sceneName?: string } };
+    return meta.studio?.sceneId ? { id: meta.studio.sceneId, name: meta.studio.sceneName ?? "Untitled scene" } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function tagExport(file: string, url: URL) {
+  const sceneId = url.searchParams.get("scene");
+  if (!sceneId || !existsSync(`${file}.mockup.json`)) return;
+  try {
+    const meta = JSON.parse(readFileSync(`${file}.mockup.json`, "utf8"));
+    meta.studio = { sceneId, sceneName: url.searchParams.get("name") ?? undefined };
+    writeFileSync(`${file}.mockup.json`, JSON.stringify(meta, null, 2));
+  } catch {
+    // An export without history is still an export.
+  }
 }
 
 /** Recent files the studio can show: captures, uploads, renders. */
-function recentFiles(): Array<{ path: string; kind: string; mtime: number }> {
-  const out: Array<{ path: string; kind: string; mtime: number }> = [];
+function recentFiles(): Array<{ path: string; kind: string; mtime: number; scene?: { id: string; name: string } }> {
+  const out: Array<{ path: string; kind: string; mtime: number; scene?: { id: string; name: string } }> = [];
   for (const kind of ["raw", "uploads", "mockups", "videos", "recordings"]) {
     const dir = path.join(outputRoot(), kind);
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
       if (!/\.(png|jpe?g|webp|mp4|mov|webm|gif)$/i.test(f) || /\.(tmp|page)\.png$|\.poster\.|\.filmstrip\./.test(f)) continue;
       const p = path.join(dir, f);
-      out.push({ path: p, kind, mtime: statSync(p).mtimeMs });
+      out.push({ path: p, kind, mtime: statSync(p).mtimeMs, scene: kind === "mockups" || kind === "videos" ? exportScene(p) : undefined });
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, 80);
@@ -175,11 +214,12 @@ async function options() {
     devices: DEVICE_MODELS.map((m) => ({ name: m.name, family: m.family, colors: m.colors })),
     extraDevices,
     genericColors: GENERIC_COLORS,
-    looks: LOOKS.map((l) => ({ name: l.name, tone: l.tone, description: l.description, color: l.color, photo: Boolean(l.background.photo), colors: l.background.colors ?? l.fallback?.colors ?? [l.color] })),
+    looks: LOOKS.map((l) => ({ name: l.name, tone: l.tone, description: l.description, color: l.color, photo: Boolean(l.background.photo), painting: Boolean(l.painting), colors: l.background.colors ?? l.fallback?.colors ?? [l.color] })),
     canvases: CANVAS_PRESETS,
     layouts: LAYOUTS,
     grades: GRADES,
     webViewports: Object.keys(WEB_VIEWPORTS),
+    bezels: bezelSummary(),
     aiProviders: [
       process.env.OPENAI_API_KEY && "openai",
       (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) && "gemini",
@@ -266,6 +306,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     return send(200, await searchUnsplash(q, Number(url.searchParams.get("page") ?? 1) || 1));
   }
   if (req.method === "GET" && url.pathname === "/api/state") return send(200, loadState());
+  if (req.method === "GET" && url.pathname === "/api/scenes") return send(200, listScenes());
+  if (req.method === "GET" && url.pathname === "/api/scene") return send(200, getScene(url.searchParams.get("id")));
   if (req.method === "GET" && url.pathname === "/api/ai-status") return send(200, aiStatus());
   if (req.method === "GET" && url.pathname === "/docs") {
     const md = readFileSync(findAsset("README.md"), "utf8");
@@ -297,6 +339,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   }
   if (req.method === "GET" && url.pathname === "/api/options") return send(200, await options());
   if (req.method === "GET" && url.pathname === "/api/files") return send(200, recentFiles());
+  if (req.method === "GET" && url.pathname === "/api/whats-new") {
+    let file = "";
+    try {
+      file = findAsset("CHANGELOG.md");
+    } catch {
+      // No changelog in this build: nothing to show.
+    }
+    return send(200, whatsNew(file, version()));
+  }
+  if (req.method === "GET" && url.pathname === "/api/house-style") return send(200, { notes: houseStyle() });
+  if (req.method === "GET" && url.pathname === "/api/bezels") return send(200, { ...bezelSummary(), sets: bezelSets(), suggested: SUGGESTED_SETS, job: bezelJob() });
   if (req.method === "GET" && url.pathname === "/api/apps") {
     const { s, all } = await sim.withSimulatorLock(async () => {
       const s = await sim.resolveSimulator({ simulator: url.searchParams.get("simulator") || undefined });
@@ -319,11 +372,31 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   if (req.headers["x-screenshotter"] !== "studio") throw new HttpError(403, "Missing studio header");
 
   switch (url.pathname) {
-    case "/api/ai-edit":
-      return send(200, await editScene(AIEditSchema.parse(await json(req))));
+    case "/api/ai-edit": {
+      const input = AIEditSchema.parse(await json(req));
+      if (url.searchParams.get("stream") !== "1") return send(200, await editScene(input));
+      // Streamed: one JSON object per line: progress steps as they happen, then the result.
+      res.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" });
+      const line = (o: unknown) => res.write(JSON.stringify(o) + "\n");
+      try {
+        const result = await editScene(input, (p) => line({ type: "progress", ...p }));
+        line({ type: "result", ...result });
+      } catch (e) {
+        line({ type: "error", error: e instanceof z.ZodError ? e.issues.map((i) => i.message).join("; ") : (e as Error).message });
+      }
+      res.end();
+      return;
+    }
     case "/api/state":
       saveState(await json(req));
       return send(200, { ok: true });
+    case "/api/scenes/save":
+      return send(200, saveScene(await json(req)));
+    case "/api/scenes/delete":
+      deleteScene((await json<{ id: string }>(req)).id);
+      return send(200, { ok: true });
+    case "/api/scenes/duplicate":
+      return send(200, duplicateScene((await json<{ id: string }>(req)).id));
     case "/api/capture/simulator": {
       const a = CaptureSimSchema.parse(await json(req));
       return send(200, await captureScreenshot(a));
@@ -338,6 +411,25 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     }
     case "/api/upload":
       return send(200, await upload(req, url));
+    case "/api/bezels/get": {
+      const { sets } = await json<{ sets: string[] }>(req);
+      if (!Array.isArray(sets) || !sets.length) throw new HttpError(400, "Choose which devices to get");
+      if (process.platform !== "darwin") throw new HttpError(400, "Apple's bezels come as macOS disk images");
+      void getAppleBezels(sets);
+      return send(200, { job: bezelJob() });
+    }
+    case "/api/whats-new/seen":
+      markSeen(version());
+      return send(200, { seen: version() });
+    case "/api/house-style": {
+      const { add, remove } = await json<{ add?: string[]; remove?: string[] }>(req);
+      return send(200, { notes: updateHouseStyle({ add: Array.isArray(add) ? add.map(String) : undefined, remove: Array.isArray(remove) ? remove.map(String) : undefined }) });
+    }
+    case "/api/bezels/import": {
+      const { paths } = await json<{ paths: string[] }>(req);
+      if (!Array.isArray(paths) || !paths.length) throw new HttpError(400, "Choose bezel images or a folder of them");
+      return send(200, { ...importBezels(paths), ...bezelSummary() });
+    }
     case "/api/mockup": {
       const input = MockupInputSchema.parse(await json(req));
       if (input.quality === "preview" && !input.output) {
@@ -345,12 +437,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
         prunePreviews(dir);
         input.output = path.join(dir, `preview-${timestamp()}.${input.format === "jpeg" ? "jpg" : (input.format ?? "png")}`);
       }
-      return send(200, await createMockup(input));
+      const result = await createMockup(input);
+      tagExport(result.path, url);
+      return send(200, result);
     }
     case "/api/layout":
       return send(200, await layoutScene(MockupInputSchema.parse(await json(req))));
-    case "/api/video":
-      return send(200, await createVideo(VideoInputSchema.parse(await json(req))));
+    case "/api/video": {
+      const result = await createVideo(VideoInputSchema.parse(await json(req)));
+      tagExport(result.path, url);
+      return send(200, result);
+    }
     case "/api/delete": {
       const { path: p } = await json<{ path: string }>(req);
       if (!p || !allowedFile(p) || !existsSync(p)) throw new HttpError(404, "Not found");
@@ -401,10 +498,8 @@ async function upload(req: http.IncomingMessage, url: URL) {
   if (![".mp4", ".mov"].includes(ext)) return { path: file, ...(await imageSize(file).catch(() => ({}))) };
   const poster = file.replace(/\.(mp4|mov)$/i, ".png");
   try {
-    // A frame just after the start: the very first one is often black or mid-transition.
-    await run("ffmpeg", ["-v", "error", "-y", "-ss", "0.3", "-i", file, "-frames:v", "1", poster], { timeoutMs: 30_000 }).catch(() =>
-      run("ffmpeg", ["-v", "error", "-y", "-i", file, "-frames:v", "1", poster], { timeoutMs: 30_000 }),
-    );
+    // The first frame, as the device shows it until the recording plays.
+    await run("ffmpeg", ["-v", "error", "-y", "-i", file, "-frames:v", "1", poster], { timeoutMs: 30_000 });
     return { path: file, poster, ...(await imageSize(poster)) };
   } catch {
     // No ffmpeg: the recording still works once attached to a device with a screenshot.

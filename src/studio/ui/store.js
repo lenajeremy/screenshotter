@@ -52,6 +52,10 @@ export const S = {
   opts: null,
   scene: DEFAULT_SCENE,
   sceneName: "Untitled scene",
+  /** The saved scene being edited (null until it has something in it). */
+  sceneId: null,
+  scenes: [],
+  scenesOpen: false,
   layout: null,
   layoutError: null,
   files: [],
@@ -69,7 +73,7 @@ export const S = {
   exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4" } },
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false },
   apps: { list: [], loading: false, for: "" },
-  ai: { open: false, busy: false, text: "", error: null, history: [], model: "", context: true, last: null },
+  ai: { open: false, busy: false, text: "", error: null, history: [], thread: [], model: "", preview: true, context: true, last: null },
   pulse: [],
   toasts: [],
   modal: null,
@@ -208,7 +212,8 @@ let persistTimer = 0;
 const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched },
+  sceneId: S.sceneId,
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched },
 });
 export function persist() {
   clearTimeout(persistTimer);
@@ -216,15 +221,63 @@ export function persist() {
     persistTimer = 0;
     api("/api/state", snapshot()).catch(() => undefined);
   }, 500);
+  scheduleSceneSave();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Saved scenes: the scene you're editing saves itself as you work.
+
+const hasContent = (sc) => Boolean(sc?.devices?.length || sc?.headline || sc?.texts?.length);
+let sceneTimer = 0;
+let saving = Promise.resolve();
+function scheduleSceneSave() {
+  clearTimeout(sceneTimer);
+  sceneTimer = setTimeout(() => {
+    sceneTimer = 0;
+    saveSceneNow();
+  }, 800);
+}
+/** Save the current scene now (creating it in the library the first time). Saves run in order. */
+export function saveSceneNow() {
+  clearTimeout(sceneTimer);
+  sceneTimer = 0;
+  if (!hasContent(S.scene)) return saving;
+  const body = { id: S.sceneId ?? undefined, name: S.sceneName, scene: S.scene, chat: S.ai.thread.slice(-60) };
+  const forScene = S.scene;
+  saving = saving
+    .then(() => api("/api/scenes/save", { ...body, id: S.sceneId ?? undefined }))
+    .then((saved) => {
+      // Still the same document? (It may have been swapped while the save was in flight.)
+      if (S.scene === forScene || S.sceneId === null || S.sceneId === saved.id) {
+        const others = S.scenes.filter((x) => x.id !== saved.id);
+        set({ sceneId: S.sceneId ?? saved.id, scenes: [{ ...saved, at: Date.now() }, ...others] });
+        if (!body.id) api("/api/state", snapshot()).catch(() => undefined);
+      }
+      return saved;
+    })
+    .catch(() => undefined);
+  return saving;
+}
+export async function refreshScenes() {
+  const scenes = await api("/api/scenes").catch(() => null);
+  if (scenes) set({ scenes: scenes.map((x) => ({ ...x, at: Date.now() })) });
+  return S.scenes;
 }
 /** Save a pending change right away (the window is closing or the app is quitting). */
 export function flushPersist() {
-  if (!persistTimer) return Promise.resolve();
-  clearTimeout(persistTimer);
-  persistTimer = 0;
-  return fetch("/api/state", { method: "POST", keepalive: true, headers: { "x-screenshotter": "studio", "Content-Type": "application/json" }, body: JSON.stringify(snapshot()) })
-    .then(() => undefined)
-    .catch(() => undefined);
+  const headers = { "x-screenshotter": "studio", "Content-Type": "application/json" };
+  const jobs = [];
+  if (sceneTimer && hasContent(S.scene)) {
+    clearTimeout(sceneTimer);
+    sceneTimer = 0;
+    jobs.push(fetch("/api/scenes/save", { method: "POST", keepalive: true, headers, body: JSON.stringify({ id: S.sceneId ?? undefined, name: S.sceneName, scene: S.scene, chat: S.ai.thread.slice(-60) }) }).catch(() => undefined));
+  }
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = 0;
+    jobs.push(fetch("/api/state", { method: "POST", keepalive: true, headers, body: JSON.stringify(snapshot()) }).catch(() => undefined));
+  }
+  return Promise.all(jobs).then(() => undefined);
 }
 addEventListener("pagehide", () => flushPersist());
 
@@ -234,11 +287,12 @@ export async function restore() {
   const patch = {};
   if (saved.scene && Array.isArray(saved.scene.devices)) patch.scene = saved.scene;
   if (saved.sceneName) patch.sceneName = saved.sceneName;
+  if (saved.sceneId) patch.sceneId = saved.sceneId;
   if (ui.leftTab) patch.leftTab = ui.leftTab;
   if (typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
-  patch.ai = { ...S.ai, model: ui.aiModel ?? "", history: ui.aiHistory ?? [] };
+  patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
   set(patch);

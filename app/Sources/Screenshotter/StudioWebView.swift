@@ -48,6 +48,32 @@ final class StudioWebView: WKWebView, NSDraggingSource {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // MARK: Right-click
+
+    /// The page draws its own right-click menus; text fields keep the system's text menu. Trim
+    /// that menu to text actions (cut, copy, paste, spelling, look up): items like Reload or
+    /// Inspect Element belong to a browser, not to this app.
+    static let browserMenuItems: Set<String> = [
+        "WKMenuItemIdentifierReload", "WKMenuItemIdentifierInspectElement", "WKMenuItemIdentifierGoBack",
+        "WKMenuItemIdentifierGoForward", "WKMenuItemIdentifierOpenLink", "WKMenuItemIdentifierOpenLinkInNewWindow",
+        "WKMenuItemIdentifierDownloadLinkedFile", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierOpenImageInNewWindow",
+        "WKMenuItemIdentifierDownloadImage", "WKMenuItemIdentifierCopyImage", "WKMenuItemIdentifierOpenFrameInNewWindow",
+        "WKMenuItemIdentifierOpenMediaInNewWindow", "WKMenuItemIdentifierDownloadMedia", "WKMenuItemIdentifierShowHideMediaControls",
+        "WKMenuItemIdentifierToggleFullScreen", "WKMenuItemIdentifierToggleEnhancedFullScreen", "WKMenuItemIdentifierShareMenu",
+    ]
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        for item in menu.items where StudioWebView.browserMenuItems.contains(item.identifier?.rawValue ?? "") {
+            menu.removeItem(item)
+        }
+        var lastWasSeparator = true
+        for item in menu.items {
+            if item.isSeparatorItem, lastWasSeparator { menu.removeItem(item) } else { lastWasSeparator = item.isSeparatorItem }
+        }
+        if menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
+        super.willOpenMenu(menu, with: event)
+    }
+
     // MARK: Paste
 
     static let importableTypes: [UTType] = [.png, .jpeg, .webP, .tiff, .heic, .mpeg4Movie, .quickTimeMovie]

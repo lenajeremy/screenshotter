@@ -101,6 +101,11 @@ export interface GenerateOptions {
 const PROMPT_SUFFIX =
   ". Use as a wide background image for product marketing: no text, no logos, no devices, no UI, soft natural light, uncluttered composition.";
 
+/** The image generator that's set up (an API key in the environment), if any. */
+export function availableImageProvider(): GenerateOptions["provider"] | undefined {
+  return availableProvider();
+}
+
 function availableProvider(): GenerateOptions["provider"] | undefined {
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) return "gemini";
@@ -130,7 +135,7 @@ async function generateOpenAI(prompt: string, aspect: Aspect, model?: string): P
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
     body: JSON.stringify({
-      model: model ?? process.env.SCREENSHOTTER_OPENAI_IMAGE_MODEL ?? "gpt-image-1",
+      model: model ?? process.env.SCREENSHOTTER_OPENAI_IMAGE_MODEL ?? "gpt-image-2",
       prompt,
       size,
       quality: "high",

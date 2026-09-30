@@ -1,6 +1,6 @@
 {
   "name": "screenshotter-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server and studio that capture iOS Simulator, web and Mac screens and turn them into polished device mockups, App Store sets and videos.",
   "type": "module",
   "license": "MIT",
@@ -34,7 +34,9 @@
     "app:check": "node scripts/app-check.mjs",
     "app:dmg": "node scripts/build-dmg.mjs",
     "site:assets": "tsx scripts/site-assets.ts",
-    "site": "cd site && python3 -m http.server 4700 --bind 127.0.0.1"
+    "site": "cd site && python3 -m http.server 4700 --bind 127.0.0.1",
+    "skill": "tsx scripts/build-skill.ts",
+    "changelog": "tsx scripts/build-site-changelog.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

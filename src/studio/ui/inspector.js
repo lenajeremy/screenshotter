@@ -86,6 +86,14 @@ function DeviceInspector({ id }) {
   const modelName = d.device ?? e?.device;
   const model = models.find((m) => m.name === modelName);
   const colors = [...(model?.colors ?? []), ...(s.opts?.genericColors ?? []).filter((g) => !model?.colors.some((c) => c.name === g.name))];
+  // Finishes with Apple's product art installed render photographically; everything else is drawn.
+  const artNames = s.opts?.bezels?.models?.find((b) => b.name === model?.name)?.colors ?? [];
+  const appleColors = (model?.colors ?? []).filter((c) => artNames.includes(c.name));
+  const drawnColors = colors.filter((c) => !artNames.includes(c.name));
+  const current = d.color ?? model?.colors[0]?.name ?? "Black";
+  const currentIsApple = artNames.includes(current);
+  // Art exists for this finish but isn't used: turned off, or a web page (Apple's licence covers app mock-ups).
+  const artUnused = currentIsApple && !e?.bezel;
   const family = (m) => (m.family === "iphone" ? "iPhone" : m.family === "ipad" ? "iPad" : m.family === "watch" ? "Watch" : m.family === "mac" ? "Mac" : m.family);
   const modelOpts = [
     { value: "", label: "Match the capture", hint: e?.device ?? "" },
@@ -123,13 +131,35 @@ function DeviceInspector({ id }) {
           dev.device = v || undefined;
           delete dev.color;
         })} /></div>
-          <div class="row top"><label>Colour</label><div class="vstack" style=${{ gap: "7px" }}><div class="swatches">
-            ${colors.map((c) => html`<button class="swatch ${(d.color ?? (model?.colors[0]?.name ?? "Black")) === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${c.name} onClick=${() => upd((dev) => (dev.color = c.name))}></button>`)}
-            <${ColorPickSwatch} value=${/^#/.test(d.color ?? "") ? d.color : undefined} onChange=${(v) => upd((dev) => (dev.color = v), "color")} />
-          </div><span class="swatch-name">${d.color ?? model?.colors[0]?.name ?? "Black"}</span></div></div>`}
+          <div class="row top"><label>Colour</label><div class="vstack colour-groups">
+            <div class="colour-group">
+              <span class="colour-head"><${Icon} n="image" s=${11} />Apple product art</span>
+              ${appleColors.length
+                ? html`<div class="swatches">${appleColors.map(
+                    (c) => html`<button class="swatch art ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: Apple's photographic render`} onClick=${() => upd((dev) => {
+                      dev.color = c.name;
+                      if (dev.bezel === false) delete dev.bezel;
+                    })}></button>`,
+                  )}</div>`
+                : html`<button class="link colour-get" onClick=${() => set({ modal: { kind: "settings" } })}>${artNames.length === 0 && model ? `Get Apple's art for the ${model.name}…` : "Get Apple's device art…"}</button>`}
+            </div>
+            <div class="colour-group">
+              <span class="colour-head"><${Icon} n="wand" s=${11} />Drawn</span>
+              <div class="swatches">
+                ${drawnColors.map((c) => html`<button class="swatch ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: drawn`} onClick=${() => upd((dev) => (dev.color = c.name))}></button>`)}
+                <${ColorPickSwatch} value=${/^#/.test(d.color ?? "") ? d.color : undefined} onChange=${(v) => upd((dev) => (dev.color = v), "color")} />
+              </div>
+            </div>
+            <span class="swatch-name">${current}<span class="faint"> · ${currentIsApple && !artUnused ? "Apple product art" : "drawn"}</span></span>
+            ${artUnused && html`<span class="note">${d.bezel === false ? "Art is set to Drawn below." : "Web pages use drawn frames: Apple's licence covers mock-ups of apps."}</span>`}
+          </div></div>`}
         ${frame === "browser" && html`<div class="row"><label>Address</label><${TextField} value=${d.url} placeholder="Page URL by default" onChange=${(v) => upd((dev) => (dev.url = v || undefined), "url")} /></div>`}
         ${frame === "window" && html`<div class="row"><label>Title</label><${TextField} value=${d.title} placeholder="Window title" onChange=${(v) => upd((dev) => (dev.title = v || undefined), "title")} /></div>`}
         ${(frame === "browser" || frame === "window") && html`<div class="row"><label>Chrome</label><${Seg} value=${d.chrome ?? "light"} options=${["light", "dark"]} onChange=${(v) => upd((dev) => (dev.chrome = v === "light" ? undefined : v))} /></div>`}
+        ${frame === "device" && (e?.bezel || d.bezel === false) &&
+        html`<div class="row"><label>Art</label><${Seg} value=${d.bezel === false ? "drawn" : "apple"} options=${[{ value: "apple", label: "Apple" }, { value: "drawn", label: "Drawn" }]} onChange=${(v) => upd((dev) => (dev.bezel = v === "drawn" ? false : undefined))} /></div>`}
+        ${frame === "device" && /iphone/i.test(modelName ?? "") &&
+        html`<div class="row"><label>Show</label><${Seg} value=${d.side ?? "front"} options=${[{ value: "front", label: "Front" }, { value: "back", label: "Back" }]} onChange=${(v) => upd((dev) => (dev.side = v === "front" ? undefined : v))} /></div>`}
         ${frame === "device" &&
         html`<div class="hstack wrap" style=${{ gap: "14px" }}>
           <${Switch} checked=${d.buttons !== false} onChange=${(v) => upd((dev) => (dev.buttons = v ? undefined : false))} label="Buttons" />
@@ -147,6 +177,23 @@ function DeviceInspector({ id }) {
           <${Num} label="Y" title="Vertical: 0% top, 100% bottom" value=${Y} ...${pct} onChange=${(v) => place({ y: v === undefined ? undefined : r4(v) }, "y")} />
         </div></div>
         <div class="note">Tip: drag the device on the canvas. Hold ⌥ to turn snapping off.</div>
+      <//>
+
+      <${Section} title="Focus">
+        <div class="row"><label>Blur</label><${Slider} value=${d.blur ?? 0} min=${0} max=${0.012} step=${0.0005} reset=${0}
+          format=${(v) => (v ? Math.round((v / 0.012) * 100) + "%" : "Sharp")} onChange=${(v) => upd((dev) => (dev.blur = v ? Math.round(v * 10000) / 10000 : undefined), "blur")} /></div>
+        <div class="row"><label>Fade</label><${Seg} value=${d.fade ? (typeof d.fade === "number" ? "bottom" : d.fade.edge ?? "bottom") : "none"}
+          options=${[{ value: "none", label: "None" }, { value: "bottom", label: "Bottom" }, { value: "top", label: "Top" }, { value: "left", label: "Left" }, { value: "right", label: "Right" }]}
+          onChange=${(v) => upd((dev) => {
+            const extent = typeof dev.fade === "number" ? dev.fade : dev.fade?.extent ?? 0.4;
+            dev.fade = v === "none" ? undefined : v === "bottom" ? extent : { edge: v, extent };
+          })} /></div>
+        ${d.fade && html`<div class="row"><label>Fade amount</label><${Slider} value=${typeof d.fade === "number" ? d.fade : d.fade.extent ?? 0.4} min=${0.1} max=${1} step=${0.01}
+          format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((dev) => {
+            const extent = v === undefined ? 0.4 : Math.round(v * 100) / 100;
+            dev.fade = typeof dev.fade === "number" || !dev.fade ? extent : { ...dev.fade, extent };
+          }, "fade")} /></div>`}
+        <div class="note">Blur a device to put it out of focus behind a sharp one. Fade dissolves it into the background.</div>
       <//>
 
       <${Section} title="3D angle" right=${d.rotateX || d.rotateY ? html`<button class="btn sm ghost" onClick=${() => upd((dev) => {

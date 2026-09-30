@@ -9,7 +9,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -18,7 +18,15 @@ import { z } from "zod";
 import { DEVICE_MODELS, GENERIC_COLORS } from "../devices/catalog.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
-import { layoutScene } from "../render/mockup.js";
+import { createMockup, layoutScene } from "../render/mockup.js";
+import { cacheDir } from "../util/files.js";
+import { imageSize } from "../util/image.js";
+import { DESIGN_GUIDE } from "../design/guide.js";
+import { screenshotPalette } from "../render/analyze.js";
+import { availableImageProvider } from "../render/photos.js";
+import { listBezels } from "../render/bezels.js";
+import { recognizeText } from "../native/ocr.js";
+import { houseStyle, updateHouseStyle } from "../util/style.js";
 import { GRADES, LAYOUTS, MockupInputSchema, type MockupInput } from "../render/schema.js";
 
 export const DEFAULT_EDIT_MODEL = "claude-opus-5-5";
@@ -29,6 +37,13 @@ export const AIEditSchema = z.object({
   /** Entity the user has selected on the canvas ("device-1", "caption", "text-2"), for "make this bigger". */
   selection: z.string().max(40).optional(),
   model: z.string().max(100).optional(),
+  /** Show Claude a quick render of the current design along with its settings. Default true. */
+  preview: z.boolean().optional(),
+  /** Earlier turns of this chat: what the user said and what Claude replied. */
+  history: z
+    .array(z.object({ user: z.string().max(4000), assistant: z.string().max(4000).optional() }))
+    .max(40)
+    .optional(),
 });
 export type AIEditInput = z.infer<typeof AIEditSchema>;
 
@@ -38,8 +53,18 @@ export const OperationSchema = z.object({
   value: z.string().describe('The new value encoded as JSON, e.g. "0.42", "\\"#ff5500\\"", "{\\"look\\":\\"dusk\\"}". Use "null" for remove.'),
 });
 export const EditReplySchema = z.object({
-  summary: z.string().describe("One short sentence, past tense, describing what changed. Shown to the user."),
+  summary: z
+    .string()
+    .describe("Your chat reply, shown to the user. After an edit: one short sentence, past tense, describing what changed. For a question: a short, direct answer (a few sentences at most)."),
   operations: z.array(OperationSchema).describe("The edits, applied in order. Empty if the request can't be done."),
+  check: z
+    .boolean()
+    .optional()
+    .describe("True when you changed the look or composition and want to see the render before the person does (you'll get it and can fix anything). False for small exact edits and answers."),
+  remember: z
+    .array(z.string())
+    .optional()
+    .describe("Lasting preferences the person just stated (\"I prefer…\", \"always…\", \"never…\", \"I love this font\"), each as one short note for the house style. Empty otherwise."),
 });
 export type EditReply = z.infer<typeof EditReplySchema>;
 export type Operation = z.infer<typeof OperationSchema>;
@@ -52,6 +77,10 @@ export interface EditResult {
   changed: string[];
   provider: "api" | "claude-code";
   model?: string;
+  /** Whether Claude looked at its own render and how many fixes it made then. */
+  checked?: { fixes: number };
+  /** Preferences added to the house style. */
+  remembered?: string[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -72,7 +101,7 @@ export function sceneAssets(request: MockupInput) {
   };
   const safe = structuredClone(request);
   for (const d of safe.devices) {
-    d.screenshot = token(d.screenshot);
+    if (d.screenshot) d.screenshot = token(d.screenshot);
     if (d.video) d.video = token(d.video);
   }
   for (const f of safe.fonts ?? []) f.path = token(f.path);
@@ -93,7 +122,7 @@ function restoreAssets(scene: MockupInput, assets: Map<string, string>): MockupI
     return file;
   };
   for (const d of scene.devices) {
-    d.screenshot = restore(d.screenshot, "screenshot");
+    if (d.screenshot) d.screenshot = restore(d.screenshot, "screenshot");
     if (d.video) d.video = restore(d.video, "recording");
   }
   for (const f of scene.fonts ?? []) f.path = restore(f.path, "font file");
@@ -188,27 +217,35 @@ let systemPrompt: string | undefined;
 function system(): string {
   if (systemPrompt) return systemPrompt;
   const schema = JSON.stringify(z.toJSONSchema(MockupInputSchema.omit({ output: true, preview: true, quality: true, format: true, jpegQuality: true, deliveryWidth: true, fonts: true })));
-  systemPrompt = `You are the design assistant inside Screenshotter Studio, an editor for App Store screenshots and marketing mockups. The user describes a change to their scene; you reply with JSON-pointer operations that make exactly that change.
+  systemPrompt = `You are the designer inside Screenshotter Studio, an editor for App Store screenshots and marketing mockups. The person describes what they want; you change their scene with JSON-pointer operations, and you design with the taste of a great art director. The design guide below is how you work.
 
 How scenes work:
-- The scene is JSON matching the schema below. Devices show screenshots in hardware frames; the caption is headline + subheadline styled by textStyle; texts are extra free-positioned labels.
+- The scene is JSON matching the schema at the end. Devices show screenshots in hardware frames; the caption is headline + subheadline styled by textStyle; texts are extra free-positioned labels (badges, ratings, eyebrows).
 - Positions and sizes are fractions of the canvas: x 0 = left edge, 1 = right edge; y 0 = top, 1 = bottom. Values outside 0–1 bleed off the canvas.
 - A device's x/y is its centre. Set "anchor": "center" whenever you set a device's y. Size devices with "height" (fraction of canvas height). rotate is 2D degrees clockwise; rotateX/rotateY are 3D tilt/turn.
 - The caption can follow the layout (no textStyle.x/y) or be placed with textStyle.x/y/anchor/align. headlineSize is a fraction of canvas height when < 1.
-- Wrap words in **double asterisks** to paint them in an accent colour: textStyle.accentColor for the caption, texts[i].accentColor for extra text (which falls back to textStyle.accentColor). Without an accent colour the words are only bold.
-- "entities" in the request is the current resolved placement of everything (after automatic layout), so use it to know where things are now, even when the scene itself has no x/y.
+- "entities" is where everything is now (after automatic layout), even when the scene has no x/y.
 - If "selected" is given, "this", "it" and "the selection" mean that entity (device-N → /devices/N-1, text-N → /texts/N-1, caption → headline/subheadline/textStyle).
+- An image usually comes with the request: a quick render of the design as it is now. Look at it before deciding anything. The JSON is the source of truth for exact values.
+- "screens" describes each device's screenshot: its palette (dominant colours with their share, the accent colour, dark or light UI) and the text visible on it, top to bottom, with where it sits (fractions of the screenshot). Build colour decisions on the palette, and aim callouts at text copied exactly from this list.
+- "available" says what can be used right now: "aiImages" names the image generator, or is null (then don't use background.generate; use looks, Unsplash or colours). "appleArt" lists the devices that have Apple's product art installed.
+- "houseStyle" is what this person likes, remembered from before. Follow it unless they ask otherwise.
 
-Rules:
-- Change only what the user asked for. Keep every other property as it is.
+How to respond:
+- A specific request ("tilt it 10°", "make the title blue") changes exactly that and keeps everything else.
+- An open request ("make it better", "make it pop", "more premium", "redesign it", "make it look amazing") is licence to redesign: follow the guide, commit to one idea, and change as much as the design needs. Keep the person's screenshots, and their words unless the copy breaks the guide's rules (then say you rewrote it).
 - Screenshot, video and font values are asset tokens like "asset:1". Never invent a token or a file path. To add another device you may reuse an existing token.
-- Prefer a named look for backgrounds ("background": "dusk") unless the user asks for specific colours. Photo backgrounds may use {"unsplash": "search words"}.
 - Use device names, finishes, looks, grades, layouts and canvases from the lists below.
-- If the request can't be expressed in the scene, return no operations and say why in the summary.
-- The summary is one short sentence in plain language, like "Tilted the phone 12° and moved the title to the bottom."
+- If the request can't be expressed in the scene, return no operations and say why.
+- summary is your chat reply: after an edit, one or two plain sentences on what you changed and the idea behind it ("Made the phone huge and let it rise from the bottom over a deep green that matches the app, and lifted the Today card so the headline has something to point at."). For a question, a short direct answer and no operations.
+- check: true when you changed the look or composition, so you see the render before the person does and can fix what's off. false for small exact edits and answers.
+- remember: when the person states a lasting preference ("I prefer…", "always…", "never…", "love this font"), add one short note for each; they're saved to the house style. Otherwise leave it empty.
+- This is a chat. "history" lists earlier turns; the scene already includes every edit made so far. Use it for follow-ups like "bigger", "the other one", "go back to the blue" or "try again".
+
+${DESIGN_GUIDE}
 
 Devices and finishes: ${DEVICE_MODELS.map((d) => `${d.name} (${d.colors.map((c) => c.name).join(", ")})`).join("; ")}. Generic finishes for any device: ${GENERIC_COLORS.map((c) => c.name).join(", ")}, or any hex.
-Looks: ${LOOKS.map((l) => `${l.name} (${l.tone}): ${l.description}`).join("; ")}.
+Looks: ${LOOKS.map((l) => `${l.name} (${l.tone}${l.painting ? ", painting" : ""}): ${l.description}`).join("; ")}.
 Layouts: ${LAYOUTS.join(", ")}. Grades: ${GRADES.join(", ")}.
 Canvases: ${Object.entries(CANVAS_PRESETS)
     .map(([k, v]) => `${k} ${v.width}×${v.height}`)
@@ -219,13 +256,57 @@ ${schema}`;
   return systemPrompt;
 }
 
+/** What each device's screenshot looks like and says: palette, accent, dark or light, visible text. */
+async function screenFacts(request: MockupInput): Promise<unknown[]> {
+  const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))]);
+  return Promise.all(
+    request.devices.map(async (d, i) => {
+      if (!d.screenshot) return { device: i + 1 };
+      const [palette, text, size] = await Promise.all([
+        withTimeout(screenshotPalette(d.screenshot).catch(() => undefined), 6000),
+        withTimeout(recognizeText(d.screenshot).catch(() => undefined), 8000),
+        imageSize(d.screenshot).catch(() => undefined),
+      ]);
+      const round = (v: number) => Math.round(v * 1000) / 1000;
+      const lines = (text ?? [])
+        .filter((t) => t.text.trim())
+        .sort((a, b) => a.y - b.y || a.x - b.x)
+        .slice(0, 45)
+        .map((t) => (size ? { text: t.text.slice(0, 70), x: round(t.x / size.width), y: round(t.y / size.height) } : { text: t.text.slice(0, 70) }));
+      return { device: i + 1, palette, text: lines };
+    }),
+  );
+}
+
 async function userMessage(input: AIEditInput, safe: MockupInput): Promise<string> {
   const layout = await layoutScene(input.request);
   const entities = layout.entities.map(({ screenshot, screen, ...e }) => e);
+  const art = [...new Set(listBezels().map((b) => DEVICE_MODELS.find((m) => m.id === b.model)?.name).filter(Boolean))];
+  const style = houseStyle().map((n) => n.text);
   return JSON.stringify({
+    history: input.history?.length ? input.history.slice(-12) : undefined,
     instruction: input.instruction,
     selected: input.selection || undefined,
+    houseStyle: style.length ? style : undefined,
+    available: { aiImages: availableImageProvider() ?? null, appleArt: art },
+    screens: await screenFacts(input.request),
     scene: safe,
+    canvas: layout.canvas,
+    entities,
+  });
+}
+
+/** The follow-up that shows Claude its own render, to fix what's off before the person sees it. */
+async function reviewMessage(input: AIEditInput, edited: MockupInput, restored: MockupInput, first: EditReply): Promise<string> {
+  const layout = await layoutScene(restored);
+  const entities = layout.entities.map(({ screenshot, screen, ...e }) => e);
+  return JSON.stringify({
+    review: true,
+    instruction: input.instruction,
+    note:
+      "The image is how your edit renders. Check it against 'Check your work' in the guide. If something is off (text touching the device, weak contrast, a device too small, empty space, a callout on the wrong thing, clashing colours), return operations that fix it; they apply on top of this scene. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished design.",
+    yourEarlierReply: first.summary,
+    scene: edited,
     canvas: layout.canvas,
     entities,
   });
@@ -263,10 +344,50 @@ export function aiStatus() {
   };
 }
 
-async function viaApi(input: AIEditInput, prompt: string, retry?: { previous: string; error: string }): Promise<{ reply: EditReply; model: string }> {
+/**
+ * A quick render of the design as it is, for Claude to look at: preview quality, JPEG, at most
+ * ~1400 px on the long side. Undefined if it can't be rendered (the edit goes ahead without it).
+ */
+const FRAME_NAMES: Record<string, string> = { browser: "Browser", window: "Window", card: "Card", none: "Screenshot" };
+
+/** What the Studio is told while an edit runs, so it can show the agent at work. */
+export type AIProgress =
+  | { step: "look"; image?: string }
+  | { step: "read"; items: string[] }
+  | { step: "think" }
+  | { step: "check"; image: string }
+  | { step: "retry"; reason: string };
+
+async function previewImage(request: MockupInput): Promise<string | undefined> {
+  const file = path.join(cacheDir("ai"), `preview-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`);
+  try {
+    const layout = await layoutScene(request);
+    const { width: W, height: H } = layout.canvas;
+    const deliveryWidth = Math.max(200, Math.round(W >= H ? Math.min(1400, W / 2) : Math.min(W / 2, (1400 * W) / H)));
+    await createMockup({ ...structuredClone(request), quality: "preview", format: "jpeg", jpegQuality: 80, deliveryWidth, preview: false, output: file });
+    return (await readFile(file)).toString("base64");
+  } catch {
+    return undefined;
+  } finally {
+    await rm(file, { force: true }).catch(() => undefined);
+    await rm(`${file}.mockup.json`, { force: true }).catch(() => undefined);
+  }
+}
+
+async function viaApi(input: AIEditInput, prompt: string, image: string | undefined, retry?: { previous: string; error: string }): Promise<{ reply: EditReply; model: string }> {
   const client = new Anthropic({ timeout: 120_000, maxRetries: 2 });
   const model = input.model || process.env.SCREENSHOTTER_EDIT_MODEL || DEFAULT_EDIT_MODEL;
-  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: prompt }];
+  const messages: Anthropic.Beta.BetaMessageParam[] = [
+    {
+      role: "user",
+      content: image
+        ? [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } },
+            { type: "text", text: prompt },
+          ]
+        : prompt,
+    },
+  ];
   if (retry) {
     messages.push({ role: "assistant", content: retry.previous });
     messages.push({ role: "user", content: `Those operations didn't produce a valid scene: ${retry.error}\nReturn corrected operations for the original instruction.` });
@@ -278,7 +399,7 @@ async function viaApi(input: AIEditInput, prompt: string, retry?: { previous: st
       system: [{ type: "text", text: system(), cache_control: { type: "ephemeral" } }],
       messages,
       thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: zodOutputFormat(EditReplySchema) },
+      output_config: { effort: "medium", format: zodOutputFormat(EditReplySchema) },
       // Route a declined request to a fallback model instead of failing the edit.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
@@ -304,18 +425,22 @@ export function cliSchema(): Record<string, unknown> {
   return schema;
 }
 
-async function viaClaudeCode(input: AIEditInput, prompt: string, cli: string, retry?: { previous: string; error: string }): Promise<{ reply: EditReply; model?: string }> {
+async function viaClaudeCode(input: AIEditInput, prompt: string, image: string | undefined, cli: string, retry?: { previous: string; error: string }): Promise<{ reply: EditReply; model?: string }> {
   const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-ai-"));
   try {
     const env = { ...process.env };
     // Don't let a parent Claude Code session's settings leak in.
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
+    // stream-json in and out, so the message can carry the preview image.
     const args = [
       "--safe-mode",
       "-p",
+      "--input-format",
+      "stream-json",
       "--output-format",
-      "json",
+      "stream-json",
+      "--verbose",
       "--json-schema",
       JSON.stringify(cliSchema()),
       "--tools",
@@ -330,13 +455,15 @@ async function viaClaudeCode(input: AIEditInput, prompt: string, cli: string, re
       "--disable-slash-commands",
       "--no-session-persistence",
       "--effort",
-      "low",
+      "medium",
       "--system-prompt",
       system(),
     ];
     const model = input.model || process.env.SCREENSHOTTER_EDIT_MODEL;
     if (model) args.push("--model", model);
     const text = retry ? `${prompt}\n\nYour previous operations were:\n${retry.previous}\nThey didn't produce a valid scene: ${retry.error}\nReturn corrected operations.` : prompt;
+    const content = [...(image ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } }] : []), { type: "text", text }];
+    const line = JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n";
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(cli, args, { cwd: dir, env, timeout: 180_000, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" }, (error, out, err) => {
         if (!error) return resolve(out);
@@ -344,26 +471,18 @@ async function viaClaudeCode(input: AIEditInput, prompt: string, cli: string, re
         if (code === "ENOENT") return reject(new Error("Claude Code wasn't found. Install it, or add an Anthropic API key in Settings."));
         if (error.killed) return reject(new Error("Claude Code took too long to answer. Try again."));
         let detail = `${err}\n${out}`.trim();
-        try {
-          const parsed = JSON.parse(out) as { result?: string; errors?: string[] };
-          detail = [parsed.result, ...(parsed.errors ?? [])].filter(Boolean).join(" ") || detail;
-        } catch {
-          // Not JSON: keep the raw text.
-        }
+        const final = resultLine(out);
+        if (final) detail = [final.result, ...(final.errors ?? [])].filter(Boolean).join(" ") || detail;
         if (/not logged in|log ?in|authenticat|credential/i.test(detail)) return reject(new Error("Claude Code isn't signed in. Run `claude` in Terminal once to sign in, or add an API key in Settings."));
         if (/rate limit|quota|usage limit/i.test(detail)) return reject(new Error("Claude Code usage limit reached. Try again later or add an API key in Settings."));
         const last = detail.split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0]?.slice(0, 240);
         reject(new Error(`Claude Code couldn't complete the edit${last ? `: ${last}` : ""}. Run \`claude\` in Terminal to check it works, then retry.`));
       });
       child.stdin?.on("error", () => undefined);
-      child.stdin?.end(text);
+      child.stdin?.end(line);
     });
-    let result: { is_error?: boolean; structured_output?: unknown; result?: string; model?: string };
-    try {
-      result = JSON.parse(stdout);
-    } catch {
-      throw new Error("Claude Code returned something unexpected. Update it with `claude update` and retry.");
-    }
+    const result = resultLine(stdout);
+    if (!result) throw new Error("Claude Code returned something unexpected. Update it with `claude update` and retry.");
     if (result.is_error) throw new Error("Claude Code couldn't complete the edit. Check its login and usage, then retry.");
     const raw = result.structured_output ?? (result.result ? JSON.parse(result.result) : undefined);
     return { reply: EditReplySchema.parse(raw), model: result.model };
@@ -372,35 +491,97 @@ async function viaClaudeCode(input: AIEditInput, prompt: string, cli: string, re
   }
 }
 
+/** The final `result` message of a stream-json run. */
+function resultLine(out: string): { is_error?: boolean; structured_output?: unknown; result?: string; model?: string; errors?: string[] } | undefined {
+  let last;
+  for (const l of out.split("\n")) {
+    if (!l.trim().startsWith("{")) continue;
+    try {
+      const m = JSON.parse(l);
+      if (m.type === "result") last = m;
+    } catch {
+      // Partial or non-JSON line.
+    }
+  }
+  return last;
+}
+
 // ---------------------------------------------------------------------------------------------
 
-export async function editScene(raw: AIEditInput): Promise<EditResult> {
+export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined): Promise<EditResult> {
   const input = AIEditSchema.parse(raw);
   const { safe, assets } = sceneAssets(input.request);
-  const prompt = await userMessage(input, safe);
   const cli = hasApiCredentials() ? undefined : findClaudeCli();
   if (!hasApiCredentials() && !cli) {
     throw new Error("AI Edit needs Claude. Sign in to Claude Code (run `claude` once in Terminal) or add an Anthropic API key in Settings.");
   }
-  const ask = (retry?: { previous: string; error: string }) => (cli ? viaClaudeCode(input, prompt, cli, retry) : viaApi(input, prompt, retry));
+  // Let Claude see the design, not just its settings.
+  onProgress({ step: "look" });
+  const image = input.preview === false ? undefined : await previewImage(input.request);
+  if (image) onProgress({ step: "look", image });
+  const prompt = await userMessage(input, safe);
+  const layout = await layoutScene(input.request).catch(() => undefined);
+  onProgress({
+    step: "read",
+    items: [
+      ...(layout?.entities ?? []).map((e) => (e.kind === "device" ? (e.device ?? (FRAME_NAMES[e.frame ?? "none"] ?? "Device")) : e.kind === "caption" ? "Headline" : `“${String(e.text ?? "Text").replace(/\*\*/g, "").slice(0, 18)}”`)),
+      "Backdrop",
+    ],
+  });
+  onProgress({ step: "think" });
+  const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) =>
+    cli ? viaClaudeCode(input, text, img, cli, retry) : viaApi(input, text, img, retry);
+  const ask = (retry?: { previous: string; error: string }) => askWith(prompt, image, retry);
 
-  const attempt = async (reply: EditReply): Promise<MockupInput> => {
-    const edited = MockupInputSchema.parse(applyOperations(safe, reply.operations));
-    const restored = restoreAssets(edited, assets);
+  // Operations on a scene (in token space), checked the way a render would check them.
+  const apply = async (base: MockupInput, ops: Operation[]) => {
+    const edited = MockupInputSchema.parse(applyOperations(base, ops));
+    const restored = restoreAssets(structuredClone(edited), assets);
     await layoutScene(restored); // checks device names, finishes, looks and canvas
-    return restored;
+    return { edited, restored };
   };
 
   let { reply, model } = await ask();
-  let scene: MockupInput;
+  let result: { edited: MockupInput; restored: MockupInput };
   try {
-    scene = await attempt(reply);
+    result = await apply(safe, reply.operations);
   } catch (e) {
     const error = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message;
     if (/isn't in this scene/.test(error)) throw e;
+    onProgress({ step: "retry", reason: error.slice(0, 160) });
     ({ reply, model } = await ask({ previous: JSON.stringify(reply), error }));
-    scene = await attempt(reply);
+    result = await apply(safe, reply.operations);
   }
+  let scene = result.restored;
+  let summary = reply.summary;
+  let operations = reply.operations;
+  let checked: EditResult["checked"];
+
+  // Look at the result before the person does, and fix what's off. A review that fails to apply
+  // is dropped: the first edit stands.
+  if (reply.check && reply.operations.length && input.preview !== false) {
+    const shot = await previewImage(scene);
+    if (shot) {
+      onProgress({ step: "check", image: shot });
+      try {
+        const review = await askWith(await reviewMessage(input, result.edited, scene, reply), shot);
+        if (review.reply.operations.length) {
+          const fixed = await apply(result.edited, review.reply.operations);
+          scene = fixed.restored;
+          operations = [...operations, ...review.reply.operations];
+        }
+        if (review.reply.summary.trim()) summary = review.reply.summary;
+        checked = { fixes: review.reply.operations.length };
+      } catch {
+        checked = { fixes: 0 };
+      }
+    }
+  }
+
+  // Preferences the person stated go to the house style.
+  const remembered = (reply.remember ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 5);
+  if (remembered.length) updateHouseStyle({ add: remembered });
+
   // Keep delivery settings the edit never sees.
   for (const key of ["output", "preview", "quality", "format", "jpegQuality", "deliveryWidth"] as const) {
     if (input.request[key] !== undefined) (scene as Record<string, unknown>)[key] = input.request[key];
@@ -408,10 +589,12 @@ export async function editScene(raw: AIEditInput): Promise<EditResult> {
   }
   return {
     request: scene,
-    summary: reply.summary,
-    operations: reply.operations,
+    summary,
+    operations,
     changed: changedEntities(input.request, scene),
     provider: cli ? "claude-code" : "api",
     model,
+    checked,
+    remembered: remembered.length ? remembered : undefined,
   };
 }

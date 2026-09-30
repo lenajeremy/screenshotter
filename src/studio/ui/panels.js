@@ -14,6 +14,7 @@ import {
   deleteFile,
   recordSimulator,
   recordingFor,
+  restoreVersion,
   reveal,
   uploadFiles,
   useCapture,
@@ -142,7 +143,7 @@ function Shot({ f, used, replacing }) {
   const video = recordingFor(f.path);
   const [wide, setWide] = useState(false);
   const stop = (e) => e.stopPropagation();
-  return html`<div class="shot ${used ? "used" : ""} ${wide ? "wide" : ""}" draggable="true" title=${`${base(f.path)}\nClick to use · drag onto the canvas`}
+  return html`<div class="shot ${used ? "used" : ""} ${wide ? "wide" : ""}" data-file=${f.path} data-kind="shot" draggable="true" title=${`${base(f.path)}\nClick to use · drag onto the canvas`}
       onDragStart=${(e) => {
         e.dataTransfer.setData("application/x-screenshot", f.path);
         e.dataTransfer.effectAllowed = "copy";
@@ -208,7 +209,54 @@ export function CapturesPanel() {
 // Backgrounds
 
 const bgObj = (bg) => (bg && typeof bg === "object" ? bg : typeof bg === "string" && S.opts?.looks.some((l) => l.name === bg) ? { look: bg } : bg ? { color: bg } : {});
-const TREATMENT = ["blur", "motionBlur", "motionAngle", "brightness", "contrast", "saturation", "tint", "tintAmount", "haze", "hazeColor", "bloom", "halation", "dim", "zoom", "focusX", "focusY"];
+const TREATMENT = ["blur", "motionBlur", "motionAngle", "brightness", "contrast", "saturation", "tint", "tintAmount", "haze", "hazeColor", "bloom", "halation", "dim", "zoom", "focusX", "focusY", "finish"];
+
+// Print and paint finishes for the backdrop, with the colours each one takes.
+const FINISH_OPTIONS = [
+  { value: "risograph", label: "Risograph", colors: [["Colour ink", "#ff4a9e"], ["Dark ink", "#23306b"]] },
+  { value: "newsprint", label: "Newsprint" },
+  { value: "halftone", label: "Halftone" },
+  { value: "dither", label: "One-bit", colors: [["Dark", "#151515"], ["Light", "#f2f0eb"]] },
+  { value: "oil", label: "Oil paint" },
+  { value: "watercolor", label: "Watercolour" },
+  { value: "ink", label: "Ink wash", colors: [["Paper", "#efe6d3"], ["Ink", "#3b2a1d"]] },
+  { value: "fluted-glass", label: "Fluted glass" },
+];
+
+function PrintFinish() {
+  const s = useStore();
+  const o = bgObj(s.scene.background);
+  if (o.type === "transparent") return null;
+  const f = typeof o.finish === "string" ? { style: o.finish } : o.finish ?? null;
+  const opt = FINISH_OPTIONS.find((x) => x.value === f?.style);
+  const setF = (next, key) =>
+    edit((d) => {
+      const b = bgObj(d.background);
+      if (!next) delete b.finish;
+      else {
+        const clean = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined && !(Array.isArray(v) && !v.length)));
+        b.finish = Object.keys(clean).length === 1 ? clean.style : clean;
+      }
+      const keys = Object.keys(b);
+      d.background = keys.length === 1 && keys[0] === "look" ? b.look : b;
+    }, key ?? "bg.finish");
+  return html`<${Section} title="Print & paint" collapsible id="print">
+    <div class="note">Reprint or repaint the backdrop. Your screenshots stay untouched.</div>
+    <div class="chips">
+      <button class="chip sm ${!f ? "on" : ""}" onClick=${() => setF(null)}>None</button>
+      ${FINISH_OPTIONS.map((x) => html`<button class="chip sm ${f?.style === x.value ? "on" : ""}" onClick=${() => setF({ style: x.value })}>${x.label}</button>`)}
+    </div>
+    ${f &&
+    html`<div class="row"><label>Size</label><${Slider} value=${f.scale} min=${0.4} max=${3} step=${0.05} fallback=${1} format=${(v) => v.toFixed(2) + "×"} onChange=${(v) => setF({ ...f, scale: v === undefined || v === 1 ? undefined : v }, "bg.finish.scale")} /></div>
+      <div class="row"><label>Strength</label><${Slider} value=${f.amount} min=${0.1} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setF({ ...f, amount: v === undefined || v >= 1 ? undefined : v }, "bg.finish.amount")} /></div>
+      ${opt?.colors?.map(
+        ([label, dflt], i) => html`<div class="row"><label>${label}</label><${ColorButton} value=${f.colors?.[i] ?? dflt} onChange=${(v) => {
+          const colors = opt.colors.map(([, d], j) => (j === i ? v ?? d : f.colors?.[j] ?? d));
+          setF({ ...f, colors }, `bg.finish.c${i}`);
+        }} /></div>`,
+      )}`}
+  <//>`;
+}
 function keepTreatment(bg) {
   const o = bgObj(bg);
   const out = {};
@@ -249,10 +297,12 @@ function Looks() {
   const s = useStore();
   const o = bgObj(s.scene.background);
   const looks = s.opts?.looks ?? [];
-  const photo = looks.filter((l) => l.photo);
+  const photo = looks.filter((l) => l.photo && !l.painting);
+  const paintings = looks.filter((l) => l.painting);
   const made = looks.filter((l) => !l.photo);
   return html`
     <${Section} title="Photographic" count=${photo.length}><div class="looks">${photo.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>
+    <${Section} title="Paintings & prints" count=${paintings.length}><div class="looks">${paintings.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>
     <${Section} title="Gradients" count=${made.length}><div class="looks">${made.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>`;
 }
 
@@ -455,6 +505,7 @@ export function BackgroundsPanel() {
       ${mode === "photo" && html`<div class="vstack"><${PhotoBg} /></div>`}
       ${mode === "ai" && html`<div class="vstack"><${AiBg} /></div>`}
       <${Treatment} />
+      <${PrintFinish} />
       <${Finish} />
     </div>
   </div>`;
@@ -534,25 +585,63 @@ export function LayersPanel() {
 // =============================================================================================
 // Exports
 
+/** How long ago, briefly. */
+const since = (ms) => {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
+
+/**
+ * Everything exported, newest first. Exports of the same scene stack into one card with its
+ * versions: open a version to view it, or restore it as the working design.
+ */
 export function ExportsPanel() {
   const s = useStore();
+  const [open, setOpen] = useState(null);
   const outs = s.files.filter((f) => f.kind === "mockups" || f.kind === "videos");
+  const groups = [];
+  const byScene = new Map();
+  for (const f of outs) {
+    const id = f.scene?.id;
+    if (id && byScene.has(id)) byScene.get(id).versions.push(f);
+    else {
+      const g = { key: id ?? f.path, scene: f.scene, versions: [f] };
+      if (id) byScene.set(id, g);
+      groups.push(g);
+    }
+  }
+  const view = (f) => set({ render: { path: f.path, isVideo: isVideo(f.path), preview: false, at: f.mtime }, renderStale: false, view: "render" });
+  const tile = (f, g) => html`<div class="shot wide" key=${f.path} data-file=${f.path} data-kind="saved" title=${base(f.path)} onClick=${() => view(f)}>
+    ${isVideo(f.path) ? html`<video src=${`/file?path=${encodeURIComponent(f.path)}#t=0.5`} muted preload="metadata" style=${{ width: "100%", height: "100%", objectFit: "contain" }}></video>` : html`<img loading="lazy" src=${thumbUrl(f.path, 360)} />`}
+    <div class="veil"></div>
+    ${isVideo(f.path) && html`<span class="badge"><${Icon} n="play" s=${9} />${f.path.split(".").pop().toUpperCase()}</span>`}
+    ${g && g.versions.length > 1 && html`<button class="badge versions" title="Show every version" onClick=${(e) => {
+      e.stopPropagation();
+      setOpen(open === g.key ? null : g.key);
+    }}><${Icon} n="history" s=${10} />${g.versions.length} versions</button>`}
+    <div class="acts" onClick=${(e) => e.stopPropagation()}>
+      <button class="btn" onClick=${() => reveal(f.path)}>Show</button>
+      <button class="icon-btn" title="Delete" onClick=${() => deleteFile(f.path)}><${Icon} n="trash" s=${13} /></button>
+    </div>
+  </div>`;
   return html`<div class="panel left">
     <div class="panel-head"><h2>Saved</h2><span class="sub">${outs.length}</span></div>
     <div class="panel-body">
-      <div class="intro">Images and videos you've exported. Click one to view it.</div>
-      ${outs.length
-        ? html`<div class="shots two">${outs.map(
-            (f) => html`<div class="shot wide" key=${f.path} title=${base(f.path)} onClick=${() => set({ render: { path: f.path, isVideo: isVideo(f.path), preview: false, at: f.mtime }, renderStale: false, view: "render" })}>
-              ${isVideo(f.path) ? html`<video src=${`/file?path=${encodeURIComponent(f.path)}#t=0.5`} muted preload="metadata" style=${{ width: "100%", height: "100%", objectFit: "contain" }}></video>` : html`<img loading="lazy" src=${thumbUrl(f.path, 360)} />`}
-              <div class="veil"></div>
-              ${isVideo(f.path) && html`<span class="badge"><${Icon} n="play" s=${9} />${f.path.split(".").pop().toUpperCase()}</span>`}
-              <div class="acts" onClick=${(e) => e.stopPropagation()}>
-                <button class="btn" onClick=${() => reveal(f.path)}>Show</button>
-                <button class="icon-btn" title="Delete" onClick=${() => deleteFile(f.path)}><${Icon} n="trash" s=${13} /></button>
-              </div>
-            </div>`,
-          )}</div>`
+      <div class="intro">Images and videos you've exported. Each scene keeps its versions; click one to view it.</div>
+      ${groups.length
+        ? html`<div class="shots two">${groups.map((g) => [
+            tile(g.versions[0], g),
+            open === g.key &&
+              html`<div class="history" key=${`${g.key}-history`}>
+                <div class="history-head"><b>${g.scene?.name ?? "Scene"}</b><span class="faint">${g.versions.length} versions</span></div>
+                ${g.versions.map(
+                  (v, i) => html`<div class="history-row" key=${v.path}>
+                    <button class="history-pick" onClick=${() => view(v)}><img loading="lazy" src=${thumbUrl(v.path, 120)} /><span>${i === 0 ? "Latest" : `Version ${g.versions.length - i}`}<em>${since(v.mtime)}</em></span></button>
+                    ${!isVideo(v.path) && html`<button class="btn sm ghost" title="Make this version the working design" onClick=${() => restoreVersion(v.path)}>Restore</button>`}
+                  </div>`,
+                )}
+              </div>`,
+          ])}</div>`
         : html`<div class="empty-note">Images and videos you export appear here.</div>`}
     </div>
   </div>`;

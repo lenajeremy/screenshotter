@@ -21,9 +21,11 @@ export const WEB_VIEWPORTS: Record<string, WebViewport> = {
   iphone: { width: 402, height: 874, scale: 3, mobile: true, simulator: "iPhone 17 Pro", device: "iPhone 17 Pro" },
   "iphone-max": { width: 440, height: 956, scale: 3, mobile: true, simulator: "iPhone 17 Pro Max", device: "iPhone 17 Pro Max" },
   ipad: { width: 1032, height: 1376, scale: 2, mobile: true, simulator: "iPad Pro 13-inch (M5)", device: "iPad Pro 13-inch" },
-  desktop: { width: 1440, height: 900, scale: 2, mobile: false },
-  macbook: { width: 1512, height: 982, scale: 2, mobile: false, device: "MacBook Pro 14-inch" },
-  wide: { width: 1920, height: 1080, scale: 2, mobile: false },
+  // Desktop pages render at 3×: past Retina, so text stays crisp when the frame is scaled up on
+  // large canvases (a MacBook across a 4K image).
+  desktop: { width: 1440, height: 900, scale: 3, mobile: false },
+  macbook: { width: 1512, height: 982, scale: 3, mobile: false, device: "MacBook Pro 14-inch" },
+  wide: { width: 1920, height: 1080, scale: 3, mobile: false },
 };
 
 export interface WebCaptureOptions {
@@ -42,11 +44,15 @@ export interface WebCaptureOptions {
   hide?: string[];
   waitMs?: number;
   output?: string;
+  /** Hide cookie and consent banners (fixed/sticky elements that ask about cookies). Default true. */
+  hideBanners?: boolean;
+  /** Override the pixel density (1–4). */
+  scale?: number;
 }
 
-const MOBILE_UA =
+export const MOBILE_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
-const IPAD_UA =
+export const IPAD_UA =
   "Mozilla/5.0 (iPad; CPU OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
 
 export interface WebCaptureResult {
@@ -88,6 +94,54 @@ async function captureInSafari(opts: WebCaptureOptions, vp: WebViewport): Promis
   });
 }
 
+/**
+ * Get the page ready for a sharp, complete capture: web fonts loaded, lazy images below the fold
+ * loaded (by scrolling through), every image decoded, no scrollbars, cookie banners hidden.
+ */
+export async function settlePage(page: Awaited<ReturnType<typeof newPage>>, opts: WebCaptureOptions): Promise<void> {
+  await page.evaluate(() => document.fonts.ready).catch(() => undefined);
+  // Scroll through (up to a dozen screens) so lazy images and scroll-triggered sections load.
+  await page
+    .evaluate(async () => {
+      const end = Math.min(document.documentElement.scrollHeight, innerHeight * 12);
+      for (let y = 0; y < end; y += innerHeight * 0.85) {
+        scrollTo(0, y);
+        await new Promise((r) => setTimeout(r, 140));
+      }
+      scrollTo(0, 0);
+    })
+    .catch(() => undefined);
+  await page.waitForNetworkIdle({ idleTime: 500, timeout: 10_000 }).catch(() => undefined);
+  // Wait for images to load and decode, but never for long: a lazy image that never loads would
+  // otherwise hold decode() open until the browser connection times out.
+  await page
+    .evaluate(async () => {
+      const imgs = [...document.images].filter((i) => i.currentSrc || i.src);
+      const loaded = Promise.all(imgs.map((i) => (i.complete ? Promise.resolve() : new Promise((r) => ((i.onload = i.onerror = r), setTimeout(r, 4000))))));
+      const decoded = loaded.then(() => Promise.all(imgs.filter((i) => i.complete && i.naturalWidth).map((i) => i.decode().catch(() => undefined))));
+      await Promise.race([decoded, new Promise((r) => setTimeout(r, 6000))]);
+    })
+    .catch(() => undefined);
+  const hide = [...(opts.hide ?? [])];
+  await page.addStyleTag({ content: `html{scrollbar-width:none}::-webkit-scrollbar{display:none}${hide.length ? `${hide.join(",")}{display:none !important}` : ""}` });
+  if (opts.hideBanners !== false) {
+    await page
+      .evaluate(() => {
+        for (const el of document.querySelectorAll<HTMLElement>("body *")) {
+          const st = getComputedStyle(el);
+          if (st.position !== "fixed" && st.position !== "sticky") continue;
+          const key = `${el.id} ${el.getAttribute("class") ?? ""} ${el.getAttribute("aria-label") ?? ""}`.toLowerCase();
+          const text = (el.textContent ?? "").slice(0, 600).toLowerCase();
+          const r = el.getBoundingClientRect();
+          const cookieish = /cookie|consent|gdpr|onetrust|cookiebot|privacy-banner|cmp-/.test(key) || (/cookie/.test(text) && /accept|agree|allow|reject|decline/.test(text));
+          if (cookieish && r.height < innerHeight * 0.7) el.style.setProperty("display", "none", "important");
+        }
+      })
+      .catch(() => undefined);
+  }
+  await sleep(opts.waitMs ?? 800);
+}
+
 async function simulatorAvailable(): Promise<boolean> {
   try {
     return (await sim.listSimulators()).some((s) => s.platform === "iOS");
@@ -99,7 +153,8 @@ async function simulatorAvailable(): Promise<boolean> {
 export async function captureWeb(opts: WebCaptureOptions): Promise<WebCaptureResult> {
   const preset = typeof opts.viewport === "string" || opts.viewport === undefined ? WEB_VIEWPORTS[opts.viewport ?? "desktop"] : undefined;
   if (!preset && typeof opts.viewport === "string") throw new Error(`Unknown viewport "${opts.viewport}". Use ${Object.keys(WEB_VIEWPORTS).join(", ")} or {width,height}.`);
-  const vp: WebViewport = preset ?? { scale: 2, mobile: false, ...(opts.viewport as { width: number; height: number }) };
+  const base: WebViewport = preset ?? { scale: 3, mobile: false, ...(opts.viewport as { width: number; height: number }) };
+  const vp: WebViewport = opts.scale ? { ...base, scale: Math.max(1, Math.min(4, opts.scale)) } : base;
 
   const wantsSafari = opts.engine === "safari" || (opts.engine === undefined && vp.simulator && !opts.fullPage && !opts.selector && !opts.hide?.length);
   if (wantsSafari) {
@@ -114,11 +169,13 @@ export async function captureWeb(opts: WebCaptureOptions): Promise<WebCaptureRes
   try {
     if (vp.mobile) await page.setUserAgent(vp.width > 800 ? IPAD_UA : MOBILE_UA);
     await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: vp.scale, isMobile: vp.mobile, hasTouch: vp.mobile });
-    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts.colorScheme ?? "light" }]);
+    // Reduced motion: most sites then skip entrance animations, so nothing is caught mid-fade.
+    await page.emulateMediaFeatures([
+      { name: "prefers-color-scheme", value: opts.colorScheme ?? "light" },
+      { name: "prefers-reduced-motion", value: "reduce" },
+    ]);
     await page.goto(opts.url, { waitUntil: "networkidle2", timeout: 60_000 });
-    if (opts.hide?.length) await page.addStyleTag({ content: `${opts.hide.join(",")}{display:none !important}` });
-    await page.evaluate(() => document.fonts.ready);
-    await sleep(opts.waitMs ?? 800);
+    await settlePage(page, opts);
     if (opts.selector) {
       const el = await page.$(opts.selector);
       if (!el) throw new Error(`No element matches ${opts.selector}`);

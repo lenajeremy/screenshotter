@@ -88,6 +88,10 @@ code, .mono { font-family: var(--mono); }
 .hero .wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 20px; align-items: center; }
 .hero-copy { display: flex; flex-direction: column; gap: 26px; position: relative; z-index: 2; min-width: 0; }
 .pill { align-self: flex-start; display: inline-flex; align-items: center; gap: 9px; height: 34px; padding: 0 14px 0 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13.5px; color: var(--text-2); }
+a.pill { text-decoration: none; height: auto; min-height: 34px; padding-block: 4px; line-height: 1.3; transition: box-shadow 200ms ease, color 200ms ease; }
+a.pill b { white-space: nowrap; flex: none; }
+.cycle.strip { flex: none; min-height: 0; aspect-ratio: 2000 / 490; margin: auto -26px -26px; }
+a.pill:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-3); }
 .pill b { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; background: var(--ai); color: #fff; font-weight: 650; font-size: 12px; }
 h1 { font: 300 clamp(52px, 8.6vw, 116px)/0.92 var(--display); letter-spacing: -0.035em; }
 h1 .w { display: inline-block; }
@@ -415,6 +419,7 @@ footer a:hover { color: var(--text); }
       <a href="#ai">Ask AI</a>
       <a href="#mcp">For agents</a>
       <a href="#features">Features</a>
+      <a href="changelog.html">What's new</a>
     </nav>
     <a class="btn primary sm" href="#download" data-download>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>Download
@@ -427,7 +432,7 @@ footer a:hover { color: var(--text); }
 <section class="hero">
   <div class="wrap">
     <div class="hero-copy">
-      <span class="pill"><b>✦ New</b>Ask AI edits your design in plain English</span>
+      <a class="pill" href="changelog.html"><b>✦ New in 0.2</b>Ask AI now designs like an art director<span aria-hidden="true">→</span></a>
       <h1 aria-label="Make your app look incredible.">
         <span class="w" style="--i:0">Make</span> <span class="w" style="--i:1">your</span> <span class="w" style="--i:2">app</span> <span class="w" style="--i:3">look</span>
         <span class="line2"><span class="w grad" style="--i:4">incredible.</span></span>
@@ -510,11 +515,13 @@ footer a:hover { color: var(--text); }
     <div class="sec-head reveal">
       <span class="eyebrow"><i></i>Ask AI</span>
       <h2 class="h2">Say it. <span class="ital grad">See it.</span></h2>
-      <p class="lede">Describe the change the way you'd brief a designer. Claude edits the scene, you see it on the canvas, and every edit is one undo away.</p>
+      <p class="lede">Describe the change the way you'd brief a designer, or just say “make it amazing”. Claude designs from an art-direction guide, sees your app's colours and words, checks its own render before you do, and every edit is one undo away.</p>
       <ul class="checks">
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Aims at what you select.</b> Pick the phone, then say “make it bigger”.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Designs, not just edits.</b> Big confident type, colour from your app's own palette, a call-out on what the headline names.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Checks its own work.</b> It looks at the render and fixes what's off before you see it.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Remembers your taste.</b> Say “always Space Black” once; your house style carries into every design.</span></li>
         <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>No setup.</b> Uses your Claude Code sign-in, or an API key if you prefer.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Your screens stay on your Mac.</b> Claude sees the design settings, never your screenshots.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>It sees what you see.</b> Claude gets a small preview, your screenshot's colours and its visible text. Your files stay on your Mac.</span></li>
       </ul>
     </div>
     <div class="ai-demo reveal-scale" data-ai>
@@ -550,7 +557,7 @@ footer a:hover { color: var(--text); }
             <span class="badge-mcp">MCP SERVER</span>
             <h2>Built for your <span class="ital grad">agents.</span></h2>
           </div>
-          <p class="lede">Screenshotter is also an MCP server. Add it to Claude Code, Codex or OpenCode, and your agent can build your app, capture it, and hand you finished store images. It checks each result with a preview before it moves on.</p>
+          <p class="lede">Screenshotter is also an MCP server. Add it to Claude Code, Codex or OpenCode, and your agent can build your app, capture it, and hand you finished store images. It designs from the same art-direction guide as Ask AI, then zooms into details and compares variants before it moves on.</p>
         </div>
 
         <div class="mcp-grid">
@@ -598,6 +605,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
               <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>capture_screenshot</b> ×4</span><span class="tm">12.6s</span></div>
               <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>find_text</b> “Fresh ramen noodles”</span><span class="tm">0.2s</span></div>
               <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>create_mockup_set</b></span><span class="tm">11.8s</span></div>
+              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>crop_image</b> headline, call-out</span><span class="tm">0.3s</span></div>
               <div class="line done">✓ Five screenshots, 1320 × 2868, in screenshots/sets/mise-app-store</div>
               <div class="line thumbs on">
                 <img src="assets/set-1.webp" alt="" width="460" height="1000" loading="lazy">
@@ -611,9 +619,9 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </div>
 
         <div class="stats">
-          <div class="stat"><b>13</b><span>MCP tools</span></div>
-          <div class="stat"><b>26</b><span>device frames</span></div>
-          <div class="stat"><b>26</b><span>built-in looks</span></div>
+          <div class="stat"><b>20</b><span>MCP tools</span></div>
+          <div class="stat"><b>30</b><span>device frames</span></div>
+          <div class="stat"><b>49</b><span>built-in looks</span></div>
           <div class="stat"><b>7</b><span>export formats</span></div>
         </div>
 
@@ -624,9 +632,13 @@ tool_timeout_sec = <span class="s">600</span></pre>
           <div class="tool"><code>capture_mac</code><p>A Mac app window by name, or the whole screen.</p></div>
           <div class="tool"><code>create_mockup</code><p>One finished image: frames, backdrop, effects, call-outs, headline.</p></div>
           <div class="tool"><code>create_mockup_set</code><p>A matching series, like a full App Store set.</p></div>
-          <div class="tool"><code>create_video</code><p>The same scene in motion: MP4, MOV, WebM or GIF.</p></div>
+          <div class="tool"><code>create_video</code><p>The same scene in motion, with zooms that follow the action and a cursor that clicks.</p></div>
           <div class="tool"><code>layout_mockup</code><p>Where everything lands, without rendering, so agents can plan.</p></div>
           <div class="tool"><code>find_text</code><p>On-device text recognition, to aim call-outs at words.</p></div>
+          <div class="tool"><code>record_web</code> · <code>record_mac</code><p>Rehearsed click-throughs of a page, with a cursor track; Mac app recordings.</p></div>
+          <div class="tool"><code>crop_image</code> · <code>create_grid</code><p>Zoom into details and compare variants side by side, the way a designer checks work.</p></div>
+          <div class="tool"><code>design_guide</code><p>The art-direction guide: composition, copy, type, colour, call-outs.</p></div>
+          <div class="tool"><code>get_house_style</code> · <code>remember_style</code><p>What you like, remembered between sessions and shared with the app.</p></div>
           <div class="tool"><code>simulator_control</code><p>Boot, launch, open links, set appearance and permissions.</p></div>
           <div class="tool"><code>list_simulators</code> · <code>list_apps</code><p>What's installed and running.</p></div>
           <div class="tool"><code>list_mockup_options</code><p>Every device, finish, look, canvas and layout.</p></div>
@@ -642,8 +654,16 @@ tool_timeout_sec = <span class="s">600</span></pre>
     <div class="wrap sec-head">
       <span class="eyebrow"><i></i>Backdrops</span>
       <h2 class="h2">Any backdrop. <span class="ital grad">Tuned to your app.</span></h2>
+      <p class="lede">Photos, public-domain paintings and soft gradients, reprinted as a risograph, halftone or one-bit dither, or repainted in oil or watercolour if you like. Your screenshots stay untouched.</p>
     </div>
     <div class="rail">
+      <figure class="look"><img src="assets/bg-wave.webp" alt="Mise over Hokusai's Great Wave" width="520" height="650" loading="lazy"><span>The Great Wave <em>painting</em></span></figure>
+      <figure class="look"><img src="assets/bg-riso.webp" alt="Mise over pink architecture printed as a two-ink risograph" width="520" height="650" loading="lazy"><span>Pink architecture <em>risograph</em></span></figure>
+      <figure class="look"><img src="assets/bg-monet.webp" alt="Mise over Monet's Japanese footbridge" width="520" height="650" loading="lazy"><span>Monet's footbridge <em>painting</em></span></figure>
+      <figure class="look"><img src="assets/bg-fluted.webp" alt="Mise over deep indigo behind fluted glass" width="520" height="650" loading="lazy"><span>Indigo <em>fluted glass</em></span></figure>
+      <figure class="look"><img src="assets/bg-watercolor.webp" alt="Mise over misty hills painted as a watercolour" width="520" height="650" loading="lazy"><span>Misty hills <em>watercolour</em></span></figure>
+      <figure class="look"><img src="assets/bg-dither.webp" alt="Mise over palm shadows as a one-bit dither" width="520" height="650" loading="lazy"><span>Palm shadows <em>dither</em></span></figure>
+      <figure class="look"><img src="assets/bg-oil.webp" alt="Mise over a dinner table repainted in oil" width="520" height="650" loading="lazy"><span>Dinner table <em>oil paint</em></span></figure>
       <figure class="look"><img src="assets/bg-table.webp" alt="Mise on a dinner table backdrop" width="520" height="650" loading="lazy"><span>Dinner table <em>your photo</em></span></figure>
       <figure class="look"><img src="assets/bg-warm.webp" alt="Mise on a warm spot backdrop" width="520" height="650" loading="lazy"><span>Warm spot <em>radial</em></span></figure>
       <figure class="look"><img src="assets/bg-green.webp" alt="Mise on a brand green backdrop" width="520" height="650" loading="lazy"><span>Brand green <em>radial</em></span></figure>
@@ -666,27 +686,30 @@ tool_timeout_sec = <span class="s">600</span></pre>
     <div class="bento">
       <article class="tile span-4 reveal">
         <h3>Every Apple device, in 3D</h3>
-        <p>iPhone, iPad, Apple Watch and MacBook in their real finishes. Tilt, turn and stack them in one scene.</p>
+        <p>iPhone (including iPhone Duo), iPad, Apple Watch and MacBook in their real finishes, or Apple's own product art. Tilt, turn and stack them in one scene.</p>
         <div class="devices" data-parallax>
           <img class="d-mac" data-speed="0.3" src="assets/dev-mac.webp" alt="MacBook Pro showing Mise's website" width="1300" height="880" loading="lazy">
           <img class="d-ipad" data-speed="0.7" src="assets/dev-ipad.webp" alt="iPad Pro showing Mise's recipes" width="760" height="874" loading="lazy">
           <img class="d-iphone" data-speed="1" src="assets/dev-iphone.webp" alt="iPhone showing a Mise recipe" width="480" height="823" loading="lazy">
-          <img class="d-watch" data-speed="1.3" src="assets/dev-watch.webp" alt="Apple Watch running a Mise cooking timer" width="360" height="900" loading="lazy">
+          <img class="d-watch" data-speed="1.3" src="assets/dev-watch.webp" alt="Apple Watch running a Mise cooking timer" width="382" height="640" loading="lazy">
         </div>
       </article>
       <article class="tile span-2 reveal">
         <h3>Call out what matters</h3>
-        <p>Name the words on screen and Screenshotter finds them: lift a row, magnify it, or spotlight it.</p>
-        <div class="chips" data-cycle-labels><span class="on">Lift</span><span>Loupe</span><span>Spotlight</span></div>
+        <p>Name the words on screen and Screenshotter finds them: lift a row, magnify it, number the steps, point with an arrow.</p>
+        <div class="chips" data-cycle-labels><span class="on">Lift</span><span>Loupe</span><span>Spotlight</span><span>Wider card</span><span>Steps</span><span>Mark up</span></div>
         <div class="cycle" data-cycle>
           <img class="on" src="assets/callout-lift.webp" alt="A grocery row lifted out of the screen" width="620" height="775" loading="lazy">
           <img src="assets/callout-loupe.webp" alt="A loupe magnifying a recipe step" width="620" height="775" loading="lazy">
           <img src="assets/callout-spotlight.webp" alt="A spotlight on a cooking timer" width="620" height="775" loading="lazy">
+          <img src="assets/callout-card.webp" alt="A grocery row lifted onto a card wider than the phone" width="620" height="775" loading="lazy">
+          <img src="assets/callout-steps.webp" alt="Numbered steps and an arrow pointing to Start cooking" width="620" height="775" loading="lazy">
+          <img src="assets/callout-mark.webp" alt="A highlighted line, a curved arrow and a blurred private row" width="620" height="775" loading="lazy">
         </div>
       </article>
       <article class="tile span-2 reveal">
         <h3>Motion, not just stills</h3>
-        <p>Drift, float or push in. Play a real screen recording inside the frame.</p>
+        <p>Drift, float or push in. Play a real recording inside the frame, with zooms that follow the action and a cursor that clicks.</p>
         <div class="chips"><span>MP4</span><span>MOV</span><span>WebM</span><span>GIF</span></div>
         <div class="cycle"><video src="assets/video-drift.mp4" poster="assets/video-drift.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A phone drifting gently over a dinner table"></video></div>
       </article>
@@ -718,6 +741,27 @@ tool_timeout_sec = <span class="s">600</span></pre>
         <h3>A canvas that stays out of your way</h3>
         <p>Drag, resize and rotate with snapping guides. Double-click any text to retype it.</p>
         <div class="shot-crop" role="img" aria-label="The Studio canvas with a selected iPhone"></div>
+      </article>
+      <article class="tile span-4 reveal">
+        <h3>Print & paint</h3>
+        <p>Reprint the backdrop as a risograph, newsprint, halftone or one-bit dither, repaint it in oil, watercolour or ink, or set it behind fluted glass. Never your UI.</p>
+        <div class="chips"><span>Risograph</span><span>Halftone</span><span>Dither</span><span>Oil</span><span>Watercolour</span><span>Fluted glass</span></div>
+        <div class="cycle strip"><img class="on" style="object-position:center" src="assets/finishes.webp" alt="One design with four backdrop finishes: risograph, halftone, one-bit dither and oil paint" width="2000" height="490" loading="lazy"></div>
+      </article>
+      <article class="tile span-2 reveal">
+        <h3>Menu bar apps</h3>
+        <p>A drawn macOS menu bar with your status item, and its menu hanging below. MacBook screens get the real menu bar too.</p>
+        <div class="cycle"><img class="on" src="assets/menubar.webp" alt="A menu bar app's menu hanging under its status item" width="900" height="798" loading="lazy"></div>
+      </article>
+      <article class="tile span-3 reveal">
+        <h3>Out of focus, on purpose</h3>
+        <p>Soften a device behind a sharp one, or let screens dissolve into the dark.</p>
+        <div class="cycle"><img class="on" style="object-position:center" src="assets/dof.webp" alt="A blurred MacBook behind a sharp iPhone" width="1400" height="875" loading="lazy"></div>
+      </article>
+      <article class="tile span-3 reveal">
+        <h3>Everything, in one frame</h3>
+        <p>Grids, staircases and rising pairs for the last screen of a set, or a launch post.</p>
+        <div class="cycle"><img class="on" style="object-position:center" src="assets/mosaic.webp" alt="Four app screens side by side" width="1400" height="875" loading="lazy"></div>
       </article>
     </div>
   </div>
@@ -766,7 +810,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </a>
         <a class="btn ghost lg" href="#mcp">Set up the MCP</a>
       </div>
-      <p class="dl-meta">Version 0.1.0 · 25 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
+      <p class="dl-meta">Version 0.2.0 · <a href="changelog.html">What's new</a> · 27 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
     </div>
     <div class="how">
       <ol>

@@ -44,7 +44,7 @@ chmodSync(path.join(contents, "MacOS", "Screenshotter"), 0o755);
 
 // Engine: compiled JS (no source maps), docs, and production dependencies.
 cpSync(path.join(root, "dist"), path.join(engine, "dist"), { recursive: true, filter: (src) => !src.endsWith(".map") });
-for (const f of ["package.json", "README.md"]) copyFileSync(path.join(root, f), path.join(engine, f));
+for (const f of ["package.json", "README.md", "CHANGELOG.md"]) copyFileSync(path.join(root, f), path.join(engine, f));
 const prod = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], { cwd: root, encoding: "utf8" })
   .split("\n")
   .map((l) => l.trim())

@@ -179,6 +179,46 @@ export function computeLayout(
     return { layout, devices, text: splitText, headlineSize };
   }
 
+  // Screens stepping up to the right, each in front of the one before and overlapping it by about
+  // a third; `rising` counter-rotates them. They may run off the bottom edge.
+  if (layout === "staircase" || layout === "rising") {
+    const wide = shape === "landscape";
+    const h = hasText ? (wide ? 0.82 : 0.6) : wide ? 0.9 : 0.68;
+    const spread = Math.min(wide ? 0.34 : 0.42, (wide ? 0.13 : 0.36) * (n - 1));
+    const step = (wide ? 0.07 : 0.05) * (n > 1 ? 2 / n : 0);
+    const base = hasText ? (up ? 0.42 : wide ? 0.62 : 0.64) : 0.54;
+    const devices = Array.from({ length: n }, (_, i) => {
+      const t = n > 1 ? i / (n - 1) : 0.5;
+      const rotate = layout === "rising" ? (t < 0.5 ? -7 : t > 0.5 ? 6 : 0) : 0;
+      return slot(0.5 - spread / 2 + spread * t, base + step * ((n - 1) / 2 - i), 0.8, h, { rotate, z: 10 + i });
+    });
+    return { layout, devices, text, headlineSize };
+  }
+
+  // A mosaic: equal cells in rows under (or above) the caption, a short last row centred.
+  if (layout === "grid") {
+    const cols = n <= 2 ? n : n <= 4 ? (shape === "portrait" ? 2 : n) : n <= 6 ? 3 : n <= 8 ? 4 : Math.ceil(Math.sqrt(n * 1.6));
+    const rows = Math.ceil(n / cols);
+    const area = hasText ? (up ? { y0: 0.03, y1: 0.8 } : { y0: 0.22, y1: 0.97 }) : { y0: 0.04, y1: 0.96 };
+    const cw = 0.92 / cols;
+    // Rows only as tall as the devices need at the cell width (a phone is about half as wide as
+    // it is tall), with the whole block centred in the space.
+    const aspect = Math.max(...families.map((f) => ({ iphone: 0.48, ipad: 0.74, watch: 0.62, mac: 1.5 })[f] ?? 0.6));
+    const need = ((cw * 0.9 * width) / aspect / height) * 1.08;
+    const rh = Math.min((area.y1 - area.y0) / rows, need);
+    // With a caption, most of the spare room goes on the far side from it, so the screens sit
+    // close under (or above) the words.
+    const slack = area.y1 - area.y0 - rh * rows;
+    const top = area.y0 + slack * (hasText ? (up ? 0.72 : 0.28) : 0.5);
+    const devices = Array.from({ length: n }, (_, i) => {
+      const row = Math.floor(i / cols);
+      const inRow = Math.min(cols, n - row * cols);
+      const col = i % cols;
+      return slot(0.04 + (cols - inRow) * (cw / 2) + cw * (col + 0.5), top + rh * (row + 0.5), cw * 0.9, rh * 0.92, { z: 10 + i });
+    });
+    return { layout, devices, text, headlineSize };
+  }
+
   if (layout === "stack") {
     const area = hasText ? (up ? { x0: 0.04, x1: 0.96, y0: 0.04, y1: 0.8 } : { x0: 0.04, x1: 0.96, y0: 0.22, y1: 0.98 }) : { x0: 0.04, x1: 0.96, y0: 0.05, y1: 0.95 };
     return { layout, devices: stack(families, area, shape === "portrait"), text, headlineSize };

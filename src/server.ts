@@ -8,6 +8,10 @@ import { CANVAS_PRESETS } from "./render/layouts.js";
 import { createMockup, layoutScene } from "./render/mockup.js";
 import { LAYOUTS, MockupInputShape } from "./render/schema.js";
 import { createMockupSet, MockupSetShape } from "./render/set.js";
+import { cropImage, CropInputShape, createGrid, GridInputShape } from "./render/compose.js";
+import { houseStyle, updateHouseStyle } from "./util/style.js";
+import { DESIGN_GUIDE } from "./design/guide.js";
+import { recordMac, RecordMacShape, recordWeb, RecordWebShape } from "./capture/record.js";
 import { outputRoot } from "./util/files.js";
 import { captureWeb, WEB_VIEWPORTS } from "./capture/web.js";
 import { captureMac, listMacWindows } from "./capture/mac.js";
@@ -21,7 +25,7 @@ import { recordSimulator } from "./simulator/record.js";
 import { createVideo, VideoInputShape } from "./render/video.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
@@ -32,11 +36,16 @@ Capture:
 
 Compose with create_mockup (or create_mockup_set for a whole series):
 - Frames: device hardware (iPhone, iPad, Apple Watch, MacBook; any colour), browser, window, card or none. Several devices make a composition (e.g. MacBook + iPhone).
-- Backgrounds: named looks (e.g. "meadow-motion", "clouds", "midnight"), gradients/mesh, any photo, Unsplash (\`unsplash\` search or "unsplash:<id>"), or AI-generated (\`generate\` prompt) with photo treatment: motion blur, blur, haze, tint, bloom, halation.
-- Effects: film grain, vignette, edge blur, colour grade. Shadows: soft/medium/strong/studio.
-- Highlights call out UI: lift a row, loupe magnifier, outline, spotlight, blur-rest. Target by visible text (on-device OCR) or a rect; find_text lists the text boxes.
-- Caption: headline/subheadline with **accent** words, top/bottom/left/right.
-- Video: create_video renders the same scene with motion (float, drift, push-in), a zoom onto a highlight and timed reveals; record_simulator captures a screen recording to play inside the frame.
+- Backgrounds: named looks (photographic, public-domain paintings and prints like "great-wave" or "monet-bridge", soft grounds like "cream-grain"), gradients/mesh, any photo, Unsplash (\`unsplash\` search or "unsplash:<id>"), or AI-generated (\`generate\` prompt) with photo treatment: motion blur, blur, haze, tint, bloom, halation. \`finish\` reprints or repaints the backdrop (never the UI): risograph, newsprint, halftone, dither, oil, watercolor, ink, fluted-glass.
+- Effects: film grain, vignette, edge blur, colour grade. Shadows: soft/medium/strong/studio. Per device: \`blur\` (soft focus behind a sharp hero device) and \`fade\` (dissolve into the backdrop).
+- Highlights call out UI: lift a row (\`breakout\` makes a card wider than the device), loupe (can sit beside the device), outline, spotlight, blur-rest, blur (hide something private), highlighter, numbered step markers and curved arrows. Target by visible text (on-device OCR) or a rect; find_text lists the text boxes.
+- Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic), fonts from Google Fonts, top/bottom/left/right.
+- Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
+- Layouts include grid (a mosaic of screens). \`camera\` zooms the scene in on a point for a crisp close-up.
+- Finished images: crop_image crops or zooms into part of any image; create_grid lays images out as a contact sheet or mosaic. Use a grid to compare variants side by side, and a crop to check small details before you call something done.
+- Video: create_video renders the same scene with motion (float, drift, push-in), zooms that follow the action (video.zooms), a drawn cursor with clicks and drags (video.cursor) and timed reveals. Recordings to play inside a frame: record_simulator (iPhone, iPad, Watch), record_web (a rehearsed click-through of a page, with its cursor track) and record_mac (an app window).
+
+Design: read design_guide once before you design (composition, copy, type, colour, backdrops, callouts and a checklist). House style: call get_house_style before designing and follow it. When the person says they like or dislike something, or asks for something every time ("always use Space Black", "less text"), save it with remember_style.
 
 Always look at the returned preview and iterate (positions, sizes, rotation, copy). The scene is a set of entities (devices, caption, texts); every result lists them with their resolved positions, and layout_mockup returns them without rendering. Move an entity by setting its properties: devices[i].x/y (centre)/height/rotate, textStyle.x/y for the caption, texts[i].x/y. Positions and sizes are fractions of the canvas (x 0 = left, 1 = right). Each output has a .mockup.json with the exact request for re-rendering.
 Call list_mockup_options for devices, colours, looks, canvases, layouts and grades.`;
@@ -318,7 +327,9 @@ export function createServer(): McpServer {
         colorScheme: z.enum(["light", "dark"]).optional(),
         fullPage: z.boolean().optional(),
         selector: z.string().optional().describe("Capture just this element."),
-        hide: z.array(z.string()).optional().describe("CSS selectors to hide (cookie banners, chat widgets)."),
+        hide: z.array(z.string()).optional().describe("CSS selectors to hide (chat widgets, promos). Cookie banners are hidden automatically."),
+        hideBanners: z.boolean().optional().describe("Hide cookie/consent banners automatically. Default true."),
+        scale: z.number().min(1).max(4).optional().describe("Pixel density. Default 3 for desktop pages (crisp on large canvases), 3 for iPhone, 2 for iPad."),
         engine: z.enum(["safari", "chrome"]).optional().describe("safari = Mobile Safari in the iOS Simulator (default for iphone/ipad); chrome = headless Chrome page render."),
         simulator: z.string().optional().describe("Simulator for the safari engine. Default matches the viewport."),
         waitMs: z.number().optional(),
@@ -431,6 +442,105 @@ export function createServer(): McpServer {
       annotations: { readOnlyHint: true },
     },
     (a) => guard(async () => [text(await layoutScene(a))]),
+  );
+
+  server.registerTool(
+    "record_web",
+    {
+      title: "Record a flow on a web page",
+      description:
+        "Record clicks, typing and scrolling on a web page as a video. The flow is rehearsed first (a step that can't find its target fails with its name) and then recorded with a real pointer. Returns the video, a first-frame still and a cursor track: pass the still as the device's screenshot, the video as its video, and the cursor as create_video's video.cursor, then place zooms (video.zooms) where the clicks happen.",
+      inputSchema: RecordWebShape,
+    },
+    (a) => guard(async () => [text(await recordWeb(a))]),
+  );
+
+  server.registerTool(
+    "record_mac",
+    {
+      title: "Record a Mac app",
+      description:
+        "Record an app's window (or the whole display) for a number of seconds as a video, with a first-frame still. Do the flow while it runs. Put it in a MacBook or window frame with create_video.",
+      inputSchema: RecordMacShape,
+    },
+    (a) => guard(async () => [text(await recordMac(a))]),
+  );
+
+  server.registerTool(
+    "design_guide",
+    {
+      title: "How to design great screenshots",
+      description:
+        "The art direction guide for App Store screenshots, mockups, how-to and launch images: composition with real numbers, headline copy, font pairings, colour from the app's palette, which backdrop, finish, effect and callout to use when, sets, a quality checklist, and how to turn vague requests into settings. Read it once before designing.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    () => guard(async () => [text(DESIGN_GUIDE)]),
+  );
+
+  server.registerTool(
+    "get_house_style",
+    {
+      title: "Get the house style",
+      description: "What this person likes, remembered between sessions: colours, devices, fonts, backdrops, layouts and things to avoid. Read it before designing and follow it unless asked otherwise.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    () => guard(async () => [text({ notes: houseStyle() })]),
+  );
+
+  server.registerTool(
+    "remember_style",
+    {
+      title: "Remember a style preference",
+      description:
+        "Save what the person likes or dislikes so every future design follows it, e.g. \"Always Space Black devices\", \"Loves film grain on backdrops\", \"No rotated phones\". One short, specific note per preference. Remove notes they no longer want by id.",
+      inputSchema: {
+        add: z.array(z.string().max(240)).optional().describe("Notes to remember."),
+        remove: z.array(z.string()).optional().describe("Ids of notes to forget (from get_house_style)."),
+      },
+    },
+    (a) => guard(async () => [text({ notes: updateHouseStyle(a) })]),
+  );
+
+  server.registerTool(
+    "crop_image",
+    {
+      title: "Crop or zoom into an image",
+      description:
+        "Crop any image (a mockup, screenshot or crop) to a region, or zoom into a point, optionally enlarging the result. For detail shots, social crops, and for checking small details of a render (text edges, a callout, a bezel) before calling it done. Returns the path, the region as fractions and a preview.",
+      inputSchema: CropInputShape,
+    },
+    (a) =>
+      guard(async () => {
+        const r = await cropImage(a);
+        const content: Content = [text(r)];
+        if (a.preview !== false) {
+          const img = await image(r.path, 1400);
+          if (img) content.push(img);
+        }
+        return content;
+      }),
+  );
+
+  server.registerTool(
+    "create_grid",
+    {
+      title: "Lay images out in a grid",
+      description:
+        "Arrange images in a grid: a contact sheet (every image whole, rows scaled to the full width), or a mosaic of equal cells. For comparing variants side by side, presenting an App Store set, a feature wall of screens, or a before/after pair. Any backdrop, labels under each image.",
+      inputSchema: GridInputShape,
+    },
+    (a) =>
+      guard(async () => {
+        const r = await createGrid(a);
+        const content: Content = [text(r)];
+        if (a.preview !== false) {
+          const img = await image(r.path, 1600);
+          if (img) content.push(img);
+        }
+        return content;
+      }),
   );
 
   server.registerTool(

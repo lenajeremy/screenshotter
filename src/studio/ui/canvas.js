@@ -35,6 +35,16 @@ function needsStill(bg, looks) {
   return true;
 }
 
+/** A scene's macOS menu bar, sketched on the canvas (the render draws the real one). */
+function SceneMenuBar({ bar, H }) {
+  const h = (bar.size ?? 0.034) * H;
+  const dark = bar.style === "dark";
+  return html`<div style=${{ position: "absolute", left: 0, right: 0, top: 0, height: h + "px", zIndex: 40, pointerEvents: "none", background: dark ? "rgba(22,22,26,.62)" : "rgba(246,246,249,.74)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: h * 0.6 + "px", padding: `0 ${h * 0.6}px`, font: `500 ${h * 0.5}px -apple-system, system-ui, sans-serif`, color: dark ? "#fff" : "#1d1d1f" }}>
+    ${bar.status && html`<span style=${{ background: dark ? "rgba(255,255,255,.2)" : "rgba(0,0,0,.1)", borderRadius: h * 0.3 + "px", padding: `${h * 0.1}px ${h * 0.35}px`, whiteSpace: "nowrap" }}>${bar.status}</span>`}
+    <span style=${{ whiteSpace: "pre" }}>${bar.time ?? "Wed Sep 23  9:41 AM"}</span>
+  </div>`;
+}
+
 function Backdrop({ bg, W, H }) {
   const looks = S.opts?.looks;
   const guess = bgGuess(bg, looks);
@@ -48,17 +58,59 @@ function Backdrop({ bg, W, H }) {
 
 // ---------------------------------------------------------------------------------------------
 
-/** **accent** spans like the renderer: the accent colour (or gradient), or just bold without one. */
-const rich = (text, accent) =>
+// Font names the renderer knows as shortcuts; anything else is a Google Fonts (or installed) family.
+const FONT_SHORTCUTS = {
+  "sf-pro": `-apple-system, "SF Pro Display", system-ui, sans-serif`,
+  system: `-apple-system, "SF Pro Display", system-ui, sans-serif`,
+  "sf-rounded": `ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif`,
+  "new-york": `ui-serif, "New York", Georgia, serif`,
+  "sf-mono": `ui-monospace, "SF Mono", Menlo, monospace`,
+};
+const stackFor = (font) => (font ? (FONT_SHORTCUTS[font.toLowerCase()] ?? `"${font.replace(/"/g, "")}", -apple-system, system-ui, sans-serif`) : undefined);
+
+/** Load the Google Fonts a scene uses, so the canvas shows the same type as the render. */
+const loadedFonts = new Set();
+function useSceneFonts(scene) {
+  const families = [scene.textStyle?.font, scene.textStyle?.subheadlineFont, scene.textStyle?.accentFont, ...(scene.texts ?? []).flatMap((t) => [t.font, t.accentFont])].filter(
+    (f) => f && !FONT_SHORTCUTS[f.toLowerCase()],
+  );
+  for (const f of families) {
+    if (loadedFonts.has(f)) continue;
+    loadedFonts.add(f);
+    const name = encodeURIComponent(f).replace(/%20/g, "+");
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?family=${name}:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&display=swap`;
+    // Families without every style reject that request; fall back to whatever the family has.
+    link.onerror = () => {
+      const plain = document.createElement("link");
+      plain.rel = "stylesheet";
+      plain.href = `https://fonts.googleapis.com/css2?family=${name}&family=${name}:ital@1&display=swap`;
+      document.head.append(plain);
+    };
+    document.head.append(link);
+  }
+}
+
+/** **accent** spans like the renderer: accent colour (or gradient), font, weight and italic; just bold without any. */
+const rich = (text, accent = {}) =>
   String(text ?? "")
     .replace(/(\\n|\n|\s)+$/, "")
     .split(/\*\*(.+?)\*\*/g)
     .map((part, i) => {
       if (i % 2 === 0) return part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
-      if (!accent) return html`<strong>${part}</strong>`;
-      return /gradient\(/.test(accent)
-        ? html`<span style=${{ backgroundImage: accent, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>${part}</span>`
-        : html`<span style=${{ color: accent }}>${part}</span>`;
+      if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${part}</strong>`;
+      const style = {
+        ...(accent.color
+          ? /gradient\(/.test(accent.color)
+            ? { backgroundImage: accent.color, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }
+            : { color: accent.color }
+          : {}),
+        fontFamily: stackFor(accent.font),
+        fontWeight: accent.weight,
+        fontStyle: accent.italic ? "italic" : undefined,
+      };
+      return html`<span style=${style}>${part}</span>`;
     });
 
 function place(e, W, H) {
@@ -93,15 +145,31 @@ function DeviceEnt({ e, W, H }) {
   const bar = dev.chrome === "dark" ? "#2a2a2f" : "#e9e9ec";
   const body = frame === "device" ? e.color || "#1d1d1f" : frame === "browser" || frame === "window" ? bar : "transparent";
   const screen = { left: s.x * 100 + "%", top: s.y * 100 + "%", width: s.width * 100 + "%", height: s.height * 100 + "%", borderRadius: Math.max(0, (s.radius - s.x) * bw) + "px" };
-  // Laptops show the capture below a black menu-bar strip, like the render.
+  // Laptops show the capture below the drawn menu bar, like the render.
+  const menuStrip = e.menuBar
+    ? { position: "absolute", left: s.x * 100 + "%", top: s.y * 100 + "%", width: s.width * 100 + "%", height: s.height * e.menuBar * 100 + "%", background: e.menuBarStyle === "dark" ? "#141417" : "#e9e8ee" }
+    : null;
   if (e.menuBar) {
     const bar = s.height * e.menuBar;
     Object.assign(screen, { top: (s.y + bar) * 100 + "%", height: (s.height - bar) * 100 + "%", objectPosition: "top", borderRadius: 0 });
   }
   const tags = [dev.video && "▶ Recording", (Math.abs(e.rotateX || 0) > 0.5 || Math.abs(e.rotateY || 0) > 0.5) && "3D tilt applied on render"].filter(Boolean);
-  return html`<div class="body" style=${{ background: body, borderRadius: s.radius * bw + "px" }}>
+  // Soft focus and fade, like the render: blur is a fraction of canvas width (or canvas px).
+  const cw = S.layout?.canvas.width || W;
+  const blur = dev.blur ? (dev.blur <= 0.5 ? dev.blur * W : (dev.blur * W) / cw) : 0;
+  const fade = dev.fade ? (typeof dev.fade === "number" ? { edge: "bottom", extent: dev.fade } : { edge: "bottom", extent: 0.4, ...dev.fade }) : null;
+  const mask = fade && `linear-gradient(to ${fade.edge}, #000 ${(1 - fade.extent) * 100}%, rgba(0,0,0,.55) ${(1 - fade.extent * 0.55) * 100}%, transparent 100%)`;
+  // A drawn watch: band stubs above and below, the case between them.
+  const band = e.band;
+  const caseBox = band ? { position: "absolute", left: 0, right: 0, top: band.stub * 100 + "%", bottom: band.stub * 100 + "%", background: body, borderRadius: s.radius * bw + "px" } : null;
+  const stub = (top) => ({ position: "absolute", left: (1 - band.width) * 50 + "%", width: band.width * 100 + "%", top: top ? 0 : undefined, bottom: top ? undefined : 0, height: band.stub * 100 + 6 + "%", background: band.color, borderRadius: top ? "8% 8% 0 0 / 20% 20% 0 0" : "0 0 8% 8% / 0 0 20% 20%" });
+  // With an installed product bezel, the canvas shows the real art over the screen.
+  return html`<div class="body" style=${{ background: e.bezel || band ? "transparent" : body, borderRadius: s.radius * bw + "px", filter: blur ? `blur(${blur}px)` : undefined, WebkitMaskImage: mask || undefined, maskImage: mask || undefined }}>
+    ${band && html`<div style=${stub(true)}></div><div style=${stub(false)}></div><div style=${caseBox}></div>`}
+    ${menuStrip && html`<div style=${menuStrip}></div>`}
     <img draggable=${false} src=${thumbUrl(e.screenshot, Math.min(900, Math.max(240, Math.round(bw * s.width * 2))))} style=${screen} />
     ${dev.video && html`<video key=${dev.video} src=${fileUrl(dev.video)} muted loop autoplay playsinline preload="auto" style=${{ ...screen, objectFit: "cover" }}></video>`}
+    ${e.bezel && html`<img class="bezel-art" draggable=${false} src=${fileUrl(e.bezel)} />`}
   </div>
   ${tags.length > 0 && html`<span class="tag">${tags.join(" · ")}</span>`}`;
 }
@@ -110,8 +178,15 @@ function TextEnt({ e, H, editing, onDone }) {
   const scene = S.scene;
   const t = e.kind === "text" ? scene.texts?.[e.index] ?? {} : {};
   const style = scene.textStyle ?? {};
-  // Extra text uses its own star colour, else the headline's.
-  const accent = (e.kind === "text" ? t.accentColor : undefined) ?? style.accentColor;
+  useSceneFonts(scene);
+  // Extra text uses its own accent settings, else the headline's.
+  const own = e.kind === "text" ? t : {};
+  const accent = {
+    color: own.accentColor ?? style.accentColor,
+    font: own.accentFont ?? style.accentFont,
+    weight: own.accentWeight ?? style.accentWeight,
+    italic: own.accentItalic ?? style.accentItalic,
+  };
   const base = {
     color: e.color || "#fff",
     fontFamily: e.font || "-apple-system, system-ui, sans-serif",
@@ -155,7 +230,7 @@ function TextEnt({ e, H, editing, onDone }) {
   if (e.kind === "caption") {
     return html`<div ref=${ref} style=${base}>
       ${(e.text || editing) && editable("headline", e.text ?? "", "h")}
-      ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px" }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent)}</div>`}
+      ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px", fontFamily: e.subFont, fontWeight: style.subheadlineWeight }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent)}</div>`}
     </div>`;
   }
   const pill = t.background ? { display: "inline-block", background: t.background, padding: ".35em .8em", borderRadius: "2em" } : null;
@@ -198,50 +273,72 @@ export function CanvasView() {
   const ox = view.zoom === null ? (size.w - W) / 2 : view.x;
   const oy = view.zoom === null ? TOP + (size.h - TOP - BOTTOM - H) / 2 : view.y;
 
-  const zoomAt = (next, cx = size.w / 2, cy = size.h / 2) => {
+  // The view as it is right now. Trackpad events arrive faster than the canvas re-renders, so
+  // each one builds on the last one's result rather than on the last render.
+  const cam = useRef();
+  cam.current = { scale, ox, oy, W0, H0, size, ready: !!layout };
+  const moveTo = (zoom, x, y) => {
+    cam.current = { ...cam.current, scale: zoom, ox: x, oy: y };
+    setView({ zoom, x, y });
+  };
+  const zoomAt = (next, cx, cy) => {
+    const c = cam.current;
+    cx ??= c.size.w / 2;
+    cy ??= c.size.h / 2;
     next = clamp(next, 0.02, 4);
-    const fx = (cx - ox) / W;
-    const fy = (cy - oy) / H;
-    setView({ zoom: next, x: cx - fx * W0 * next, y: cy - fy * H0 * next });
+    const fx = (cx - c.ox) / (c.W0 * c.scale);
+    const fy = (cy - c.oy) / (c.H0 * c.scale);
+    moveTo(next, cx - fx * c.W0 * next, cy - fy * c.H0 * next);
   };
   canvasApi.fit = () => setView({ zoom: null, x: 0, y: 0 });
-  canvasApi.zoomBy = (f) => zoomAt(scale * f);
+  canvasApi.zoomBy = (f) => zoomAt(cam.current.scale * f);
   canvasApi.zoomTo = (z) => zoomAt(z);
   canvasApi.editText = (id, part) => setEditing({ id, part: part ?? (id === "caption" ? "headline" : "text") });
   canvasApi.scale = scale;
 
-  // Trackpad: two-finger scroll pans, pinch (ctrl+wheel / Safari gesture) zooms.
+  // Trackpad: two-finger scroll pans, pinch zooms around the pointer, from wherever the zoom is.
+  // WebKit reports a pinch as gesture events (scale relative to where the pinch began); Chrome
+  // as ctrl+wheel. While a gesture runs, any ctrl+wheel it also produces is ignored.
   useEffect(() => {
     const el = vp.current;
-    const wheel = (ev) => {
-      if (!layout) return;
-      ev.preventDefault();
+    let pinch = null; // zoom when the current pinch began
+    const at = (ev) => {
       const r = el.getBoundingClientRect();
+      return [ev.clientX - r.left, ev.clientY - r.top];
+    };
+    const wheel = (ev) => {
+      if (!cam.current.ready) return;
+      ev.preventDefault();
       if (ev.ctrlKey || ev.metaKey) {
-        zoomAt(scale * Math.exp(-ev.deltaY * 0.012), ev.clientX - r.left, ev.clientY - r.top);
+        if (pinch === null) zoomAt(cam.current.scale * Math.exp(-ev.deltaY * 0.012), ...at(ev));
       } else {
-        setView({ zoom: scale, x: ox - ev.deltaX, y: oy - ev.deltaY });
+        const c = cam.current;
+        moveTo(c.scale, c.ox - ev.deltaX, c.oy - ev.deltaY);
       }
     };
-    let g0 = 1;
     const gs = (ev) => {
       ev.preventDefault();
-      g0 = scale;
+      pinch = cam.current.scale;
     };
     const gc = (ev) => {
       ev.preventDefault();
-      const r = el.getBoundingClientRect();
-      zoomAt(g0 * ev.scale, ev.clientX - r.left, ev.clientY - r.top);
+      if (pinch !== null && cam.current.ready) zoomAt(pinch * ev.scale, ...at(ev));
+    };
+    const ge = (ev) => {
+      ev.preventDefault();
+      pinch = null;
     };
     el.addEventListener("wheel", wheel, { passive: false });
     el.addEventListener("gesturestart", gs);
     el.addEventListener("gesturechange", gc);
+    el.addEventListener("gestureend", ge);
     return () => {
       el.removeEventListener("wheel", wheel);
       el.removeEventListener("gesturestart", gs);
       el.removeEventListener("gesturechange", gc);
+      el.removeEventListener("gestureend", ge);
     };
-  });
+  }, []);
 
   // Space to pan.
   useEffect(() => {
@@ -473,8 +570,9 @@ export function CanvasView() {
     ${layout &&
     html`<div class="world" style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
       <div class="artboard-label" style=${{ top: H + 12 + "px" }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><span class="faint">· Edit view shows placement. Preview shows the finished look.</span></div>
-      <div class="artboard ${dropOver ? "drop-over" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px" }}>
+      <div class="artboard ${dropOver ? "drop-over" : ""} ${s.ai.busy ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px" }}>
         <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} />
+        ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
         ${entities.map(
           (e) => html`<div key=${e.id} class="ent ent-${e.kind} ${s.pulse.includes(e.id) ? "pulse" : ""}" data-id=${e.id} style=${place(e, W, H)}>
             ${e.kind === "device"
@@ -494,7 +592,7 @@ export function CanvasView() {
         </div>`}
       </div>
     </div>`}
-    ${sel && selBox && !live && !editing && !s.ai.open && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
+    ${sel && selBox && !live && !editing && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>

@@ -244,6 +244,17 @@ import WebKit
         case "chooseNode":
             replyHandler(true, nil)
             chooseNode()
+        case "choosePaths":
+            // Files or folders (e.g. an opened bezel disk image) for the page to import.
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = true
+            panel.prompt = "Add"
+            panel.message = body["message"] as? String ?? ""
+            panel.beginSheetModal(for: window) { response in
+                replyHandler(["paths": response == .OK ? panel.urls.map(\.path) : []], nil)
+            }
         case "showLog":
             NSWorkspace.shared.activateFileViewerSelecting([Engine.logURL])
             replyHandler(true, nil)
@@ -392,7 +403,10 @@ import WebKit
             action("Quit Screenshotter", #selector(NSApplication.terminate(_:)), "q"),
         ])
         _ = submenu("File", [
-            item("New Design", "newScene", "n"),
+            item("New Scene", "newScene", "n"),
+            item("Open Scene…", "scenes", "o", [.command, .shift]),
+            item("Save", "save", "s"),
+            .separator(),
             action("Import Screenshots…", #selector(openFilesPanel(_:)), "o", target: self),
             .separator(),
             item("Export Image", "exportImage", "e"),
@@ -437,6 +451,7 @@ import WebKit
         NSApp.windowsMenu = win
         let help = submenu("Help", [
             item("How Screenshotter Works", "help"),
+            item("What's New in Screenshotter", "whatsNew"),
             action("Documentation", #selector(openDocs(_:)), "?", target: self),
         ])
         NSApp.helpMenu = help

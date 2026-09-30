@@ -135,6 +135,82 @@ export async function averageColor(file: string): Promise<string | undefined> {
   return result;
 }
 
+export interface Palette {
+  /** Dominant colours, most common first, with their share of the image (0–1). */
+  colors: Array<{ hex: string; share: number }>;
+  /** The most saturated colour that's used a fair amount: usually the app's accent/brand colour. */
+  accent?: string;
+  /** Whether the UI is mostly dark or light. */
+  tone: "dark" | "light";
+}
+
+const paletteCache = new Map<string, Palette | undefined>();
+
+/**
+ * The colours of a screenshot, for design decisions: its dominant colours, its accent (the most
+ * saturated colour with a real presence) and whether the UI is dark or light.
+ */
+export async function screenshotPalette(file: string): Promise<Palette | undefined> {
+  const key = `${file}:${statSync(file).mtimeMs}`;
+  if (paletteCache.has(key)) return paletteCache.get(key);
+  let result: Palette | undefined;
+  try {
+    result = await withImage(file, async (src: string) => {
+      const img = new Image();
+      img.src = src;
+      await img.decode();
+      const w = 72;
+      const h = Math.max(1, Math.round((w * img.height) / img.width));
+      const c = new OffscreenCanvas(w, h);
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, w, h);
+      const d = ctx.getImageData(0, 0, w, h).data;
+      // Bucket colours (5 bits per channel), then merge buckets that look alike.
+      const buckets = new Map<number, { r: number; g: number; b: number; n: number }>();
+      let lum = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const [r, g, b] = [d[i], d[i + 1], d[i + 2]];
+        lum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const k = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+        const e = buckets.get(k) ?? { r: 0, g: 0, b: 0, n: 0 };
+        e.r += r;
+        e.g += g;
+        e.b += b;
+        e.n++;
+        buckets.set(k, e);
+      }
+      const total = d.length / 4;
+      const groups: Array<{ r: number; g: number; b: number; n: number }> = [];
+      for (const e of [...buckets.values()].sort((a, b) => b.n - a.n)) {
+        const c0 = { r: e.r / e.n, g: e.g / e.n, b: e.b / e.n };
+        const near = groups.find((g) => Math.hypot(g.r / g.n - c0.r, g.g / g.n - c0.g, g.b / g.n - c0.b) < 34);
+        if (near) {
+          near.r += e.r;
+          near.g += e.g;
+          near.b += e.b;
+          near.n += e.n;
+        } else groups.push({ ...e });
+      }
+      groups.sort((a, b) => b.n - a.n);
+      const hex = (g: { r: number; g: number; b: number; n: number }) =>
+        "#" + [g.r, g.g, g.b].map((v) => Math.round(v / g.n).toString(16).padStart(2, "0")).join("");
+      const sat = (g: { r: number; g: number; b: number; n: number }) => {
+        const [r, gg, b] = [g.r / g.n, g.g / g.n, g.b / g.n];
+        const mx = Math.max(r, gg, b);
+        const mn = Math.min(r, gg, b);
+        return mx === 0 ? 0 : (mx - mn) / mx;
+      };
+      const colors = groups.slice(0, 6).map((g) => ({ hex: hex(g), share: Math.round((g.n / total) * 1000) / 1000 }));
+      const accent = groups.filter((g) => g.n / total > 0.004 && sat(g) > 0.35).sort((a, b) => sat(b) * Math.sqrt(b.n) - sat(a) * Math.sqrt(a.n))[0];
+      return { colors, accent: accent ? hex(accent) : undefined, tone: lum / total / 255 > 0.45 ? "light" : "dark" } as Palette;
+    });
+  } catch {
+    result = undefined;
+  }
+  paletteCache.set(key, result);
+  return result;
+}
+
 export interface Box {
   x: number;
   y: number;

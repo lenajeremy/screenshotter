@@ -35,8 +35,30 @@ export interface DeviceModel {
   buttons: ChromeButton[];
   /** Tablets: where the front camera sits when held in portrait. */
   camera?: "long-edge" | "short-edge";
+  /** Dynamic Island size in points, when it isn't the standard 125 × 37 (iPhone 18 Pro's is narrower). */
+  island?: { width: number; height: number };
+  /** Camera Control on the right side (iPhone 16 and later): centre as a fraction of the body height, length in points. */
+  cameraControl?: { at: number; length: number };
+  /** Antenna lines across the long sides, as fractions of the body height. */
+  antenna?: number[];
+  /** What the back looks like: shown with `side: "back"`, and at the edges when the device is tilted. */
+  back?: BackDesign;
+  /** Other models whose product art may show this one (a foldable's folded and open states share a set). */
+  shareArt?: string[];
   /** True when this entry was synthesised from an Xcode profile rather than the catalog. */
   generic?: boolean;
+}
+
+/**
+ * The back of a phone. Camera housings: a full-width aluminium plateau (iPhone 17 Pro and later),
+ * the iPhone Air's camera bar, a square module (15 Pro, 16 Pro), a vertical pill (16, 17), a
+ * diagonal pair (15) or a single lens (16e). Material: an aluminium back with a glass window
+ * ("window", which reads glazed next to the metal; "matched" when it's colour-matched), or glass
+ * all over inside a metal band ("glass").
+ */
+export interface BackDesign {
+  camera: "plateau" | "bar" | "square" | "pill" | "diagonal" | "single";
+  material: "window" | "matched" | "glass";
 }
 
 const c = (name: string, hex: string): ColorOption => ({
@@ -118,7 +140,14 @@ const screen = (width: number, height: number, scale: number, cornerRadius: numb
   cornerRadius,
 });
 
+// Sampled from Apple's product photography under neutral light.
+const IPHONE_18_PRO_COLORS = [c("Black", "#29292b"), c("Silver", "#e2e2e0"), c("Glacier", "#a9b6c7"), c("Burgundy", "#4c2229")];
+// iPhone Duo (2026): mirror-polished titanium.
+const IPHONE_DUO_COLORS = [c("Night Sky", "#23262e"), c("Star White", "#ecebe6")];
 const IPHONE_17_PRO_COLORS = [c("Deep Blue", "#323d57"), c("Silver", "#e4e4e2"), c("Cosmic Orange", "#e9773a")];
+/** Camera Control sits two-thirds of the way down the right side. */
+const CAMERA_CONTROL = { at: 0.655, length: 58 };
+const PRO_ANTENNA = [0.083, 0.917];
 const IPHONE_16_PRO_COLORS = [
   c("Black Titanium", "#303032"),
   c("White Titanium", "#f0eee9"),
@@ -164,6 +193,75 @@ const WATCH_COLORS = [
 ];
 
 export const DEVICE_MODELS: DeviceModel[] = [
+  // iPhone — 2026
+  {
+    id: "iphone-18-pro-max",
+    name: "iPhone 18 Pro Max",
+    family: "iphone",
+    screen: screen(1320, 2868, 3, 62),
+    cutout: "island",
+    island: { width: 82, height: 36.67 },
+    bezel: 7.5,
+    frame: 8,
+    thickness: 53,
+    finish: "aluminum",
+    colors: IPHONE_18_PRO_COLORS,
+    buttons: PHONE_ACTION_LARGE,
+    cameraControl: CAMERA_CONTROL,
+    antenna: PRO_ANTENNA,
+    back: { camera: "plateau", material: "matched" },
+  },
+  {
+    id: "iphone-18-pro",
+    name: "iPhone 18 Pro",
+    family: "iphone",
+    screen: screen(1206, 2622, 3, 62),
+    cutout: "island",
+    island: { width: 82, height: 36.67 },
+    bezel: 7.5,
+    frame: 8.5,
+    thickness: 53,
+    finish: "aluminum",
+    colors: IPHONE_18_PRO_COLORS,
+    buttons: PHONE_ACTION,
+    cameraControl: CAMERA_CONTROL,
+    antenna: PRO_ANTENNA,
+    back: { camera: "plateau", material: "matched" },
+  },
+  // iPhone Duo — 2026. Folded, it's a phone with a 5.4" outer display; open, a 7.6" inner display
+  // (2670 × 1878, landscape when held open like a book), drawn like a small tablet.
+  {
+    id: "iphone-duo",
+    name: "iPhone Duo",
+    family: "iphone",
+    aliases: ["iPhone Duo Folded", "iPhone Duo Closed", "iPhone Duo Outer"],
+    screen: screen(1398, 2034, 3, 48),
+    cutout: "island",
+    bezel: 7,
+    frame: 7,
+    thickness: 52,
+    finish: "polished",
+    colors: IPHONE_DUO_COLORS,
+    buttons: PHONE_ACTION,
+    cameraControl: CAMERA_CONTROL,
+    shareArt: ["iphone-duo-open"],
+  },
+  {
+    id: "iphone-duo-open",
+    name: "iPhone Duo (open)",
+    family: "ipad",
+    aliases: ["iPhone Duo Open", "iPhone Duo Unfolded", "iPhone Duo Inner", "iPhone Duo Opened"],
+    screen: screen(1878, 2670, 3, 30),
+    cutout: "none",
+    bezel: 8,
+    frame: 6,
+    thickness: 26,
+    finish: "polished",
+    colors: IPHONE_DUO_COLORS,
+    buttons: IPAD_MINI,
+    camera: "short-edge",
+    shareArt: ["iphone-duo"],
+  },
   // iPhone — 2025
   {
     id: "iphone-17-pro-max",
@@ -177,6 +275,9 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: IPHONE_17_PRO_COLORS,
     buttons: PHONE_ACTION_LARGE,
+    cameraControl: CAMERA_CONTROL,
+    antenna: PRO_ANTENNA,
+    back: { camera: "plateau", material: "window" },
   },
   {
     id: "iphone-17-pro",
@@ -190,6 +291,9 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: IPHONE_17_PRO_COLORS,
     buttons: PHONE_ACTION,
+    cameraControl: CAMERA_CONTROL,
+    antenna: PRO_ANTENNA,
+    back: { camera: "plateau", material: "window" },
   },
   {
     id: "iphone-air",
@@ -203,6 +307,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "polished",
     colors: [c("Space Black", "#1f1f21"), c("Cloud White", "#f3f2ee"), c("Light Gold", "#eadfc7"), c("Sky Blue", "#d4e3ef")],
     buttons: PHONE_ACTION_LARGE,
+    cameraControl: CAMERA_CONTROL,
+    back: { camera: "bar", material: "glass" },
   },
   {
     id: "iphone-17",
@@ -222,6 +328,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
       c("Sage", "#b5c1a5"),
     ],
     buttons: PHONE_ACTION,
+    cameraControl: CAMERA_CONTROL,
+    back: { camera: "pill", material: "glass" },
   },
   // iPhone — 2024
   {
@@ -236,6 +344,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "titanium",
     colors: IPHONE_16_PRO_COLORS,
     buttons: PHONE_ACTION_LARGE,
+    cameraControl: CAMERA_CONTROL,
+    back: { camera: "square", material: "glass" },
   },
   {
     id: "iphone-16-pro",
@@ -249,6 +359,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "titanium",
     colors: IPHONE_16_PRO_COLORS,
     buttons: PHONE_ACTION,
+    cameraControl: CAMERA_CONTROL,
+    back: { camera: "square", material: "glass" },
   },
   {
     id: "iphone-16-plus",
@@ -262,6 +374,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: IPHONE_16_COLORS,
     buttons: PHONE_ACTION_LARGE,
+    cameraControl: CAMERA_CONTROL,
+    back: { camera: "pill", material: "glass" },
   },
   {
     id: "iphone-16",
@@ -275,6 +389,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: IPHONE_16_COLORS,
     buttons: PHONE_ACTION,
+    cameraControl: CAMERA_CONTROL,
+    back: { camera: "pill", material: "glass" },
   },
   {
     id: "iphone-16e",
@@ -288,6 +404,7 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: [c("Black", "#2b2b2d"), c("White", "#f3f3f1")],
     buttons: PHONE_CLASSIC,
+    back: { camera: "single", material: "glass" },
   },
   // iPhone — 2023
   {
@@ -302,6 +419,7 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "titanium",
     colors: IPHONE_15_PRO_COLORS,
     buttons: PHONE_ACTION_LARGE,
+    back: { camera: "square", material: "glass" },
   },
   {
     id: "iphone-15-pro",
@@ -315,6 +433,7 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "titanium",
     colors: IPHONE_15_PRO_COLORS,
     buttons: PHONE_ACTION,
+    back: { camera: "square", material: "glass" },
   },
   {
     id: "iphone-15-plus",
@@ -328,6 +447,7 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: IPHONE_15_COLORS,
     buttons: PHONE_CLASSIC,
+    back: { camera: "diagonal", material: "glass" },
   },
   {
     id: "iphone-15",
@@ -341,6 +461,7 @@ export const DEVICE_MODELS: DeviceModel[] = [
     finish: "aluminum",
     colors: IPHONE_15_COLORS,
     buttons: PHONE_CLASSIC,
+    back: { camera: "diagonal", material: "glass" },
   },
   // iPad
   {
@@ -441,8 +562,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     aliases: ["Apple Watch Series 11 (46mm)", "Apple Watch Series 10 (46mm)"],
     screen: screen(416, 496, 2, 50),
     cutout: "none",
-    bezel: 11,
-    frame: 11,
+    bezel: 16,
+    frame: 6,
     thickness: 62,
     finish: "aluminum",
     colors: WATCH_COLORS,
@@ -455,8 +576,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     aliases: ["Apple Watch Series 11 (42mm)", "Apple Watch Series 10 (42mm)"],
     screen: screen(374, 446, 2, 46),
     cutout: "none",
-    bezel: 10,
-    frame: 10,
+    bezel: 16,
+    frame: 6,
     thickness: 62,
     finish: "aluminum",
     colors: WATCH_COLORS,

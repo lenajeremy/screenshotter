@@ -4,18 +4,19 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { applyOperations, editScene, EditReplySchema, sceneAssets } from "../src/studio/ai.js";
 import { startStudio } from "../src/studio/server.js";
+import { closeBrowser } from "../src/render/browser.js";
 import type { MockupInput } from "../src/render/schema.js";
 import { encodePng } from "../src/util/png.js";
 
 const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-studio-test-"));
-const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR"].map((k) => [k, process.env[k]]));
+const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE"].map((k) => [k, process.env[k]]));
 let server: http.Server | undefined;
 let checks = 0;
 const check = async (name: string, fn: () => unknown | Promise<unknown>) => {
@@ -39,9 +40,13 @@ process.stdin.on("end", () => {
   if (!a.includes("--safe-mode") || a[a.indexOf("--tools") + 1] !== "" || !a.includes("--no-session-persistence") || !a.includes("--json-schema")) process.exit(3);
   // Claude Code rejects schemas tagged draft 2020-12.
   if (/2020-12/.test(a[a.indexOf("--json-schema") + 1])) { console.error("--json-schema is not a valid JSON Schema"); process.exit(4); }
-  const prompt = JSON.parse(input.split("\\n\\nYour previous operations")[0]);
+  if (a[a.indexOf("--input-format") + 1] !== "stream-json") process.exit(5);
+  const blocks = JSON.parse(input.trim().split("\\n")[0]).message.content;
+  const prompt = JSON.parse(blocks.find((b) => b.type === "text").text.split("\\n\\nYour previous operations")[0]);
+  prompt.__image = blocks.some((b) => b.type === "image" && b.source.data.length > 100);
   const reply = (${body})(prompt);
-  console.log(JSON.stringify({ type: "result", is_error: false, structured_output: reply }));
+  console.log(JSON.stringify({ type: "system", subtype: "init" }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, structured_output: reply }));
 });`,
   );
   await chmod(file, 0o755);
@@ -134,9 +139,81 @@ try {
     assert.deepEqual(r.operations, []);
   });
 
+  await fakeClaude((p: any) => ({ summary: p.__image ? "Saw the design." : "Blind.", operations: [] }));
+  await check("Claude gets a preview image of the design, unless it's turned off", async () => {
+    assert.equal((await editScene({ request, instruction: "Look" })).summary, "Saw the design.");
+    assert.equal((await editScene({ request, instruction: "Look", preview: false })).summary, "Blind.");
+  });
+
   await fakeClaude(() => ({ summary: "Bad device.", operations: [{ op: "set", path: "/devices/0/height", value: "-3" }] }));
   await check("an invalid result is retried once, then reported", async () => {
     await assert.rejects(() => editScene({ request, instruction: "Break it" }), /height|Too small|>0/i);
+  });
+
+  // The design brief: the guide in the system prompt, and each screen's palette in the request.
+  await fakeClaude((p: any) => ({ summary: p.screens?.[0]?.palette?.tone && "available" in p ? `Palette ${p.screens[0].palette.tone}` : "No facts.", operations: [] }));
+  await check("Claude gets each screen's palette and what's available, with the design guide", async () => {
+    assert.match((await editScene({ request, instruction: "Look" })).summary, /^Palette (dark|light)$/);
+  });
+
+  // It looks at its own render and fixes what's off, on top of its first edit.
+  await fakeClaude((p: any) =>
+    p.review
+      ? { summary: "Checked it: the title needed more room.", operations: [{ op: "set", path: "/textStyle/headlineSize", value: "0.05" }] }
+      : { summary: "Retitled.", operations: [{ op: "set", path: "/headline", value: '"Big idea"' }], check: true },
+  );
+  await check("Claude checks its render when it asks to, and its fixes apply on top", async () => {
+    const r = await editScene({ request, instruction: "Make it better" });
+    assert.equal(r.request.headline, "Big idea");
+    assert.equal(r.request.textStyle?.headlineSize, 0.05);
+    assert.equal(r.summary, "Checked it: the title needed more room.");
+    assert.deepEqual(r.checked, { fixes: 1 });
+    assert.equal(r.operations.length, 2);
+  });
+
+  // Stated preferences go to the house style.
+  process.env.SCREENSHOTTER_STYLE_FILE = path.join(dir, "house-style.json");
+  await fakeClaude((p: any) => ({ summary: p.houseStyle?.length ? "Knew it." : "Noted.", operations: [], remember: ["Always Space Black devices"] }));
+  await check("preferences are remembered and come back in later requests", async () => {
+    const first = await editScene({ request, instruction: "I always want Space Black" });
+    assert.deepEqual(first.remembered, ["Always Space Black devices"]);
+    assert.match(readFileSync(process.env.SCREENSHOTTER_STYLE_FILE!, "utf8"), /Always Space Black devices/);
+    assert.equal((await editScene({ request, instruction: "Again" })).summary, "Knew it.");
+  });
+
+  await check("release notes: parsed from the changelog, shown once after an update, never on a first run", async () => {
+    const { parseChangelog, whatsNew, markSeen, compareVersions } = await import("../src/studio/whatsnew.js");
+    const md = "# What's new\n\n## 0.3.0 · Later\n\n### New\n- **Big** thing\n- Small thing\n\n## 0.2.0 · Earlier\n\n- Older thing\n";
+    const releases = parseChangelog(md);
+    assert.deepEqual(releases.map((r) => r.version), ["0.3.0", "0.2.0"]);
+    assert.equal(releases[0].sections[0].title, "New");
+    assert.equal(releases[0].sections[0].items[0], "<strong>Big</strong> thing");
+    assert.equal(compareVersions("0.10.0", "0.9.1"), 1);
+    const file = path.join(dir, "CHANGELOG.md");
+    await writeFile(file, md);
+    const out = process.env.SCREENSHOTTER_OUTPUT_DIR;
+    // First run (no saved Studio state): nothing to show, and this version counts as seen.
+    process.env.SCREENSHOTTER_SEEN_FILE = path.join(dir, "seen-a.json");
+    process.env.SCREENSHOTTER_OUTPUT_DIR = path.join(dir, "fresh-output");
+    assert.deepEqual(whatsNew(file, "0.3.0").unseen, []);
+    // Updating from before the changelog (the Studio saved state before): this release only.
+    process.env.SCREENSHOTTER_SEEN_FILE = path.join(dir, "seen-b.json");
+    process.env.SCREENSHOTTER_OUTPUT_DIR = path.join(dir, "used-output");
+    mkdirSync(path.join(dir, "used-output", ".studio"), { recursive: true });
+    await writeFile(path.join(dir, "used-output", ".studio", "state.json"), "{}");
+    assert.deepEqual(whatsNew(file, "0.3.0").unseen.map((r) => r.version), ["0.3.0"]);
+    markSeen("0.3.0");
+    assert.deepEqual(whatsNew(file, "0.3.0").unseen, []);
+    // Skipping versions shows everything since the last one seen.
+    markSeen("0.1.0");
+    assert.deepEqual(whatsNew(file, "0.3.0").unseen.map((r) => r.version), ["0.3.0", "0.2.0"]);
+    if (out === undefined) delete process.env.SCREENSHOTTER_OUTPUT_DIR;
+    else process.env.SCREENSHOTTER_OUTPUT_DIR = out;
+  });
+
+  await check("the Claude Code skill is up to date with the design guide", async () => {
+    const { SKILL_MD } = await import("../src/design/skill.js");
+    assert.equal(readFileSync(path.join(import.meta.dirname, "..", "skills", "screenshot-design", "SKILL.md"), "utf8"), SKILL_MD, "Run npm run skill");
   });
 
   process.env.SCREENSHOTTER_CLAUDE_PATH = path.join(dir, "missing-claude");
@@ -224,6 +301,16 @@ try {
     assert.equal(r.request.devices[0].screenshot, shot);
     assert.equal((await readFile(shot))[0], 137);
   });
+  await check("AI endpoint streams its steps, then the result", async () => {
+    const text = await (await post("/api/ai-edit?stream=1", { request, instruction: "Retitle it", preview: false })).text();
+    const lines = text.trim().split("\n").map((l) => JSON.parse(l));
+    const steps = lines.filter((l) => l.type === "progress").map((l) => l.step);
+    assert.deepEqual([...new Set(steps)], ["look", "read", "think"]);
+    assert.ok(lines.find((l) => l.step === "read").items.includes("Backdrop"));
+    const last = lines.at(-1);
+    assert.equal(last.type, "result");
+    assert.equal(last.request.headline, "New title");
+  });
   console.log(`${checks} Studio checks passed.`);
 } finally {
   for (const [k, v] of Object.entries(saved)) {
@@ -234,5 +321,6 @@ try {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server!.close(() => resolve()));
   }
+  await closeBrowser();
   await rm(dir, { recursive: true, force: true });
 }
