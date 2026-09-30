@@ -16,7 +16,7 @@ import type { MockupInput } from "../src/render/schema.js";
 import { encodePng } from "../src/util/png.js";
 
 const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-studio-test-"));
-const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE"].map((k) => [k, process.env[k]]));
+const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE", "SCREENSHOTTER_STUDIO_FILE"].map((k) => [k, process.env[k]]));
 let server: http.Server | undefined;
 let checks = 0;
 const check = async (name: string, fn: () => unknown | Promise<unknown>) => {
@@ -251,6 +251,8 @@ try {
   });
 
   process.env.SCREENSHOTTER_OUTPUT_DIR = dir;
+  // The note telling agents where this Studio's library is goes in the test folder too.
+  process.env.SCREENSHOTTER_STUDIO_FILE = path.join(dir, "studio-note.json");
   server = await startStudio(0, false);
   const port = (server.address() as { port: number }).port;
   const base = `http://127.0.0.1:${port}`;
@@ -304,6 +306,39 @@ try {
     const listedScene = ((await (await fetch(base + "/api/scenes")).json()) as Array<{ id: string; name: string }>).find((x) => x.id === saved.id);
     assert.equal(listedScene?.name, "Launch day");
     assert.equal((await post("/api/scenes/delete", { id: saved.id })).status, 200);
+  });
+  await check("agents find the Studio's library; their scenes are copies unless told to replace, with files brought in", async () => {
+    const { studioFolder } = await import("../src/util/studio.js");
+    const { adoptFiles, findScene, saveScene } = await import("../src/studio/scenes.js");
+    assert.equal(studioFolder(), path.resolve(dir));
+    // A screenshot from outside the library is copied into it; one already inside stays put.
+    const outside = await mkdtemp(path.join(tmpdir(), "screenshotter-elsewhere-"));
+    const far = path.join(outside, "Far Away.png");
+    await writeFile(far, await readFile(shot));
+    const adopted = adoptFiles({ devices: [{ screenshot: far }, { screenshot: shot }], headline: "From an agent" });
+    const [first, second] = adopted.scene.devices as Array<{ screenshot: string }>;
+    assert.match(first.screenshot, /uploads\/far-away-[0-9a-f]{8}\.png$/);
+    assert(first.screenshot.startsWith(path.resolve(dir)) && existsSync(first.screenshot));
+    assert.equal(second.screenshot, shot);
+    assert.equal(adopted.copied.length, 1);
+    assert.equal(adoptFiles({ devices: [{ screenshot: far }] }).copied.length, 0, "the same file is copied once");
+    await rm(outside, { recursive: true, force: true });
+    // Saved by an agent: marked, and listed for the Studio.
+    const original = await (await post("/api/scenes/save", { name: "Pricing", scene: { devices: [{ screenshot: shot }], headline: "Before" } })).json();
+    const copy = saveScene({ name: "Pricing (agent's version)", scene: adopted.scene, by: "agent" });
+    assert.notEqual(copy.id, original.id);
+    const list = (await (await fetch(base + "/api/scenes")).json()) as Array<{ id: string; by?: string; headline?: string }>;
+    assert.equal(list.find((x) => x.id === copy.id)?.by, "agent");
+    assert.equal(list.find((x) => x.id === original.id)?.headline, "Before", "the original is untouched");
+    // Replacing in place keeps the id; the Studio's own next edit clears the agent's mark.
+    const replaced = saveScene({ id: original.id, scene: { devices: [{ screenshot: shot }], headline: "After" }, by: "agent" });
+    assert.equal(replaced.id, original.id);
+    assert.equal(replaced.by, "agent");
+    assert.equal(findScene({ name: "pricing" }).id, original.id, "an exact name wins over a longer one containing it");
+    const mine = await (await post("/api/scenes/save", { id: original.id, name: "Pricing", scene: { devices: [{ screenshot: shot }], headline: "Mine again" } })).json();
+    assert.equal(mine.by, undefined);
+    assert.throws(() => findScene({ name: "no such scene" }), /No scene named/);
+    for (const id of [copy.id, original.id]) await post("/api/scenes/delete", { id });
   });
   await check("thumbnails only for files in the output folder", async () => {
     const res = await fetch(`${base}/thumb?path=${encodeURIComponent(shot)}&w=100`);

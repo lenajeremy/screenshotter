@@ -15,14 +15,24 @@
 - Sharper previews.
 
 ### Shapes
-- The new Shapes tab: pick a colour, click a shape to add it or drag it onto the design.
-- Mark something on the screen: press Find text and click the words to circle, box, point at or number. The mark lands on them and follows the device when it moves.
+- The new Shapes tab: pick a colour, then drag a shape onto the design and drop it where you want it. It follows your pointer at its real size. Or click to add it in the middle.
+- Optional: snap a mark to text on the screen. Pick the words and the mark lands on them and follows the device when it moves.
 - Fill, stroke colour and width, dashed or dotted lines, corner radius, star points, opacity and a soft shadow, all in the right-hand panel.
 - Ask AI can add and restyle shapes ("circle the price and point an arrow at it from the headline"), and so can agents through the MCP server.
+
+### Workspace
+- Focus mode (⌘\\, or the button in the canvas's top-right corner) hides both side panels so the design fills the window. Bring back just the left panel or just the inspector with the buttons in the canvas corners.
+- Drag the edge of either side panel to make it wider or narrower; double-click the edge for the usual width. Your layout is remembered.
+- Fixed: the Fade options on a device no longer run into each other.
 
 ### Designs
 - A new scene's first screenshot starts from the bold hero design instead of a plain layout.
 - For AI agents: apply_recipe builds any of these designs through the MCP server.
+
+### For AI agents
+- Agents can work on your Studio scenes: list_scenes and get_scene open them, and save_scene puts a design into your Scenes with every device, text and shape still editable by hand.
+- An agent's save is a new scene unless you asked it to change one. If it changes the scene you have open, its version appears on your canvas with an Undo.
+- Shapes work in every tool, including each screen of a set.
 
 ## 0.2.0 · 30 September 2026
 

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, clamp, edit, entityLabel, fileUrl, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, addShape, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode } from "./actions.js";
+import { addDevice, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode } from "./actions.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
 export const canvasApi = { fit: () => {}, zoomBy: () => {}, zoomTo: () => {}, editText: () => {} };
@@ -604,23 +604,14 @@ export function CanvasView() {
   // ------------------------------------------------------------------ drop captures from the library
 
   const onDragOver = (ev) => {
-    const shape = ev.dataTransfer.types.includes("application/x-shape");
-    if (!shape && !ev.dataTransfer.types.includes("application/x-screenshot")) return;
+    if (!ev.dataTransfer.types.includes("application/x-screenshot")) return;
     ev.preventDefault();
     ev.dataTransfer.dropEffect = "copy";
-    if (!shape) setDropOver(true);
+    setDropOver(true);
   };
   const onDrop = (ev) => {
     const p = ev.dataTransfer.getData("application/x-screenshot");
-    const shape = ev.dataTransfer.getData("application/x-shape");
     setDropOver(false);
-    if (shape) {
-      // A shape dragged from the Shapes panel lands where it's dropped.
-      ev.preventDefault();
-      ev.stopPropagation();
-      const b = art.current?.getBoundingClientRect();
-      return addShape(shape, { tint: S.shapeTint, at: b ? { x: r4((ev.clientX - b.left) / b.width), y: r4((ev.clientY - b.top) / b.height) } : undefined });
-    }
     if (!p) return;
     ev.preventDefault();
     ev.stopPropagation();

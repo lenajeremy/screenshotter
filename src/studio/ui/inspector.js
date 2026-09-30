@@ -67,6 +67,14 @@ const FRAMES = [
   { value: "none", label: "None", icon: "noframe" },
 ];
 const SHADOWS = ["none", "soft", "medium", "strong", "studio"];
+// Which edge of a device dissolves into the backdrop. Icons, as five words don't fit the row.
+const FADES = [
+  { value: "none", label: "", icon: "fadeNone", title: "No fade" },
+  { value: "bottom", label: "", icon: "fadeBottom", title: "Fade the bottom" },
+  { value: "top", label: "", icon: "fadeTop", title: "Fade the top" },
+  { value: "left", label: "", icon: "fadeLeft", title: "Fade the left side" },
+  { value: "right", label: "", icon: "fadeRight", title: "Fade the right side" },
+];
 const HL_STYLES = [
   { value: "lift", label: "Lift" },
   { value: "loupe", label: "Loupe" },
@@ -184,17 +192,17 @@ function DeviceInspector({ id }) {
         <div class="row"><label>Blur</label><${Slider} value=${d.blur ?? 0} min=${0} max=${0.012} step=${0.0005} reset=${0}
           format=${(v) => (v ? Math.round((v / 0.012) * 100) + "%" : "Sharp")} onChange=${(v) => upd((dev) => (dev.blur = v ? Math.round(v * 10000) / 10000 : undefined), "blur")} /></div>
         <div class="row"><label>Fade</label><${Seg} value=${d.fade ? (typeof d.fade === "number" ? "bottom" : d.fade.edge ?? "bottom") : "none"}
-          options=${[{ value: "none", label: "None" }, { value: "bottom", label: "Bottom" }, { value: "top", label: "Top" }, { value: "left", label: "Left" }, { value: "right", label: "Right" }]}
+          options=${FADES}
           onChange=${(v) => upd((dev) => {
             const extent = typeof dev.fade === "number" ? dev.fade : dev.fade?.extent ?? 0.4;
             dev.fade = v === "none" ? undefined : v === "bottom" ? extent : { edge: v, extent };
           })} /></div>
-        ${d.fade && html`<div class="row"><label>Fade amount</label><${Slider} value=${typeof d.fade === "number" ? d.fade : d.fade.extent ?? 0.4} min=${0.1} max=${1} step=${0.01}
+        ${d.fade && html`<div class="row"><label>Amount</label><${Slider} value=${typeof d.fade === "number" ? d.fade : d.fade.extent ?? 0.4} min=${0.1} max=${1} step=${0.01}
           format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((dev) => {
             const extent = v === undefined ? 0.4 : Math.round(v * 100) / 100;
             dev.fade = typeof dev.fade === "number" || !dev.fade ? extent : { ...dev.fade, extent };
           }, "fade")} /></div>`}
-        <div class="note">Blur a device to put it out of focus behind a sharp one. Fade dissolves it into the background.</div>
+        <div class="note">Blur a device to put it out of focus behind a sharp one. Fade dissolves one edge of it into the background${d.fade ? `: the ${typeof d.fade === "number" ? "bottom" : d.fade.edge ?? "bottom"} edge` : ""}.</div>
       <//>
 
       <${Section} title="3D angle" right=${d.rotateX || d.rotateY ? html`<button class="btn sm ghost" onClick=${() => upd((dev) => {

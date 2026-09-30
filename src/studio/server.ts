@@ -21,6 +21,7 @@ import { recordSimulator } from "../simulator/record.js";
 import * as sim from "../simulator/simctl.js";
 import { run } from "../util/exec.js";
 import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
+import { noteStudioFolder } from "../util/studio.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
@@ -581,6 +582,8 @@ export async function startStudio(port = Number(process.env.SCREENSHOTTER_STUDIO
     });
   });
   const url = `http://127.0.0.1:${port}`;
+  // Agents using the MCP server find this Studio's library through this note.
+  noteStudioFolder(outputRoot());
   console.error(`Screenshotter Studio running at ${url} (output: ${outputRoot()})`);
   console.error(`SCREENSHOTTER_STUDIO_PORT=${port}`);
   if (open) await run("open", [url]).catch(() => undefined);

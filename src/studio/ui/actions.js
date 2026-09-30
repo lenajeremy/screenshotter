@@ -1,5 +1,5 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
-import { DEFAULT_SCENE, S, api, base, edit, entityLabel, fail, isVideo, native, persist, r4, refreshFiles, refreshScenes, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch } from "./store.js";
+import { DEFAULT_SCENE, S, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -212,6 +212,29 @@ export function moveZ(id, dir) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Panels
+
+export function togglePanel(side) {
+  set(side === "left" ? { leftOpen: !S.leftOpen } : { rightOpen: !S.rightOpen });
+  persistPrefs();
+}
+
+/** Focus mode: hide both side panels for the whole canvas; again brings back the ones that were open. */
+export function toggleFocus() {
+  if (S.leftOpen || S.rightOpen) {
+    set({ focusRestore: { left: S.leftOpen, right: S.rightOpen }, leftOpen: false, rightOpen: false });
+    if (!S.touched.focus) {
+      touch("focus");
+      toast({ kind: "ok", icon: "focus", title: "Focus mode", text: "The panels are tucked away. Press ⌘\\ or use the buttons in the canvas corners to bring them back.", timeout: 4200 });
+    }
+  } else {
+    const r = S.focusRestore ?? { left: true, right: true };
+    set({ leftOpen: r.left, rightOpen: r.right, focusRestore: null });
+  }
+  persistPrefs();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Shapes
 
 /** What each shape in the Shapes panel starts as. `tint` is the panel's colour: the stroke of a mark, the fill of a solid. */
@@ -238,6 +261,7 @@ const lineKind = (t) => t === "arrow" || t === "line";
 export function addShape(kind, { tint = "#ff3b30", at, around } = {}) {
   const k = SHAPE_KINDS.find((x) => x.id === kind);
   if (!k) return;
+  if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Shapes go on top of a design." });
   const shapes = S.scene.shapes ?? [];
   if (shapes.length >= 40) return toast({ kind: "warn", title: "Forty shapes is the limit" });
   const sh = k.make(tint);
@@ -813,6 +837,7 @@ export async function newScene() {
   set({
     scene: { devices: [], background: DEFAULT_SCENE.background },
     sceneId: null,
+    sceneStamp: null,
     sceneName: "Untitled scene",
     past: [],
     future: [],
@@ -832,7 +857,7 @@ export async function openScene(id) {
   await saveSceneNow();
   try {
     const saved = await api(`/api/scene?id=${encodeURIComponent(id)}`);
-    set({ scene: saved.scene, sceneId: saved.id, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, sceneId: saved.id, sceneStamp: saved.updatedAt, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
@@ -848,6 +873,35 @@ export async function saveNow() {
 }
 
 /** Rename a saved scene: to `to`, or to what the person types in a sheet. */
+/**
+ * Agents can save scenes through the MCP server. If one replaced the scene that's open, put its
+ * version on the canvas (one undo step); if one added scenes, say so. `known` is the ids listed
+ * before this check, or null the first time.
+ */
+export async function pickUpAgentChanges(scenes, known) {
+  const mine = S.sceneId && scenes.find((x) => x.id === S.sceneId);
+  if (mine && mine.by === "agent" && mine.updatedAt !== S.sceneStamp && !savePending() && !S.ai.busy) {
+    try {
+      const saved = await api(`/api/scene?id=${encodeURIComponent(mine.id)}`);
+      const differs = JSON.stringify(saved.scene) !== JSON.stringify(S.scene);
+      set({ sceneStamp: saved.updatedAt });
+      if (differs) {
+        setScene(saved.scene);
+        set({ sceneName: saved.name, selected: null, render: null, renderStale: false });
+        toast({ kind: "ok", icon: "spark", title: "An agent updated this scene", text: "Its version is on the canvas.", timeout: 9000, actions: [{ label: "Undo", run: () => undo() }] });
+      }
+    } catch {
+      // The scene went away in the meantime: the next save recreates it.
+    }
+  } else if (mine && !S.sceneStamp) {
+    set({ sceneStamp: mine.updatedAt });
+  }
+  if (!known) return;
+  const added = scenes.filter((x) => x.by === "agent" && !known.has(x.id));
+  if (added.length === 1) toast({ kind: "ok", icon: "spark", title: "An agent saved a scene", text: added[0].name, timeout: 9000, actions: [{ label: "Open", run: () => openScene(added[0].id) }] });
+  else if (added.length > 1) toast({ kind: "ok", icon: "spark", title: `An agent saved ${added.length} scenes`, text: added.map((x) => x.name).join(", "), timeout: 9000, actions: [{ label: "See them", run: () => set({ scenesPage: true }) }] });
+}
+
 export async function renameSavedScene(id, to) {
   const current = S.scenes.find((x) => x.id === id);
   const name = to ?? (await promptDialog({ title: "Rename scene", value: current?.name ?? S.sceneName, confirm: "Rename" }));

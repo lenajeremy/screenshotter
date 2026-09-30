@@ -3,9 +3,12 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, api, base, dismiss, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, undo, useStore } from "./store.js";
+import { S, api, base, dismiss, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, undo, useStore } from "./store.js";
 import {
   answerPrompt,
+  pickUpAgentChanges,
+  toggleFocus,
+  togglePanel,
   deleteSavedScene,
   duplicateSavedScene,
   openScene,
@@ -340,8 +343,16 @@ function RenderView() {
 function Stage() {
   const s = useStore();
   const empty = !s.scene.devices.length;
+  const focused = !s.leftOpen && !s.rightOpen;
   return html`<main class="stage">
     <div class="stage-glow"></div>
+    <div class="float panel-toggle l">
+      <button class="icon-btn sm ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the side panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${15} /></button>
+    </div>
+    <div class="float panel-toggle r">
+      <button class="icon-btn sm ${focused ? "on" : ""}" title=${focused ? "Leave focus mode (⌘\\)" : "Focus mode: hide both panels (⌘\\)"} onClick=${toggleFocus}><${Icon} n="focus" s=${15} /></button>
+      <button class="icon-btn sm ${s.rightOpen ? "on" : ""}" title=${`${s.rightOpen ? "Hide" : "Show"} the inspector (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${15} /></button>
+    </div>
     ${s.view === "render" ? html`<${RenderView} />` : empty ? html`<div class="dots"></div><${Hero} />` : html`<${CanvasView} />`}
     ${s.view === "canvas" && !empty && html`<${Checklist} />`}
     ${s.view === "canvas" && !empty && html`<${AIChat} />`}
@@ -961,18 +972,57 @@ function Toasts() {
 // =============================================================================================
 // Root
 
+/** The edge of a side panel: drag it to make the panel wider or narrower; double-click for the usual width. */
+function Resizer({ side }) {
+  const left = side === "l";
+  const down = (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const app = ev.currentTarget.closest(".app");
+    const w0 = app.querySelector(left ? ".panel.left" : ".panel.right").offsetWidth;
+    const min = left ? 248 : 264;
+    // The canvas keeps at least 340px.
+    const max = Math.max(min, Math.min(680, w0 + app.querySelector(".stage").offsetWidth - 340));
+    const x0 = ev.clientX;
+    let w = w0;
+    app.classList.add("resizing");
+    const move = (e) => {
+      w = Math.round(Math.min(max, Math.max(min, w0 + (left ? 1 : -1) * (e.clientX - x0))));
+      app.style.setProperty(left ? "--left-w" : "--right-w", w + "px");
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      app.classList.remove("resizing");
+      if (w !== w0) {
+        set(left ? { leftW: w } : { rightW: w });
+        persistPrefs();
+      }
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
+  const reset = () => {
+    set(left ? { leftW: null } : { rightW: null });
+    persistPrefs();
+  };
+  return html`<div class="resizer ${side}" title="Drag to resize. Double-click for the usual width." onPointerDown=${down} onDblClick=${reset}></div>`;
+}
+
 function App() {
   const s = useStore();
   if (s.bootError) {
     return html`<div class="hero"><div class="hero-inner"><h1>Couldn't reach the <em>engine.</em></h1><p>${s.bootError}</p><button class="btn primary" onClick=${() => location.reload()}>Try again</button></div></div>`;
   }
   if (!s.ready) return html`<div class="boot"><div class="boot-mark"></div></div>`;
-  return html`<div class="app ${s.leftOpen ? "" : "left-closed"}">
+  return html`<div class="app ${s.leftOpen ? "" : "left-closed"} ${s.rightOpen ? "" : "right-closed"}" style=${{ "--left-w": s.leftW ? s.leftW + "px" : null, "--right-w": s.rightW ? s.rightW + "px" : null }}>
     <${Topbar} />
     <${Rail} />
     <${LeftPanel} />
     <${Stage} />
     <${Inspector} />
+    ${s.leftOpen && html`<${Resizer} side="l" />`}
+    ${s.rightOpen && html`<${Resizer} side="r" />`}
     ${s.scenesPage && html`<${ScenesPage} />`}
     ${s.modal?.kind === "settings" && html`<${Settings} />`}
     ${s.modal?.kind === "confirm" && html`<${Confirm} />`}
@@ -1052,7 +1102,9 @@ const commands = {
     set({ leftTab: "captures", leftOpen: true, capture: { ...S.capture, source: "import" } });
     setTimeout(() => document.querySelector('.dropzone input[type="file"]')?.click(), 60);
   },
-  toggleLeft: () => set({ leftOpen: !S.leftOpen }),
+  toggleLeft: () => togglePanel("left"),
+  toggleRight: () => togglePanel("right"),
+  focus: () => toggleFocus(),
   json: () => set({ jsonOpen: !S.jsonOpen }),
   refresh: () => refreshFiles().catch(fail),
   // Files the desktop app imported (pasted, opened from Finder, dropped on the Dock icon):
@@ -1099,6 +1151,9 @@ window.addEventListener("keydown", (e) => {
   if (mod && k === "d") return e.preventDefault(), commands.duplicate();
   if (mod && k === "o") return e.preventDefault(), commands.import();
   if (mod && k === ",") return e.preventDefault(), commands.settings();
+  if (mod && e.code === "Backslash") return e.preventDefault(), commands.focus();
+  if (mod && e.altKey && e.code === "KeyS") return e.preventDefault(), commands.toggleLeft();
+  if (mod && e.altKey && e.code === "KeyI") return e.preventDefault(), commands.toggleRight();
   if (mod) return;
   if (e.key === "Escape") {
     if (S.exportOpen) return set({ exportOpen: false });
@@ -1306,6 +1361,9 @@ new MutationObserver(() => {
   dragTimer = setTimeout(reportDragRegions, 120);
 }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
 window.addEventListener("resize", () => {
+  // A smaller window: widened panels go back to their usual width rather than squeeze the canvas.
+  const stage = document.querySelector(".stage");
+  if (stage && stage.offsetWidth < 300 && (S.leftW || S.rightW)) set({ leftW: null, rightW: null });
   clearTimeout(dragTimer);
   dragTimer = setTimeout(reportDragRegions, 60);
 });
@@ -1333,9 +1391,16 @@ async function boot() {
     }
     scheduleLayout(0);
     bootDone();
-    // Scenes: list them, and make sure the design on screen is one of them.
-    refreshScenes();
+    // Scenes: list them, and make sure the design on screen is one of them. An agent may have
+    // changed the open one while the Studio was closed.
+    refreshScenes().then((scenes) => pickUpAgentChanges(scenes, null));
     if (!S.sceneId && (S.scene.devices.length || S.scene.headline)) saveSceneNow();
+    // Scenes saved by agents through the MCP server show up while you work.
+    setInterval(async () => {
+      if (document.visibilityState !== "visible" || S.busy || S.ai.busy) return;
+      const known = new Set(S.scenes.map((x) => x.id));
+      pickUpAgentChanges(await refreshScenes(), known);
+    }, 5000);
     // After an update, the release notes open once.
     setTimeout(() => !S.modal && openWhatsNew(false), 900);
     setTimeout(reportDragRegions, 300);

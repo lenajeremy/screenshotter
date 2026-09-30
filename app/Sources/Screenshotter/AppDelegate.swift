@@ -438,6 +438,8 @@ import WebKit
             item("Zoom to Fit", "fit", "0"),
             .separator(),
             item("Toggle Side Panel", "toggleLeft", "s", [.command, .option]),
+            item("Toggle Inspector", "toggleRight", "i", [.command, .option]),
+            item("Focus Mode", "focus", "\\"),
             item("Scene JSON", "json", "j", [.command, .option]),
             .separator(),
             action("Reload Interface", #selector(reloadUI(_:)), "r", [.command, .option, .shift], target: self),

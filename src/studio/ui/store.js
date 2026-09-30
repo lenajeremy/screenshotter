@@ -56,6 +56,13 @@ export const S = {
   sceneId: null,
   scenes: [],
   scenesOpen: false,
+  /** When the open scene was last saved, as the library has it: a newer save by an agent gets picked up. */
+  sceneStamp: null,
+  /** Side panels: the inspector can be hidden too, each can be dragged wider, and focus mode hides both. */
+  rightOpen: true,
+  leftW: null,
+  rightW: null,
+  focusRestore: null,
   /** The full-window Scenes page, and how it lists them. */
   scenesPage: false,
   scenesPrefs: { sort: "edited", layout: "grid", kind: "all" },
@@ -224,7 +231,7 @@ const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
   sceneId: S.sceneId,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs },
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW },
 });
 export function persist() {
   persistPrefs();
@@ -265,7 +272,7 @@ export function saveSceneNow() {
       // Still the same document? (It may have been swapped while the save was in flight.)
       if (S.scene === forScene || S.sceneId === null || S.sceneId === saved.id) {
         const others = S.scenes.filter((x) => x.id !== saved.id);
-        set({ sceneId: S.sceneId ?? saved.id, scenes: [{ ...saved, at: Date.now() }, ...others] });
+        set({ sceneId: S.sceneId ?? saved.id, sceneStamp: saved.updatedAt, scenes: [{ ...saved, at: Date.now() }, ...others] });
         if (!body.id) api("/api/state", snapshot()).catch(() => undefined);
       }
       return saved;
@@ -273,6 +280,8 @@ export function saveSceneNow() {
     .catch(() => undefined);
   return saving;
 }
+/** A change to the scene is waiting to be saved. */
+export const savePending = () => Boolean(sceneTimer);
 export async function refreshScenes() {
   const scenes = await api("/api/scenes").catch(() => null);
   if (scenes) set({ scenes: scenes.map((x) => ({ ...x, at: Date.now() })) });
@@ -305,6 +314,9 @@ export async function restore() {
   if (saved.sceneId) patch.sceneId = saved.sceneId;
   if (ui.leftTab) patch.leftTab = ui.leftTab;
   if (typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
+  if (typeof ui.rightOpen === "boolean") patch.rightOpen = ui.rightOpen;
+  if (Number.isFinite(ui.leftW)) patch.leftW = ui.leftW;
+  if (Number.isFinite(ui.rightW)) patch.rightW = ui.rightW;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
   patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };

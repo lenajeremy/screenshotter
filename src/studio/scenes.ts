@@ -2,15 +2,15 @@
  * Saved scenes: every design in the Studio is a document in the output folder
  * (.studio/scenes/<id>.json), saved as you work, with a small thumbnail rendered in the background.
  */
-import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { type Family, findModel } from "../devices/catalog.js";
 import { readSidecar } from "../devices/resolve.js";
 import { defaultCanvasFor } from "../render/layouts.js";
 import { createMockup, resolveCanvas } from "../render/mockup.js";
 import type { MockupInput } from "../render/schema.js";
-import { ensureDir, outputRoot } from "../util/files.js";
+import { cacheDir, ensureDir, outputRoot, resolveUserPath, slug } from "../util/files.js";
 
 export interface SavedScene {
   id: string;
@@ -20,6 +20,8 @@ export interface SavedScene {
   chat?: unknown[];
   createdAt: string;
   updatedAt: string;
+  /** Set when the last change came from an agent (the MCP server), so the Studio can pick it up. */
+  by?: "agent";
 }
 
 /** What a scene shows, for filtering: a device family, or a website in a browser frame. */
@@ -42,11 +44,20 @@ export interface SceneSummary {
   /** Thumbnail image, when one has been rendered, and when (ms), so cached copies refresh. */
   thumb?: string;
   thumbAt?: number;
+  /** "agent" when the last change was saved through the MCP server. */
+  by?: "agent";
 }
 
 const THUMB_WIDTH = 640;
 
-const dir = () => ensureDir(path.join(outputRoot(), ".studio", "scenes"));
+// The library's folder: the Studio's own output folder. The MCP server points this at the Studio's.
+let library: () => string = outputRoot;
+export function useLibrary(folder: () => string) {
+  library = folder;
+}
+export const libraryFolder = () => library();
+
+const dir = () => ensureDir(path.join(library(), ".studio", "scenes"));
 const file = (id: string) => path.join(dir(), `${id}.json`);
 const thumbFile = (id: string) => path.join(dir(), `${id}.jpg`);
 const validId = (id: unknown): id is string => typeof id === "string" && /^[a-z0-9]{6,32}$/.test(id);
@@ -116,6 +127,7 @@ function summarize(s: SavedScene): SceneSummary {
     size,
     thumb: thumbAt ? thumb : undefined,
     thumbAt: thumbAt ? Math.round(thumbAt) : undefined,
+    by: s.by,
   };
 }
 
@@ -146,7 +158,7 @@ export function getScene(id: unknown): SavedScene {
 }
 
 /** Save a scene: a new document when `id` is missing, else an update. Returns its summary. */
-export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown }): SceneSummary {
+export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; by?: "agent" }): SceneSummary {
   if (!input.scene || typeof input.scene !== "object" || !Array.isArray((input.scene as { devices?: unknown }).devices)) throw new Error("A scene needs a devices array");
   const now = new Date().toISOString();
   const existing = validId(input.id) ? read(input.id) : undefined;
@@ -156,7 +168,9 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   // Only a change to the design counts as an edit: not a rename, nor saving it unchanged (switching
   // scenes, opening the Scenes page), so the list keeps its order.
   const changed = !existing || JSON.stringify(existing.scene) !== JSON.stringify(input.scene);
-  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt };
+  // Who made the last change: the Studio's own saves clear an agent's mark.
+  const by = changed ? input.by : existing.by;
+  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
   write(saved);
   if (changed || !existsSync(thumbFile(id))) scheduleThumb(id);
   return summarize(saved);
@@ -166,6 +180,59 @@ export function deleteScene(id: unknown) {
   if (!validId(id)) throw new Error("Unknown scene");
   rmSync(file(id), { force: true });
   rmSync(thumbFile(id), { force: true });
+}
+
+/** A scene by id, or by name: the exact name, else the only one containing the words. */
+export function findScene(ref: { id?: string; name?: string }): SavedScene {
+  if (ref.id) return getScene(ref.id);
+  const q = (ref.name ?? "").trim().toLowerCase();
+  if (!q) throw new Error("Give the scene's id or its name.");
+  const all = listScenes();
+  const exact = all.filter((x) => x.name.toLowerCase() === q);
+  const hits = exact.length ? exact : all.filter((x) => x.name.toLowerCase().includes(q));
+  if (hits.length === 1) return getScene(hits[0].id);
+  if (!hits.length) throw new Error(`No scene named "${ref.name}". Scenes: ${all.slice(0, 20).map((x) => `"${x.name}"`).join(", ") || "none yet"}.`);
+  throw new Error(`${hits.length} scenes match "${ref.name}": ${hits.map((x) => `"${x.name}" (${x.id})`).join(", ")}. Use an id.`);
+}
+
+/**
+ * Bring the files a scene uses into the library's folder (the Studio only shows files from there):
+ * screenshots and recordings into uploads/, a backdrop photo into backdrops/, fonts into fonts/.
+ * A file already inside stays where it is. Returns the scene with its paths updated.
+ */
+export function adoptFiles<T extends Record<string, unknown>>(scene: T): { scene: T; copied: string[] } {
+  const root = path.resolve(library());
+  const cache = path.resolve(cacheDir(""));
+  const copied: string[] = [];
+  const inside = (p: string) => [root, cache].some((r) => p === r || p.startsWith(r + path.sep));
+  const adopt = (value: unknown, folder: string): unknown => {
+    if (typeof value !== "string" || !value || /^(https?:|unsplash:|data:|asset:)/i.test(value)) return value;
+    const src = resolveUserPath(value);
+    if (!existsSync(src) || !statSync(src).isFile()) return value;
+    if (inside(src)) return src;
+    const st = statSync(src);
+    const tag = createHash("sha1").update(`${src}:${st.size}:${st.mtimeMs}`).digest("hex").slice(0, 8);
+    const dest = path.join(ensureDir(path.join(root, folder)), `${slug(path.parse(src).name)}-${tag}${path.extname(src).toLowerCase()}`);
+    if (!existsSync(dest)) {
+      copyFileSync(src, dest);
+      // A capture's notes (device, scale, app) travel with it.
+      if (existsSync(`${src}.json`)) copyFileSync(`${src}.json`, `${dest}.json`);
+      copied.push(dest);
+    }
+    return dest;
+  };
+  const out = structuredClone(scene) as Record<string, unknown>;
+  if (Array.isArray(out.devices)) {
+    out.devices = out.devices.map((d: Record<string, unknown>) => ({
+      ...d,
+      ...(d.screenshot !== undefined ? { screenshot: adopt(d.screenshot, "uploads") } : {}),
+      ...(d.video !== undefined ? { video: adopt(d.video, "uploads") } : {}),
+    }));
+  }
+  const bg = out.background as Record<string, unknown> | string | undefined;
+  if (bg && typeof bg === "object" && bg.photo !== undefined) out.background = { ...bg, photo: adopt(bg.photo, "backdrops") };
+  if (Array.isArray(out.fonts)) out.fonts = out.fonts.map((f: Record<string, unknown>) => ({ ...f, path: adopt(f.path, "fonts") }));
+  return { scene: out as T, copied };
 }
 
 export function duplicateScene(id: unknown): SceneSummary {
@@ -189,6 +256,15 @@ function scheduleThumb(id: string, delay = 3000) {
       queue = queue.then(() => renderThumb(id)).catch(() => undefined);
     }, delay),
   );
+}
+
+/** Render a scene's thumbnail now (after anything already queued) and return its path, if it rendered. */
+export async function sceneThumb(id: string): Promise<string | undefined> {
+  clearTimeout(pending.get(id));
+  pending.delete(id);
+  queue = queue.then(() => renderThumb(id)).catch(() => undefined);
+  await queue;
+  return existsSync(thumbFile(id)) ? thumbFile(id) : undefined;
 }
 
 async function renderThumb(id: string) {

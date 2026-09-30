@@ -40,8 +40,8 @@
   --spring: cubic-bezier(0.34, 1.4, 0.5, 1);
   --topbar: 52px;
   --rail: 64px;
-  --left: 304px;
-  --right: 300px;
+  --left-d: 304px;
+  --right-d: 300px;
   --check: repeating-conic-gradient(#1c1c20 0 25%, #141417 0 50%) 0 0 / 16px 16px;
 }
 @property --spin {
@@ -77,7 +77,10 @@ svg { display: block; flex: none; }
 /* ---------------------------------------------------------------- shell */
 
 .app { position: fixed; inset: 0; display: grid; grid-template-rows: var(--topbar) 1fr; grid-template-columns: var(--rail) auto 1fr auto; background: var(--win); }
+/* Panel widths: the usual ones, or what the person dragged them to. */
+.app { --left: var(--left-w, var(--left-d)); --right: var(--right-w, var(--right-d)); }
 .app.left-closed { --left: 0px; }
+.app.right-closed { --right: 0px; }
 
 .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 var(--traffic, 14px); position: relative; z-index: 30; }
 .native .topbar { --traffic: 84px; }
@@ -154,7 +157,21 @@ svg { display: block; flex: none; }
 .panel { background: var(--panel); border-radius: var(--r-panel); box-shadow: 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .left { grid-row: 2; width: var(--left); margin: 0 8px 8px 0; transition: width 0.3s var(--ease), margin 0.3s var(--ease), opacity 0.2s; }
 .app.left-closed .left { margin-right: 0; opacity: 0; pointer-events: none; }
-.right { grid-row: 2; grid-column: 4; width: var(--right); margin: 0 8px 8px 8px; }
+.right { grid-row: 2; grid-column: 4; width: var(--right); margin: 0 8px 8px 8px; transition: width 0.3s var(--ease), margin 0.3s var(--ease), opacity 0.2s; }
+.app.right-closed .right { margin-left: 0; opacity: 0; pointer-events: none; }
+.app.resizing .left, .app.resizing .right { transition: none; }
+.app.resizing, .app.resizing * { cursor: col-resize !important; user-select: none; -webkit-user-select: none; }
+/* The gap beside each panel is its resize handle. */
+.resizer { position: absolute; top: calc(var(--topbar) + 10px); bottom: 18px; width: 8px; z-index: 25; cursor: col-resize; }
+.resizer.l { left: calc(var(--rail) + var(--left)); }
+.resizer.r { right: calc(var(--right) + 8px); }
+.resizer::after { content: ""; position: absolute; left: 3px; top: 50%; width: 2px; height: 40px; margin-top: -20px; border-radius: 2px; background: var(--iris); opacity: 0; transition: opacity 150ms ease; }
+.resizer:hover::after, .app.resizing .resizer::after { opacity: 1; }
+/* Panel toggles in the canvas corners: quiet until wanted. */
+.panel-toggle { top: 10px; padding: 3px; gap: 1px; border-radius: 10px; opacity: 0.7; transition: opacity 150ms ease; }
+.panel-toggle:hover, .panel-toggle:focus-within { opacity: 1; }
+.panel-toggle.l { left: 10px; }
+.panel-toggle.r { right: 10px; }
 .panel-head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px 16px; min-height: 50px; }
 .panel-head h2 { margin: 0; font: 650 14px var(--display); letter-spacing: -0.015em; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-head .sub { color: var(--text-3); font-weight: 500; font-size: 12px; }
@@ -219,7 +236,7 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 
 /* Segmented control with a sliding thumb. */
 .seg { position: relative; display: flex; background: var(--panel-2); border-radius: 9px; padding: 2px; box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
-.seg button { position: relative; z-index: 1; flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px; height: 26px; padding: 0 8px; border: 0; background: none; color: var(--text-3); font-weight: 550; font-size: 12px; border-radius: 7px; white-space: nowrap; transition: color 0.15s; }
+.seg button { position: relative; z-index: 1; flex: 1; min-width: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 5px; height: 26px; padding: 0 8px; border: 0; background: none; color: var(--text-3); font-weight: 550; font-size: 12px; border-radius: 7px; white-space: nowrap; transition: color 0.15s; }
 .seg button:hover { color: var(--text-2); }
 .seg button.on { color: var(--text); }
 .seg .thumb { position: absolute; top: 2px; bottom: 2px; border-radius: 7px; background: var(--panel-4); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06); transition: left 0.25s var(--spring), width 0.25s var(--spring); }
@@ -375,6 +392,13 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .shape-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; padding: 9px 2px 7px; border: 0; border-radius: 11px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-size: 11px; transition: background-color 140ms ease, box-shadow 140ms ease, transform 160ms ease-out; }
 .shape-tile:hover { background: var(--panel-3); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text); }
 .shape-tile:active { transform: scale(0.97); }
+.shape-tile { cursor: grab; outline: none; user-select: none; -webkit-user-select: none; touch-action: none; }
+.shape-tile:focus-visible { box-shadow: inset 0 0 0 1.5px var(--iris); }
+/* A shape on its way from the panel to the design. */
+.shape-ghost { position: fixed; left: 0; top: 0; z-index: 2000; pointer-events: none; opacity: 0.55; transition: opacity 120ms ease; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35)); }
+.shape-ghost.over { opacity: 1; }
+.shape-ghost svg { overflow: visible; }
+body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .shape-tile.light .shape-prev { background: #e9e9ee; border-radius: 8px; }
 .shape-prev { position: relative; display: block; flex: none; overflow: hidden; pointer-events: none; }
 .shape-tile .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -919,7 +943,7 @@ li.done .work-shot .scan { display: none; }
 @keyframes rot { to { transform: rotate(360deg); } }
 
 @media (max-width: 1180px) {
-  :root { --left: 272px; --right: 276px; }
+  :root { --left-d: 272px; --right-d: 276px; }
 }
 @media (max-width: 980px) {
   .brand-name, .crumb-sep, .scene-name { display: none; }

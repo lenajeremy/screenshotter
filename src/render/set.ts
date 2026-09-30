@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { ensureDir, outputRoot, resolveUserPath, slug, timestamp } from "../util/files.js";
 import { createMockup, renderHtml, type MockupResult } from "./mockup.js";
-import { DeviceInputSchema, MockupInputShape, TextInputSchema, type MockupInput } from "./schema.js";
+import { DeviceInputSchema, MockupInputShape, ShapeInputSchema, TextInputSchema, type MockupInput } from "./schema.js";
 
 const ScreenSchema = z.object({
   screenshot: z.string().optional().describe("Screenshot for a single-device screen."),
@@ -14,6 +14,7 @@ const ScreenSchema = z.object({
   background: MockupInputShape.background,
   textStyle: MockupInputShape.textStyle,
   texts: z.array(TextInputSchema).optional(),
+  shapes: z.array(ShapeInputSchema).max(40).optional().describe("Arrows, circles, boxes and number badges for this screen (see create_mockup)."),
   deviceOverrides: DeviceInputSchema.omit({ screenshot: true })
     .partial()
     .optional()
@@ -77,6 +78,7 @@ export async function createMockupSet(input: MockupSetInput): Promise<MockupSetR
       subheadline: screen.subheadline,
       textStyle: { ...input.textStyle, ...screen.textStyle },
       texts: screen.texts,
+      shapes: screen.shapes,
       fonts: input.fonts,
       format: input.format,
       quality: input.quality,

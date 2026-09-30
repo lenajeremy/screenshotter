@@ -629,6 +629,64 @@ function ShapePreview({ kind, tint }) {
   </span>`;
 }
 
+/**
+ * Drag a shape out of the panel: it follows the pointer at the size it will be, and lands where
+ * it's dropped on the design. A press without a drag adds it in the middle.
+ */
+function dragShape(ev, kind, tint) {
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  const start = { x: ev.clientX, y: ev.clientY };
+  const made = kind.make(tint);
+  const line = made.type === "arrow" || made.type === "line";
+  let ghost = null;
+  let off = { x: 0, y: 0 };
+  const board = () => document.querySelector(".stage .artboard")?.getBoundingClientRect();
+  const over = (e) => {
+    const v = document.querySelector(".stage .viewport")?.getBoundingClientRect();
+    return Boolean(v && e.clientX >= v.left && e.clientX <= v.right && e.clientY >= v.top && e.clientY <= v.bottom);
+  };
+  const move = (e) => {
+    if (!ghost) {
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
+      // Drawn for the design's size on screen, so what you drag is what you get.
+      const a = board();
+      const W = a?.width ?? 640;
+      const H = a?.height ?? 480;
+      const r = renderShape(shapeSpec({ ...made, x: 0.5, y: 0.5, from: line ? { x: 0.38, y: 0.56 } : undefined, to: line ? { x: 0.62, y: 0.44 } : undefined }), W, H);
+      off = { x: r.left - W / 2, y: r.top - H / 2 };
+      ghost = document.createElement("div");
+      ghost.className = "shape-ghost";
+      ghost.style.width = r.width + "px";
+      ghost.style.height = r.height + "px";
+      ghost.innerHTML = r.svg;
+      document.body.append(ghost);
+      document.body.classList.add("dragging-shape");
+    }
+    ghost.style.transform = `translate(${e.clientX + off.x}px, ${e.clientY + off.y}px)`;
+    ghost.classList.toggle("over", over(e));
+  };
+  const up = (e) => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    removeEventListener("keydown", key, true);
+    document.body.classList.remove("dragging-shape");
+    if (!ghost) return e && addShape(kind.id, { tint });
+    ghost.remove();
+    const a = board();
+    if (e && a && over(e)) addShape(kind.id, { tint, at: { x: (e.clientX - a.left) / a.width, y: (e.clientY - a.top) / a.height } });
+  };
+  // Esc lets go without adding anything.
+  const key = (e) => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    up(null);
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+  addEventListener("keydown", key, true);
+}
+
 export function ShapesPanel() {
   const s = useStore();
   const tint = s.shapeTint;
@@ -651,18 +709,15 @@ export function ShapesPanel() {
       setBusy(false);
     }
   };
-  const tile = (k) => html`<button class="shape-tile ${isDark(tint) ? "light" : ""}" title=${`Add ${k.label.toLowerCase()} (or drag it onto the design)`} draggable="true"
-      onClick=${() => addShape(k.id, { tint })}
-      onDragStart=${(e) => {
-        e.dataTransfer.setData("application/x-shape", k.id);
-        e.dataTransfer.effectAllowed = "copy";
-      }}>
+  const tile = (k) => html`<div class="shape-tile ${isDark(tint) ? "light" : ""}" role="button" tabindex="0" title=${`Drag ${k.label.toLowerCase()} onto the design, or click to add it`}
+      onPointerDown=${(e) => dragShape(e, k, tint)}
+      onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addShape(k.id, { tint }))}>
     <${ShapePreview} kind=${k} tint=${tint} /><span class="nm">${k.label}</span>
-  </button>`;
+  </div>`;
   return html`<div class="panel left">
     <div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
     <div class="panel-body">
-      <div class="intro">Point something out, or decorate. Click a shape to add it, or drag it onto the design. Then move, resize and recolour it.</div>
+      <div class="intro">Drag a shape onto your design and drop it where you want it (or click to add it in the middle). Then move, resize, rotate and recolour it.</div>
       <${Section} title="Colour">
         <div class="tints">
           ${TINTS.map((c) => html`<button class="tint ${c === tint ? "on" : ""}" title=${c} style=${{ background: c }} onClick=${() => set({ shapeTint: c })}></button>`)}
@@ -675,15 +730,6 @@ export function ShapesPanel() {
       <${Section} title="Shapes">
         <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "solid").map(tile)}</div>
       <//>
-      ${dev &&
-      html`<${Section} title="Mark something on the screen"
-          right=${html`<button class="btn sm ghost" onClick=${find} disabled=${busy}>${busy ? html`<span class="spinner"></span>` : html`<${Icon} n="search" s=${12} />`}Find text</button>`}>
-        <div class="row"><label>Add a</label><${Seg} value=${s.shapeMark} options=${MARKS} onChange=${(v) => set({ shapeMark: v })} /></div>
-        ${ocr
-          ? html`<div class="note">Click the words to mark${devices.length > 1 ? ` on ${entityLabel(`device-${di + 1}`)}` : ""}. The mark follows them if the device moves.</div>
-              <div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => addShape(s.shapeMark, { tint, around: { device: di + 1 > 1 ? di + 1 : undefined, text: b.text } })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`
-          : html`<div class="note">Press <b>Find text</b>, then click the words to circle, box, point at or number. The mark lands on them and follows the device.</div>`}
-      <//>`}
       ${shapes.length > 0 &&
       html`<${Section} title="In this design" count=${shapes.length}>
         ${shapes.map((sh, i) => {
@@ -698,6 +744,14 @@ export function ShapesPanel() {
             }}><${Icon} n="trash" s=${13} /></button>
           </div>`;
         })}
+      <//>`}
+      ${dev &&
+      html`<${Section} title="Snap to text on the screen" collapsible open=${false} id="shape-snap">
+        <div class="note">Optional. Instead of placing a mark yourself, pick words on the screen: the mark lands on them and follows the device when it moves.</div>
+        <div class="row"><label>Add a</label><${Seg} value=${s.shapeMark} options=${MARKS} onChange=${(v) => set({ shapeMark: v })} /></div>
+        ${ocr
+          ? html`<div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => addShape(s.shapeMark, { tint, around: { device: di + 1 > 1 ? di + 1 : undefined, text: b.text } })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`
+          : html`<button class="btn sm block" onClick=${find} disabled=${busy}>${busy ? html`<span class="spinner"></span>` : html`<${Icon} n="search" s=${12} />`}Find the text${devices.length > 1 ? ` on ${entityLabel(`device-${di + 1}`)}` : ""}</button>`}
       <//>`}
     </div>
   </div>`;

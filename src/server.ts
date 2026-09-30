@@ -12,6 +12,8 @@ import { cropImage, CropInputShape, createGrid, GridInputShape } from "./render/
 import { houseStyle, updateHouseStyle } from "./util/style.js";
 import { DESIGN_GUIDE } from "./design/guide.js";
 import { RECIPES, buildRecipe } from "./design/recipes.js";
+import { adoptFiles, findScene, getScene, libraryFolder, listScenes, saveScene, sceneThumb, useLibrary } from "./studio/scenes.js";
+import { studioFolder } from "./util/studio.js";
 import { recordMac, RecordMacShape, recordWeb, RecordWebShape } from "./capture/record.js";
 import { outputRoot } from "./util/files.js";
 import { captureWeb, WEB_VIEWPORTS } from "./capture/web.js";
@@ -41,6 +43,7 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 - Effects: film grain, vignette, edge blur, colour grade. Shadows: soft/medium/strong/studio. Per device: \`blur\` (soft focus behind a sharp hero device) and \`fade\` (dissolve into the backdrop).
 - Highlights call out UI: lift a row (\`breakout\` makes a card wider than the device), loupe (can sit beside the device), outline, spotlight, blur-rest, blur (hide something private), highlighter, numbered step markers and curved arrows. Target by visible text (on-device OCR) or a rect; find_text lists the text boxes.
 - Shapes: arrows, lines, circles, boxes, triangles, stars and number badges drawn over the scene, each with a fill and a stroke, clean or hand-drawn (sketch). Aim one at text on a screen with \`around\` (an ellipse goes around it, a badge beside it, an arrow to its edge), or place it freely with x/y, or from/to.
+- Studio scenes: list_scenes and get_scene open the designs the person saved in the Studio; save_scene puts a design into it (a new scene by default; replace an existing one only when asked). Every element stays editable there.
 - Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic), fonts from Google Fonts, top/bottom/left/right.
 - Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
 - Layouts include grid (a mosaic of screens). \`camera\` zooms the scene in on a point for a crisp close-up.
@@ -489,6 +492,96 @@ export function createServer(): McpServer {
         const r = await createMockup(request);
         const content: Content = [text({ request, path: r.path, width: r.width, height: r.height, warnings: r.warnings })];
         const img = await image(r.path, 1200);
+        if (img) content.push(img);
+        return content;
+      }),
+  );
+
+  // Scenes live in the Studio's library: the folder of the Studio last opened on this Mac.
+  useLibrary(studioFolder);
+
+  server.registerTool(
+    "list_scenes",
+    {
+      title: "List the Studio's scenes",
+      description:
+        "The designs saved in the Studio (its Scenes page), most recently edited first: id, name, devices, canvas size, headline and when each was last edited. Open one with get_scene.",
+      inputSchema: {
+        query: z.string().optional().describe("Only scenes whose name, headline or devices contain these words."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const q = a.query?.trim().toLowerCase();
+        const scenes = listScenes()
+          .filter((x) => !q || [x.name, x.headline, ...x.deviceNames].some((v) => v?.toLowerCase().includes(q)))
+          .map((x) => ({ id: x.id, name: x.name, devices: x.deviceNames, size: x.size ? `${x.size.width}x${x.size.height}` : undefined, headline: x.headline, editedAt: x.updatedAt, lastEditedBy: x.by ?? "the person" }));
+        return [text({ library: libraryFolder(), scenes })];
+      }),
+  );
+
+  server.registerTool(
+    "get_scene",
+    {
+      title: "Open a Studio scene",
+      description:
+        "A scene saved in the Studio, as a create_mockup request you can change and render, with a preview of how it looks. Give its id (from list_scenes) or its name. To put your changes back in the Studio, use save_scene.",
+      inputSchema: {
+        id: z.string().optional().describe("The scene's id."),
+        name: z.string().optional().describe("The scene's name, or words from it, when you don't have the id."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const s = findScene(a);
+        const content: Content = [text({ id: s.id, name: s.name, editedAt: s.updatedAt, request: s.scene })];
+        const thumb = await sceneThumb(s.id);
+        const img = thumb ? await image(thumb, 1200) : undefined;
+        if (img) content.push(img);
+        return content;
+      }),
+  );
+
+  server.registerTool(
+    "save_scene",
+    {
+      title: "Save a scene to the Studio",
+      description:
+        "Save a design into the Studio's Scenes, where the person can open it and keep editing: every device, caption, text, shape and call-out stays editable there. By default it is saved as a NEW scene and nothing existing changes. To change an existing scene in place, pass its `id` and `replace: true`, and only when the person asked you to change that scene: if they have it open, the change appears on their canvas (as one step they can undo). Files from outside the library are copied in. Render with create_mockup first and look at it; save what you'd be happy to hand over.",
+      inputSchema: {
+        scene: z.object(MockupInputShape).describe("The design: a create_mockup request (output and format settings are ignored)."),
+        name: z.string().max(120).optional().describe("The scene's name. Default: the original's name (a copy is marked as the agent's), else \"Untitled scene\"."),
+        id: z.string().optional().describe("The scene this is an edit of (from list_scenes or get_scene)."),
+        replace: z.boolean().optional().describe("With `id`: overwrite that scene instead of saving a copy. Default false."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        if (a.replace && !a.id) throw new Error("`replace` needs the `id` of the scene to replace.");
+        const original = a.id ? getScene(a.id) : undefined;
+        // Rendering settings belong to an export, not to the design.
+        const { output: _o, preview: _p, quality: _q, format: _f, jpegQuality: _j, deliveryWidth: _d, ...design } = a.scene;
+        const adopted = adoptFiles(design);
+        // Laying it out checks every file and target before anything is written.
+        const layout = await layoutScene(adopted.scene as Parameters<typeof layoutScene>[0]);
+        const saved = saveScene({
+          id: a.replace ? a.id : undefined,
+          name: a.name ?? (original ? (a.replace ? original.name : `${original.name} (agent's version)`) : undefined),
+          scene: adopted.scene,
+          chat: a.replace ? undefined : original?.chat,
+          by: "agent",
+        });
+        const content: Content = [
+          text({
+            saved: { id: saved.id, name: saved.name, replaced: Boolean(a.replace), editedAt: saved.updatedAt },
+            library: libraryFolder(),
+            copiedIntoLibrary: adopted.copied.length ? adopted.copied : undefined,
+            warnings: layout.warnings.length ? layout.warnings : undefined,
+            next: a.replace ? "If the person has this scene open in the Studio, it updates there within a few seconds." : "It's in the Studio under Scenes.",
+          }),
+        ];
+        const thumb = await sceneThumb(saved.id);
+        const img = thumb ? await image(thumb, 1200) : undefined;
         if (img) content.push(img);
         return content;
       }),

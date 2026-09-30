@@ -23,6 +23,7 @@ You have the Screenshotter MCP tools. Use them like a designer who checks their 
 5. **Check.** Look at the preview. Then zoom in: \`crop_image\` with a \`focus\` and \`zoom\` on the headline edges, the callout, the device edge. Anything off (text touching the device, weak contrast, a callout on the wrong row), fix it and render again.
 6. **Compare.** When the direction isn't obvious, render two or three variants (backdrop, layout, type) and lay them side by side with \`create_grid\` (with \`labels\`). Pick the strongest, say why, and refine it.
 7. **Remember.** When the person states a preference ("always Space Black", "less text"), save it with \`remember_style\`.
+8. **Hand it over.** The person's own designs live in the Studio: \`list_scenes\` and \`get_scene\` open them as requests you can change. \`save_scene\` puts a design into the Studio, where every device, text and shape stays editable by hand. It saves a new scene unless you pass the original's \`id\` with \`replace: true\`; replace only when they asked you to change that scene.
 
 Everything is a scene of entities (devices, the caption, texts) with positions as fractions of the canvas; every result lists them. Each output has a \`.mockup.json\` next to it with the exact request, so you can re-render with small changes.
 
