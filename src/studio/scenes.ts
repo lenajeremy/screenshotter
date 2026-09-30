@@ -3,9 +3,12 @@
  * (.studio/scenes/<id>.json), saved as you work, with a small thumbnail rendered in the background.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { createMockup } from "../render/mockup.js";
+import { type Family, findModel } from "../devices/catalog.js";
+import { readSidecar } from "../devices/resolve.js";
+import { defaultCanvasFor } from "../render/layouts.js";
+import { createMockup, resolveCanvas } from "../render/mockup.js";
 import type { MockupInput } from "../render/schema.js";
 import { ensureDir, outputRoot } from "../util/files.js";
 
@@ -19,15 +22,29 @@ export interface SavedScene {
   updatedAt: string;
 }
 
+/** What a scene shows, for filtering: a device family, or a website in a browser frame. */
+export type SceneKind = Family | "web";
+
 export interface SceneSummary {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
   devices: number;
-  /** Thumbnail image, when one has been rendered. */
+  /** The kinds of device in it, in order, without repeats. */
+  kinds: SceneKind[];
+  /** The devices as the scene names them ("iPhone 17 Pro"). */
+  deviceNames: string[];
+  /** The caption as plain text. */
+  headline?: string;
+  /** Canvas size in pixels, when it can be told without laying the scene out. */
+  size?: { width: number; height: number };
+  /** Thumbnail image, when one has been rendered, and when (ms), so cached copies refresh. */
   thumb?: string;
+  thumbAt?: number;
 }
+
+const THUMB_WIDTH = 640;
 
 const dir = () => ensureDir(path.join(outputRoot(), ".studio", "scenes"));
 const file = (id: string) => path.join(dir(), `${id}.json`);
@@ -49,20 +66,74 @@ function write(s: SavedScene) {
   renameSync(tmp, file(s.id));
 }
 
+type SceneDevice = { device?: string; frame?: string; screenshot?: string };
+
+/** What a device shows and what to call it. A device left to detection is told by its capture's notes. */
+function describe(d: SceneDevice): { kind?: SceneKind; name: string } {
+  if (d.frame === "browser") return { kind: "web", name: "Browser" };
+  if (d.frame === "window") return { kind: "mac", name: "Mac window" };
+  if (d.device && (!d.frame || d.frame === "device")) return { kind: findModel(d.device)?.family, name: d.device };
+  const notes = d.screenshot ? readSidecar(d.screenshot) : undefined;
+  const model = notes?.deviceName ? findModel(notes.deviceName) : undefined;
+  const kind: SceneKind | undefined = model?.family ?? (notes?.kind === "web" ? "web" : notes?.kind === "mac" ? "mac" : undefined);
+  // A bare screenshot or card still counts as the platform it was captured on.
+  if (d.frame && d.frame !== "device") return { kind, name: d.frame === "card" ? "Card" : "Screenshot" };
+  if (model) return { kind, name: model.name };
+  if (notes?.kind === "web") return { kind, name: "Browser" };
+  if (notes?.kind === "mac") return { kind, name: notes.app ?? "Mac" };
+  return { name: "Device" };
+}
+
+function summarize(s: SavedScene): SceneSummary {
+  const sc = s.scene as Partial<MockupInput> & { devices: SceneDevice[] };
+  const devices: SceneDevice[] = Array.isArray(sc?.devices) ? sc.devices : [];
+  const described = devices.map(describe);
+  const kinds = described.map((d) => d.kind);
+  let size: SceneSummary["size"];
+  try {
+    // With no canvas set, the engine picks one from the first device (16:9 for a Mac with a phone).
+    const desktop = kinds.some((k) => k === "mac" || k === "web");
+    const mixed = devices.length > 1 && desktop && kinds.some((k) => k && k !== "mac" && k !== "web");
+    const first = kinds[0] === "web" ? "flat" : kinds[0];
+    if (sc.canvas || first) {
+      const c = resolveCanvas(sc.canvas, sc.landscape, mixed ? "16:9" : defaultCanvasFor(first ?? "iphone"));
+      size = { width: c.width, height: c.height };
+    }
+  } catch {
+    // An unknown preset: leave the size out.
+  }
+  const thumb = thumbFile(s.id);
+  const thumbAt = existsSync(thumb) ? statSync(thumb).mtimeMs : undefined;
+  return {
+    id: s.id,
+    name: s.name,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    devices: devices.length,
+    kinds: [...new Set(kinds.filter((k): k is SceneKind => Boolean(k)))],
+    deviceNames: described.map((d) => d.name),
+    headline: typeof sc.headline === "string" ? sc.headline.replace(/\*\*/g, "").replace(/\s+/g, " ").trim() || undefined : undefined,
+    size,
+    thumb: thumbAt ? thumb : undefined,
+    thumbAt: thumbAt ? Math.round(thumbAt) : undefined,
+  };
+}
+
+// Scenes with devices but no thumbnail (imported, or saved before thumbnails) get one, once per run.
+const thumbTried = new Set<string>();
+
 export function listScenes(): SceneSummary[] {
   const out: SceneSummary[] = [];
   for (const f of readdirSync(dir())) {
     if (!f.endsWith(".json")) continue;
     const s = read(f.slice(0, -5));
     if (!s) continue;
-    out.push({
-      id: s.id,
-      name: s.name,
-      createdAt: s.createdAt,
-      updatedAt: s.updatedAt,
-      devices: Array.isArray(s.scene?.devices) ? s.scene.devices.length : 0,
-      thumb: existsSync(thumbFile(s.id)) ? thumbFile(s.id) : undefined,
-    });
+    const summary = summarize(s);
+    if (summary.devices && !summary.thumb && !thumbTried.has(s.id)) {
+      thumbTried.add(s.id);
+      scheduleThumb(s.id, 400);
+    }
+    out.push(summary);
   }
   return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -82,10 +153,13 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   const id = existing?.id ?? randomBytes(8).toString("hex");
   const name = (typeof input.name === "string" && input.name.trim().slice(0, 120)) || existing?.name || "Untitled scene";
   const chat = Array.isArray(input.chat) ? input.chat.slice(-60) : existing?.chat;
-  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, createdAt: existing?.createdAt ?? now, updatedAt: now };
+  // Only a change to the design counts as an edit: not a rename, nor saving it unchanged (switching
+  // scenes, opening the Scenes page), so the list keeps its order.
+  const changed = !existing || JSON.stringify(existing.scene) !== JSON.stringify(input.scene);
+  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt };
   write(saved);
-  scheduleThumb(id);
-  return { id, name, createdAt: saved.createdAt, updatedAt: now, devices: saved.scene.devices.length, thumb: existsSync(thumbFile(id)) ? thumbFile(id) : undefined };
+  if (changed || !existsSync(thumbFile(id))) scheduleThumb(id);
+  return summarize(saved);
 }
 
 export function deleteScene(id: unknown) {
@@ -127,7 +201,7 @@ async function renderThumb(id: string) {
   }
   const tmp = path.join(dir(), `${id}.tmp.jpg`);
   try {
-    await createMockup({ ...(structuredClone(s.scene) as MockupInput), quality: "preview", format: "jpeg", jpegQuality: 78, deliveryWidth: 480, preview: false, output: tmp });
+    await createMockup({ ...(structuredClone(s.scene) as MockupInput), quality: "preview", format: "jpeg", jpegQuality: 78, deliveryWidth: THUMB_WIDTH, preview: false, output: tmp });
     renameSync(tmp, out);
   } catch {
     // A scene that can't render (a missing screenshot) just keeps its old thumbnail.

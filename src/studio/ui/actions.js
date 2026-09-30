@@ -13,6 +13,82 @@ export function recordingFor(p) {
   return S.files.find((f) => f.path === `${stem}.mp4` || f.path === `${stem}.mov`)?.path;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Designs: recipes (complete designs built from your screens) and "Design it for me".
+
+/** What a recipe is built from: the scene's screens (and recordings) and its words. */
+export const recipeInput = (scene = S.scene) => ({
+  devices: (scene.devices ?? []).filter((d) => d.screenshot).map((d) => (d.video ? { screenshot: d.screenshot, video: d.video } : { screenshot: d.screenshot })),
+  ...(scene.headline ? { headline: scene.headline } : {}),
+  ...(scene.subheadline ? { subheadline: scene.subheadline } : {}),
+});
+
+/** Apply a recipe to the current screens: one undo step. */
+export async function applyRecipe(id, { quiet = false } = {}) {
+  const body = recipeInput();
+  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Recipes use your own screens." });
+  try {
+    const { scene } = await api("/api/recipe", { id, ...body });
+    setScene(scene);
+    touch("backdrop");
+    set({ view: "canvas", selected: null });
+    const name = S.recipes?.find((r) => r.id === id)?.name ?? "the design";
+    toast({ kind: "ok", title: quiet ? `Started you off with ${name}` : `Applied ${name}`, text: quiet ? "Undo (⌘Z) for a plain layout, or pick another in Designs." : "Undo (⌘Z) goes back.", timeout: 3200 });
+  } catch (e) {
+    fail(e, "Couldn't apply that design");
+  }
+}
+
+/** Ask Claude for three directions, each rendered, to pick from. */
+export async function designForMe() {
+  if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (S.directions?.busy) return;
+  const started = Date.now();
+  set({ directions: { busy: true, step: "look", started, items: [], error: null } });
+  try {
+    const res = await fetch("/api/ai-directions", {
+      method: "POST",
+      headers: { "x-screenshotter": "studio", "Content-Type": "application/json" },
+      body: JSON.stringify({ request: S.scene, model: S.ai.model || undefined, preview: S.ai.preview !== false }),
+    });
+    if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const ev = JSON.parse(line);
+        if (ev.type === "progress") set({ directions: { ...S.directions, step: ev.step === "check" ? "render" : ev.step } });
+        else if (ev.type === "error") throw new Error(ev.error);
+        else if (ev.type === "result") {
+          set({ directions: { busy: false, items: ev.directions, took: Math.round((Date.now() - started) / 1000), base: S.scene } });
+          return;
+        }
+      }
+    }
+    throw new Error("It stopped before it finished. Try again.");
+  } catch (e) {
+    set({ directions: { busy: false, items: [], error: e.message } });
+  }
+}
+
+/** Use one of the directions: one undo step. */
+export function applyDirection(i) {
+  const d = S.directions?.items?.[i];
+  if (!d) return;
+  setScene(d.request);
+  touch("backdrop");
+  set({ view: "canvas", selected: null, directions: { ...S.directions, picked: i } });
+  toast({ kind: "ok", title: d.name, text: "Undo (⌘Z) goes back, or pick another.", timeout: 2600 });
+}
+
 export function addDevice(path, at = {}) {
   const d = { screenshot: path };
   const video = at.video ?? recordingFor(path);
@@ -25,8 +101,11 @@ export function addDevice(path, at = {}) {
     const first = S.layout?.entities.find((e) => e.kind === "device");
     if (first) d.height = r4(first.height);
   }
+  // A fresh scene's first screen starts from a design that works, not a plain layout.
+  const pristine = !S.scene.devices?.length && !S.scene.headline && !S.scene.layout && !S.scene.effects && S.scene.background === DEFAULT_SCENE.background && at.x === undefined && !at.frame;
   setScene(next);
   set({ selected: `device-${next.devices.length}`, view: "canvas", replacing: null });
+  if (pristine) return applyRecipe("bold-hero", { quiet: true });
 }
 
 /** Put a capture on the selected device, or start the scene with it. */
@@ -64,6 +143,11 @@ export function deleteEntity(id) {
     edit((d) => d.devices.splice(idx(id), 1));
   } else if (id.startsWith("text-")) {
     edit((d) => d.texts.splice(idx(id), 1));
+  } else if (id.startsWith("shape-")) {
+    edit((d) => {
+      d.shapes.splice(idx(id), 1);
+      if (!d.shapes.length) delete d.shapes;
+    });
   }
   set({ selected: null });
 }
@@ -80,6 +164,25 @@ export function duplicateEntity(id) {
       d.devices.push(copy);
     });
     set({ selected: `device-${S.scene.devices.length}` });
+  } else if (id.startsWith("shape-")) {
+    // The copy sits a little down and right, free of any target, with the next number on a badge.
+    const g = e?.shape;
+    edit((d) => {
+      const copy = clone(d.shapes[idx(id)]);
+      delete copy.around;
+      delete copy.at;
+      if (g && (g.type === "arrow" || g.type === "line")) {
+        copy.from = { x: r4(g.from.x + 0.03), y: r4(g.from.y + 0.03) };
+        copy.to = { x: r4(g.to.x + 0.03), y: r4(g.to.y + 0.03) };
+        copy.bend = g.bend;
+      } else if (g) {
+        Object.assign(copy, { x: r4(g.x + 0.03), y: r4(g.y + 0.03), size: r4(g.size), aspect: Math.round(g.aspect * 1000) / 1000 });
+        if (g.rotate) copy.rotate = g.rotate;
+      }
+      if (copy.type === "badge" && /^\d+$/.test(g?.label ?? copy.label ?? "")) copy.label = String(Number(g?.label ?? copy.label) + 1);
+      d.shapes.push(copy);
+    });
+    set({ selected: `shape-${S.scene.shapes.length}` });
   } else {
     edit((d) => {
       const copy = clone(d.texts[idx(id)]);
@@ -104,7 +207,56 @@ export function moveZ(id, dir) {
   edit((d) => {
     if (id.startsWith("device-")) d.devices[idx(id)].z = z;
     else if (id.startsWith("text-")) d.texts[idx(id)].z = z;
+    else if (id.startsWith("shape-")) d.shapes[idx(id)].z = z;
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shapes
+
+/** What each shape in the Shapes panel starts as. `tint` is the panel's colour: the stroke of a mark, the fill of a solid. */
+export const SHAPE_KINDS = [
+  { id: "arrow", label: "Arrow", icon: "arrow", group: "mark", make: (tint) => ({ type: "arrow", stroke: tint, strokeWidth: 0.006, bend: 0.3 }) },
+  { id: "sketch-arrow", label: "Drawn arrow", icon: "arrow", group: "mark", make: (tint) => ({ type: "arrow", stroke: tint, strokeWidth: 0.006, bend: 0.35, sketch: true }) },
+  { id: "circle-it", label: "Circle it", icon: "circled", group: "mark", make: (tint) => ({ type: "ellipse", stroke: tint, fill: "none", strokeWidth: 0.005, size: 0.09, aspect: 1.6, sketch: true }) },
+  { id: "box", label: "Box", icon: "square", group: "mark", make: (tint) => ({ type: "rect", stroke: tint, fill: "none", strokeWidth: 0.005, size: 0.08, aspect: 1.8, radius: 0.2 }) },
+  { id: "badge", label: "Number", icon: "badge", group: "mark", make: (tint) => ({ type: "badge", fill: tint, stroke: "#ffffff", labelColor: "#ffffff" }) },
+  { id: "line", label: "Line", icon: "line", group: "mark", make: (tint) => ({ type: "line", stroke: tint, strokeWidth: 0.005, bend: 0 }) },
+  { id: "rect", label: "Rectangle", icon: "square", group: "solid", make: (tint) => ({ type: "rect", fill: tint, stroke: "none", size: 0.1, aspect: 1.6, radius: 0.12 }) },
+  { id: "ellipse", label: "Circle", icon: "ellipse", group: "solid", make: (tint) => ({ type: "ellipse", fill: tint, stroke: "none", size: 0.1, aspect: 1 }) },
+  { id: "pill", label: "Pill", icon: "square", group: "solid", make: (tint) => ({ type: "rect", fill: tint, stroke: "none", size: 0.06, aspect: 3.2, radius: 0.5 }) },
+  { id: "triangle", label: "Triangle", icon: "triangle", group: "solid", make: (tint) => ({ type: "triangle", fill: tint, stroke: "none", size: 0.08, aspect: 1.1 }) },
+  { id: "star", label: "Star", icon: "star", group: "solid", make: (tint) => ({ type: "star", fill: tint, stroke: "none", size: 0.08, aspect: 1 }) },
+];
+
+const lineKind = (t) => t === "arrow" || t === "line";
+
+/**
+ * Add a shape: in free space near the middle (staggered so a few in a row don't stack), at a point
+ * (canvas fractions, from a drop), or aimed at text on a screen with `around`.
+ */
+export function addShape(kind, { tint = "#ff3b30", at, around } = {}) {
+  const k = SHAPE_KINDS.find((x) => x.id === kind);
+  if (!k) return;
+  const shapes = S.scene.shapes ?? [];
+  if (shapes.length >= 40) return toast({ kind: "warn", title: "Forty shapes is the limit" });
+  const sh = k.make(tint);
+  if (sh.type === "badge") sh.label = String(shapes.filter((x) => x.type === "badge").length + 1);
+  if (around) sh.around = around;
+  else {
+    const off = (shapes.length % 5) * 0.035;
+    const c = at ?? { x: 0.5 + off, y: 0.5 + off };
+    if (lineKind(sh.type)) {
+      sh.from = { x: r4(c.x - 0.12), y: r4(c.y + 0.06) };
+      sh.to = { x: r4(c.x + 0.12), y: r4(c.y - 0.06) };
+    } else {
+      sh.x = r4(c.x);
+      sh.y = r4(c.y);
+    }
+  }
+  edit((d) => (d.shapes = [...(d.shapes ?? []), sh]));
+  touch("shape");
+  set({ selected: `shape-${shapes.length + 1}`, view: "canvas" });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -676,11 +828,11 @@ export async function newScene() {
 }
 
 export async function openScene(id) {
-  if (id === S.sceneId) return set({ scenesOpen: false });
+  if (id === S.sceneId) return set({ scenesOpen: false, scenesPage: false });
   await saveSceneNow();
   try {
     const saved = await api(`/api/scene?id=${encodeURIComponent(id)}`);
-    set({ scene: saved.scene, sceneId: saved.id, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, sceneId: saved.id, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
@@ -695,10 +847,12 @@ export async function saveNow() {
   toast({ kind: "ok", title: "Saved", text: `“${S.sceneName}” is in your scenes.`, timeout: 2200 });
 }
 
-export async function renameSavedScene(id) {
+/** Rename a saved scene: to `to`, or to what the person types in a sheet. */
+export async function renameSavedScene(id, to) {
   const current = S.scenes.find((x) => x.id === id);
-  const name = await promptDialog({ title: "Rename scene", value: current?.name ?? S.sceneName, confirm: "Rename" });
-  if (!name?.trim()) return;
+  const name = to ?? (await promptDialog({ title: "Rename scene", value: current?.name ?? S.sceneName, confirm: "Rename" }));
+  if (!name?.trim() || name.trim() === current?.name) return;
+  set({ scenes: S.scenes.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)) });
   if (id === S.sceneId) {
     set({ sceneName: name.trim() });
     persist();
@@ -718,6 +872,8 @@ export async function duplicateSavedScene(id) {
   try {
     const copy = await api("/api/scenes/duplicate", { id });
     await refreshScenes();
+    set({ freshScene: copy.id });
+    setTimeout(() => S.freshScene === copy.id && set({ freshScene: null }), 1600);
     toast({ kind: "ok", title: "Duplicated", text: copy.name, actions: [{ label: "Open", run: () => openScene(copy.id) }] });
   } catch (e) {
     fail(e, "Couldn't duplicate");

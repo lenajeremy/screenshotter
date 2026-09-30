@@ -42,6 +42,7 @@ export function Inspector() {
   if (!id) body = html`<${SceneInspector} />`;
   else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
   else if (id === "caption") body = html`<${CaptionInspector} />`;
+  else if (id.startsWith("shape-")) body = html`<${ShapeInspector} id=${id} />`;
   else body = html`<${TextInspector} id=${id} />`;
   return html`<aside class="panel right">${body}</aside>`;
 }
@@ -431,6 +432,118 @@ function TextInspector({ id }) {
       <${Section} title="Badge">
         <div class="row"><label>Pill colour</label><${ColorButton} value=${t.background} auto="None" onChange=${(v) => upd((x) => (x.background = v), "bg")} /></div>
         <${Switch} checked=${Boolean(t.shadow)} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft text shadow" />
+      <//>
+    </div>`;
+}
+
+// =============================================================================================
+// Shapes
+
+const HEADS = [
+  { value: "none", label: "None" },
+  { value: "end", label: "End" },
+  { value: "start", label: "Start" },
+  { value: "both", label: "Both" },
+];
+const DASH_OPTIONS = [
+  { value: "solid", label: "Solid" },
+  { value: "dashed", label: "Dashed" },
+  { value: "dotted", label: "Dotted" },
+];
+const BOX_TYPES = [
+  { value: "ellipse", label: "", title: "Ellipse", icon: "ellipse" },
+  { value: "rect", label: "", title: "Rectangle", icon: "square" },
+  { value: "triangle", label: "", title: "Triangle", icon: "triangle" },
+  { value: "star", label: "", title: "Star", icon: "star" },
+];
+const LINE_TYPES = [
+  { value: "arrow", label: "Arrow", icon: "arrow" },
+  { value: "line", label: "Line", icon: "line" },
+];
+
+function ShapeInspector({ id }) {
+  const s = useStore();
+  const i = Number(id.split("-")[1]) - 1;
+  const sh = s.scene.shapes?.[i];
+  // The shape as drawn: what it leaves unsaid filled in, and its target (if any) found.
+  const g = s.layout?.entities.find((x) => x.id === id)?.shape;
+  if (!sh || !g) return null;
+  const W0 = s.layout?.canvas.width ?? 1000;
+  const H0 = s.layout?.canvas.height ?? 1000;
+  const upd = (fn, key) => edit((d) => fn(d.shapes[i]), key && `s${i}.${key}`);
+  const line = g.type === "arrow" || g.type === "line";
+  const badge = g.type === "badge";
+  // Setting the geometry by hand places it, so it stops following its target.
+  const place = (fn, key) =>
+    upd((x) => {
+      if (x.around) {
+        if (line) Object.assign(x, { from: { ...g.from }, to: { ...g.to }, bend: g.bend });
+        else Object.assign(x, { x: r4(g.x), y: r4(g.y), size: r4(g.size), aspect: Math.round(g.aspect * 1000) / 1000 });
+        delete x.around;
+        delete x.at;
+      }
+      fn(x);
+    }, key);
+  const colour = (v) => (v && v !== "none" ? v : undefined);
+  const strokeOn = g.stroke !== "none" && g.strokeWidth > 0;
+  const widthFrac = g.strokeWidth < 1 ? g.strokeWidth : g.strokeWidth / H0;
+  return html`
+    <${Head} title=${entityLabel(id)} id=${id} />
+    <div class="panel-body">
+      ${sh.around &&
+      html`<div class="follow-note"><${Icon} n="link" s=${13} /><span>Follows <b>“${sh.around.text}”</b> on the screen. Drag it to place it yourself.</span></div>`}
+      <${Section} title="Shape">
+        ${!badge && html`<${Seg} value=${g.type} options=${line ? LINE_TYPES : BOX_TYPES} onChange=${(v) => upd((x) => {
+          x.type = v;
+          if (v === "line") x.head ??= g.head === "end" ? "none" : g.head;
+          else if (v === "arrow" && (x.head ?? "none") === "none") delete x.head;
+        })} />`}
+        ${badge && html`<div class="row"><label>Label</label><${TextField} value=${g.label} placeholder="1" onChange=${(v) => upd((x) => (x.label = (v ?? "").slice(0, 4) || undefined), "label")} /></div>`}
+        ${line &&
+        html`<div class="row"><label>Heads</label><${Seg} value=${g.head} options=${HEADS} onChange=${(v) => upd((x) => (x.head = v))} /></div>
+          <div class="row"><label>Curve</label><${Slider} value=${g.bend} min=${-1} max=${1} step=${0.01} centered reset=${0} format=${(v) => (v ? Math.round(v * 100) + "%" : "Straight")} onChange=${(v) => place((x) => (x.bend = v ?? 0), "bend")} /></div>`}
+        ${g.type === "rect" && html`<div class="row"><label>Corners</label><${Slider} value=${g.radius} min=${0} max=${0.5} step=${0.01} format=${(v) => (v >= 0.5 ? "Pill" : v ? Math.round(v * 200) + "%" : "Square")} onChange=${(v) => upd((x) => (x.radius = v ?? 0), "radius")} /></div>`}
+        ${g.type === "star" && html`<div class="row"><label>Points</label><${Slider} value=${g.points} min=${3} max=${12} step=${1} format=${(v) => String(v)} onChange=${(v) => upd((x) => (x.points = v ?? 5), "points")} /></div>`}
+        <${Switch} checked=${g.sketch} onChange=${(v) => upd((x) => (x.sketch = v || undefined))} label="Hand-drawn" />
+        ${g.sketch && html`<button class="btn sm ghost" onClick=${() => upd((x) => (x.seed = (g.seed % 97) + 1))}><${Icon} n="refresh" s=${12} />Redraw it</button>`}
+      <//>
+      ${!line &&
+      html`<${Section} title="Fill">
+        <div class="row"><label>Colour</label><${ColorButton} value=${colour(g.fill)} auto="None" onChange=${(v) => upd((x) => (x.fill = v ?? "none"), "fill")} /></div>
+        ${badge && html`<div class="row"><label>Label colour</label><${ColorButton} value=${g.labelColor} allowAuto=${false} onChange=${(v) => upd((x) => (x.labelColor = v), "labelColor")} /></div>`}
+      <//>`}
+      <${Section} title=${badge ? "Ring" : "Stroke"}>
+        <div class="row"><label>Colour</label><${ColorButton} value=${colour(g.stroke)} auto="None" allowAuto=${!line}
+          onChange=${(v) => upd((x) => {
+            x.stroke = v ?? "none";
+            if (v && !(g.strokeWidth > 0)) x.strokeWidth = 0.005;
+          }, "stroke")} /></div>
+        ${strokeOn &&
+        html`<div class="row"><label>Width</label><${Slider} value=${widthFrac} min=${0.001} max=${0.03} step=${0.0005} format=${(v) => Math.max(1, Math.round(v * H0)) + " px"} onChange=${(v) => upd((x) => (x.strokeWidth = v ?? 0.005), "sw")} /></div>
+          <div class="row"><label>Style</label><${Seg} value=${g.dash} options=${DASH_OPTIONS} onChange=${(v) => upd((x) => (x.dash = v === "solid" ? undefined : v))} /></div>`}
+      <//>
+      <${Section} title="Size & position">
+        ${line
+          ? html`<div class="grid2">
+                <${Num} label="From X" value=${g.from.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.from = { ...g.from, x: r4(v) }), "fx")} />
+                <${Num} label="Y" value=${g.from.y} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.from = { ...g.from, y: r4(v) }), "fy")} />
+                <${Num} label="To X" value=${g.to.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.to = { ...g.to, x: r4(v) }), "tx")} />
+                <${Num} label="Y" value=${g.to.y} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.to = { ...g.to, y: r4(v) }), "ty")} />
+              </div>`
+          : html`<div class="grid2">
+                <${Num} label="X" value=${g.x} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.x = r4(v)), "x")} />
+                <${Num} label="Y" value=${g.y} ...${pct} onChange=${(v) => v !== undefined && place((x) => (x.y = r4(v)), "y")} />
+                <${Num} label="W" value=${g.size * g.aspect} scale=${H0} unit="px" min=${4 / H0} max=${4} onChange=${(v) => v !== undefined && place((x) => (x.aspect = Math.round((v / g.size) * 1000) / 1000), "w")} />
+                <${Num} label="H" value=${g.size} scale=${H0} unit="px" min=${4 / H0} max=${2} onChange=${(v) => v !== undefined && place((x) => {
+                  x.aspect = Math.round(((g.size * g.aspect) / v) * 1000) / 1000;
+                  x.size = r4(v);
+                }, "h")} />
+              </div>
+              <div class="row"><label>Rotation</label><${Slider} value=${g.rotate} min=${-180} max=${180} step=${1} centered reset=${0} format=${(v) => v + "°"} onChange=${(v) => upd((x) => (x.rotate = v || undefined), "rot")} /></div>`}
+      <//>
+      <${Section} title="Look">
+        <div class="row"><label>Opacity</label><${Slider} value=${g.opacity} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
+        <${Switch} checked=${g.shadow} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft shadow" />
       <//>
     </div>`;
 }

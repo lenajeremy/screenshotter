@@ -1,5 +1,29 @@
 # What's new
 
+## 0.3.0 · 30 September 2026
+
+### Highlights
+- **Scenes, full window.** Every design you've made on one page, like a file browser: large previews grouped by when you last worked on them, or a list with devices, size and dates. Filter by iPhone, iPad, Mac, Watch or web, sort, and search by name, headline or device. Open it from the top of the left rail or with ⇧⌘O.
+- **Designs.** A new tab of complete, proven designs made from your screen and its colours: bold hero, art director, in the gallery, risograph print, 3D tilt, depth of field, rising pair, staircase, mosaic, feature call-out, how-to and dissolve. One click, then make it yours.
+- **Design it for me.** Claude makes three different designs from your screens, renders each, and you pick one.
+- **Shapes.** Arrows, lines, circles, boxes, triangles, stars and number badges you can drop anywhere, each with its own fill and stroke. Drag to move, pull a corner or a side to resize, turn the handle to rotate; arrows have an end to drag at each tip and a handle to curve them. Clean, or hand-drawn like a marker.
+
+### Scenes
+- Rename right on the card, duplicate (⌘D) or delete (⌫); arrow keys move between scenes and Return opens one.
+- Start from the Scenes page: a blank scene, your latest screen framed in a finished design, or three designs by Claude. Drop images on the page to start a new scene with them.
+- The scene you have open is marked, and opening or renaming a scene no longer counts as editing it, so the order stays put.
+- Sharper previews.
+
+### Shapes
+- The new Shapes tab: pick a colour, click a shape to add it or drag it onto the design.
+- Mark something on the screen: press Find text and click the words to circle, box, point at or number. The mark lands on them and follows the device when it moves.
+- Fill, stroke colour and width, dashed or dotted lines, corner radius, star points, opacity and a soft shadow, all in the right-hand panel.
+- Ask AI can add and restyle shapes ("circle the price and point an arrow at it from the headline"), and so can agents through the MCP server.
+
+### Designs
+- A new scene's first screenshot starts from the bold hero design instead of a plain layout.
+- For AI agents: apply_recipe builds any of these designs through the MCP server.
+
 ## 0.2.0 · 30 September 2026
 
 ### Highlights

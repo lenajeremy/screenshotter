@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ARROW_HEADS, DASHES, SHAPE_TYPES } from "./shapes.js";
 
 // ---------------------------------------------------------------------------------------------
 // Background
@@ -295,6 +296,51 @@ export const TextInputSchema = z.object({
   z: z.number().optional(),
 });
 
+// ---------------------------------------------------------------------------------------------
+// Shapes
+
+const PointSchema = z.object({ x: z.number().describe("0 = left edge, 1 = right edge."), y: z.number().describe("0 = top edge, 1 = bottom edge.") });
+
+export const ShapeInputSchema = z.object({
+  type: z
+    .enum(SHAPE_TYPES)
+    .describe("arrow, line, ellipse (circles and ovals), rect (boxes, rounded or pill), triangle, star, badge (a filled circle with a number or letter, for steps)."),
+  x: z.number().optional().describe("Box shapes: centre x as a fraction of the canvas width. Default 0.5 (ignored with `around`)."),
+  y: z.number().optional().describe("Centre y as a fraction of the canvas height. Default 0.5."),
+  size: z.number().positive().max(2).optional().describe("Box shapes: height as a fraction of the canvas height (badge default 0.045, ellipse 0.1)."),
+  aspect: z.number().positive().max(40).optional().describe("Width ÷ height in pixels: 1 is a circle or square, 2 twice as wide. Default 1.5 for an ellipse, 1.7 for a rect."),
+  rotate: z.number().optional().describe("Degrees, clockwise."),
+  from: PointSchema.optional().describe("Arrow/line: where it starts (canvas fractions). With `around`, defaults to a spot beside the target."),
+  to: PointSchema.optional().describe("Arrow/line: where it ends; the head goes here. With `around`, the edge of the target."),
+  bend: z.number().min(-1).max(1).optional().describe("Arrow/line: how much it curves, -1 to 1 (0 straight, the sign picks the side). Default 0.3 for arrows."),
+  head: z.enum(ARROW_HEADS).optional().describe("Arrow/line: where the arrowheads go. Default end for arrows, none for lines."),
+  around: z
+    .object({
+      device: z.number().int().min(1).optional().describe("Which device, 1 = the first. Default 1."),
+      text: z.string().describe("Visible text on that device's screen, found by on-device OCR, e.g. \"Allow\"."),
+      match: z.number().int().min(1).optional().describe("Which match of the text, top to bottom. Default 1."),
+      padding: z.number().min(0).optional().describe("Room around the text as a fraction of canvas height. Default 0.012."),
+    })
+    .optional()
+    .describe(
+      "Aim the shape at something on a screen, so it follows the device: an ellipse or rect goes around the text, a badge sits beside it (see `at`), an arrow or line ends at its edge. Works on flat devices; 3D tilt isn't followed.",
+    ),
+  at: z.enum(["right", "left", "top", "bottom"]).optional().describe("badge with `around`: which side of the target it sits on. Default right."),
+  fill: z.string().optional().describe('Fill colour, or "none". Default none for outlines (ellipse, rect), yellow for triangle and star, red for badge.'),
+  stroke: z.string().optional().describe('Stroke colour, or "none". Default red (#ff3b30) for arrows, lines and outlines; white for a badge ring.'),
+  strokeWidth: z.number().min(0).optional().describe("Stroke width: a fraction of canvas height when < 1 (0.005 is a clear line), or px. Arrows also scale their heads with it."),
+  dash: z.enum(DASHES).optional().describe("Stroke pattern. Default solid."),
+  radius: z.number().min(0).max(0.5).optional().describe("rect: corner radius as a share of the shorter side; 0.5 makes a pill. Default 0.2."),
+  points: z.number().int().min(3).max(12).optional().describe("star: number of points. Default 5."),
+  label: z.string().max(4).optional().describe("badge: the number or letter. Default 1, 2, 3… in list order."),
+  labelColor: z.string().optional().describe("badge: label colour. Default white."),
+  sketch: z.boolean().optional().describe("Hand-drawn, like a marker: a ring that overshoots its start, edges that overshoot their corners, open arrowheads. Default false."),
+  seed: z.number().int().optional().describe("sketch: pick a different wobble."),
+  opacity: z.number().min(0).max(1).optional(),
+  shadow: z.boolean().optional().describe("A soft drop shadow, to lift the shape off a busy backdrop."),
+  z: z.number().optional().describe("Stacking order; higher is in front. Default 40, in front of devices and text."),
+});
+
 export const TextStyleSchema = z
   .object({
     font: z.string().optional().describe("Headline font (and the subheadline's unless subheadlineFont is set): sf-pro (default), sf-rounded, new-york, sf-mono, or a Google Fonts / installed family."),
@@ -342,6 +388,11 @@ export const MockupInputShape = {
   subheadline: z.string().optional(),
   textStyle: TextStyleSchema,
   texts: z.array(TextInputSchema).optional().describe("Extra free-positioned text (badges, ratings, labels)."),
+  shapes: z
+    .array(ShapeInputSchema)
+    .max(40)
+    .optional()
+    .describe("Drawn shapes over the scene: arrows, lines, circles, boxes, stars and number badges, for pointing things out or decoration. Aim one at text on a screen with `around`."),
   menuBar: SceneMenuBarSchema.optional(),
   camera: z
     .object({
@@ -364,6 +415,7 @@ export const MockupInputSchema = z.object(MockupInputShape);
 export type MockupInput = z.infer<typeof MockupInputSchema>;
 export type DeviceInput = z.infer<typeof DeviceInputSchema>;
 export type TextInput = z.infer<typeof TextInputSchema>;
+export type ShapeInput = z.infer<typeof ShapeInputSchema>;
 export type BackgroundInput = z.infer<typeof BackgroundSchema>;
 export type BackgroundObject = z.infer<typeof BackgroundObjectSchema>;
 export type EffectsInput = z.infer<typeof EffectsSchema>;

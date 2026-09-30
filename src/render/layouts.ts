@@ -183,10 +183,11 @@ export function computeLayout(
   // a third; `rising` counter-rotates them. They may run off the bottom edge.
   if (layout === "staircase" || layout === "rising") {
     const wide = shape === "landscape";
-    const h = hasText ? (wide ? 0.82 : 0.6) : wide ? 0.9 : 0.68;
-    const spread = Math.min(wide ? 0.34 : 0.42, (wide ? 0.13 : 0.36) * (n - 1));
+    // Big screens that run off the bottom edge: the steps read as a sequence, not a gallery.
+    const h = hasText ? (wide ? 0.82 : 0.62) : wide ? 0.9 : 0.7;
+    const spread = Math.min(wide ? 0.34 : 0.4, (wide ? 0.13 : 0.38) * (n - 1));
     const step = (wide ? 0.07 : 0.05) * (n > 1 ? 2 / n : 0);
-    const base = hasText ? (up ? 0.42 : wide ? 0.62 : 0.64) : 0.54;
+    const base = hasText ? (up ? 0.4 : wide ? 0.62 : 0.7) : 0.56;
     const devices = Array.from({ length: n }, (_, i) => {
       const t = n > 1 ? i / (n - 1) : 0.5;
       const rotate = layout === "rising" ? (t < 0.5 ? -7 : t > 0.5 ? 6 : 0) : 0;

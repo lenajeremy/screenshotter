@@ -3,9 +3,41 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, clamp, edit, entityLabel, fileUrl, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode } from "./actions.js";
+import { addDevice, addShape, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode } from "./actions.js";
+import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
 export const canvasApi = { fit: () => {}, zoomBy: () => {}, zoomTo: () => {}, editText: () => {} };
+
+/**
+ * A shape entity with its shape changed by `fn`, and its box worked out again (canvas fractions).
+ * W0 and H0 are the canvas size in pixels.
+ */
+export function withShape(e, fn, W0, H0) {
+  const sh = JSON.parse(JSON.stringify(e.shape));
+  fn(sh);
+  if (isLine(sh.type)) {
+    return { ...e, shape: sh, x: (sh.from.x + sh.to.x) / 2, y: (sh.from.y + sh.to.y) / 2, width: Math.abs(sh.to.x - sh.from.x), height: Math.abs(sh.to.y - sh.from.y), rotate: 0 };
+  }
+  return { ...e, shape: sh, x: sh.x, y: sh.y, width: (sh.size * H0 * sh.aspect) / W0, height: sh.size, rotate: sh.rotate };
+}
+
+function ShapeEnt({ e, W, H }) {
+  const r = renderShape(e.shape, W, H, { hit: 14 });
+  return html`<div class="shape-svg" dangerouslySetInnerHTML=${{ __html: r.svg }}></div>`;
+}
+
+function placeShape(e, W, H) {
+  const r = renderShape(e.shape, W, H, { hit: 14 });
+  return {
+    left: r.left + "px",
+    top: r.top + "px",
+    width: r.width + "px",
+    height: r.height + "px",
+    transform: r.rotate ? `rotate(${r.rotate}deg)` : undefined,
+    filter: r.filter,
+    zIndex: e.z,
+  };
+}
 
 const PAD = 72;
 const TOP = 96;
@@ -114,6 +146,7 @@ const rich = (text, accent = {}) =>
     });
 
 function place(e, W, H) {
+  if (e.kind === "shape") return placeShape(e, W, H);
   if (e.kind === "device") {
     return {
       left: e.x * W + "px",
@@ -420,8 +453,11 @@ export function CanvasView() {
       targets.xs.push(b.l, (b.l + b.r) / 2, b.r);
       targets.ys.push(b.t, (b.t + b.b) / 2, b.b);
     }
-    const mode = handle === "rot" ? "rotate" : handle ? "resize" : "move";
+    const mode = handle === "rot" ? "rotate" : handle === "from" || handle === "to" || handle === "bend" ? handle : /^[nsew]$/.test(handle ?? "") ? "stretch" : handle ? "resize" : "move";
     const start = { x: ev.clientX, y: ev.clientY };
+    // Shapes: the pointer in canvas pixels, and the box as it was.
+    const at = (e) => ({ x: ((e.clientX - a.left) / W) * W0, y: ((e.clientY - a.top) / H) * H0 });
+    const sh0 = e0.shape;
     let moved = false;
     let cur = { ...e0 };
     const tolX = 6 / W;
@@ -456,11 +492,61 @@ export function CanvasView() {
         if (e.shiftKey) Math.abs(dx) > Math.abs(dy) ? (fy = 0) : (fx = 0);
         cur.x = e0.x + fx;
         cur.y = e0.y + fy;
+        if (sh0) {
+          cur = withShape(e0, (sh) => {
+            if (isLine(sh.type)) {
+              for (const k of ["from", "to"]) sh[k] = { x: sh0[k].x + fx, y: sh0[k].y + fy };
+            } else {
+              sh.x = sh0.x + fx;
+              sh.y = sh0.y + fy;
+            }
+          }, W0, H0);
+        }
+      } else if (sh0 && (mode === "from" || mode === "to")) {
+        // Drag an end; Shift keeps the line to 15° steps.
+        const other = sh0[mode === "from" ? "to" : "from"];
+        let p = at(e);
+        if (e.shiftKey) {
+          const ox = other.x * W0;
+          const oy = other.y * H0;
+          const len = Math.hypot(p.x - ox, p.y - oy);
+          const ang = Math.round(Math.atan2(p.y - oy, p.x - ox) / (Math.PI / 12)) * (Math.PI / 12);
+          p = { x: ox + Math.cos(ang) * len, y: oy + Math.sin(ang) * len };
+        }
+        cur = withShape(e0, (sh) => (sh[mode] = { x: p.x / W0, y: p.y / H0 }), W0, H0);
+      } else if (sh0 && mode === "bend") {
+        const p = at(e);
+        cur = withShape(e0, (sh) => (sh.bend = Math.abs(bendThrough(sh0, p, W0, H0)) < 0.04 ? 0 : bendThrough(sh0, p, W0, H0)), W0, H0);
+      } else if (sh0 && mode === "stretch") {
+        // Pull one side; the opposite side stays put.
+        const p = at(e);
+        const rad = ((sh0.rotate || 0) * Math.PI) / 180;
+        const horiz = handle === "e" || handle === "w";
+        const u = horiz ? { x: Math.cos(rad), y: Math.sin(rad) } : { x: -Math.sin(rad), y: Math.cos(rad) };
+        const sign = handle === "e" || handle === "s" ? 1 : -1;
+        const h0 = sh0.size * H0;
+        const w0 = h0 * sh0.aspect;
+        const half = (horiz ? w0 : h0) / 2;
+        const c0 = { x: sh0.x * W0, y: sh0.y * H0 };
+        const fixed = { x: c0.x - u.x * sign * half, y: c0.y - u.y * sign * half };
+        const len = Math.max(6, sign * ((p.x - fixed.x) * u.x + (p.y - fixed.y) * u.y));
+        const c = { x: fixed.x + (u.x * sign * len) / 2, y: fixed.y + (u.y * sign * len) / 2 };
+        cur = withShape(e0, (sh) => {
+          sh.x = c.x / W0;
+          sh.y = c.y / H0;
+          if (horiz) sh.aspect = len / h0;
+          else {
+            sh.size = len / H0;
+            sh.aspect = w0 / len;
+          }
+        }, W0, H0);
       } else if (mode === "resize") {
         const d0 = Math.hypot(start.x - center.x, start.y - center.y) || 1;
         const d1 = Math.hypot(e.clientX - center.x, e.clientY - center.y);
         const f = clamp(d1 / d0, 0.05, 12);
-        if (cur.kind === "device") {
+        if (sh0) {
+          cur = withShape(e0, (sh) => (sh.size = Math.max(0.004, sh0.size * f)), W0, H0);
+        } else if (cur.kind === "device") {
           cur.width = e0.width * f;
           cur.height = e0.height * f;
         } else {
@@ -472,6 +558,7 @@ export function CanvasView() {
         if (ang > 180) ang -= 360;
         ang = e.shiftKey ? Math.round(ang / 15) * 15 : Math.abs(ang) < 2.5 ? 0 : Math.round(ang * 2) / 2;
         cur.rotate = ang;
+        if (sh0) cur = withShape(e0, (sh) => (sh.rotate = ang), W0, H0);
       }
       setGuides(g);
       setLive({ e: cur, mode });
@@ -517,14 +604,23 @@ export function CanvasView() {
   // ------------------------------------------------------------------ drop captures from the library
 
   const onDragOver = (ev) => {
-    if (!ev.dataTransfer.types.includes("application/x-screenshot")) return;
+    const shape = ev.dataTransfer.types.includes("application/x-shape");
+    if (!shape && !ev.dataTransfer.types.includes("application/x-screenshot")) return;
     ev.preventDefault();
     ev.dataTransfer.dropEffect = "copy";
-    setDropOver(true);
+    if (!shape) setDropOver(true);
   };
   const onDrop = (ev) => {
     const p = ev.dataTransfer.getData("application/x-screenshot");
+    const shape = ev.dataTransfer.getData("application/x-shape");
     setDropOver(false);
+    if (shape) {
+      // A shape dragged from the Shapes panel lands where it's dropped.
+      ev.preventDefault();
+      ev.stopPropagation();
+      const b = art.current?.getBoundingClientRect();
+      return addShape(shape, { tint: S.shapeTint, at: b ? { x: r4((ev.clientX - b.left) / b.width), y: r4((ev.clientY - b.top) / b.height) } : undefined });
+    }
     if (!p) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -575,7 +671,9 @@ export function CanvasView() {
         ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
         ${entities.map(
           (e) => html`<div key=${e.id} class="ent ent-${e.kind} ${s.pulse.includes(e.id) ? "pulse" : ""}" data-id=${e.id} style=${place(e, W, H)}>
-            ${e.kind === "device"
+            ${e.kind === "shape"
+              ? html`<${ShapeEnt} e=${e} W=${W} H=${H} />`
+              : e.kind === "device"
               ? html`<${DeviceEnt} e=${e} W=${W} H=${H} />`
               : html`<${TextEnt} e=${e} H=${H} editing=${editing?.id === e.id ? editing.part : null} onDone=${finishEdit} />`}
           </div>`,
@@ -583,10 +681,13 @@ export function CanvasView() {
         <div class="clip"></div>
         ${guides.map((g) => (g.v !== undefined ? html`<div class="guide v" style=${{ left: g.v * W + "px", top: -4000 + "px", height: 8000 + "px" }}></div>` : html`<div class="guide h" style=${{ top: g.h * H + "px", left: -4000 + "px", width: 8000 + "px" }}></div>`))}
         ${hovBox && !live && html`<div class="hover-box" style=${hovBox}></div>`}
+        ${sel?.kind === "shape" && isLine(sel.shape.type) && html`<${LineHandles} sh=${sel.shape} W=${W} H=${H} dims=${dims} />`}
         ${selBox &&
         !editing &&
-        html`<div class="sel-box" style=${selBox}>
+        !(sel.kind === "shape" && isLine(sel.shape.type)) &&
+        html`<div class="sel-box ${sel.kind === "shape" && Math.min(sel.width * W, sel.height * H) <= 44 ? "small" : ""}" style=${selBox}>
           ${["nw", "ne", "sw", "se"].map((c) => html`<div class="h ${c}" data-handle=${c}></div>`)}
+          ${sel.kind === "shape" && Math.min(sel.width * W, sel.height * H) > 44 && ["n", "s", "e", "w"].map((c) => html`<div class="h side ${c}" data-handle=${c}></div>`)}
           ${sel.kind !== "caption" && html`<div class="rot" data-handle="rot"><${Icon} n="rotate" s=${12} w=${2} /></div>`}
           ${dims && html`<div class="dims" style=${{ transform: `translate(-50%, 10px) rotate(${-(sel.rotate || 0)}deg)` }}>${dims}</div>`}
         </div>`}
@@ -611,7 +712,7 @@ function canvasName(name) {
 }
 
 function selectionBox(e, W, H, el) {
-  if (e.kind === "device") {
+  if (e.kind === "device" || e.kind === "shape") {
     return {
       left: e.x * W - (e.width * W) / 2 + "px",
       top: e.y * H - (e.height * H) / 2 + "px",
@@ -637,6 +738,16 @@ function selectionBox(e, W, H, el) {
 
 function dimsText(e, mode, W0, H0) {
   if (mode === "rotate") return `${Math.round((e.rotate || 0) * 10) / 10}°`;
+  if (e.kind === "shape") {
+    const sh = e.shape;
+    if (mode === "resize" || mode === "stretch") return `${Math.round(sh.size * H0 * sh.aspect)} × ${Math.round(sh.size * H0)} px`;
+    if (mode === "bend") return sh.bend ? `Curve ${Math.round(sh.bend * 100)}%` : "Straight";
+    if (mode === "from" || mode === "to") {
+      const len = Math.hypot((sh.to.x - sh.from.x) * W0, (sh.to.y - sh.from.y) * H0);
+      const ang = (Math.atan2((sh.to.y - sh.from.y) * H0, (sh.to.x - sh.from.x) * W0) * 180) / Math.PI;
+      return `${Math.round(len)} px  ·  ${Math.round(-ang)}°`;
+    }
+  }
   if (mode === "resize") return e.kind === "device" ? `H ${Math.round(e.height * 1000) / 10}%  ·  ${Math.round(e.width * W0)}×${Math.round(e.height * H0)}` : `${Math.round(e.size * H0)} px`;
   return `X ${Math.round(e.x * 1000) / 10}%  Y ${Math.round(e.y * 1000) / 10}%`;
 }
@@ -651,6 +762,23 @@ function commit(e) {
       Object.assign(dev, { x: r4(e.x), y: r4(e.y), anchor: "center", height: r4(clamp(e.height, 0.01, 5)), rotate: Math.round((e.rotate || 0) * 2) / 2 });
       delete dev.width;
       if (!dev.rotate) delete dev.rotate;
+    } else if (e.kind === "shape") {
+      const sh = d.shapes?.[e.index];
+      const g = e.shape;
+      if (!sh || !g) return;
+      // Moved by hand, it stays where it was put, rather than following its target.
+      delete sh.around;
+      delete sh.at;
+      if (isLine(g.type)) {
+        sh.from = { x: r4(g.from.x), y: r4(g.from.y) };
+        sh.to = { x: r4(g.to.x), y: r4(g.to.y) };
+        sh.bend = Math.round(g.bend * 100) / 100;
+        delete sh.x;
+        delete sh.y;
+      } else {
+        Object.assign(sh, { x: r4(g.x), y: r4(g.y), size: r4(g.size), aspect: Math.round(g.aspect * 1000) / 1000, rotate: Math.round((g.rotate || 0) * 2) / 2 });
+        if (!sh.rotate) delete sh.rotate;
+      }
     } else if (e.kind === "caption") {
       d.textStyle = { ...(d.textStyle ?? {}), x: r4(e.x), y: r4(e.y), anchor: e.anchor ?? "top", align: e.align ?? "center", headlineSize: r4(e.size) };
       if (e.subSize) d.textStyle.subheadlineSize = r4(e.subSize);
@@ -664,6 +792,18 @@ function commit(e) {
       t.align ??= e.align;
     }
   }, null);
+}
+
+/** A selected line or arrow: its two ends, and a handle in the middle to curve it. */
+function LineHandles({ sh, W, H, dims }) {
+  const m = curveMid(sh, W, H);
+  return html`<div class="line-handles">
+    <svg class="line-guide" width=${W} height=${H}><line x1=${sh.from.x * W} y1=${sh.from.y * H} x2=${sh.to.x * W} y2=${sh.to.y * H} /></svg>
+    <div class="pt" data-handle="from" title="Drag to move this end" style=${{ left: sh.from.x * W + "px", top: sh.from.y * H + "px" }}></div>
+    <div class="pt" data-handle="to" title="Drag to move this end" style=${{ left: sh.to.x * W + "px", top: sh.to.y * H + "px" }}></div>
+    <div class="pt bend" data-handle="bend" title="Drag to curve it" style=${{ left: m.x + "px", top: m.y + "px" }}></div>
+    ${dims && html`<div class="dims" style=${{ left: m.x + "px", top: m.y + 18 + "px" }}>${dims}</div>`}
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -685,13 +825,18 @@ function ContextBar({ sel, box, vp }) {
   const candidates = [r.top - v.top - (sel.kind === "caption" ? 12 : 50), r.bottom - v.top + 50, 50];
   const top = candidates.find((c) => fits(c) && clear(c)) ?? candidates.find(fits) ?? 50;
   const stop = (e) => e.stopPropagation();
-  const text = sel.kind !== "device";
+  const text = sel.kind === "caption" || sel.kind === "text";
   return html`<div class="ctx-bar" style=${{ left: left + "px", top: top + "px" }} onPointerDown=${stop}>
     <button class="btn" onClick=${() => openAI(sel.id)}><${Icon} n="spark" s=${14} style=${{ color: "var(--pink)" }} /><span class="ai-mini">Ask AI</span></button>
     <span class="sep"></span>
     ${text
       ? html`<button class="icon-btn" title="Edit text (double-click)" onClick=${() => canvasApi.editText(sel.id)}><${Icon} n="text" s=${15} /></button>`
-      : html`<button class="icon-btn" title="Replace screenshot" onClick=${() => replaceMode(sel.id)}><${Icon} n="replace" s=${15} /></button>`}
+      : sel.kind === "device"
+        ? html`<button class="icon-btn" title="Replace screenshot" onClick=${() => replaceMode(sel.id)}><${Icon} n="replace" s=${15} /></button>`
+        : html`<button class="icon-btn ${sel.shape?.sketch ? "on" : ""}" title="Hand-drawn" onClick=${() => edit((d) => {
+            const sh = d.shapes?.[sel.index];
+            if (sh) sh.sketch = !sel.shape?.sketch || undefined;
+          })}><${Icon} n="pen" s=${15} /></button>`}
     ${sel.id !== "caption" && html`<button class="icon-btn" title="Duplicate (⌘D)" onClick=${() => duplicateEntity(sel.id)}><${Icon} n="duplicate" s=${15} /></button>`}
     ${sel.id !== "caption" && html`<button class="icon-btn" title="Bring forward" onClick=${() => moveZ(sel.id, 1)}><${Icon} n="front" s=${15} /></button>`}
     ${sel.id !== "caption" && html`<button class="icon-btn" title="Send backward" onClick=${() => moveZ(sel.id, -1)}><${Icon} n="back" s=${15} /></button>`}

@@ -211,6 +211,35 @@ try {
     else process.env.SCREENSHOTTER_OUTPUT_DIR = out;
   });
 
+  await check("every recipe builds a valid design from a screenshot, keeping the person's words", async () => {
+    const { RECIPES, buildRecipe } = await import("../src/design/recipes.js");
+    const { layoutScene } = await import("../src/render/mockup.js");
+    const { MockupInputSchema } = await import("../src/render/schema.js");
+    for (const r of RECIPES) {
+      const scene = await buildRecipe(r.id, [{ screenshot: shot }], { headline: "Our **words**" });
+      MockupInputSchema.parse(scene);
+      await layoutScene(scene);
+      if (scene.headline) assert.equal(scene.headline, "Our **words**", r.id);
+      assert.ok(scene.devices.every((d) => d.screenshot === shot), r.id);
+    }
+  });
+
+  // Design it for me: three directions, each checked and rendered.
+  await fakeClaude((p: any) => ({
+    directions: [
+      { name: "Warm studio", summary: "Warm.", operations: [{ op: "set", path: "/background", value: '"ember-glow"' }] },
+      { name: "Gallery", summary: "Painted.", operations: [{ op: "set", path: "/background", value: '"great-wave"' }] },
+      { name: "Broken", summary: "Invalid.", operations: [{ op: "set", path: "/devices/0/height", value: "-2" }] },
+    ],
+  }));
+  await check("Design it for me returns the valid directions, each rendered", async () => {
+    const { designDirections } = await import("../src/studio/ai.js");
+    const r = await designDirections({ request, instruction: "Design it for me" });
+    assert.deepEqual(r.directions.map((d) => d.name), ["Warm studio", "Gallery"]);
+    assert.equal(r.directions[0].request.background, "ember-glow");
+    assert.ok(r.directions.every((d) => (d.image?.length ?? 0) > 1000));
+  });
+
   await check("the Claude Code skill is up to date with the design guide", async () => {
     const { SKILL_MD } = await import("../src/design/skill.js");
     assert.equal(readFileSync(path.join(import.meta.dirname, "..", "skills", "screenshot-design", "SKILL.md"), "utf8"), SKILL_MD, "Run npm run skill");
@@ -232,6 +261,10 @@ try {
     const html = await (await fetch(base + "/")).text();
     assert.match(html, /importmap/);
     for (const p of ["/ui/app.js", "/ui/styles.css", "/ui/vendor/preact.js", "/ui/vendor/htm.js"]) assert.equal((await fetch(base + p)).status, 200, p);
+    // The canvas draws shapes with the engine's own module.
+    const shapes = await (await fetch(base + "/ui/shapes.js")).text();
+    assert.match(shapes, /export function renderShape/);
+    assert.doesNotMatch(shapes, /^import /m);
     assert.equal((await fetch(base + "/ui/../server.js")).status, 404);
   });
   await check("requests from other sites are refused", async () => {
@@ -254,6 +287,23 @@ try {
   await check("state round-trips through the output folder", async () => {
     assert.equal((await post("/api/state", { sceneName: "Test", scene: request })).status, 200);
     assert.equal((await (await fetch(base + "/api/state")).json()).sceneName, "Test");
+  });
+  await check("saved scenes list their devices, size and caption; renaming or re-saving isn't an edit", async () => {
+    const scene = { devices: [{ screenshot: shot, device: "MacBook Pro 14-inch" }, { screenshot: shot, device: "iPhone 17 Pro" }, { screenshot: shot, frame: "browser" }], headline: "Meet **Mise**" };
+    const saved = await (await post("/api/scenes/save", { name: "Launch", scene })).json();
+    assert.deepEqual(saved.kinds, ["mac", "iphone", "web"]);
+    assert.deepEqual(saved.deviceNames, ["MacBook Pro 14-inch", "iPhone 17 Pro", "Browser"]);
+    assert.deepEqual(saved.size, { width: 2560, height: 1440 });
+    assert.equal(saved.headline, "Meet Mise");
+    await new Promise((r) => setTimeout(r, 20));
+    const renamed = await (await post("/api/scenes/save", { id: saved.id, name: "Launch day", scene })).json();
+    assert.equal(renamed.name, "Launch day");
+    assert.equal(renamed.updatedAt, saved.updatedAt);
+    const edited = await (await post("/api/scenes/save", { id: saved.id, name: "Launch day", scene: { ...scene, headline: "Hi" } })).json();
+    assert.notEqual(edited.updatedAt, saved.updatedAt);
+    const listedScene = ((await (await fetch(base + "/api/scenes")).json()) as Array<{ id: string; name: string }>).find((x) => x.id === saved.id);
+    assert.equal(listedScene?.name, "Launch day");
+    assert.equal((await post("/api/scenes/delete", { id: saved.id })).status, 200);
   });
   await check("thumbnails only for files in the output folder", async () => {
     const res = await fetch(`${base}/thumb?path=${encodeURIComponent(shot)}&w=100`);

@@ -3,8 +3,12 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, edit, entityLabel, fail, isVideo, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
+import { renderShape, shapeSpec } from "./shapes.js";
 import {
+  SHAPE_KINDS,
   TEXT_PRESETS,
+  addShape,
+  deleteEntity,
   addCaption,
   addDevice,
   addText,
@@ -15,6 +19,10 @@ import {
   recordSimulator,
   recordingFor,
   restoreVersion,
+  applyRecipe,
+  applyDirection,
+  designForMe,
+  recipeInput,
   reveal,
   uploadFiles,
   useCapture,
@@ -569,7 +577,7 @@ export function LayersPanel() {
       <div class="intro" style=${{ marginBottom: "8px" }}>Everything in the image, front to back. Click to select.</div>
       ${ents.map(
         (e) => html`<div class="layer ${s.selected === e.id ? "on" : ""}" onClick=${() => set({ selected: e.id, view: "canvas" })} onMouseEnter=${() => set({ hover: e.id })} onMouseLeave=${() => set({ hover: null })}>
-          <span class="thumb">${e.kind === "device" ? html`<img src=${thumbUrl(e.screenshot, 80)} />` : html`<${Icon} n="text" s=${13} />`}</span>
+          <span class="thumb">${e.kind === "device" ? html`<img src=${thumbUrl(e.screenshot, 80)} />` : html`<${Icon} n=${e.kind === "shape" ? "shapes" : "text"} s=${13} />`}</span>
           <span class="nm">${entityLabel(e.id)}</span>
           <span class="faint mono">${Math.round(e.z)}</span>
         </div>`,
@@ -578,6 +586,119 @@ export function LayersPanel() {
         <span class="thumb"><${Icon} n="background" s=${13} /></span><span class="nm">Background</span><span class="faint">${typeof s.scene.background === "string" ? s.scene.background : bgObj(s.scene.background).look ?? ""}</span>
       </div>
       ${!ents.length && html`<div class="empty-note">Add a screenshot to start the scene.</div>`}
+    </div>
+  </div>`;
+}
+
+// =============================================================================================
+// Shapes
+
+const TINTS = ["#ff3b30", "#ff9f0a", "#ffd60a", "#34c759", "#0a84ff", "#bf5af2", "#ff5fa2", "#ffffff", "#111111"];
+const MARKS = [
+  { value: "circle-it", label: "", title: "Circle it", icon: "circled" },
+  { value: "box", label: "", title: "Box it", icon: "square" },
+  { value: "sketch-arrow", label: "", title: "Point an arrow at it", icon: "arrow" },
+  { value: "badge", label: "", title: "Number it", icon: "badge" },
+];
+
+const isDark = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  return (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255 < 0.22;
+};
+
+/** A shape drawn small, exactly as it will look, for its button. */
+function ShapePreview({ kind, tint }) {
+  const W = 66;
+  const H = 46;
+  const made = kind.make(tint);
+  const line = made.type === "arrow" || made.type === "line";
+  const spec = shapeSpec({
+    ...made,
+    x: 0.5,
+    y: 0.5,
+    size: made.type === "badge" ? 0.62 : Math.min(0.66, (0.8 * W) / H / (made.aspect ?? 1)),
+    strokeWidth: made.strokeWidth ? 0.045 : 0,
+    from: line ? { x: 0.16, y: 0.76 } : undefined,
+    to: line ? { x: 0.84, y: 0.24 } : undefined,
+  });
+  const r = renderShape(spec, W, H);
+  return html`<span class="shape-prev" style=${{ width: W + "px", height: H + "px" }}>
+    <span style=${{ position: "absolute", left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" }} dangerouslySetInnerHTML=${{ __html: r.svg }}></span>
+  </span>`;
+}
+
+export function ShapesPanel() {
+  const s = useStore();
+  const tint = s.shapeTint;
+  const shapes = s.scene.shapes ?? [];
+  const devices = s.scene.devices;
+  // Marks go on the selected device's screen, else the first.
+  const di = s.selected?.startsWith("device-") ? Number(s.selected.split("-")[1]) - 1 : 0;
+  const dev = devices[di] ?? devices[0];
+  const [ocr, setOcr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setOcr(null), [dev?.screenshot]);
+  const find = async () => {
+    setBusy(true);
+    try {
+      const boxes = await api(`/api/text?path=${encodeURIComponent(dev.screenshot)}`);
+      setOcr(boxes.filter((b) => b.text.trim().length > 1));
+    } catch (e) {
+      fail(e, "Couldn't read the screenshot");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tile = (k) => html`<button class="shape-tile ${isDark(tint) ? "light" : ""}" title=${`Add ${k.label.toLowerCase()} (or drag it onto the design)`} draggable="true"
+      onClick=${() => addShape(k.id, { tint })}
+      onDragStart=${(e) => {
+        e.dataTransfer.setData("application/x-shape", k.id);
+        e.dataTransfer.effectAllowed = "copy";
+      }}>
+    <${ShapePreview} kind=${k} tint=${tint} /><span class="nm">${k.label}</span>
+  </button>`;
+  return html`<div class="panel left">
+    <div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
+    <div class="panel-body">
+      <div class="intro">Point something out, or decorate. Click a shape to add it, or drag it onto the design. Then move, resize and recolour it.</div>
+      <${Section} title="Colour">
+        <div class="tints">
+          ${TINTS.map((c) => html`<button class="tint ${c === tint ? "on" : ""}" title=${c} style=${{ background: c }} onClick=${() => set({ shapeTint: c })}></button>`)}
+        </div>
+        <${ColorButton} value=${tint} allowAuto=${false} onChange=${(v) => v && set({ shapeTint: v })} />
+      <//>
+      <${Section} title="Point things out">
+        <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "mark").map(tile)}</div>
+      <//>
+      <${Section} title="Shapes">
+        <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "solid").map(tile)}</div>
+      <//>
+      ${dev &&
+      html`<${Section} title="Mark something on the screen"
+          right=${html`<button class="btn sm ghost" onClick=${find} disabled=${busy}>${busy ? html`<span class="spinner"></span>` : html`<${Icon} n="search" s=${12} />`}Find text</button>`}>
+        <div class="row"><label>Add a</label><${Seg} value=${s.shapeMark} options=${MARKS} onChange=${(v) => set({ shapeMark: v })} /></div>
+        ${ocr
+          ? html`<div class="note">Click the words to mark${devices.length > 1 ? ` on ${entityLabel(`device-${di + 1}`)}` : ""}. The mark follows them if the device moves.</div>
+              <div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => addShape(s.shapeMark, { tint, around: { device: di + 1 > 1 ? di + 1 : undefined, text: b.text } })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`
+          : html`<div class="note">Press <b>Find text</b>, then click the words to circle, box, point at or number. The mark lands on them and follows the device.</div>`}
+      <//>`}
+      ${shapes.length > 0 &&
+      html`<${Section} title="In this design" count=${shapes.length}>
+        ${shapes.map((sh, i) => {
+          const id = `shape-${i + 1}`;
+          const icon = { arrow: "arrow", line: "line", ellipse: sh.sketch ? "circled" : "ellipse", rect: "square", triangle: "triangle", star: "star", badge: "badge" }[sh.type];
+          return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
+            <span class="thumb" style=${{ color: sh.stroke && sh.stroke !== "none" ? sh.stroke : sh.fill && sh.fill !== "none" ? sh.fill : undefined }}><${Icon} n=${icon} s=${13} /></span>
+            <span class="nm">${entityLabel(id)}${sh.around ? html` <span class="faint">on “${sh.around.text}”</span>` : ""}</span>
+            <button class="icon-btn sm" title="Remove" onClick=${(e) => {
+              e.stopPropagation();
+              deleteEntity(id);
+            }}><${Icon} n="trash" s=${13} /></button>
+          </div>`;
+        })}
+      <//>`}
     </div>
   </div>`;
 }
@@ -643,6 +764,66 @@ export function ExportsPanel() {
               </div>`,
           ])}</div>`
         : html`<div class="empty-note">Images and videos you export appear here.</div>`}
+    </div>
+  </div>`;
+}
+
+// =============================================================================================
+// Designs
+
+const DIRECTION_STEPS = { look: "Looking at your design", read: "Reading your screens", think: "Designing three directions", render: "Rendering them" };
+
+/** Claude proposes three directions, rendered side by side; pick one. */
+function DesignForMe() {
+  const s = useStore();
+  const d = s.directions;
+  const ai = s.opts?.ai;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!d?.busy) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [d?.busy]);
+  return html`<div class="dfm">
+    <div class="dfm-head">
+      <div><b>Design it for me</b><span>Claude looks at your screens and proposes three directions. Pick the one you like.</span></div>
+      <button class="btn primary sm" disabled=${d?.busy || !s.scene.devices.length || (ai && !ai.available)} onClick=${designForMe}>
+        ${d?.busy ? html`<span class="spinner"></span>Designing…` : html`<${Icon} n="spark" s=${13} />${d?.items?.length ? "Three more" : "Design it"}`}
+      </button>
+    </div>
+    ${d?.busy && html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint">${Math.max(0, Math.round((now - d.started) / 1000))}s</span></div>`}
+    ${d?.error && html`<div class="note warn">${d.error}</div>`}
+    ${d?.items?.length > 0 &&
+    html`<div class="dfm-grid">${d.items.map(
+      (x, i) => html`<button class="dfm-card ${d.picked === i ? "on" : ""}" style=${{ "--i": i }} onClick=${() => applyDirection(i)} title=${x.summary}>
+        ${x.image ? html`<img src=${`data:image/jpeg;base64,${x.image}`} />` : html`<div class="dfm-blank"></div>`}
+        <b>${x.name}</b><span>${x.summary}</span>
+      </button>`,
+    )}</div>`}
+    ${ai && !ai.available && html`<div class="note">Needs Claude Code or an API key (Settings › AI Edit).</div>`}
+  </div>`;
+}
+
+/** Complete designs built from your own screens, headline and colours. */
+export function DesignsPanel() {
+  const s = useStore();
+  const body = recipeInput(s.scene);
+  const has = body.devices.length > 0;
+  const q = encodeURIComponent(JSON.stringify(body));
+  return html`<div class="panel left">
+    <div class="panel-head"><h2>Designs</h2><span class="sub">${s.recipes.length}</span></div>
+    <div class="panel-body">
+      <div class="intro">Start from a design that works. Each one uses your screenshots, your headline and your app's colours. One click; undo goes back.</div>
+      <${DesignForMe} />
+      <${Section} title="Recipes" count=${s.recipes.length}>
+        ${!has && html`<div class="empty-note">Add a screenshot and the recipes preview with it.</div>`}
+        <div class="recipes">${s.recipes.map(
+          (r) => html`<button class="recipe" key=${r.id} disabled=${!has} onClick=${() => applyRecipe(r.id)} title=${r.description}>
+            <div class="recipe-img">${has && html`<img loading="lazy" src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} />`}</div>
+            <b>${r.name}</b><span>${r.description}</span>
+          </button>`,
+        )}</div>
+      <//>
     </div>
   </div>`;
 }

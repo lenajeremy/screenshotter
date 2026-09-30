@@ -11,6 +11,7 @@ import { createMockupSet, MockupSetShape } from "./render/set.js";
 import { cropImage, CropInputShape, createGrid, GridInputShape } from "./render/compose.js";
 import { houseStyle, updateHouseStyle } from "./util/style.js";
 import { DESIGN_GUIDE } from "./design/guide.js";
+import { RECIPES, buildRecipe } from "./design/recipes.js";
 import { recordMac, RecordMacShape, recordWeb, RecordWebShape } from "./capture/record.js";
 import { outputRoot } from "./util/files.js";
 import { captureWeb, WEB_VIEWPORTS } from "./capture/web.js";
@@ -25,7 +26,7 @@ import { recordSimulator } from "./simulator/record.js";
 import { createVideo, VideoInputShape } from "./render/video.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
@@ -39,15 +40,17 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 - Backgrounds: named looks (photographic, public-domain paintings and prints like "great-wave" or "monet-bridge", soft grounds like "cream-grain"), gradients/mesh, any photo, Unsplash (\`unsplash\` search or "unsplash:<id>"), or AI-generated (\`generate\` prompt) with photo treatment: motion blur, blur, haze, tint, bloom, halation. \`finish\` reprints or repaints the backdrop (never the UI): risograph, newsprint, halftone, dither, oil, watercolor, ink, fluted-glass.
 - Effects: film grain, vignette, edge blur, colour grade. Shadows: soft/medium/strong/studio. Per device: \`blur\` (soft focus behind a sharp hero device) and \`fade\` (dissolve into the backdrop).
 - Highlights call out UI: lift a row (\`breakout\` makes a card wider than the device), loupe (can sit beside the device), outline, spotlight, blur-rest, blur (hide something private), highlighter, numbered step markers and curved arrows. Target by visible text (on-device OCR) or a rect; find_text lists the text boxes.
+- Shapes: arrows, lines, circles, boxes, triangles, stars and number badges drawn over the scene, each with a fill and a stroke, clean or hand-drawn (sketch). Aim one at text on a screen with \`around\` (an ellipse goes around it, a badge beside it, an arrow to its edge), or place it freely with x/y, or from/to.
 - Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic), fonts from Google Fonts, top/bottom/left/right.
 - Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
 - Layouts include grid (a mosaic of screens). \`camera\` zooms the scene in on a point for a crisp close-up.
+- Recipes: apply_recipe builds a complete, proven design (bold hero, art director, gallery painting, risograph, 3D tilt, depth of field, rising pair, staircase, mosaic, feature call-out, how-to, dissolve) from your screenshots: a strong start to refine.
 - Finished images: crop_image crops or zooms into part of any image; create_grid lays images out as a contact sheet or mosaic. Use a grid to compare variants side by side, and a crop to check small details before you call something done.
 - Video: create_video renders the same scene with motion (float, drift, push-in), zooms that follow the action (video.zooms), a drawn cursor with clicks and drags (video.cursor) and timed reveals. Recordings to play inside a frame: record_simulator (iPhone, iPad, Watch), record_web (a rehearsed click-through of a page, with its cursor track) and record_mac (an app window).
 
 Design: read design_guide once before you design (composition, copy, type, colour, backdrops, callouts and a checklist). House style: call get_house_style before designing and follow it. When the person says they like or dislike something, or asks for something every time ("always use Space Black", "less text"), save it with remember_style.
 
-Always look at the returned preview and iterate (positions, sizes, rotation, copy). The scene is a set of entities (devices, caption, texts); every result lists them with their resolved positions, and layout_mockup returns them without rendering. Move an entity by setting its properties: devices[i].x/y (centre)/height/rotate, textStyle.x/y for the caption, texts[i].x/y. Positions and sizes are fractions of the canvas (x 0 = left, 1 = right). Each output has a .mockup.json with the exact request for re-rendering.
+Always look at the returned preview and iterate (positions, sizes, rotation, copy). The scene is a set of entities (devices, caption, texts, shapes); every result lists them with their resolved positions, and layout_mockup returns them without rendering. Move an entity by setting its properties: devices[i].x/y (centre)/height/rotate, textStyle.x/y for the caption, texts[i].x/y. Positions and sizes are fractions of the canvas (x 0 = left, 1 = right). Each output has a .mockup.json with the exact request for re-rendering.
 Call list_mockup_options for devices, colours, looks, canvases, layouts and grades.`;
 
 type Content = CallToolResult["content"];
@@ -437,7 +440,7 @@ export function createServer(): McpServer {
     {
       title: "Lay out a mockup without rendering",
       description:
-        "Resolve a create_mockup request into its canvas and entities (every device, the caption and each extra text) with their positions and sizes as canvas fractions, without rendering. Fast. Use it to see where auto-layout put things, then move or resize an entity by setting that device's x/y/height/rotate (or textStyle.x/y for the caption, texts[i].x/y for extra text) in create_mockup.",
+        "Resolve a create_mockup request into its canvas and entities (every device, the caption, each extra text and each shape) with their positions and sizes as canvas fractions, without rendering. Fast. Use it to see where auto-layout put things, then move or resize an entity by setting that device's x/y/height/rotate (or textStyle.x/y for the caption, texts[i].x/y for extra text) in create_mockup.",
       inputSchema: MockupInputShape,
       annotations: { readOnlyHint: true },
     },
@@ -464,6 +467,31 @@ export function createServer(): McpServer {
       inputSchema: RecordMacShape,
     },
     (a) => guard(async () => [text(await recordMac(a))]),
+  );
+
+  server.registerTool(
+    "apply_recipe",
+    {
+      title: "Start from a recipe",
+      description: `Build a complete, proven design from your screenshots: it picks the canvas, backdrop (from the app's own colours), composition, type and effects, and returns the create_mockup request (rendered too, unless render is false). A strong starting point to refine. Recipes: ${RECIPES.map((r) => `${r.id} (${r.description})`).join("; ")}`,
+      inputSchema: {
+        recipe: z.enum(RECIPES.map((r) => r.id) as [string, ...string[]]),
+        screenshots: z.array(z.string()).min(1).max(8).describe("Screenshot paths, most important first."),
+        headline: z.string().optional().describe("Your headline (**accent** words allowed). Without one, a placeholder is used."),
+        subheadline: z.string().optional(),
+        render: z.boolean().optional().describe("Also render it. Default true."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const request = await buildRecipe(a.recipe, a.screenshots.map((screenshot) => ({ screenshot })), { headline: a.headline, subheadline: a.subheadline });
+        if (a.render === false) return [text({ request })];
+        const r = await createMockup(request);
+        const content: Content = [text({ request, path: r.path, width: r.width, height: r.height, warnings: r.warnings })];
+        const img = await image(r.path, 1200);
+        if (img) content.push(img);
+        return content;
+      }),
   );
 
   server.registerTool(

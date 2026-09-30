@@ -424,6 +424,49 @@ await check("extra text takes its own star colour, else the headline's, else bol
   assert(/<strong>bold<\/strong>/.test(bold), "without any star colour the words should be bold");
 });
 
+await check("shapes: every type draws, badges number themselves, and each is an entity", async () => {
+  const { buildScene } = await import("../src/render/mockup.js");
+  const types = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge", "badge"];
+  const scene = await buildScene({ devices: [{ screenshot: shot }], shapes: types.map((type, i) => ({ type, x: 0.1 + i * 0.1, y: 0.1, sketch: i % 2 === 0 })) } as never);
+  assert((scene.html.match(/class="shape"/g) ?? []).length === types.length, "not every shape was drawn");
+  assert(/>1<\/text>/.test(scene.html) && />2<\/text>/.test(scene.html), "badges should number themselves 1, 2");
+  const ents = scene.result.entities.filter((e) => e.kind === "shape");
+  assert(ents.length === types.length && ents[6].shape?.label === "1" && ents[2].z === 40, "shape entities are wrong");
+  assert(ents[2].shape?.stroke === "#ff3b30" && ents[5].shape?.fill === "#ffd60a", "defaults should be a red outline and a yellow star");
+});
+
+await check("shapes: `around` lands on the text, follows the device, and an arrow stops at its edge", async () => {
+  const { layoutScene } = await import("../src/render/mockup.js");
+  const scene = (x: number) => ({
+    devices: [{ screenshot: shot, x, y: 0.5, height: 0.8, anchor: "center" }],
+    canvas: "1600x1200",
+    shapes: [{ type: "ellipse", around: { text: "Row number 3" } }, { type: "arrow", around: { text: "Row number 3" } }, { type: "badge", around: { text: "Row number 3" }, at: "left" }],
+  });
+  const a = await layoutScene(scene(0.4) as never);
+  const b = await layoutScene(scene(0.6) as never);
+  const dev = a.entities[0];
+  const [ring, arrow, badge] = a.entities.filter((e) => e.kind === "shape");
+  // Row 3 sits 250pt down an 874pt screen, and its words start at the left.
+  const wantY = dev.y - dev.height! / 2 + (dev.screen!.y + (250 / 874) * dev.screen!.height) * dev.height!;
+  assert(Math.abs(ring.y - wantY) < 0.012, `ring is at y ${ring.y}, the row is at ${wantY.toFixed(4)}`);
+  assert(ring.x > dev.x - dev.width / 2 && ring.x < dev.x, `ring x ${ring.x} should be on the left half of the device`);
+  const ring2 = b.entities.find((e) => e.id === "shape-1")!;
+  assert(Math.abs(ring2.x - ring.x - 0.2) < 0.002 && Math.abs(ring2.y - ring.y) < 0.002, "the ring should move with the device");
+  const to = arrow.shape!.to;
+  const from = arrow.shape!.from;
+  const gap = Math.hypot((to.x - ring.x) * 1600, (to.y - ring.y) * 1200);
+  assert(gap > 8 && gap < 140, `the arrow should stop at the text's edge, not ${Math.round(gap)}px from its centre`);
+  assert(from.x < dev.x - dev.width / 2, "the arrow should start outside the device");
+  assert(badge.x < ring.x - ring.width / 2 + 0.01, "a badge `at: left` should sit left of the text");
+});
+
+await check("shapes: a target that isn't on the screen is a warning, not a failure", async () => {
+  const { layoutScene } = await import("../src/render/mockup.js");
+  const r = await layoutScene({ devices: [{ screenshot: shot }], shapes: [{ type: "ellipse", around: { text: "No such words" } }] } as never);
+  assert(r.warnings.some((w) => /Shape 1/.test(w)), "no warning");
+  assert(r.entities.some((e) => e.id === "shape-1"), "the shape should still be placed");
+});
+
 await check("process still alive after all of the above", () => statSync(out).isDirectory());
 
 await closeBrowser();

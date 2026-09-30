@@ -135,6 +135,18 @@ Use a callout when an image is about **one thing on the screen**. It's the faste
 - **step** (1, 2, 3…) and **arrow**: how-to images. Markers sit beside their target (\`at\`), arrows start outside the device (\`offsetX\`, \`offsetY\`) and curve (\`bend\`) to the control.
 Marketing images: one or two callouts. How-to images: up to three steps and an arrow. Callouts fade in on video.
 
+### Shapes: marks you can place anywhere
+
+\`shapes\` are drawn over the scene and the person can drag, resize and recolour each one afterwards. Types: \`arrow\`, \`line\`, \`ellipse\`, \`rect\`, \`triangle\`, \`star\`, \`badge\` (a number in a circle). Each has a \`fill\` and a \`stroke\` (a colour, or "none"), \`strokeWidth\` (0.004–0.008 of the canvas height reads well), \`dash\`, \`opacity\` and \`shadow\`.
+- **Aim, don't guess.** To mark something on a screen, give \`around: { device, text }\` with the text copied exactly from the screen's visible text. An ellipse or rect goes around it, a badge sits beside it (\`at\`), and an arrow ends at its edge, starting beside the device unless you set \`from\`. The mark follows the device when it moves. \`around\` doesn't follow 3D tilt: on a tilted device use a callout instead.
+- **Free shapes** take \`x\`, \`y\` (centre), \`size\` (height as a fraction of canvas height) and \`aspect\` (width ÷ height: 1 is a circle or square); arrows and lines take \`from\` and \`to\`, with \`bend\` to curve. Take positions from the entities, never from a guess.
+- **\`sketch: true\`** draws it like a marker: a ring that overshoots, open arrowheads. It feels human and friendly, and suits tutorials, launch posts and social images. Clean shapes suit App Store sets and anything premium. Don't mix the two in one image.
+- **An arrow from the headline to the thing it names** is the strongest use: \`from\` just under the caption, \`around\` the feature, \`bend\` 0.25–0.45.
+- **Steps**: badges 1, 2, 3 beside their targets, in reading order; add one arrow at most.
+- **Colour**: one mark colour for the whole image, picked to stand out from both the backdrop and the screen: the app's accent if it contrasts, else a clear red (#ff3b30), yellow (#ffd60a) on dark, or white with \`shadow\`. A white \`stroke\` ring on a badge keeps it readable over any screen.
+- **Decoration** (a star or a few small circles near a headline, a pill behind a word) is rare: one to three small shapes in the palette, never competing with the device. When in doubt, leave it out.
+- Callouts or shapes? Callouts change the screen itself (lift a card, magnify, dim the rest). Shapes sit on top and can go anywhere, including outside the device. Use whichever says it with less.
+
 ## 11. Devices and special shots
 
 - Pick the newest hardware that matches the capture unless the person asks otherwise. \`side: "back"\` shows an iPhone's back, for hardware and colour shots.
@@ -156,7 +168,7 @@ Before you call it done, look at the render and fix anything that fails:
 - Does the backdrop belong to the app's colours, and stay behind the UI?
 - Does every colour pass contrast, especially the accent words?
 - Is there one clear hero and one clear idea?
-- Are callouts on the right element, and does the headline name it?
+- Are callouts and shapes on the right element (an arrow's head on its target, a ring around all of it), and does the headline name it?
 - Did you keep what the person asked to keep, and follow the house style?
 - Nothing invented: no fake ratings, awards, quotes or UI.
 

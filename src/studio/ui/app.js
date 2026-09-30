@@ -35,10 +35,11 @@ import {
   uploadFiles,
   useCapture,
 } from "./actions.js";
-import { CanvasView, canvasApi, commitEntity } from "./canvas.js";
+import { CanvasView, canvasApi, commitEntity, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
-import { BackgroundsPanel, CapturesPanel, ExportsPanel, LayersPanel, TextPanel } from "./panels.js";
+import { BackgroundsPanel, CapturesPanel, DesignsPanel, ExportsPanel, LayersPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
+import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
 // =============================================================================================
 // Top bar
@@ -84,7 +85,7 @@ function Topbar() {
             set({ sceneName: e.target.value.trim() || "Untitled scene" });
             persist();
           }} />
-        <button class="scene-chev" title="Your scenes (⇧⌘O)" onClick=${() => set({ scenesOpen: !s.scenesOpen })}><${Icon} n="down" s=${13} /></button>
+        <button class="scene-chev" title="Switch scene" onClick=${() => set({ scenesOpen: !s.scenesOpen })}><${Icon} n="down" s=${13} /></button>
       </div>
       <button class="icon-btn sm" data-nodrag title="New scene (⌘N)" onClick=${newScene}><${Icon} n="plus" s=${15} /></button>
     </div>
@@ -110,57 +111,7 @@ function Topbar() {
 // =============================================================================================
 // Scenes
 
-const ago = (iso) => {
-  const s = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (s < 45) return "Just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  if (s < 172800) return "Yesterday";
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
-export const sceneMenu = (id) => [
-  { label: "Open", icon: "canvas", run: () => openScene(id) },
-  { label: "Rename…", icon: "text", run: () => renameSavedScene(id) },
-  { label: "Duplicate", icon: "duplicate", run: () => duplicateSavedScene(id) },
-  "-",
-  { label: "Delete…", icon: "trash", danger: true, run: () => deleteSavedScene(id) },
-];
-
-function SceneThumb({ x }) {
-  return html`<div class="scene-thumb">${x.thumb ? html`<img src=${fileUrl(x.thumb, x.updatedAt)} draggable=${false} />` : html`<${Icon} n="canvas" s=${18} />`}</div>`;
-}
-
-function ScenesPopover({ anchor }) {
-  const s = useStore();
-  const [q, setQ] = useState("");
-  useEffect(() => {
-    saveSceneNow().then(() => refreshScenes());
-  }, []);
-  const list = s.scenes.filter((x) => !q || x.name.toLowerCase().includes(q.toLowerCase()));
-  return html`<${Popover} anchor=${anchor} class="scenes-pop" width=${440} onClose=${() => set({ scenesOpen: false })}>
-    <div class="scenes-head">
-      <b>Scenes</b><span class="faint">${s.scenes.length || ""}</span><span class="grow"></span>
-      <button class="btn sm primary" onClick=${newScene}><${Icon} n="plus" s=${12} w=${2.4} />New scene</button>
-    </div>
-    ${s.scenes.length > 6 && html`<div class="input-wrap scenes-search"><${Icon} n="search" s=${13} /><input class="input sm" placeholder="Search scenes" value=${q} autoFocus onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} /></div>`}
-    ${list.length
-      ? html`<div class="scene-grid">${list.map(
-          (x) => html`<div class="scene-card ${x.id === s.sceneId ? "on" : ""}" role="button" tabindex="0" data-scene=${x.id} title=${x.name}
-              onClick=${() => openScene(x.id)} onKeyDown=${(e) => e.key === "Enter" && openScene(x.id)}>
-            <${SceneThumb} x=${x} />
-            <div class="scene-meta"><b>${x.name}</b><span>${x.id === s.sceneId ? "Open now" : ago(x.updatedAt)}</span></div>
-            <button class="scene-more" title="More" onClick=${(e) => {
-              e.stopPropagation();
-              const r = e.currentTarget.getBoundingClientRect();
-              openMenu(r.left, r.bottom + 4, sceneMenu(x.id));
-            }}><${Icon} n="dots" s=${14} /></button>
-          </div>`,
-        )}</div>`
-      : html`<div class="empty-note">${q ? "No scenes match." : "Scenes save themselves as you work. Start designing and this one appears here."}</div>`}
-    <div class="scenes-foot"><${Icon} n="check" s=${12} />Saved automatically · <span class="kbd">⌘S</span> saves now</div>
-  <//>`;
-}
+// The switcher, the Scenes page and the scene menus live in scenes.js.
 
 // =============================================================================================
 // Export
@@ -217,8 +168,10 @@ const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
 
 const TABS = [
   { id: "captures", label: "Screens", icon: "captures", tip: "Capture or import screenshots" },
+  { id: "designs", label: "Designs", icon: "wand", tip: "Complete designs from your screens, or three from Claude" },
   { id: "backgrounds", label: "Backdrop", icon: "background", tip: "Photos, gradients and colours behind your device" },
   { id: "text", label: "Text", icon: "text", tip: "Headline, labels and badges" },
+  { id: "shapes", label: "Shapes", icon: "shapes", tip: "Arrows, circles, numbers and shapes" },
   { id: "layers", label: "Layers", icon: "layers", tip: "Everything in the image, front to back" },
   { id: "exports", label: "Exports", icon: "exports", tip: "Images and videos you've exported" },
 ];
@@ -230,6 +183,8 @@ function Rail() {
     persist();
   };
   return html`<nav class="rail">
+    <button class="rail-btn" onClick=${openScenesPage}><${Icon} n="grid" s=${19} /><span class="rl">Scenes</span><span class="tip">All your designs (⇧⌘O)</span></button>
+    <span class="rail-sep"></span>
     ${TABS.map((t) => html`<button class="rail-btn ${s.leftOpen && s.leftTab === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
       <${Icon} n=${t.icon} s=${19} />
       <span class="rl">${t.label}</span>
@@ -243,7 +198,7 @@ function Rail() {
 
 function LeftPanel() {
   const s = useStore();
-  const P = { captures: CapturesPanel, backgrounds: BackgroundsPanel, text: TextPanel, layers: LayersPanel, exports: ExportsPanel }[s.leftTab] ?? CapturesPanel;
+  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: TextPanel, shapes: ShapesPanel, layers: LayersPanel, exports: ExportsPanel }[s.leftTab] ?? CapturesPanel;
   return html`<${P} />`;
 }
 
@@ -272,7 +227,8 @@ function Hero() {
     ${recent.length > 0 &&
     html`<div class="vstack" style=${{ alignItems: "center", gap: "10px" }}>
       <span class="note">…or pick up a scene</span>
-      <div class="scene-strip">${recent.map((x) => html`<button title=${x.name} data-scene=${x.id} onClick=${() => openScene(x.id)}><${SceneThumb} x=${x} /><span>${x.name}</span></button>`)}</div>
+      <div class="scene-strip">${recent.map((x) => html`<button title=${x.name} data-scene=${x.id} onClick=${() => openScene(x.id)}><${SceneThumb} x=${x} /><span>${x.name}</span></button>`)}
+        <button class="scene-strip-all" onClick=${openScenesPage}><div class="scene-thumb"><${Icon} n="grid" s=${18} /></div><span>See all ${s.scenes.length}</span></button></div>
     </div>`}
     ${shots.length > 0 &&
     html`<div class="vstack" style=${{ alignItems: "center", gap: "10px" }}>
@@ -919,10 +875,12 @@ function Help() {
   const close = () => set({ modal: null });
   const steps = [
     ["sim", "1 · Add a screenshot", "Capture your app from the iOS Simulator, a website, or a Mac window, or drop in image files. They collect in the Screens panel; click one to use it."],
-    ["canvas", "2 · Make it yours", "Edit mode shows where things go. Drag the device to move it, pull a corner to resize, use the round handle to rotate. Double-click text to retype it. Pick a Backdrop, add a headline in Text."],
+    ["canvas", "2 · Make it yours", "Edit mode shows where things go. Drag the device to move it, pull a corner to resize, use the round handle to rotate. Double-click text to retype it. Pick a Backdrop, add a headline in Text, and point things out with arrows, circles and numbers from Shapes."],
     ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset backdrop”. Undo (⌘Z) reverts anything."],
+    ["wand", "Or start from a design", "Designs turns your screen into a finished design in one click, or asks Claude for three to pick from."],
     ["eye", "Preview", "Edit mode is a quick layout guide. Preview renders the finished image with the real frame, lighting and effects."],
     ["export", "3 · Export", "Export saves a full-size PNG, JPEG or WebP, or a video with gentle camera motion. Everything lands in your output folder."],
+    ["grid", "Scenes", "Every design saves itself as you work. Scenes (⇧⌘O) shows them all: search, open, rename, duplicate, or start a new one."],
   ];
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
     <div class="sheet">
@@ -1015,6 +973,7 @@ function App() {
     <${LeftPanel} />
     <${Stage} />
     <${Inspector} />
+    ${s.scenesPage && html`<${ScenesPage} />`}
     ${s.modal?.kind === "settings" && html`<${Settings} />`}
     ${s.modal?.kind === "confirm" && html`<${Confirm} />`}
     ${s.modal?.kind === "help" && html`<${Help} />`}
@@ -1022,7 +981,7 @@ function App() {
     ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
     <${Toasts} />
     <${ContextMenu} />
-    ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />Drop to add to the scene</div></div>`}
+    ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new scene" : "Drop to add to the scene"}</div></div>`}
   </div>`;
 }
 
@@ -1037,10 +996,22 @@ const typing = () => {
 function nudgeSelected(dx, dy, scaleF, rot) {
   const e = S.layout?.entities.find((x) => x.id === S.selected);
   if (!e) return;
-  const next = { ...e };
+  let next = { ...e };
   next.x += dx;
   next.y += dy;
-  if (scaleF) {
+  if (e.kind === "shape") {
+    const c = S.layout.canvas;
+    next = withShape(e, (sh) => {
+      if (sh.type === "arrow" || sh.type === "line") {
+        for (const k of ["from", "to"]) sh[k] = { x: sh[k].x + dx, y: sh[k].y + dy };
+      } else {
+        sh.x += dx;
+        sh.y += dy;
+        if (scaleF) sh.size *= scaleF;
+        if (rot) sh.rotate = (sh.rotate || 0) + rot;
+      }
+    }, c.width, c.height);
+  } else if (scaleF) {
     if (e.kind === "device") {
       next.width *= scaleF;
       next.height *= scaleF;
@@ -1049,7 +1020,7 @@ function nudgeSelected(dx, dy, scaleF, rot) {
       if (next.subSize) next.subSize *= scaleF;
     }
   }
-  if (rot && e.kind !== "caption") next.rotate = (e.rotate || 0) + rot;
+  if (rot && e.kind !== "caption" && e.kind !== "shape") next.rotate = (e.rotate || 0) + rot;
   // Apply to the layout right away so repeated key presses build on each other.
   set({ layout: { ...S.layout, entities: S.layout.entities.map((x) => (x.id === e.id ? next : x)) } });
   commitEntity(next);
@@ -1076,7 +1047,7 @@ const commands = {
   whatsNew: () => openWhatsNew(true),
   newScene,
   save: () => saveNow(),
-  scenes: () => set({ scenesOpen: !S.scenesOpen }),
+  scenes: () => toggleScenesPage(),
   import: () => {
     set({ leftTab: "captures", leftOpen: true, capture: { ...S.capture, source: "import" } });
     setTimeout(() => document.querySelector('.dropzone input[type="file"]')?.click(), 60);
@@ -1100,6 +1071,12 @@ window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const k = e.key.toLowerCase();
   // Shortcuts that also work while typing.
+  if (mod && e.shiftKey && k === "o") {
+    e.preventDefault();
+    return commands.scenes();
+  }
+  // The Scenes page handles its own keys.
+  if (S.scenesPage) return;
   if (mod && k === "k") {
     e.preventDefault();
     return commands.ai();
@@ -1107,10 +1084,6 @@ window.addEventListener("keydown", (e) => {
   if (mod && k === "s" && !e.shiftKey) {
     e.preventDefault();
     return saveNow();
-  }
-  if (mod && e.shiftKey && k === "o") {
-    e.preventDefault();
-    return commands.scenes();
   }
   if (typing()) return;
   if (S.modal) return;
@@ -1176,6 +1149,20 @@ function entityMenu(id) {
       (e?.bezel || d.bezel === false) && { label: d.bezel === false ? "Use Apple's device art" : "Use the drawn frame", icon: "image", run: () => editScene((sc) => (sc.devices[i].bezel = d.bezel === false ? undefined : false)) },
       { label: "Put back in the layout", icon: "refresh", disabled: !placed, run: () => editScene((sc) => ["x", "y", "anchor", "height", "width", "rotate"].forEach((k) => delete sc.devices[i][k])) },
       "-",
+      { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },
+      { label: "Bring forward", icon: "front", run: () => moveZ(id, 1) },
+      { label: "Send backward", icon: "back", run: () => moveZ(id, -1) },
+      "-",
+      { label: "Delete", icon: "trash", kbd: "⌫", danger: true, run: () => deleteEntity(id) },
+    ];
+  }
+  if (id.startsWith("shape-")) {
+    const sh = S.scene.shapes?.[i];
+    if (!sh) return [];
+    return [
+      { label: `Ask AI about this ${entityLabel(id).toLowerCase()}…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
+      "-",
+      { label: sh.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => editScene((sc) => (sc.shapes[i].sketch = sh.sketch ? undefined : true)) },
       { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },
       { label: "Bring forward", icon: "front", run: () => moveZ(id, 1) },
       { label: "Send backward", icon: "back", run: () => moveZ(id, -1) },
@@ -1295,13 +1282,16 @@ window.addEventListener("drop", (e) => {
   e.preventDefault();
   dragDepth = 0;
   set({ dropping: false });
-  uploadFiles(e.dataTransfer.files);
+  const files = [...e.dataTransfer.files];
+  // On the Scenes page, a drop starts a new scene with the files.
+  if (S.scenesPage) newScene().then(() => (closeScenesPage(), uploadFiles(files)));
+  else uploadFiles(files);
 });
 
 // Report the draggable title-bar area to the desktop shell.
 function reportDragRegions() {
   if (!native) return;
-  const bar = document.querySelector(".topbar");
+  const bar = document.querySelector(".scenes-page .sp-bar") ?? document.querySelector(".topbar");
   if (!bar) return;
   const r = bar.getBoundingClientRect();
   const holes = [...bar.querySelectorAll("[data-nodrag], button, input")].map((el) => {
@@ -1331,6 +1321,7 @@ async function boot() {
   render(html`<${App} />`, document.getElementById("root"));
   try {
     const [opts] = await Promise.all([api("/api/options"), restore(), refreshFiles().catch(() => [])]);
+    api("/api/recipes").then((recipes) => set({ recipes })).catch(() => undefined);
     set({ opts, ready: true });
     // Drop scene devices whose files were deleted outside the app.
     const known = new Set(S.files.map((f) => f.path));

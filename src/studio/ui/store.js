@@ -56,6 +56,17 @@ export const S = {
   sceneId: null,
   scenes: [],
   scenesOpen: false,
+  /** The full-window Scenes page, and how it lists them. */
+  scenesPage: false,
+  scenesPrefs: { sort: "edited", layout: "grid", kind: "all" },
+  renaming: null,
+  /** The Shapes panel: the colour new shapes take, and what a click on screen text adds. */
+  shapeTint: "#ff3b30",
+  shapeMark: "circle-it",
+  /** Recipes: complete designs built from your screens (loaded at start). */
+  recipes: [],
+  /** "Design it for me": { busy, step, items: [{ name, summary, request, image }], error }. */
+  directions: null,
   layout: null,
   layoutError: null,
   files: [],
@@ -213,15 +224,19 @@ const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
   sceneId: S.sceneId,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched },
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs },
 });
 export function persist() {
+  persistPrefs();
+  scheduleSceneSave();
+}
+/** Save the app's state but not the scene: only a preference changed, not the design. */
+export function persistPrefs() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = 0;
     api("/api/state", snapshot()).catch(() => undefined);
   }, 500);
-  scheduleSceneSave();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -295,6 +310,7 @@ export async function restore() {
   patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
+  if (ui.scenesPrefs) patch.scenesPrefs = { ...S.scenesPrefs, ...ui.scenesPrefs };
   set(patch);
 }
 
@@ -365,6 +381,15 @@ export function entityLabel(id, scene = S.scene, layout = S.layout) {
   if (id === "caption") return "Caption";
   const [kind, n] = id.split("-");
   if (kind === "text") return (scene.texts?.[n - 1]?.text || "Text").replace(/\*\*/g, "").slice(0, 28);
+  if (kind === "shape") {
+    const sh = scene.shapes?.[n - 1];
+    const e = layout?.entities.find((x) => x.id === id)?.shape;
+    if (!sh) return "Shape";
+    if (sh.type === "badge") return `Number ${e?.label ?? sh.label ?? ""}`.trim();
+    if (sh.type === "ellipse") return sh.sketch && sh.fill !== undefined && sh.fill === "none" ? "Circled" : (e?.aspect ?? sh.aspect ?? 1.5) === 1 ? "Circle" : "Ellipse";
+    if (sh.type === "rect") return (e?.fill ?? sh.fill ?? "none") === "none" ? "Box" : (e?.radius ?? sh.radius) >= 0.5 ? "Pill" : "Rectangle";
+    return { arrow: "Arrow", line: "Line", triangle: "Triangle", star: "Star" }[sh.type] ?? "Shape";
+  }
   if (kind === "device") {
     const e = layout?.entities.find((x) => x.id === id);
     const d = scene.devices?.[n - 1];

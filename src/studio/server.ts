@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import http from "node:http";
@@ -21,7 +22,8 @@ import * as sim from "../simulator/simctl.js";
 import { run } from "../util/exec.js";
 import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { imageSize } from "../util/image.js";
-import { aiStatus, editScene, AIEditSchema } from "./ai.js";
+import { aiStatus, designDirections, editScene, AIEditSchema } from "./ai.js";
+import { RECIPES, buildRecipe } from "../design/recipes.js";
 import { backgroundPreview, loadState, lookThumbnail, saveState, searchUnsplash, thumbnail } from "./assets.js";
 import { houseStyle, updateHouseStyle } from "../util/style.js";
 import { SUGGESTED_SETS, bezelJob, bezelSets, bezelSummary, bezelsDir, getAppleBezels, importBezels } from "../render/bezels.js";
@@ -255,6 +257,15 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     res.end(readFileSync(path.join(uiDir(), "index.html")));
     return;
   }
+  // The canvas draws shapes with the engine's own code: its compiled module (from the build when
+  // running from source).
+  if (req.method === "GET" && url.pathname === "/ui/shapes.js") {
+    const file = [path.join(here, "..", "render", "shapes.js"), path.join(here, "..", "..", "dist", "render", "shapes.js")].find((f) => existsSync(f));
+    if (!file) throw new HttpError(404, "Not found");
+    res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
+    res.end(readFileSync(file, "utf8").replace(/\n\/\/# sourceMappingURL=.*$/, ""));
+    return;
+  }
   if (req.method === "GET" && url.pathname.startsWith("/ui/")) {
     const rel = decodeURIComponent(url.pathname.slice(4));
     const file = rel.startsWith("vendor/") ? vendorFile(rel.slice(7)) : path.join(uiDir(), rel);
@@ -348,6 +359,29 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     }
     return send(200, whatsNew(file, version()));
   }
+  if (req.method === "GET" && url.pathname === "/api/recipes") return send(200, RECIPES.map(({ id, name, description, screens }) => ({ id, name, description, screens })));
+  // A small render of a recipe with your own screens, cached by recipe, screens and words.
+  if (req.method === "GET" && url.pathname === "/api/recipe-preview") {
+    let body: { devices: Array<{ screenshot: string; video?: string }>; headline?: string; subheadline?: string };
+    try {
+      body = JSON.parse(url.searchParams.get("body") ?? "");
+    } catch {
+      throw new HttpError(400, "body must be JSON");
+    }
+    const id = url.searchParams.get("id") ?? "";
+    if (!body.devices?.length || body.devices.some((d) => !allowedFile(d.screenshot))) throw new HttpError(403, "Screenshots must be in the output folder");
+    const w = Math.max(160, Math.min(800, Number(url.searchParams.get("w") ?? 360)));
+    const stamp = body.devices.map((d) => (existsSync(d.screenshot) ? statSync(d.screenshot).mtimeMs : 0)).join(",");
+    const file = path.join(cacheDir("recipe-previews"), `${createHash("sha1").update(JSON.stringify([id, body, w, stamp, 2])).digest("hex").slice(0, 20)}.jpg`);
+    if (!existsSync(file)) {
+      const scene = await buildRecipe(id, body.devices, body);
+      await createMockup({ ...scene, quality: "preview", format: "jpeg", jpegQuality: 82, deliveryWidth: w, preview: false, output: file });
+      rmSync(`${file}.mockup.json`, { force: true });
+    }
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
+    createReadStream(file).pipe(res);
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/house-style") return send(200, { notes: houseStyle() });
   if (req.method === "GET" && url.pathname === "/api/bezels") return send(200, { ...bezelSummary(), sets: bezelSets(), suggested: SUGGESTED_SETS, job: bezelJob() });
   if (req.method === "GET" && url.pathname === "/api/apps") {
@@ -386,6 +420,25 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       }
       res.end();
       return;
+    }
+    case "/api/ai-directions": {
+      const input = AIEditSchema.parse({ instruction: "Design it for me", ...(await json<object>(req)) });
+      res.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" });
+      const line = (o: unknown) => res.write(JSON.stringify(o) + "\n");
+      try {
+        const result = await designDirections(input, (p) => line({ type: "progress", ...p }));
+        line({ type: "result", ...result });
+      } catch (e) {
+        line({ type: "error", error: e instanceof z.ZodError ? e.issues.map((i) => i.message).join("; ") : (e as Error).message });
+      }
+      res.end();
+      return;
+    }
+    case "/api/recipe": {
+      const { id, devices, headline, subheadline } = await json<{ id: string; devices: Array<{ screenshot: string; video?: string }>; headline?: string; subheadline?: string }>(req);
+      if (!Array.isArray(devices) || !devices.length) throw new HttpError(400, "Add a screenshot first: recipes use your screens.");
+      for (const d of devices) if (!allowedFile(d.screenshot)) throw new HttpError(403, "Screenshots must be in the output folder");
+      return send(200, { scene: await buildRecipe(id, devices, { headline, subheadline }) });
     }
     case "/api/state":
       saveState(await json(req));

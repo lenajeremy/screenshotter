@@ -16,8 +16,10 @@ import { newPage } from "./browser.js";
 import { finishBackground } from "./finish.js";
 import { FRAME_CSS, MAC_MENU_BAR, WATCH_BAND, defaultBand, measureFrame, renderFrame, screenRect, type FrameKind, type FrameOptions } from "./frame.js";
 import { resolveHighlights } from "./highlights.js";
+import { findText } from "../native/ocr.js";
+import { isLine, renderShape, shapeHtml, shapeSpec, type ShapeSpec } from "./shapes.js";
 import { CANVAS_PRESETS, computeLayout, defaultCanvasFor, type DeviceSlot, type LayoutResult } from "./layouts.js";
-import type { DeviceInput, EffectsInput, MockupInput, ShadowInput, TextInput } from "./schema.js";
+import type { DeviceInput, EffectsInput, MockupInput, ShadowInput, ShapeInput, TextInput } from "./schema.js";
 
 export interface MockupResult {
   path: string;
@@ -333,8 +335,8 @@ function place(d: Prepared, p: Placement, bgColor: string | undefined, W: number
 /** One element of the scene as positioned on the canvas. All positions are canvas fractions. */
 export interface SceneEntity {
   id: string;
-  kind: "device" | "caption" | "text";
-  /** Index into `devices` or `texts`. */
+  kind: "device" | "caption" | "text" | "shape";
+  /** Index into `devices`, `texts` or `shapes`. */
   index?: number;
   /** Devices: centre. Captions and texts: the anchor point (see align and anchor). */
   x: number;
@@ -361,6 +363,8 @@ export interface SceneEntity {
   band?: { stub: number; width: number; color: string };
   /** The product bezel image this device is drawn with, when one is installed and used. */
   bezel?: string;
+  /** Shapes: everything about it, settled (an `around` target resolved to a position). */
+  shape?: ShapeSpec;
   text?: string;
   subtext?: string;
   /** Font sizes as fractions of canvas height. */
@@ -390,6 +394,7 @@ interface ScenePlan {
   placements: Placement[];
   caption?: CaptionPlan;
   headSize: number;
+  shapes: ShapeSpec[];
 }
 
 async function planScene(input: MockupInput, light = false): Promise<ScenePlan> {
@@ -426,7 +431,93 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
       subSize: sizePx(style.subheadlineSize, H, Math.round(headSize * 0.46)),
     };
   }
-  return { prepared, warnings, canvas, layout, placements, caption, headSize };
+  const shapes = await resolveShapes(input, prepared, placements, W, H, warnings);
+  return { prepared, warnings, canvas, layout, placements, caption, headSize, shapes };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shapes
+
+type TargetBox = { cx: number; cy: number; w: number; h: number; rotate: number };
+
+/** A text box on a device's screen (screenshot pixels), as a box on the canvas (pixels). */
+function onScreen(d: Prepared, p: Placement, t: { x: number; y: number; width: number; height: number }): TargetBox {
+  const sr = screenRect(d.options);
+  const sx = (p.visW * sr.width) / d.size.width;
+  const sy = (p.visH * sr.height) / d.size.height;
+  const cx = p.cx - p.visW / 2 + sr.x * p.visW + (t.x + t.width / 2) * sx;
+  const cy = p.cy - p.visH / 2 + sr.y * p.visH + (t.y + t.height / 2) * sy;
+  // Turn with the device.
+  const a = (p.rotate * Math.PI) / 180;
+  const dx = cx - p.cx;
+  const dy = cy - p.cy;
+  return { cx: p.cx + dx * Math.cos(a) - dy * Math.sin(a), cy: p.cy + dx * Math.sin(a) + dy * Math.cos(a), w: t.width * sx, h: t.height * sy, rotate: p.rotate };
+}
+
+/** Put a shape on its target: around it, beside it (badges), or pointing at its edge (lines). */
+function aimShape(s: ShapeSpec, raw: ShapeInput, b: TargetBox, device: Placement, W: number, H: number): ShapeSpec {
+  const pad = (raw.around?.padding ?? 0.012) * H;
+  const a = (b.rotate * Math.PI) / 180;
+  const turn = (x: number, y: number) => ({ x: x * Math.cos(a) - y * Math.sin(a), y: x * Math.sin(a) + y * Math.cos(a) });
+  const rotate = raw.rotate ?? b.rotate;
+  if (s.type === "rect") {
+    const w = b.w + pad * 2;
+    const h = b.h + pad * 2;
+    return { ...s, x: b.cx / W, y: b.cy / H, size: h / H, aspect: w / h, rotate };
+  }
+  if (s.type === "ellipse" || s.type === "star" || s.type === "triangle") {
+    // An ellipse that clears the text's corners, not just its sides.
+    const w = b.w + pad * 2 + b.h * 0.7;
+    const h = b.h + pad * 2 + b.h * 0.6;
+    return { ...s, x: b.cx / W, y: b.cy / H, size: h / H, aspect: w / h, rotate };
+  }
+  if (s.type === "badge") {
+    const bw = (s.size * H * s.aspect) / 2;
+    const bh = (s.size * H) / 2;
+    const at = raw.at ?? "right";
+    const off = at === "left" ? turn(-(b.w / 2 + pad + bw), 0) : at === "top" ? turn(0, -(b.h / 2 + pad + bh)) : at === "bottom" ? turn(0, b.h / 2 + pad + bh) : turn(b.w / 2 + pad + bw, 0);
+    return { ...s, x: (b.cx + off.x) / W, y: (b.cy + off.y) / H, rotate: raw.rotate ?? 0 };
+  }
+  // Lines and arrows: start outside the device on the target's side, a little above, unless told.
+  const clampX = (x: number) => Math.min(W * 0.96, Math.max(W * 0.04, x));
+  const clampY = (y: number) => Math.min(H * 0.96, Math.max(H * 0.04, y));
+  const reach = Math.max(W, H) * 0.14;
+  const side = b.cx >= device.cx ? 1 : -1;
+  const from = raw.from ? { x: raw.from.x * W, y: raw.from.y * H } : { x: clampX(device.cx + side * (device.visW / 2 + reach * 0.45)), y: clampY(b.cy - reach * 0.55) };
+  // End at the target's edge (in the device's own axes), with a small gap.
+  const u0 = { x: from.x - b.cx, y: from.y - b.cy };
+  const len = Math.hypot(u0.x, u0.y) || 1;
+  const local = { x: (u0.x * Math.cos(-a) - u0.y * Math.sin(-a)) / len, y: (u0.x * Math.sin(-a) + u0.y * Math.cos(-a)) / len };
+  const hw = b.w / 2 + pad;
+  const hh = b.h / 2 + pad;
+  const k = Math.min(Math.abs(local.x) > 1e-6 ? hw / Math.abs(local.x) : Infinity, Math.abs(local.y) > 1e-6 ? hh / Math.abs(local.y) : Infinity);
+  const to = raw.to ? { x: raw.to.x * W, y: raw.to.y * H } : { x: b.cx + (u0.x / len) * k, y: b.cy + (u0.y / len) * k };
+  // Bow away from the device's centre, which reads as coming around it.
+  const bend = raw.bend ?? (s.bend === 0 ? 0 : side * Math.abs(s.bend) * (from.y < to.y ? -1 : 1));
+  return { ...s, from: { x: from.x / W, y: from.y / H }, to: { x: to.x / W, y: to.y / H }, x: (from.x + to.x) / 2 / W, y: (from.y + to.y) / 2 / H, bend };
+}
+
+async function resolveShapes(input: MockupInput, prepared: Prepared[], placements: Placement[], W: number, H: number, warnings: string[]): Promise<ShapeSpec[]> {
+  const out: ShapeSpec[] = [];
+  let badges = 0;
+  for (const [i, raw] of (input.shapes ?? []).entries()) {
+    const label = raw.label ?? (raw.type === "badge" ? String(++badges) : undefined);
+    let spec = shapeSpec({ ...raw, label }, i);
+    if (raw.around) {
+      try {
+        const k = (raw.around.device ?? 1) - 1;
+        const d = prepared[k];
+        const p = placements[k];
+        if (!d || !p) throw new Error(`there's no device ${k + 1}`);
+        const t = await findText(d.file, raw.around.text, raw.around.match ?? 1);
+        spec = aimShape(spec, raw, onScreen(d, p, t), p, W, H);
+      } catch (e) {
+        warnings.push(`Shape ${i + 1} (${raw.type}) couldn't find its target: ${(e as Error).message}`);
+      }
+    }
+    out.push(spec);
+  }
+  return out;
 }
 
 /** A drawn watch's band stubs, for the Studio canvas: each stub's share of the height, its width and colour. */
@@ -515,6 +606,22 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       font: fontStack(t.font).stack,
     }),
   );
+  plan.shapes.forEach((sh, i) => {
+    const r = renderShape(sh, W, H);
+    const line = isLine(sh.type);
+    entities.push({
+      id: `shape-${i + 1}`,
+      kind: "shape",
+      index: i,
+      x: round(line ? (sh.from.x + sh.to.x) / 2 : sh.x),
+      y: round(line ? (sh.from.y + sh.to.y) / 2 : sh.y),
+      width: round(line ? Math.abs(sh.to.x - sh.from.x) : r.width / W),
+      height: round(line ? Math.abs(sh.to.y - sh.from.y) : r.height / H),
+      rotate: line ? 0 : sh.rotate,
+      z: input.shapes?.[i]?.z ?? 40,
+      shape: sh,
+    });
+  });
   return entities;
 }
 
@@ -717,7 +824,9 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation): Pro
     vignetteHtml(effects.vignette) +
     (grainScope === "background" ? grainHtml(effects.grain, 4) : "") +
     `</div>`;
-  let scene = `${bgGroup}${placed.map((p) => p.html).join("\n")}`;
+  // Shapes belong to the scene: a camera zoom or a video's push-in moves them with the devices.
+  const shapes = plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40)).join("");
+  let scene = `${bgGroup}${placed.map((p) => p.html).join("\n")}${shapes}`;
   if (grade.scope === "all") scene = `<div class="scene" style="${grade.filter ? `filter:${grade.filter};` : ""}">${scene}${grade.overlays}</div>`;
   // A close-up: scale the scene about the focus and bring it to the centre, never past an edge.
   if (input.camera && input.camera.zoom > 1) {
