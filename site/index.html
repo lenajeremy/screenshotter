@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Screenshotter</title>
-<meta name="description" content="Capture real screens from the iOS Simulator, the web or your Mac, frame them in beautiful devices, and export App Store images and videos. By hand, by asking AI, or from your coding agent over MCP.">
+<title>Screenshotter: App Store screenshots from your real app</title>
+<meta name="description" content="Store-ready screenshots and launch images from your real app, in minutes. One click, a sentence to Claude, or your coding agent does the whole set.">
 <meta name="theme-color" content="#070708">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -407,6 +407,84 @@ footer a:hover { color: var(--text); }
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   html { scroll-behavior: auto; }
 }
+
+/* ------------------------------------------------------------------ the short page */
+.pill .short { display: none; }
+.hero .pill { margin-bottom: 4px; }
+.flow { display: flex; align-items: flex-start; margin-top: 54px; }
+.flow figure { margin: 0; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.flow figcaption { font: 500 12px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-3); text-align: center; }
+/* Widths in proportion to each image's shape, so both come out the same height. */
+.flow-in { flex: 0.46 1 0; }
+.flow-out { flex: 2.911 1 0; }
+.flow img { display: block; width: 100%; height: auto; }
+.flow-in img { border-radius: clamp(14px, 1.8vw, 24px); box-shadow: 0 0 0 1px var(--line-2), 0 30px 60px -30px rgba(0, 0, 0, 0.9); }
+.flow-out .strip { border-radius: clamp(14px, 1.8vw, 24px); overflow: hidden; box-shadow: 0 0 0 1px var(--line), 0 40px 90px -40px rgba(0, 0, 0, 0.9); }
+.flow-arrow { flex: none; width: clamp(40px, 5vw, 72px); align-self: center; display: grid; place-items: center; color: var(--lime); padding-bottom: 28px; }
+.proof { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 30px; margin: 40px 0 0; padding: 0; list-style: none; color: var(--text-3); font-size: 15px; }
+.proof li { display: inline-flex; align-items: center; gap: 9px; }
+.proof svg { color: var(--lime); flex: none; }
+.proof b { color: var(--text); font-weight: 600; }
+.ways { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 50px; }
+.way { border-radius: 24px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); padding: 24px; display: flex; flex-direction: column; gap: 10px; min-width: 0; scroll-margin-top: 90px; }
+.way .tag { align-self: flex-start; font: 600 11.5px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--lime); padding: 4px 9px; border-radius: 999px; background: rgba(210, 255, 77, 0.08); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.25); }
+.way h3 { font: 600 22px var(--sans); letter-spacing: -0.015em; margin-top: 4px; }
+.way > p { color: var(--text-3); font-size: 15px; }
+.way-art { position: relative; flex: 1; min-height: 270px; margin-top: 12px; border-radius: 16px; overflow: hidden; background: var(--stage); box-shadow: inset 0 0 0 1px var(--line); }
+.way-art.shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 18%; }
+/* After, large; before, as a small inset it grew from. */
+.way-art.pair .after { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+.way-art.pair .before { position: absolute; left: 12px; bottom: 12px; width: 31%; height: auto; border-radius: 10px; box-shadow: 0 0 0 1px var(--line-3), 0 14px 30px -10px rgba(0, 0, 0, 0.9); }
+.way-art.pair .to { position: absolute; left: calc(31% - 2px); bottom: 56px; width: 30px; height: 30px; border-radius: 50%; background: var(--lime); color: var(--lime-ink); display: grid; place-items: center; box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.8); }
+.way-art.pair .said { position: absolute; left: 12px; right: 12px; bottom: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(18, 18, 22, 0.82); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: flex-start; }
+.way-art.pair .said i { font-style: normal; color: var(--lilac); flex: none; }
+.way .term { margin-top: 12px; flex: 1; border-radius: 16px; background: var(--stage); }
+.way .term .body { min-height: 0; font-size: 12.5px; padding: 14px; }
+.way .term .thumbs { gap: 5px; }
+.way .term .thumbs img { width: calc((100% - 20px) / 5); }
+.oneline { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 8px 8px 12px; border-radius: 12px; background: var(--stage); box-shadow: inset 0 0 0 1px var(--line); }
+.oneline code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: #d9d9e0; }
+.oneline .copy { position: static; flex: none; }
+.way .go { margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--text-2); display: inline-flex; gap: 6px; align-items: center; align-self: flex-start; transition: color 150ms ease; }
+.way .go:hover { color: var(--lime); }
+.more { display: flex; justify-content: center; margin-top: 36px; }
+.page-head { padding-block: clamp(36px, 6vw, 80px) 10px; }
+.page-head .wrap { display: flex; flex-direction: column; gap: 18px; align-items: flex-start; }
+.page-head h1 { font: 300 clamp(44px, 7vw, 92px)/0.95 var(--display); letter-spacing: -0.03em; }
+.page-head .back { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-3); }
+.page-head .back:hover { color: var(--text); }
+@media (max-width: 980px) {
+  /* With the links hidden, the button goes to the far side. */
+  .nav .btn { margin-left: auto; }
+  /* Under the copy, the phones stay together rather than drifting to the edges. */
+  .hero-art { width: min(100%, 520px); margin-inline: auto; }
+  .ways { grid-template-columns: 1fr; }
+  .way-art { flex: none; min-height: 0; aspect-ratio: 4 / 3; }
+  .way-art.pair { aspect-ratio: 4 / 5; }
+}
+@media (max-width: 760px) {
+  .flow { flex-direction: column; align-items: center; gap: 6px; }
+  .flow-in { flex: none; width: min(150px, 42%); }
+  .flow-arrow { transform: rotate(90deg); padding: 0; height: 40px; }
+  .flow-out { flex: none; width: 100%; }
+  /* The strip is too small to read at phone width: let it run wide and swipe. */
+  .flow-out .strip { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .flow-out .strip::-webkit-scrollbar { display: none; }
+  .flow-out img { width: 760px; max-width: none; }
+  .proof { flex-direction: column; align-items: flex-start; gap: 12px; }
+}
+@media (max-width: 560px) {
+  .pill { max-width: 100%; }
+  .pill .long { display: none; }
+  .pill .short { display: inline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hero .ctas .btn { flex: 1 1 100%; }
+  .hero-art { height: 400px; }
+  /* Two notes, each clear of the screen edge: one over the top, one on the front phone. */
+  .chip { height: 34px; padding: 0 11px; font-size: 12.5px; }
+  .chip.c1 { left: 0; top: 0; }
+  .chip.c3 { display: none; }
+  .chip.c4 { display: inline-flex; right: 0; bottom: 7%; }
+}
 </style>
 </head>
 <body>
@@ -416,10 +494,10 @@ footer a:hover { color: var(--text); }
   <div class="wrap">
     <a class="brand" href="#top"><img src="assets/icon.svg" alt="">Screenshotter</a>
     <nav class="links" aria-label="Sections">
-      <a href="#story">How it works</a>
-      <a href="#ai">Ask AI</a>
-      <a href="#mcp">For agents</a>
-      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#ways">Ways to work</a>
+      <a href="#agent">For agents</a>
+      <a href="features.html">All features</a>
       <a href="changelog.html">What's new</a>
     </nav>
     <a class="btn primary sm" href="#download" data-download>
@@ -433,18 +511,18 @@ footer a:hover { color: var(--text); }
 <section class="hero">
   <div class="wrap">
     <div class="hero-copy">
-      <a class="pill" href="changelog.html"><b>✦ New in 0.3</b>Shapes, a Scenes page and one-click designs<span aria-hidden="true">→</span></a>
+      <a class="pill" href="changelog.html"><b>✦ New in 0.3</b><span class="long">Shapes, a Scenes page and one-click designs</span><span class="short">Shapes and one-click designs</span><span aria-hidden="true">→</span></a>
       <h1 aria-label="Make your app look incredible.">
         <span class="w" style="--i:0">Make</span> <span class="w" style="--i:1">your</span> <span class="w" style="--i:2">app</span> <span class="w" style="--i:3">look</span>
         <span class="line2"><span class="w grad" style="--i:4">incredible.</span></span>
       </h1>
-      <p class="lede">Capture real screens from the iOS Simulator, the web or your Mac. Drop them into beautiful device frames, and export App Store images and videos. Design by hand, by asking AI, or let your coding agent do it over MCP.</p>
+      <p class="lede">Store-ready screenshots and launch images from your real app, in minutes instead of an afternoon in Figma. One click, a sentence to Claude, or your coding agent does the whole set.</p>
       <div class="ctas">
         <a class="btn primary lg" href="#download" data-download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
           Download for Mac
         </a>
-        <a class="btn ghost lg" href="#mcp">Add it to your agent
+        <a class="btn ghost lg" href="#agent">Add it to your agent
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         </a>
       </div>
@@ -464,275 +542,99 @@ footer a:hover { color: var(--text); }
   </div>
 </section>
 
-<!-- ============================================================ agents -->
-<section class="agents" aria-label="Works with">
-  <p class="label">Use it by hand, or from the agents you already use</p>
-  <div class="wrap agent-row">
-    <span class="agent hot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg>Claude Code</span>
-    <span class="agent hot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg>Codex</span>
-    <span class="agent hot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg>OpenCode</span>
-    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="3"/><path d="M8 21h8"/></svg>Claude Desktop</span>
-    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7L3 12l5 5M16 7l5 5-5 5"/></svg>Cursor</span>
-    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Any MCP client</span>
-    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/></svg>The Studio app</span>
-  </div>
-</section>
-
-<!-- ============================================================ story -->
-<section class="story" id="story" data-pin>
-  <div class="pin">
-    <div class="grid">
-      <div class="story-copy">
-        <div class="sec-head">
-          <span class="eyebrow"><i></i>How it works</span>
-          <h2 class="h2">From capture to <span class="ital grad">App Store</span> in five moves.</h2>
-          <p class="lede">Scroll to watch one screen become a store-ready image. Every frame here was rendered by Screenshotter.</p>
-        </div>
-        <ol class="steps">
-          <li class="step"><div class="t"><span class="n">01</span><span>Capture</span></div><p>Grab a real screen from the iOS Simulator, with a clean 9:41 status bar and no permission pop-ups.</p></li>
-          <li class="step"><div class="t"><span class="n">02</span><span>Frame</span></div><p>It drops into the matching device: iPhone, iPad, Apple Watch or Mac, in any finish.</p></li>
-          <li class="step"><div class="t"><span class="n">03</span><span>Backdrop</span></div><p>Pick one of 26 looks, your own colours, an Unsplash photo, or an AI image.</p></li>
-          <li class="step"><div class="t"><span class="n">04</span><span>Headline</span></div><p>Add the words that sell it. Star a word to paint it in your accent colour.</p></li>
-          <li class="step on"><div class="t"><span class="n">05</span><span>Tilt &amp; export</span></div><p>Angle it in 3D, lift out a row, and export at App Store size.</p></li>
-        </ol>
-      </div>
-      <div class="stage" aria-label="A screenshot becoming a finished App Store image">
-        <div class="dots"></div>
-        <img class="layer" data-l="backdrop" src="assets/story-3-backdrop.webp" alt="" width="900" height="1125" loading="lazy">
-        <img class="layer" data-l="raw" src="assets/story-1-raw.webp" alt="" width="900" height="1125" loading="lazy" style="opacity:0">
-        <img class="layer" data-l="device" src="assets/story-2-device.webp" alt="" width="900" height="1125" loading="lazy">
-        <img class="layer" data-l="headline" src="assets/story-4-headline.webp" alt="" width="900" height="1125" loading="lazy">
-        <img class="layer" data-l="final" src="assets/story-5-final.webp" alt="The finished image: a tilted iPhone over a blurred dinner table, with the headline Dinner, sorted." width="900" height="1125" loading="lazy">
-        <div class="toast on"><i>✓</i>Exported · 1200 × 1500 PNG</div>
-        <span class="stage-cap">Step 5 of 5</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============================================================ Ask AI -->
-<section class="ai pad" id="ai">
-  <div class="wrap grid">
-    <div class="sec-head reveal">
-      <span class="eyebrow"><i></i>Ask AI</span>
-      <h2 class="h2">Say it. <span class="ital grad">See it.</span></h2>
-      <p class="lede">Describe the change the way you'd brief a designer, or just say “make it amazing”. Claude designs from an art-direction guide, sees your app's colours and words, checks its own render before you do, and every edit is one undo away.</p>
-      <ul class="checks">
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Designs, not just edits.</b> Big confident type, colour from your app's own palette, a call-out on what the headline names.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Design it for me.</b> One click and Claude makes three different designs from your screen. Pick the one you like.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Checks its own work.</b> It looks at the render and fixes what's off before you see it.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Remembers your taste.</b> Say “always Space Black” once; your house style carries into every design.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>No setup.</b> Uses your Claude Code sign-in, or an API key if you prefer.</span></li>
-        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>It sees what you see.</b> Claude gets a small preview, your screenshot's colours and its visible text. Your files stay on your Mac.</span></li>
-      </ul>
-    </div>
-    <div class="ai-demo reveal-scale" data-ai>
-      <div class="ai-view">
-        <img class="before" src="assets/ai-before.webp" alt="" width="720" height="900" loading="lazy">
-        <img class="after" src="assets/ai-after.webp" alt="The same design after the request: a tilted phone over a dinner table, with both hands in green" width="720" height="900" loading="lazy">
-        <div class="ai-toast on"><i>✦</i>Tilted the phone and set the table.<u>Undo</u></div>
-        <div class="prompt">
-          <div class="in">
-            <div class="txt" data-type="Tilt the phone, put it on a dinner table and make “both hands” green">Tilt the phone, put it on a dinner table and make “both hands” green</div>
-            <div class="foot"><span class="ctx">iPhone 17 Pro</span><span>Claude Code</span><span class="send"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg></span></div>
-          </div>
-        </div>
-      </div>
-      <div class="ops" aria-hidden="true">
-        <div class="op on"><b>set</b>/devices/0/rotateY <span>-14</span></div>
-        <div class="op on"><b>set</b>/background <span>{ "photo": "table.jpg", "dim": 0.5 }</span></div>
-        <div class="op on"><b>set</b>/headline <span>"Cook with **both hands** free"</span></div>
-        <div class="op on"><b>set</b>/textStyle/accentColor <span>"#7ccf9d"</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============================================================ MCP -->
-<section class="pad" id="mcp" style="padding-top:0">
+<!-- ============================================================ how it works -->
+<section class="pad" id="how">
   <div class="wrap">
-    <div class="mcp-panel reveal-scale">
-      <div class="mcp-in">
-        <div class="dots"></div>
-        <div class="mcp-top">
-          <div class="sec-head">
-            <span class="badge-mcp">MCP SERVER</span>
-            <h2>Built for your <span class="ital grad">agents.</span></h2>
-          </div>
-          <p class="lede">Screenshotter is also an MCP server. Add it to Claude Code, Codex or OpenCode, and your agent can build your app, capture it, and hand you finished store images. It designs from the same art-direction guide as Ask AI, then zooms into details and compares variants before it moves on. It can open the scenes you saved in the Studio and save its own there, where you keep editing by hand.</p>
-        </div>
-
-        <div class="mcp-grid">
-          <div class="card install">
-            <div class="tabs" role="tablist" aria-label="Choose your agent">
-              <span class="knob" aria-hidden="true"></span>
-              <button role="tab" aria-selected="true" aria-controls="p-claude" id="t-claude">Claude Code</button>
-              <button role="tab" aria-selected="false" aria-controls="p-codex" id="t-codex">Codex</button>
-              <button role="tab" aria-selected="false" aria-controls="p-opencode" id="t-opencode">OpenCode</button>
-            </div>
-            <div class="snippet" role="tabpanel" id="p-claude" aria-labelledby="t-claude">
-              <button class="copy" data-copy="claude mcp add screenshotter --scope user -- node /path/to/screenshotter/dist/index.js">Copy</button>
-<pre><span class="c"># one line, available in every project</span>
-<span class="k">claude</span> mcp add screenshotter --scope user \
-  -- node /path/to/screenshotter/dist/index.js</pre>
-              <p class="note">Then type <code>/mcp</code> in Claude Code. It shows <span style="color:var(--lime)">screenshotter ✔ connected</span>.</p>
-            </div>
-            <div class="snippet" role="tabpanel" id="p-codex" aria-labelledby="t-codex" hidden>
-              <button class="copy" data-copy="codex mcp add screenshotter -- node /path/to/screenshotter/dist/index.js">Copy</button>
-<pre><span class="k">codex</span> mcp add screenshotter \
-  -- node /path/to/screenshotter/dist/index.js
-
-<span class="c"># ~/.codex/config.toml: give videos room to render</span>
-[mcp_servers.screenshotter]
-tool_timeout_sec = <span class="s">600</span></pre>
-              <p class="note">Check it with <code>codex mcp list</code>.</p>
-            </div>
-            <div class="snippet" role="tabpanel" id="p-opencode" aria-labelledby="t-opencode" hidden>
-              <button class="copy" data-copy='"screenshotter": { "type": "local", "command": ["node", "/path/to/screenshotter/dist/index.js"], "enabled": true }'>Copy</button>
-<pre><span class="c">// ~/.config/opencode/opencode.json, inside "mcp"</span>
-<span class="s">"screenshotter"</span>: {
-  <span class="s">"type"</span>: <span class="s">"local"</span>,
-  <span class="s">"command"</span>: [<span class="s">"node"</span>, <span class="s">"/path/to/screenshotter/dist/index.js"</span>],
-  <span class="s">"enabled"</span>: true
-}</pre>
-              <p class="note">Check it with <code>opencode mcp list</code>.</p>
-            </div>
-          </div>
-
-          <div class="card term" data-term>
-            <div class="bar"><i></i><i></i><i></i><span>claude · ~/code/mise</span></div>
-            <div class="body">
-              <div class="line you"><b>›</b> Make App Store screenshots of Mise in dark mode, with our green</div>
-              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>list_simulators</b></span><span class="tm">0.4s</span></div>
-              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>capture_screenshot</b> ×4</span><span class="tm">12.6s</span></div>
-              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>find_text</b> “Fresh ramen noodles”</span><span class="tm">0.2s</span></div>
-              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>create_mockup_set</b></span><span class="tm">11.8s</span></div>
-              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>crop_image</b> headline, call-out</span><span class="tm">0.3s</span></div>
-              <div class="line done">✓ Five screenshots, 1320 × 2868, in screenshots/sets/mise-app-store</div>
-              <div class="line thumbs on">
-                <img src="assets/set-1.webp" alt="" width="460" height="1000" loading="lazy">
-                <img src="assets/set-2.webp" alt="" width="460" height="1000" loading="lazy">
-                <img src="assets/set-3.webp" alt="" width="460" height="1000" loading="lazy">
-                <img src="assets/set-4.webp" alt="" width="460" height="1000" loading="lazy">
-                <img src="assets/set-5.webp" alt="" width="460" height="1000" loading="lazy">
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="stats">
-          <div class="stat"><b>24</b><span>MCP tools</span></div>
-          <div class="stat"><b>30</b><span>device frames</span></div>
-          <div class="stat"><b>49</b><span>built-in looks</span></div>
-          <div class="stat"><b>7</b><span>export formats</span></div>
-        </div>
-
-        <div class="tools">
-          <div class="tool"><code>capture_screenshot</code><p>Simulator screen with a clean status bar, taken once animations settle.</p></div>
-          <div class="tool"><code>record_simulator</code><p>Screen recordings, with deep links played on a timeline.</p></div>
-          <div class="tool"><code>capture_web</code><p>Any URL, in real Mobile Safari or desktop Chrome.</p></div>
-          <div class="tool"><code>capture_mac</code><p>A Mac app window by name, or the whole screen.</p></div>
-          <div class="tool"><code>create_mockup</code><p>One finished image: frames, backdrop, effects, call-outs, shapes, headline.</p></div>
-          <div class="tool"><code>apply_recipe</code><p>A complete, proven design built from your screens and their colours.</p></div>
-          <div class="tool"><code>create_mockup_set</code><p>A matching series, like a full App Store set.</p></div>
-          <div class="tool"><code>create_video</code><p>The same scene in motion, with zooms that follow the action and a cursor that clicks.</p></div>
-          <div class="tool"><code>layout_mockup</code><p>Where everything lands, without rendering, so agents can plan.</p></div>
-          <div class="tool"><code>find_text</code><p>On-device text recognition, to aim call-outs at words.</p></div>
-          <div class="tool"><code>record_web</code> · <code>record_mac</code><p>Rehearsed click-throughs of a page, with a cursor track; Mac app recordings.</p></div>
-          <div class="tool"><code>crop_image</code> · <code>create_grid</code><p>Zoom into details and compare variants side by side, the way a designer checks work.</p></div>
-          <div class="tool"><code>list_scenes</code> · <code>get_scene</code> · <code>save_scene</code><p>Open the designs saved in the Studio, and save new ones there, still editable by hand.</p></div>
-          <div class="tool"><code>design_guide</code><p>The art-direction guide: composition, copy, type, colour, call-outs.</p></div>
-          <div class="tool"><code>get_house_style</code> · <code>remember_style</code><p>What you like, remembered between sessions and shared with the app.</p></div>
-          <div class="tool"><code>simulator_control</code><p>Boot, launch, open links, set appearance and permissions.</p></div>
-          <div class="tool"><code>list_simulators</code> · <code>list_apps</code><p>What's installed and running.</p></div>
-          <div class="tool"><code>list_mockup_options</code><p>Every device, finish, look, canvas and layout.</p></div>
-        </div>
-      </div>
+    <div class="sec-head center reveal">
+      <span class="eyebrow"><i></i>How it works</span>
+      <h2 class="h2">One screenshot in. <span class="ital grad">Finished designs out.</span></h2>
+      <p class="lede">Drop in a screen from your app. Screenshotter frames it in the right device, builds a backdrop from your app's own colours and sets the type. Pick the one you like, then change anything.</p>
     </div>
+    <div class="flow reveal-scale">
+      <figure class="flow-in">
+        <img src="assets/raw-tonight.webp" alt="A plain screenshot of a recipe app" width="520" height="1131" loading="lazy">
+        <figcaption>Your screenshot</figcaption>
+      </figure>
+      <div class="flow-arrow" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+      <figure class="flow-out">
+        <div class="strip"><img src="assets/recipes.webp" alt="The same screenshot as five finished designs: tilted in 3D, on a painting, a bold hero, a risograph print and an editorial layout" width="2000" height="687" loading="lazy"></div>
+        <figcaption>One click later</figcaption>
+      </figure>
+    </div>
+    <ul class="proof reveal">
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Real captures</b> from the iOS Simulator, a website or your Mac</span></li>
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Every App Store size</b> for iPhone, iPad, Watch and Mac</span></li>
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Images and video</b>, ready to upload</span></li>
+    </ul>
   </div>
 </section>
 
-<!-- ============================================================ looks -->
-<section class="looks" id="looks" data-pin>
-  <div class="pin">
-    <div class="wrap sec-head">
-      <span class="eyebrow"><i></i>Backdrops</span>
-      <h2 class="h2">Any backdrop. <span class="ital grad">Tuned to your app.</span></h2>
-      <p class="lede">Photos, public-domain paintings and soft gradients, reprinted as a risograph, halftone or one-bit dither, or repainted in oil or watercolour if you like. Your screenshots stay untouched.</p>
-    </div>
-    <div class="rail">
-      <figure class="look"><img src="assets/bg-wave.webp" alt="Mise over Hokusai's Great Wave" width="520" height="650" loading="lazy"><span>The Great Wave <em>painting</em></span></figure>
-      <figure class="look"><img src="assets/bg-riso.webp" alt="Mise over pink architecture printed as a two-ink risograph" width="520" height="650" loading="lazy"><span>Pink architecture <em>risograph</em></span></figure>
-      <figure class="look"><img src="assets/bg-monet.webp" alt="Mise over Monet's Japanese footbridge" width="520" height="650" loading="lazy"><span>Monet's footbridge <em>painting</em></span></figure>
-      <figure class="look"><img src="assets/bg-fluted.webp" alt="Mise over deep indigo behind fluted glass" width="520" height="650" loading="lazy"><span>Indigo <em>fluted glass</em></span></figure>
-      <figure class="look"><img src="assets/bg-watercolor.webp" alt="Mise over misty hills painted as a watercolour" width="520" height="650" loading="lazy"><span>Misty hills <em>watercolour</em></span></figure>
-      <figure class="look"><img src="assets/bg-dither.webp" alt="Mise over palm shadows as a one-bit dither" width="520" height="650" loading="lazy"><span>Palm shadows <em>dither</em></span></figure>
-      <figure class="look"><img src="assets/bg-oil.webp" alt="Mise over a dinner table repainted in oil" width="520" height="650" loading="lazy"><span>Dinner table <em>oil paint</em></span></figure>
-      <figure class="look"><img src="assets/bg-table.webp" alt="Mise on a dinner table backdrop" width="520" height="650" loading="lazy"><span>Dinner table <em>your photo</em></span></figure>
-      <figure class="look"><img src="assets/bg-warm.webp" alt="Mise on a warm spot backdrop" width="520" height="650" loading="lazy"><span>Warm spot <em>radial</em></span></figure>
-      <figure class="look"><img src="assets/bg-green.webp" alt="Mise on a brand green backdrop" width="520" height="650" loading="lazy"><span>Brand green <em>radial</em></span></figure>
-      <figure class="look"><img src="assets/bg-graphite.webp" alt="Mise on a graphite backdrop" width="520" height="650" loading="lazy"><span>Graphite <em>look</em></span></figure>
-      <figure class="look"><img src="assets/bg-bokeh.webp" alt="Mise on a city bokeh backdrop" width="520" height="650" loading="lazy"><span>City bokeh <em>photo look</em></span></figure>
-      <figure class="look"><img src="assets/bg-mesh.webp" alt="Mise on a forest mesh backdrop" width="520" height="650" loading="lazy"><span>Forest mesh <em>mesh</em></span></figure>
-      <figure class="look"><img src="assets/bg-aurora.webp" alt="Mise on a aurora night backdrop" width="520" height="650" loading="lazy"><span>Aurora night <em>photo look</em></span></figure>
-      <figure class="look"><img src="assets/bg-ink.webp" alt="Mise on a ink backdrop" width="520" height="650" loading="lazy"><span>Ink <em>look</em></span></figure>
-    </div>
-  </div>
-</section>
-
-<!-- ============================================================ features -->
-<section class="pad" id="features">
+<!-- ============================================================ three ways -->
+<section class="pad" id="ways" style="padding-top:0">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="eyebrow"><i></i>Everything a launch needs</span>
-      <h2 class="h2">Every device. Every size. <span class="ital grad">Every format.</span></h2>
+      <span class="eyebrow"><i></i>Three ways to work</span>
+      <h2 class="h2">Do it yourself. <span class="ital grad">Or don't.</span></h2>
+    </div>
+    <div class="ways">
+      <article class="way reveal">
+        <span class="tag">By hand</span>
+        <h3>Drag it into place</h3>
+        <p>A Mac app that feels like a design tool. Move and tilt devices, retype the headline, drop in arrows, circles and numbers.</p>
+        <div class="way-art shot"><img src="assets/way-hand.webp" alt="The Studio's canvas: a design with a hand-drawn arrow selected, ready to drag" width="900" height="1044" loading="lazy"></div>
+        <a class="go" href="#download">Download the app <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      </article>
+      <article class="way reveal">
+        <span class="tag">Ask AI</span>
+        <h3>Say what you want</h3>
+        <p>“Tilt the phone, put it on a dinner table and make ‘both hands’ green.” Claude designs it, checks its own render, and every change is one undo away.</p>
+        <div class="way-art pair">
+          <img class="after" src="assets/ai-after.webp" alt="After: the phone tilted over a dinner table, with two words in green" width="720" height="900" loading="lazy">
+          <img class="before" src="assets/ai-before.webp" alt="Before: the same phone upright on a plain backdrop" width="720" height="900" loading="lazy">
+          <span class="to" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        </div>
+        <a class="go" href="features.html#ai">How Ask AI designs <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      </article>
+      <article class="way reveal" id="agent">
+        <span class="tag">Your agent</span>
+        <h3>Hand over the whole job</h3>
+        <p>Add Screenshotter to Claude Code, Codex or OpenCode and ask for App Store screenshots. It captures your app, designs the set and hands you the files.</p>
+        <div class="card term" data-term>
+          <div class="bar"><i></i><i></i><i></i><span>claude · ~/code/mise</span></div>
+          <div class="body">
+            <div class="line you"><b>›</b> Make App Store screenshots of Mise, in dark mode</div>
+            <div class="line call ok"><span class="st">✓</span><span class="nm"><b>capture_screenshot</b> ×5</span><span class="tm">12.6s</span></div>
+            <div class="line call ok"><span class="st">✓</span><span class="nm"><b>create_mockup_set</b></span><span class="tm">11.8s</span></div>
+            <div class="line call ok"><span class="st">✓</span><span class="nm"><b>crop_image</b> checks the details</span><span class="tm">0.3s</span></div>
+            <div class="line done">✓ Five screenshots, 1320 × 2868</div>
+            <div class="line thumbs on">
+              <img src="assets/set-1.webp" alt="" width="460" height="1000" loading="lazy">
+              <img src="assets/set-2.webp" alt="" width="460" height="1000" loading="lazy">
+              <img src="assets/set-3.webp" alt="" width="460" height="1000" loading="lazy">
+              <img src="assets/set-4.webp" alt="" width="460" height="1000" loading="lazy">
+              <img src="assets/set-5.webp" alt="" width="460" height="1000" loading="lazy">
+            </div>
+          </div>
+        </div>
+        <div class="oneline"><code>claude mcp add screenshotter -- node /path/to/screenshotter/dist/index.js</code><button class="copy" data-copy="claude mcp add screenshotter --scope user -- node /path/to/screenshotter/dist/index.js">Copy</button></div>
+        <a class="go" href="features.html#mcp">Codex, OpenCode and all 24 tools <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ what you get -->
+<section class="pad" id="get" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><i></i>What you get</span>
+      <h2 class="h2">Everything a launch <span class="ital grad">needs.</span></h2>
     </div>
     <div class="bento">
-      <article class="tile span-4 reveal">
-        <h3>Every Apple device, in 3D</h3>
-        <p>iPhone (including iPhone Duo), iPad, Apple Watch and MacBook in their real finishes, or Apple's own product art. Tilt, turn and stack them in one scene.</p>
-        <div class="devices" data-parallax>
-          <img class="d-mac" data-speed="0.3" src="assets/dev-mac.webp" alt="MacBook Pro showing Mise's website" width="1300" height="880" loading="lazy">
-          <img class="d-ipad" data-speed="0.7" src="assets/dev-ipad.webp" alt="iPad Pro showing Mise's recipes" width="760" height="874" loading="lazy">
-          <img class="d-iphone" data-speed="1" src="assets/dev-iphone.webp" alt="iPhone showing a Mise recipe" width="480" height="823" loading="lazy">
-          <img class="d-watch" data-speed="1.3" src="assets/dev-watch.webp" alt="Apple Watch running a Mise cooking timer" width="382" height="640" loading="lazy">
-        </div>
-      </article>
       <article class="tile span-2 reveal">
-        <h3>Call out what matters</h3>
-        <p>Name the words on screen and Screenshotter finds them: lift a row, magnify it, number the steps, point with an arrow.</p>
-        <div class="chips" data-cycle-labels><span class="on">Lift</span><span>Loupe</span><span>Spotlight</span><span>Wider card</span><span>Steps</span><span>Mark up</span></div>
-        <div class="cycle" data-cycle>
-          <img class="on" src="assets/callout-lift.webp" alt="A grocery row lifted out of the screen" width="620" height="775" loading="lazy">
-          <img src="assets/callout-loupe.webp" alt="A loupe magnifying a recipe step" width="620" height="775" loading="lazy">
-          <img src="assets/callout-spotlight.webp" alt="A spotlight on a cooking timer" width="620" height="775" loading="lazy">
-          <img src="assets/callout-card.webp" alt="A grocery row lifted onto a card wider than the phone" width="620" height="775" loading="lazy">
-          <img src="assets/callout-steps.webp" alt="Numbered steps and an arrow pointing to Start cooking" width="620" height="775" loading="lazy">
-          <img src="assets/callout-mark.webp" alt="A highlighted line, a curved arrow and a blurred private row" width="620" height="775" loading="lazy">
-        </div>
-      </article>
-      <article class="tile span-2 reveal">
-        <h3>Arrows, circles and numbers</h3>
-        <p>Drag a shape onto the design and drop it where you want it. Clean or hand-drawn, any fill and stroke, and your agent can place them too.</p>
-        <div class="chips"><span>Arrow</span><span>Circle</span><span>Box</span><span>Number</span><span>Star</span></div>
-        <div class="cycle"><img class="on" style="object-position:center 47%" src="assets/shapes.webp" alt="A hand-drawn ring and arrow pointing at Limes in a grocery list, with numbered steps beside three rows" width="1240" height="1550" loading="lazy"></div>
-      </article>
-      <article class="tile span-4 reveal">
-        <h3>A finished design in one click</h3>
-        <p>Twelve proven designs, each built from your screen and its own colours. Or ask Claude for three and pick one.</p>
-        <div class="chips"><span>3D tilt</span><span>In the gallery</span><span>Bold hero</span><span>Risograph</span><span>Art director</span><span>+ 7 more</span></div>
-        <div class="cycle strip" style="aspect-ratio:2000/687"><img class="on" style="object-position:center" src="assets/recipes.webp" alt="One screenshot as five finished designs: tilted in 3D, on a painting, a bold hero, a risograph print and an editorial layout" width="2000" height="687" loading="lazy"></div>
-      </article>
-      <article class="tile span-2 reveal">
-        <h3>Motion, not just stills</h3>
-        <p>Drift, float or push in. Play a real recording inside the frame, with zooms that follow the action and a cursor that clicks.</p>
-        <div class="chips"><span>MP4</span><span>MOV</span><span>WebM</span><span>GIF</span></div>
-        <div class="cycle"><video src="assets/video-drift.mp4" poster="assets/video-drift.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A phone drifting gently over a dinner table"></video></div>
-      </article>
-      <article class="tile span-2 reveal">
-        <h3>Websites and Mac apps</h3>
-        <p>Capture any URL in real Mobile Safari or desktop Chrome, or a Mac window by name.</p>
-        <div class="cycle" style="display:grid;place-items:center"><img class="on" style="object-fit:contain;padding:10px 18px 30px" src="assets/dev-browser.webp" alt="Mise's website in a browser frame" width="1100" height="744" loading="lazy"></div>
+        <h3>Every Apple device</h3>
+        <p>iPhone, iPad, Apple Watch and Mac in their real finishes, flat or tilted in 3D.</p>
+        <div class="cycle"><img class="on" style="object-position:center" src="assets/get-devices.webp" alt="A MacBook, an iPad, an iPhone and an Apple Watch showing the same app" width="1200" height="900" loading="lazy"></div>
       </article>
       <article class="tile span-2 reveal">
         <h3>A whole App Store set</h3>
@@ -745,75 +647,40 @@ tool_timeout_sec = <span class="s">600</span></pre>
           <img style="--k:0;--a:0" src="assets/set-3.webp" alt="App Store screenshot: Cook with both hands free" width="460" height="1000" loading="lazy">
         </div>
       </article>
-      <article class="tile span-3 reveal">
-        <h3>Real captures, ready to ship</h3>
-        <p>Straight from the iOS Simulator, with none of the usual clean-up.</p>
-        <div class="status-demo">
-          <div class="sb-mock"><span>9:41</span><svg viewBox="0 0 70 14" fill="#fff"><rect x="0" y="9" width="3.4" height="5" rx="1"/><rect x="5.6" y="6" width="3.4" height="8" rx="1"/><rect x="11.2" y="3" width="3.4" height="11" rx="1"/><rect x="16.8" y="0" width="3.4" height="14" rx="1"/><path d="M32 3a9 9 0 0 1 6.4 2.6l1-1A10.4 10.4 0 0 0 32 1.6a10.4 10.4 0 0 0-7.4 3l1 1A9 9 0 0 1 32 3Zm0 3.4c1.6 0 3 .6 4.1 1.7l1-1a7.2 7.2 0 0 0-10.2 0l1 1c1.2-1.1 2.6-1.7 4.1-1.7Zm0 3.4c.7 0 1.4.3 1.9.8L32 12.5l-1.9-1.9c.5-.5 1.2-.8 1.9-.8Z"/><rect x="46" y="1" width="21" height="12" rx="3.5" fill="none" stroke="#fff" stroke-opacity=".45"/><rect x="47.6" y="2.6" width="17.8" height="8.8" rx="2"/></svg></div>
-          <div class="facts"><span>9:41, full battery, full signal</span><span>Permission prompts granted up front</span><span>Waits for animations to finish</span><span>Light or dark mode, any locale</span></div>
+      <article class="tile span-2 reveal">
+        <h3>Point at what matters</h3>
+        <p>Lift a row out of the screen, magnify a detail, circle it, or number the steps.</p>
+        <div class="chips" data-cycle-labels><span class="on">Lift</span><span>Loupe</span><span>Circle and arrow</span><span>Steps</span></div>
+        <div class="cycle" data-cycle>
+          <img class="on" src="assets/callout-lift.webp" alt="A grocery row lifted out of the screen" width="620" height="775" loading="lazy">
+          <img src="assets/callout-loupe.webp" alt="A loupe magnifying a recipe step" width="620" height="775" loading="lazy">
+          <img style="object-position:center 47%" src="assets/shapes.webp" alt="A hand-drawn ring and arrow pointing at one item in a list" width="1240" height="1550" loading="lazy">
+          <img src="assets/callout-steps.webp" alt="Numbered steps and an arrow pointing to a button" width="620" height="775" loading="lazy">
         </div>
-      </article>
-      <article class="tile span-3 reveal">
-        <h3>A canvas that stays out of your way</h3>
-        <p>Drag, resize and rotate with snapping guides. Double-click any text to retype it. Focus mode hides the panels when you want the whole canvas.</p>
-        <div class="shot-crop" role="img" aria-label="The Studio canvas with a selected iPhone"></div>
-      </article>
-      <article class="tile span-4 reveal">
-        <h3>Print & paint</h3>
-        <p>Reprint the backdrop as a risograph, newsprint, halftone or one-bit dither, repaint it in oil, watercolour or ink, or set it behind fluted glass. Never your UI.</p>
-        <div class="chips"><span>Risograph</span><span>Halftone</span><span>Dither</span><span>Oil</span><span>Watercolour</span><span>Fluted glass</span></div>
-        <div class="cycle strip"><img class="on" style="object-position:center" src="assets/finishes.webp" alt="One design with four backdrop finishes: risograph, halftone, one-bit dither and oil paint" width="2000" height="490" loading="lazy"></div>
       </article>
       <article class="tile span-2 reveal">
-        <h3>Menu bar apps</h3>
-        <p>A drawn macOS menu bar with your status item, and its menu hanging below. MacBook screens get the real menu bar too.</p>
-        <div class="cycle"><img class="on" src="assets/menubar.webp" alt="A menu bar app's menu hanging under its status item" width="900" height="798" loading="lazy"></div>
+        <h3>Video, not just stills</h3>
+        <p>Play a real recording inside the frame, with gentle camera moves and zooms that follow the action.</p>
+        <div class="cycle"><video src="assets/video-drift.mp4" poster="assets/video-drift.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A phone drifting gently over a dinner table"></video></div>
       </article>
-      <article class="tile span-3 reveal">
-        <h3>Out of focus, on purpose</h3>
-        <p>Soften a device behind a sharp one, or let screens dissolve into the dark.</p>
-        <div class="cycle"><img class="on" style="object-position:center" src="assets/dof.webp" alt="A blurred MacBook behind a sharp iPhone" width="1400" height="875" loading="lazy"></div>
-      </article>
-      <article class="tile span-3 reveal">
-        <h3>Everything, in one frame</h3>
-        <p>Grids, staircases and rising pairs for the last screen of a set, or a launch post.</p>
-        <div class="cycle"><img class="on" style="object-position:center" src="assets/mosaic.webp" alt="Four app screens side by side" width="1400" height="875" loading="lazy"></div>
-      </article>
-    </div>
-  </div>
-</section>
-
-<!-- ============================================================ the app -->
-<section class="app-sec pad" id="app" style="padding-top:0">
-  <div class="wrap">
-    <div class="sec-head center reveal">
-      <span class="eyebrow"><i></i>The Studio</span>
-      <h2 class="h2">A studio you'll <span class="ital grad">enjoy using.</span></h2>
-      <p class="lede">A small Mac app, with its own look. Screens on the left, your design in the middle, every setting on the right, and every design you've made one keystroke away.</p>
-    </div>
-    <div class="window-wrap reveal-scale" data-window>
-      <div class="window">
-        <div class="lights" aria-hidden="true"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
-        <div class="view">
-          <img class="on" data-view="edit" src="assets/ui-editor.webp" alt="The Studio: your screens on the left, the canvas in the middle, device settings on the right" width="2880" height="1800" loading="lazy">
-          <img data-view="ai" src="assets/ui-ai.webp" alt="The Studio with the Ask AI box open" width="2880" height="1800" loading="lazy">
-          <img data-view="preview" src="assets/ui-preview.webp" alt="The Studio showing a rendered preview" width="2880" height="1800" loading="lazy">
-          <img data-view="shapes" src="assets/ui-shapes.webp" alt="The Studio's Shapes panel, with a hand-drawn arrow selected on the canvas and its settings on the right" width="2880" height="1800" loading="lazy">
-          <img data-view="scenes" src="assets/ui-scenes.webp" alt="The Scenes page: every saved design as a large preview, grouped by when it was last edited" width="2880" height="1800" loading="lazy">
+      <article class="tile span-2 reveal">
+        <h3>Backdrops that fit your app</h3>
+        <p>49 looks, famous paintings, your own photo, or colours taken from your screen.</p>
+        <div class="chips" data-cycle-labels><span class="on">Paintings</span><span>Print finishes</span><span>Your photo</span><span>Your colours</span></div>
+        <div class="cycle" data-cycle>
+          <img class="on" src="assets/bg-wave.webp" alt="The app over Hokusai's Great Wave" width="520" height="650" loading="lazy">
+          <img src="assets/bg-riso.webp" alt="The app over a risograph print" width="520" height="650" loading="lazy">
+          <img src="assets/bg-table.webp" alt="The app over a photo of a dinner table" width="520" height="650" loading="lazy">
+          <img src="assets/bg-green.webp" alt="The app over its own brand green" width="520" height="650" loading="lazy">
         </div>
-        <span class="pin-note p1"><b>1</b>Capture from Simulator, web or Mac</span>
-        <span class="pin-note p2"><b>2</b>Drag, resize, rotate</span>
-        <span class="pin-note p3"><b>3</b>Every setting, in plain words</span>
-        <span class="pin-note p4"><b>4</b>Ask AI, ⌘K</span>
-      </div>
-      <div class="app-tabs" role="tablist" aria-label="Studio views">
-        <button role="tab" aria-selected="true" data-show="edit">Edit<i></i></button>
-        <button role="tab" aria-selected="false" data-show="ai">Ask AI<i></i></button>
-        <button role="tab" aria-selected="false" data-show="preview">Preview<i></i></button>
-        <button role="tab" aria-selected="false" data-show="shapes">Shapes<i></i></button>
-        <button role="tab" aria-selected="false" data-show="scenes">Scenes<i></i></button>
-      </div>
+      </article>
+      <article class="tile span-2 reveal">
+        <h3>Websites and Mac apps too</h3>
+        <p>Capture any URL or a Mac window by name, menu bar apps included.</p>
+        <div class="cycle"><img class="on" style="object-fit:contain;object-position:center;padding:6px 18px 26px" src="assets/dev-browser.webp" alt="A website in a browser frame" width="1100" height="744" loading="lazy"></div>
+      </article>
     </div>
+    <div class="more reveal"><a class="btn ghost lg" href="features.html">See everything it does <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></div>
   </div>
 </section>
 
@@ -828,7 +695,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
           Download for Mac
         </a>
-        <a class="btn ghost lg" href="#mcp">Set up the MCP</a>
+        <a class="btn ghost lg" href="#agent">Add it to your agent</a>
       </div>
       <p class="dl-meta">Version 0.3.0 · <a href="changelog.html">What's new</a> · 30 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
     </div>
@@ -852,7 +719,7 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   <div class="wrap">
     <a class="brand" href="#top"><img src="assets/icon.svg" alt="">Screenshotter</a>
     <p>Every image on this page was made with Screenshotter. Mise is a made-up app; its food photos are from <a href="https://unsplash.com" style="text-decoration:underline;text-underline-offset:3px">Unsplash</a>.</p>
-    <nav class="links" aria-label="Footer"><a href="#story">How it works</a><a href="#ai">Ask AI</a><a href="#mcp">MCP</a><a href="#download">Download</a></nav>
+    <nav class="links" aria-label="Footer"><a href="#how">How it works</a><a href="#agent">For agents</a><a href="features.html">All features</a><a href="#download">Download</a></nav>
   </div>
 </footer>
 
@@ -949,9 +816,9 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
     ticking = false;
     nav.classList.toggle("scrolled", scrollY > 12);
     if (reduced) return;
-    heroArt.style.setProperty("--hp", clamp(scrollY / innerHeight));
-    storyFrame(pinned(story));
-    looksFrame(pinned(looks));
+    if (heroArt) heroArt.style.setProperty("--hp", clamp(scrollY / innerHeight));
+    if (story) storyFrame(pinned(story));
+    if (looks) looksFrame(pinned(looks));
     if (devices) {
       const p = through(devices) - 0.5;
       $$("img", devices).forEach((img) => (img.style.transform = `translateY(${p * -50 * Number(img.dataset.speed)}px)`));
@@ -962,7 +829,8 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   addEventListener("resize", onScroll);
   frame();
   // The Studio's numbered notes land once the window is mostly in view.
-  if (reduced || !("IntersectionObserver" in window)) win.classList.add("shown");
+  if (!win) {}
+  else if (reduced || !("IntersectionObserver" in window)) win.classList.add("shown");
   else new IntersectionObserver(([e], o) => { if (e.isIntersecting) { win.classList.add("shown"); o.disconnect(); } }, { threshold: 0.5 }).observe(win);
 
   // ------------------------------------------------------------ play-once-in-view sequences
@@ -1020,14 +888,13 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
 
   function isVisible(el) { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; }
 
-  // Call-outs cycle through lift → loupe → spotlight.
-  const cyc = $("[data-cycle]");
-  const labels = $$("[data-cycle-labels] span");
-  if (cyc && !reduced) {
+  // Tiles that cycle through a few images, lighting the matching label.
+  if (!reduced) $$("[data-cycle]").forEach((cyc) => {
     const imgs = $$("img", cyc);
+    const labels = $$("[data-cycle-labels] span", cyc.closest(".tile") ?? document);
     let k = 0;
     setInterval(() => { if (!isVisible(cyc)) return; k = (k + 1) % imgs.length; imgs.forEach((im, i) => im.classList.toggle("on", i === k)); labels.forEach((l, i) => l.classList.toggle("on", i === k)); }, 2600);
-  }
+  });
 
   // The App Store set fans out once, when it comes into view.
   const fan = $("[data-fan]");
@@ -1042,7 +909,7 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   let manual = false, vi = 0;
   const showView = (name) => { views.forEach((v) => v.classList.toggle("on", v.dataset.view === name)); const win = views[0]?.closest(".window"); if (win) win.dataset.current = name; vtabs.forEach((t) => { t.setAttribute("aria-selected", String(t.dataset.show === name)); const bar = t.querySelector("i"); bar.style.animation = "none"; bar.offsetWidth; bar.style.animation = ""; }); };
   vtabs.forEach((t, i) => t.addEventListener("click", () => { manual = true; vi = i; showView(t.dataset.show); }));
-  if (!reduced) setInterval(() => { if (manual || !isVisible(winWrap)) return; vi = (vi + 1) % vtabs.length; showView(vtabs[vi].dataset.show); }, 5000);
+  if (!reduced && vtabs.length && winWrap) setInterval(() => { if (manual || !isVisible(winWrap)) return; vi = (vi + 1) % vtabs.length; showView(vtabs[vi].dataset.show); }, 5000);
 })();
 </script>
 </body>

@@ -1,2 +1,5 @@
 # The demo app sources and photos only feed scripts/site-assets.ts; the page needs index.html, assets/ and downloads/.
 demo/
+
+# Render sidecars (the request behind an image) hold local paths; the page never needs them.
+assets/*.mockup.json

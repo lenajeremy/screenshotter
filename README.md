@@ -332,7 +332,7 @@ Simulator captures keep iOS's own status bar. By default the values are set with
 
 ## Website
 
-`site/` is the landing page: one HTML file plus `site/assets/`. Every image on it is rendered by Screenshotter, from a made-up recipe app ("Mise") drawn in `site/demo/screens.ts`. Its food photos come from Unsplash: `site/demo/photos.ts` downloads them once into `site/demo/photos/`, with the photographers in `credits.json`. The three Studio screenshots (`ui-*.webp`) are captures of the Studio itself and are not re-rendered by `site:assets`.
+`site/` is the website: `index.html` (a short page that sells the app), `features.html` (everything it does, in detail) and `changelog.html`, plus `site/assets/`. Every image on it is rendered by Screenshotter, from a made-up recipe app ("Mise") drawn in `site/demo/screens.ts`. Its food photos come from Unsplash: `site/demo/photos.ts` downloads them once into `site/demo/photos/`, with the photographers in `credits.json`. The three Studio screenshots (`ui-*.webp`) are captures of the Studio itself and are not re-rendered by `site:assets`.
 
 ```bash
 npm run site:assets   # re-render the page's images and video with the engine
