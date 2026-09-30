@@ -1,5 +1,60 @@
 # What's new
 
+## 0.5.0 · 30 September 2026
+
+### Highlights
+- **Animate.** A new mode beside Edit and Preview, for videos: set when and how each thing appears, changes and leaves. The headline slides up, a second later the laptop and phone zoom in together, then an arrow draws itself. A timeline under the canvas has a row for each item and a bar for each animation; press Play, or drag the playhead, and the canvas shows it.
+- **Anything can move.** Devices, the headline, extra text and shapes can fade, zoom, stretch in across or up, and slide in from any side, then change part way through: size, position, rotation, opacity, a device's 3D tilt and turn, a text's colour, a shape's fill, stroke and thickness, and an arrow's two ends and its curve.
+- **A camera.** Camera is a row in the timeline: push in on the MacBook, glide to a detail on the phone, pull back. Drag a frame on the canvas to say what it should show, and a corner to zoom. It moves the whole picture, text included.
+- **Text a word at a time.** A headline or label can arrive by word or by letter, with any of the entrances, a gap you choose between each.
+- **Several things as one.** ⌘-click rows in the timeline to animate them together: a zoom or a turn is about their shared middle, so a laptop and phone arrive as one group. Or start them one by one.
+- **Videos of several shots.** Put designs one after another, each with its own animations and length, joined by a cut, a crossfade, a push, a wipe, an iris or a zoom. The shot strip on the timeline works like pages in Canva.
+- **Made for where it's going.** Export the video at the App Store's preview sizes for iPhone, iPad and Mac, following Apple's rules, and at 9:16, 4:5, 1:1 and 16:9, all at once. Each design fits whole into another shape, fills it, or is laid out again.
+- **Loops and curves.** Things can keep moving for the whole video (float, pulse, sway, spin, orbit, figure-8, blink) or travel along a curve you draw, turning to face the way they go. Any change can repeat, or go back and forth.
+- **The backdrop moves.** A slow push into a photo, a drift, breathing, a colour shift, a turn, or coming into focus, behind everything else.
+- **Blur anything.** Text, the headline, shapes and devices can be soft, animate their blur, and come into focus as they arrive, even a word at a time.
+- **Call-outs on cue, and rack focus.** Each lift, loupe or outline has its own row under its device: it appears and leaves when you say. A device's soft focus animates too, so focus can shift from the laptop to the phone.
+- **Pick the still of a recording.** When you add a screen recording, choose which moment its device shows in images, from up to eight moments where the picture changes.
+
+### Animate
+- Camera moves chain: a second move glides from the first point to the next, and "Pull back to the whole design" ends it. Look at aims it at an item.
+- By word or By letter, beside an entrance or exit for text. Punctuation stays with its word, and words never break across lines mid-reveal.
+- Call-outs have rows of their own under their device. Appear or Disappear, when, how fast: a lift rises off the screen, a loupe grows, an outline fades in. Ones you don't time appear together, as before. ⌘-click several to bring them in one by one.
+- Play through the whole video in Animate: with several shots, the strip becomes the video's timeline (each shot a filmstrip as long as it runs, transitions on the joins, one playhead), and the canvas plays every shot and draws each transition live, no export needed. Click the shot on screen to edit it.
+- Shots: a strip at the top of the timeline. Add a shot (a copy of this one, or one of your designs), click one to edit it, right-click to move or remove it. The chip between two shots picks how the next comes in and how long that takes. Each shot's length is on the timeline. See all shots puts every shot's key moments on one sheet without rendering.
+- Export › Video › Sizes: tick as many as you need. App Store previews are held to at least 15 seconds and warned past 30, at 30 fps, H.264, with the silent stereo track App Store Connect expects.
+- For AI agents: create_sequence (shots, transitions, a size) and preview_sequence; `versions` on create_video and create_sequence make other sizes; `size: "app-store-iphone"` and friends follow Apple's rules.
+- Loop, beside Enter, Change and Exit: pick Float, Pulse, Sway, Spin, Orbit, Figure-8, Blink or Your own curve. Its bar runs to the end of the video, marked at each play.
+- Plays and Each time, on any Change: once, 2×, 3× or forever; start over or back and forth.
+- Route, on a Change: Straight or Along a curve. Drag the numbered points on the canvas, add or remove them, bring it back round to the start, or have it face the way it's going.
+- Backdrop, a row under Camera: Slow push, Drift, Breathe, Colour shift, Turn and Come into focus, then push in, aim, turn, shift the colour and blur it yourself.
+- Blur, as an entrance or exit (with how soft it starts), in any Change, and in More options for text, the headline and shapes.
+- Focus blur, in a device's Change: blur one device and sharpen another at the same moment to rack focus between them.
+- Drag the grip on the timeline's top edge to make it taller or shorter; double-click it for the usual height.
+- Seven easings, each shown as its curve: slow down, speed up, smooth, steady, overshoot, spring and bounce.
+- Drag a bar to change when it happens; drag its right edge to change how long it takes.
+- With a Change selected, the canvas shows its items as they end up: drag, resize or turn them, or pull an arrow's ends and middle, to set what the animation changes them to. The design itself stays as it is.
+- Play this animation plays just the one you're editing. Space plays and pauses, ⌫ deletes the selected animation, ⌘3 opens Animate.
+- Export video, on the timeline, renders it. The video runs as long as the animations need.
+- Ask AI can write the timeline: "the headline first, then the phone slides in, then draw the arrow at 3 seconds".
+- Ask AI watches the video. For an animated design it sees a contact sheet of the video's key moments (the start, the end of each animation, the middle of long ones, the settled end), and it can ask to see any moment it wants, to the millisecond, before it answers. It checks its own timeline the same way before you see it.
+- For AI agents: `targets: "camera"` with `to: { zoom, x, y }`, `by: "word"` or `"letter"` on text, `"device-1/callout-2"` to time a call-out, `to: { blur }` on anything (and `blur` on texts, shapes and textStyle), `enter: "blur"`, `path` (loops and routes), `repeat` and `yoyo`, and `"backdrop"` as a target with zoom, x, y, rotate, blur and hue.
+- For AI agents: preview_video shows the video at its key moments, at exact times or every second, in about a second without rendering it. create_video's filmstrip shows the key moments of an animated design.
+- For AI agents: a scene's `animations` work in create_video, and travel with get_scene and save_scene. The design guide covers pacing.
+
+### Ask AI
+- Knows every shot of a video. Ask about or change any of them ("make shot 1's headline white", "copy this shot to the end with a push", "how many shots are there?"). It can add, copy, remove and reorder shots, carry something from one shot to another, and set lengths and transitions. The canvas shows the shot it changed, the strip highlights the ones it touched, and each change says which shot it was in.
+- Revert puts back exactly what that reply changed, even from another shot. (Before, it could overwrite the shot on the canvas.)
+- For AI agents: get_scene returns a video's shots, and save_scene can save them.
+- Expand it into the right-hand panel (⇧⌘K, or the arrows in its header) for a roomier chat beside the canvas; shrink it back to a floating panel the same way. It remembers which you prefer.
+- Quicker answers. It renders your design only when the request is about how it looks; a question or an exact edit ("make the headline blue") goes straight to Claude, which can still ask to see the design if it needs to. It checks its own render only when it can't tell from the settings how a change will look.
+
+### Recordings
+- Pick the still. It used to be the first frame, which is often blank. The app finds the moments where the picture changes and leaves out ones that look the same. Change it any time with Still, above the device or in its settings. Videos still play the whole recording.
+
+### Workspace
+- A tidier rail: each place is an icon in a pill with a one-word label, and the pill shows where you are. Text and Shapes are now two places, so shapes are one click away. My designs has its own icon.
+
 ## 0.4.0 · 30 September 2026
 
 ### Highlights

@@ -24,6 +24,8 @@ import {
   addDevice,
   addText,
   aiEdit,
+  closeStills,
+  pickStill,
   stopAI,
   useAIDraft,
   moveZ,
@@ -38,6 +40,7 @@ import {
   exportVideo,
   newScene,
   openAI,
+  dockAI,
   renderPreview,
   reveal,
   uploadFiles,
@@ -45,8 +48,9 @@ import {
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
-import { AddPanel, BackgroundsPanel, CapturesPanel, DesignsPanel } from "./panels.js";
+import { BackgroundsPanel, CapturesPanel, DesignsPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
+import { TimelineDock, closeTimeline, deleteAnimation, openTimeline, play } from "./timeline.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
 // =============================================================================================
@@ -66,10 +70,15 @@ function ViewSwitch() {
   useLayoutEffect(() => {
     const on = ref.current.querySelector("button.on");
     if (on) setKnob({ left: on.offsetLeft, width: on.offsetWidth });
-  }, [s.view]);
+  }, [s.view, s.timelineOpen]);
+  const animating = s.view === "canvas" && s.timelineOpen;
   return html`<div class="viewswitch" ref=${ref} data-nodrag>
     ${knob && html`<div class="knob" style=${{ left: knob.left + "px", width: knob.width + "px" }}></div>`}
-    <button class=${s.view === "canvas" ? "on" : ""} onClick=${() => set({ view: "canvas" })} title="Arrange things by dragging (⌘1)"><${Icon} n="canvas" s=${14} />Edit</button>
+    <button class=${s.view === "canvas" && !animating ? "on" : ""} onClick=${() => {
+      closeTimeline();
+      set({ view: "canvas" });
+    }} title="Arrange things by dragging (⌘1)"><${Icon} n="canvas" s=${14} />Edit</button>
+    <button class=${animating ? "on" : ""} onClick=${openTimeline} title="Set when and how each thing appears in a video (⌘3)"><${Icon} n="animate" s=${14} />Animate</button>
     <button class=${s.view === "render" ? "on" : ""} onClick=${showPreview} title="See the finished image with lighting and effects (⌘2)"><${Icon} n="eye" s=${14} />Preview</button>
   </div>`;
 }
@@ -144,6 +153,13 @@ function ExportPopover({ anchor }) {
   const outW = o.size === "half" ? Math.round(W / 2) : o.size === "custom" ? o.width : W;
   const outH = W ? Math.round((outW * H) / W) : 0;
   const hasRecording = s.scene.devices.some((d) => d.video);
+  const many = s.shots?.length > 1;
+  // Sizes to make: the first is the main file, the rest are versions.
+  const sizes = o.video.sizes?.length ? o.video.sizes : ["design"];
+  const toggleSize = (v) => {
+    const on = sizes.includes(v) ? sizes.filter((x) => x !== v) : [...sizes, v];
+    upv({ sizes: VIDEO_SIZES.map((z) => z.value).filter((x) => on.includes(x)).slice(0, 9) });
+  };
   return html`<${Popover} anchor=${anchor} align="end" class="export-pop" onClose=${() => set({ exportOpen: false })}>
     <div class="tabs"><${Seg} value=${o.tab} onChange=${(v) => up({ tab: v })} options=${[{ value: "image", label: "Image", icon: "image" }, { value: "video", label: "Video", icon: "video" }]} /></div>
     ${o.tab === "image"
@@ -156,11 +172,19 @@ function ExportPopover({ anchor }) {
           <button class="btn primary lg block" onClick=${exportImage}><${Icon} n="export" s=${16} w=${2} />Export image<span class="kbd">⌘E</span></button>
         </div>`
       : html`<div class="body">
+          ${many && html`<div class="note shots-note"><${Icon} n="video" s=${13} /><span><b>${s.shots.length} shots</b>, joined by their transitions. Each shot's length is set on the timeline.</span></div>`}
           <div class="lbl">Camera motion</div>
           <div class="motions">${MOTIONS.map((m) => html`<button class="motion ${o.video.motion === m.value ? "on" : ""}" onClick=${() => upv({ motion: m.value })}><i class="mini ${m.value}"></i>${m.label}</button>`)}</div>
-          <div class="row"><label>Length</label><${Slider} value=${o.video.duration} min=${2} max=${20} step=${0.5} format=${(v) => v + "s"} onChange=${(v) => upv({ duration: v ?? 6 })} /></div>
+          ${!many && html`<div class="row"><label>Length</label><${Slider} value=${o.video.duration} min=${2} max=${20} step=${0.5} format=${(v) => v + "s"} onChange=${(v) => upv({ duration: v ?? 6 })} /></div>`}
           <${Switch} checked=${o.video.zoom} onChange=${(v) => upv({ zoom: v })} label="Zoom into the first highlight" />
           <div class="row"><label>Format</label><${Seg} value=${o.video.format} options=${[{ value: "mp4", label: "MP4" }, { value: "mov", label: "MOV" }, { value: "webm", label: "WebM" }, { value: "gif", label: "GIF" }]} onChange=${(v) => upv({ format: v })} /></div>
+          <div class="lbl">Sizes <span class="faint">${sizes.length > 1 ? `· ${sizes.length} files` : ""}</span></div>
+          <div class="size-chips">${VIDEO_SIZES.map((z) => html`<button class="size-chip ${sizes.includes(z.value) ? "on" : ""}" key=${z.value} title=${z.title ?? ""} onClick=${() => toggleSize(z.value)}>
+            <i class="shape" style=${{ aspectRatio: z.value === "design" ? `${W || 16} / ${H || 9}` : z.aspect }}></i><span><b>${z.label}</b><small>${z.value === "design" ? (W ? `${W}×${H}` : "") : z.sub}</small></span>
+          </button>`)}</div>
+          ${sizes.some((z) => z !== "design") && html`<div class="row"><label>Other shapes</label><${Seg} value=${o.video.fit ?? "auto"} options=${[{ value: "auto", label: "Auto" }, { value: "fit", label: "Fit" }, { value: "fill", label: "Fill" }, { value: "rearrange", label: "Rearrange" }]} onChange=${(v) => upv({ fit: v })} /></div>
+            <div class="note">${{ auto: "Hand-placed designs fit whole, with the backdrop filling the rest; automatic layouts are laid out again for each shape.", fit: "The whole design, with the backdrop filling the rest.", fill: "Fills the shape, trimming the edges.", rearrange: "Laid out again for each shape." }[o.video.fit ?? "auto"]}</div>`}
+          ${sizes.some((z) => z.startsWith("app-store")) && html`<div class="note"><b>App Store</b> previews follow Apple's rules: 15 to 30 seconds (a short one holds its end), 30 fps, H.264, with a silent sound track.</div>`}
           <div class="note">${hasRecording ? html`<b>Screen recording</b> plays inside the frame.` : "Tip: record the simulator to play real app footage inside the frame."}</div>
           <button class="btn primary lg block" onClick=${exportVideo}><${Icon} n="video" s=${16} />Export video<span class="kbd">⇧⌘E</span></button>
         </div>`}
@@ -169,6 +193,17 @@ function ExportPopover({ anchor }) {
   <//>`;
 }
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
+/** Sizes a video can be exported at, beside the design's own. */
+const VIDEO_SIZES = [
+  { value: "design", label: "As designed" },
+  { value: "app-store-iphone", label: "App Store iPhone", sub: "886×1920", aspect: "886 / 1920", title: "Apple's app preview size for every current iPhone" },
+  { value: "app-store-ipad", label: "App Store iPad", sub: "1200×1600", aspect: "3 / 4", title: "Apple's app preview size for iPad" },
+  { value: "app-store-mac", label: "App Store Mac", sub: "1920×1080", aspect: "16 / 9", title: "Apple's app preview size for Mac and Apple TV" },
+  { value: "vertical", label: "9:16", sub: "Reels, TikTok", aspect: "9 / 16" },
+  { value: "portrait", label: "4:5", sub: "Feed post", aspect: "4 / 5" },
+  { value: "square", label: "1:1", sub: "Square", aspect: "1 / 1" },
+  { value: "widescreen", label: "16:9", sub: "YouTube, web", aspect: "16 / 9" },
+];
 
 // =============================================================================================
 // Rail and left panel
@@ -177,7 +212,8 @@ const TABS = [
   { id: "captures", label: "Screenshots", icon: "captures", tip: "Bring in a screenshot of your app" },
   { id: "designs", label: "Templates", icon: "wand", tip: "Finished designs made from your screenshot" },
   { id: "backgrounds", label: "Backdrop", icon: "background", tip: "What sits behind your device" },
-  { id: "text", label: "Text & shapes", icon: "text", tip: "Headline, labels, arrows and shapes" },
+  { id: "text", label: "Text", icon: "text", tip: "Headline, labels, badges and ratings" },
+  { id: "shapes", label: "Shapes", icon: "shapes", tip: "Arrows, circles, boxes and number badges" },
 ];
 
 function Rail() {
@@ -187,22 +223,22 @@ function Rail() {
     persistPrefs();
   };
   return html`<nav class="rail">
-    ${TABS.map((t) => html`<button class="rail-btn ${s.leftOpen && s.leftTab === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
-      <${Icon} n=${t.icon} s=${19} />
+    ${TABS.map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && s.leftTab === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
+      <span class="ico"><${Icon} n=${t.icon} s=${18} /></span>
       <span class="rl">${t.label}</span>
       <span class="tip">${t.tip}</span>
     </button>`)}
     <span class="rail-sep"></span>
-    <button class="rail-btn" onClick=${openScenesPage}><${Icon} n="grid" s=${19} /><span class="rl">My designs</span><span class="tip">Everything you've made and exported (⇧⌘O)</span></button>
+    <button class="rail-btn ${s.scenesPage ? "on" : ""}" onClick=${openScenesPage}><span class="ico"><${Icon} n="folder" s=${18} /></span><span class="rl">My designs</span><span class="tip">Everything you've made and exported (⇧⌘O)</span></button>
     <span class="grow"></span>
-    <button class="rail-btn" onClick=${() => set({ modal: { kind: "help" } })}><${Icon} n="info" s=${18} /><span class="rl">Help</span><span class="tip">How Screenshotter works</span></button>
-    <button class="rail-btn ${s.modal?.kind === "settings" ? "on" : ""}" onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${18} /><span class="rl">Settings</span><span class="tip">AI, output folder, shortcuts</span></button>
+    <button class="rail-btn ${s.modal?.kind === "help" ? "on" : ""}" onClick=${() => set({ modal: { kind: "help" } })}><span class="ico"><${Icon} n="info" s=${17} /></span><span class="rl">Help</span><span class="tip">How Screenshotter works</span></button>
+    <button class="rail-btn ${s.modal?.kind === "settings" ? "on" : ""}" onClick=${() => set({ modal: { kind: "settings" } })}><span class="ico"><${Icon} n="settings" s=${17} /></span><span class="rl">Settings</span><span class="tip">AI, output folder, shortcuts</span></button>
   </nav>`;
 }
 
 function LeftPanel() {
   const s = useStore();
-  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: AddPanel }[s.leftTab] ?? CapturesPanel;
+  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: TextPanel, shapes: ShapesPanel }[s.leftTab] ?? CapturesPanel;
   return html`<${P} />`;
 }
 
@@ -358,6 +394,50 @@ function HeadlineStep() {
   </div>`;
 }
 
+/**
+ * Pick the still of a recording: the moment its device shows in images and on the canvas. The
+ * engine offers up to eight moments where the picture differs; the device shows each one as
+ * you click it. Cancel puts back the one it had.
+ */
+function StillPicker() {
+  const s = useStore();
+  const p = s.stillPick;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/moments?path=${encodeURIComponent(p.video)}&n=8`)
+      .then((r) => (r.ok ? r.json() : r.json().then((b) => Promise.reject(new Error(b.error || `HTTP ${r.status}`)))))
+      .then((d) => live && setData(d))
+      .catch((e) => live && setErr(e.message));
+    return () => {
+      live = false;
+    };
+  }, [p.video]);
+  const current = s.scene.devices[Number(p.id.split("-")[1]) - 1]?.screenshot ?? "";
+  const m = /\.still-(\d+)\.png$/i.exec(current);
+  const at = m ? Number(m[1]) / 1000 : 0;
+  const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  return html`<div class="guide-card still-picker" onPointerDown=${stop}>
+    <div class="gc-head">
+      <div class="gc-title"><b>Pick the still</b><span>The moment of the recording this device shows in images. Videos still play all of it.</span></div>
+      <button class="btn ghost sm" onClick=${() => closeStills(true)}>Cancel</button>
+      <button class="btn primary sm" onClick=${() => closeStills()}>Done</button>
+    </div>
+    <div class="still-row">
+      ${data
+        ? data.moments.map(
+            (x) => html`<button class="still-card ${Math.abs(x.t - at) < 0.06 ? "on" : ""} ${p.busy === x.t ? "busy" : ""}" key=${x.t} title=${`Show the recording at ${clock(x.t)}`} onClick=${() => pickStill(x.t)}>
+              <span class="still-img"><img src=${x.thumb} alt="" /></span><span class="still-t">${clock(x.t)}</span>
+            </button>`,
+          )
+        : err
+          ? html`<div class="note warn">${err}</div>`
+          : Array.from({ length: 6 }, (_, k) => html`<span class="still-card loading" key=${k}><span class="still-img"></span><span class="still-t"> </span></span>`)}
+    </div>
+  </div>`;
+}
+
 function ExportStep() {
   return html`<div class="guide-card export-step" onPointerDown=${stop}>
     <div class="gc-title"><b>Happy with it? Export it.</b><span>You get a full-size image, ready for the App Store. You can keep changing the design afterwards.</span></div>
@@ -397,8 +477,8 @@ function RenderView() {
     ${r
       ? html`
         <div class="render-meta">
-          <span class="meta-chip">${r.preview ? "Preview · half size" : r.isVideo ? "Video" : (r.path.split(".").pop() ?? "").toUpperCase()}</span>
-          ${r.width && html`<span class="meta-chip">${r.width} × ${r.height}</span>`}
+          <span class="meta-chip">${r.sheet ? `Every shot · ${r.duration?.toFixed?.(1) ?? ""} s` : r.preview ? "Preview · half size" : r.isVideo ? "Video" : (r.path.split(".").pop() ?? "").toUpperCase()}</span>
+          ${r.width > 0 && html`<span class="meta-chip">${r.width} × ${r.height}</span>`}
           ${r.ms && html`<span class="meta-chip">${r.ms > 2000 ? (r.ms / 1000).toFixed(1) + " s" : Math.round(r.ms) + " ms"}</span>`}
           ${s.renderStale && html`<button class="meta-chip stale" onClick=${renderPreview} style=${{ border: 0 }}><${Icon} n="refresh" s=${12} />You changed the design · update preview</button>`}
         </div>
@@ -431,7 +511,7 @@ function Stage() {
   const s = useStore();
   const empty = !s.scene.devices.length;
   const focused = !s.leftOpen && !s.rightOpen;
-  return html`<main class="stage ${s.guide && !empty ? "guiding" : ""}">
+  return html`<main class="stage ${s.guide && !empty ? "guiding" : ""} ${s.timelineOpen && s.view === "canvas" && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
     <div class="stage-glow"></div>
     <div class="float panel-toggle l">
       <button class="icon-btn sm ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the side panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${15} /></button>
@@ -441,11 +521,13 @@ function Stage() {
       <button class="icon-btn sm ${s.rightOpen ? "on" : ""}" title=${`${s.rightOpen ? "Hide" : "Show"} the inspector (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${15} /></button>
     </div>
     ${s.view === "render" ? html`<${RenderView} />` : empty ? html`<div class="dots"></div><${Welcome} />` : html`<${CanvasView} />`}
-    ${s.view === "canvas" && !empty && html`<${GuideStrip} />`}
-    ${s.view === "canvas" && !empty && s.guide === "design" && html`<${DesignTray} />`}
-    ${s.view === "canvas" && !empty && s.guide === "headline" && html`<${HeadlineStep} />`}
-    ${s.view === "canvas" && !empty && s.guide === "export" && html`<${ExportStep} />`}
-    ${s.view === "canvas" && !empty && !s.guide && html`<${AIChat} />`}
+    ${s.view === "canvas" && !empty && !s.timelineOpen && html`<${GuideStrip} />`}
+    ${s.view === "canvas" && !empty && s.timelineOpen && html`<${TimelineDock} />`}
+    ${s.view === "canvas" && !empty && !s.timelineOpen && s.stillPick && html`<${StillPicker} key=${s.stillPick.video} />`}
+    ${s.view === "canvas" && !empty && !s.timelineOpen && !s.stillPick && s.guide === "design" && html`<${DesignTray} />`}
+    ${s.view === "canvas" && !empty && !s.timelineOpen && !s.stillPick && s.guide === "headline" && html`<${HeadlineStep} />`}
+    ${s.view === "canvas" && !empty && !s.timelineOpen && !s.stillPick && s.guide === "export" && html`<${ExportStep} />`}
+    ${s.view === "canvas" && !empty && !s.guide && !s.stillPick && (!s.timelineOpen || s.ai.open) && !(s.ai.open && s.ai.docked && s.rightOpen) && html`<${AIChat} />`}
     ${s.jsonOpen && html`<${JsonDrawer} />`}
   </main>`;
 }
@@ -466,14 +548,16 @@ const StepIcon = ({ state }) =>
 /** Each step the agent takes: what it says while it runs, and once it's done. */
 const provider = (x) => IMAGE_PROVIDERS[x?.provider] ?? "The image generator";
 const AI_STEPS = {
-  look: { now: "Rendering your design", done: "Looked at your design" },
+  look: { now: "Rendering your design", done: (x) => (x.moments ? `Looked at ${x.moments} moments of your video` : "Looked at your design") },
   read: { now: "Reading the screenshots", done: "Read the design" },
-  think: { now: "Claude is designing the change", done: "Designed the change" },
+  think: { now: "Claude is thinking", done: (x) => (x.answer ? "Answered" : "Designed the change") },
   retry: { now: "Fixing a mistake in its first try", done: "Fixed a mistake in its first try" },
   generate: { now: (x) => `${provider(x)} is making the new backdrop image`, done: (x) => `${provider(x)} made the backdrop image`, cut: (x) => `You used it while ${provider(x)} was still making the backdrop image` },
   render: { now: "Rendering the result", done: "Rendered the result", cut: "You used it before Claude checked it" },
-  check: { now: "Claude is checking the render", done: "Checked the render", cut: "You used it before Claude finished checking it" },
+  frames: { now: (x) => `Claude asked to see ${moments(x.times)}`, done: (x) => `Looked closer at ${moments(x.times)}` },
+  check: { now: (x) => (x.moments ? `Claude is checking ${x.moments} moments of the video` : "Claude is checking the render"), done: (x) => (x.moments ? `Checked ${x.moments} moments of the video` : "Checked the render"), cut: "You used it before Claude finished checking it" },
 };
+const moments = (times = []) => (times.length > 3 ? `${times.length} moments` : times.map((t) => `${t} s`).join(", "));
 const stepText = (x, active) => {
   const t = AI_STEPS[x.key]?.[active ? "now" : x.cut ? "cut" : "done"] ?? AI_STEPS[x.key]?.done ?? x.key;
   return typeof t === "function" ? t(x) : t;
@@ -502,18 +586,20 @@ function AIWork() {
   const via = s.opts?.ai?.provider === "api" ? s.opts.ai.model : "Claude Code";
   return html`<div class="msg assistant work">
     <ol class="work-steps">
+      ${!steps.length && html`<li class="active"><${StepIcon} state="active" /><div class="step-body"><div class="step-head"><b class="shimmer-text">Sending to Claude</b></div></div></li>`}
       ${steps.map((x, i) => {
         const active = !x.end;
         const st = active ? "active" : "done";
         return html`<li class=${st} key=${i}><${StepIcon} state=${st} /><div class="step-body">
           <div class="step-head"><b class=${active ? "shimmer-text" : ""}>${stepText(x, active)}</b><span class="work-time">${secs((x.end ?? now) - x.at)}</span></div>
-          ${x.key === "look" && w.image && html`<div class="work-shot"><img src=${w.image} onLoad=${scroll} /><i class="scan"></i></div>`}
+          ${x.key === "look" && w.image && html`<div class="work-shot ${x.moments ? "sheet" : ""}"><img src=${w.image} onLoad=${scroll} /><i class="scan"></i></div>`}
           ${x.key === "read" && html`<div class="work-items">${w.items.map((t, j) => html`<span style=${{ "--i": j }}>${t}</span>`)}</div>`}
           ${x.key === "think" && active && html`<span class="step-note">${via} · usually 10 to 30 seconds</span>`}
           ${x.key === "retry" && x.reason && html`<span class="step-note">${x.reason}</span>`}
           ${x.key === "generate" &&
           html`<span class="step-note">${x.reason && html`<b class="why">Why a new image: </b>${x.reason}<br />`}${x.prompt ? `“${x.prompt.length > 110 ? x.prompt.slice(0, 110).trim() + "…" : x.prompt}”` : ""}${active ? html`<br />${x.provider === "openai" ? (s.ai.imageQuality === "best" ? "At Best quality this usually takes a minute or more." : "This usually takes about half a minute.") : "This can take a minute."}${w.draft ? " Use it now to skip the wait: the image appears on the canvas when it's made." : ""}` : ""}</span>`}
-          ${x.key === "check" && w.checkImage && html`<div class="work-shot"><img src=${w.checkImage} onLoad=${scroll} /><i class="scan"></i></div>`}
+          ${x.key === "check" && w.checkImage && html`<div class="work-shot ${x.moments ? "sheet" : ""}"><img src=${w.checkImage} onLoad=${scroll} /><i class="scan"></i></div>`}
+          ${x.key === "frames" && x.image && html`<div class="work-shot sheet"><img src=${x.image} onLoad=${scroll} /><i class="scan"></i></div>`}
         </div></li>`;
       })}
     </ol>
@@ -561,7 +647,7 @@ function chatPos() {
  * Ask AI as a chat: a panel you can move around the canvas. Each message builds on the ones
  * before it; each change Claude makes can be reverted from its message.
  */
-function AIChat() {
+function AIChat({ docked }) {
   const s = useStore();
   const ai = s.ai;
   const input = useRef();
@@ -595,7 +681,7 @@ function AIChat() {
   const send = () => aiEdit(ai.text);
   // Drag the panel by its header; it stays inside the stage.
   const drag = (e) => {
-    if (e.button !== 0 || e.target.closest("button")) return;
+    if (docked || e.button !== 0 || e.target.closest("button")) return;
     e.preventDefault();
     const stage = panel.current.parentElement.getBoundingClientRect();
     const box = panel.current.getBoundingClientRect();
@@ -620,12 +706,15 @@ function AIChat() {
     addEventListener("pointerup", up);
   };
   const via = status?.provider === "api" ? status.model : status?.provider === "claude-code" ? "Claude Code" : "";
-  return html`<section class="ai-chat ${ai.busy ? "busy" : ""}" ref=${panel} style=${{ right: pos.right + "px", bottom: pos.bottom + "px" }} onPointerDown=${(e) => e.stopPropagation()}>
-    <header class="ai-chat-head" onPointerDown=${drag} title="Drag to move">
+  return html`<section class="ai-chat ${docked ? "docked" : ""} ${ai.busy ? "busy" : ""}" ref=${panel} style=${docked ? null : { right: pos.right + "px", bottom: pos.bottom + "px" }} onPointerDown=${(e) => e.stopPropagation()}>
+    <header class="ai-chat-head" onPointerDown=${drag} title=${docked ? null : "Drag to move"}>
       <span class="ai-chat-mark"><${Icon} n="spark" s=${14} /></span>
       <b>Ask AI</b>${via && html`<span class="faint">${via}</span>`}
       <span class="grow"></span>
       ${ai.thread.length > 0 && html`<button class="icon-btn sm" title="New chat" onClick=${newChat}><${Icon} n="plus" s=${14} /></button>`}
+      ${docked
+        ? html`<button class="icon-btn sm" title="Shrink back to a floating panel (⇧⌘K)" onClick=${() => dockAI(false)}><${Icon} n="collapse" s=${14} /></button>`
+        : html`<button class="icon-btn sm" title="Expand into the side panel (⇧⌘K)" onClick=${() => dockAI(true)}><${Icon} n="expand" s=${14} /></button>`}
       <button class="icon-btn sm" title="Close (Esc)" onClick=${() => setAi({ open: false })}><${Icon} n="x" s=${14} /></button>
     </header>
     <div class="ai-chat-body" ref=${body}>
@@ -648,7 +737,7 @@ function AIChat() {
                 ${m.took && html`<${WorkedFor} m=${m} />`}
                 ${m.ops?.length > 0 &&
                 html`<ul class="op-list">${m.ops.map(
-                  (o, i) => html`<li style=${{ "--i": i }}><span class="op-tick"><${Icon} n="check" s=${10} w=${3} /></span><b>${o.prop}</b><span class="op-target">${o.target}</span>${o.value && html`<span class="op-val" title=${o.value}>${o.color && html`<i style=${{ background: o.color }}></i>`}<span>${o.value}</span></span>`}</li>`,
+                  (o, i) => html`<li style=${{ "--i": i }}><span class="op-tick"><${Icon} n="check" s=${10} w=${3} /></span>${o.shot && html`<span class="op-shot" title=${`Shot ${o.shot}`}>${o.shot}</span>`}<b>${o.prop}</b><span class="op-target">${o.target}</span>${o.value && html`<span class="op-val" title=${o.value}>${o.color && html`<i style=${{ background: o.color }}></i>`}<span>${o.value}</span></span>`}</li>`,
                 )}</ul>`}
                 <p>${m.fresh ? plain(m.text).split(/(\s+)/).map((w, i) => html`<span class="w" style=${{ "--i": Math.min(i, 60) }}>${w}</span>`) : plain(m.text)}</p>
                 ${m.remembered?.length > 0 && html`<div class="remembered"><${Icon} n="spark" s=${11} /><span>Remembered for next time: ${m.remembered.map((r) => `“${r}”`).join(", ")}</span></div>`}
@@ -675,7 +764,10 @@ function AIChat() {
           }}
           onKeyDown=${(e) => {
             e.stopPropagation();
-            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "k") {
+              e.preventDefault();
+              dockAI(!docked);
+            } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
               e.preventDefault();
               send();
             } else if (e.key === "Escape") setAi({ open: false });
@@ -787,7 +879,7 @@ function Settings() {
             <span class="grow"></span>
             ${ai?.provider === "api" ? html`<span class="pill ok"><span class="status-dot ok"></span>Anthropic API</span>` : ai?.provider === "claude-code" ? html`<span class="pill ok"><span class="status-dot ok"></span>Claude Code</span>` : html`<span class="pill"><span class="status-dot warn"></span>Not set up</span>`}
           </h4>
-          <div class="note">Describe a change and Claude edits the design. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design, so it can judge spacing and contrast. Your original files stay on your Mac.</div>
+          <div class="note">Describe a change and Claude edits the design. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design when a request is about how it looks (questions and exact edits go without, so they're quicker). Your original files stay on your Mac.</div>
           <${Switch} checked=${s.ai.preview !== false} onChange=${(v) => {
             set({ ai: { ...S.ai, preview: v } });
             persist();
@@ -1021,7 +1113,8 @@ function Help() {
     ["sim", "1 · Add a screenshot", "Drop in an image, or capture your app from the iOS Simulator, a website or a Mac window. They collect under Screenshots."],
     ["wand", "2 · Pick a design", "You get finished designs made from your screenshot. Pick one, or open Templates for more. Claude can make three for you there too."],
     ["text", "3 · Write your headline", "Double-click the headline to retype it. Put **stars** around words to colour them."],
-    ["canvas", "Make it yours", "Click anything to select it, then drag to move, pull a corner to resize and use the round handle to rotate. The bar above a selection has the everyday edits (words, colours, Replace); Settings opens the rest. Backdrop and Text & shapes are in the rail."],
+    ["canvas", "Make it yours", "Click anything to select it, then drag to move, pull a corner to resize and use the round handle to rotate. The bar above a selection has the everyday edits (words, colours, Replace); Settings opens the rest. Backdrop, Text and Shapes are in the rail."],
+    ["animate", "Animate it for a video", "Animate (⌘3) opens a timeline: choose an item, set when it arrives and how (fade, zoom, slide…), and press Play. Things can change part way through too, and several can move together. Export video renders it."],
     ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset backdrop”. Undo (⌘Z) reverts anything."],
     ["export", "4 · Export", "Export saves a full-size PNG, JPEG or WebP, or a video with gentle camera motion. Preview shows the finished look first."],
     ["grid", "My designs", "Every design saves itself as you work. My designs (⇧⌘O) has them all, and everything you've exported."],
@@ -1154,7 +1247,7 @@ function App() {
     <${Rail} />
     <${LeftPanel} />
     <${Stage} />
-    <${Inspector} />
+    ${s.ai.open && s.ai.docked && s.rightOpen ? html`<aside class="panel right chat"><${AIChat} docked /></aside>` : html`<${Inspector} />`}
     ${s.leftOpen && html`<${Resizer} side="l" />`}
     ${s.rightOpen && html`<${Resizer} side="r" />`}
     ${s.scenesPage && html`<${ScenesPage} />`}
@@ -1218,7 +1311,11 @@ const commands = {
   showPreview: () => showPreview(),
   exportImage,
   exportVideo,
-  canvas: () => set({ view: "canvas" }),
+  canvas: () => {
+    closeTimeline();
+    set({ view: "canvas" });
+  },
+  animate: openTimeline,
   render: () => showPreview(),
   zoomIn: () => canvasApi.zoomBy(1.25),
   zoomOut: () => canvasApi.zoomBy(1 / 1.25),
@@ -1263,6 +1360,10 @@ window.addEventListener("keydown", (e) => {
   }
   // The Scenes page handles its own keys.
   if (S.scenesPage) return;
+  if (mod && e.shiftKey && k === "k") {
+    e.preventDefault();
+    return dockAI(!S.ai.docked);
+  }
   if (mod && k === "k") {
     e.preventDefault();
     return commands.ai();
@@ -1279,6 +1380,7 @@ window.addEventListener("keydown", (e) => {
   if (mod && k === "e") return e.preventDefault(), e.shiftKey ? exportVideo() : exportImage();
   if (mod && k === "1") return e.preventDefault(), commands.canvas();
   if (mod && k === "2") return e.preventDefault(), showPreview();
+  if (mod && k === "3") return e.preventDefault(), openTimeline();
   if (mod && (k === "=" || k === "+")) return e.preventDefault(), commands.zoomIn();
   if (mod && k === "-") return e.preventDefault(), commands.zoomOut();
   if (mod && k === "0") return e.preventDefault(), commands.fit();
@@ -1290,7 +1392,14 @@ window.addEventListener("keydown", (e) => {
   if (mod && e.altKey && e.code === "KeyI") return e.preventDefault(), commands.toggleRight();
   if (mod && e.altKey && e.code === "KeyJ") return e.preventDefault(), commands.json();
   if (mod) return;
+  // Animate: Space plays, ⌫ deletes the selected animation, Esc lets go of it.
+  if (S.view === "canvas" && S.timelineOpen) {
+    if (e.key === " ") return e.preventDefault(), play();
+    if (S.animSel !== null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteAnimation(S.animSel);
+    if (S.animSel !== null && e.key === "Escape") return set({ animSel: null });
+  }
   if (e.key === "Escape") {
+    if (S.stillPick) return closeStills(true);
     if (S.guide) return set({ guide: null });
     if (S.exportOpen) return set({ exportOpen: false });
     if (S.jsonOpen) return set({ jsonOpen: false });

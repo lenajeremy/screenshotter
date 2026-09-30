@@ -141,12 +141,17 @@ svg { display: block; flex: none; }
 
 /* ---------------------------------------------------------------- rail */
 
-.rail { grid-row: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0 12px; }
-.rail-btn { width: 66px; min-height: 54px; padding: 6px 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 12px; border: 0; background: none; color: var(--text-3); position: relative; transition: color 0.15s, background 0.15s; }
-.rail-btn .rl { font-size: 10px; font-weight: 600; letter-spacing: 0.01em; line-height: 1.15; text-align: center; text-wrap: balance; }
-.rail-btn:hover { color: var(--text); background: var(--panel); }
-.rail-btn.on { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
-.rail-btn.on::before { content: ""; position: absolute; left: -4px; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--lime); }
+/* The rail: each place is an icon in a pill with a one-word label under it, all the same height.
+   The pill (not the label) shows the place you're in, tinted with the accent. */
+.rail { grid-row: 2; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 12px; }
+.rail-btn { width: 70px; height: 56px; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 0; background: none; color: var(--text-3); position: relative; transition: color 0.15s; }
+.rail-btn .ico { width: 42px; height: 30px; border-radius: 10px; display: grid; place-items: center; transition: background-color 0.15s, color 0.15s, box-shadow 0.15s; }
+.rail-btn .rl { font-size: 10.5px; font-weight: 560; line-height: 1; letter-spacing: 0.005em; white-space: nowrap; }
+.rail-btn:hover { color: var(--text-2); }
+.rail-btn:hover .ico { background: var(--panel-2); }
+.rail-btn:active .ico { transform: scale(0.96); }
+.rail-btn.on { color: var(--text); }
+.rail-btn.on .ico { background: var(--lime-soft); color: var(--lime); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.22); }
 .rail-btn .badge { position: absolute; top: 6px; right: 6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--lime); color: var(--lime-ink); font: 700 9px/15px var(--sans); text-align: center; }
 .rail .grow { flex: 1; }
 .tip { position: absolute; left: calc(100% + 12px); top: 50%; transform: translate(-4px, -50%); background: var(--panel-4); color: var(--text); padding: 5px 9px; border-radius: 7px; font-size: 12px; font-weight: 550; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.12s, transform 0.12s; box-shadow: var(--shadow-pop); z-index: 100; }
@@ -345,6 +350,7 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .artboard { position: absolute; left: 0; top: 0; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.07); background: #222; transition: box-shadow 0.2s; }
 .artboard .bg { position: absolute; inset: 0; overflow: hidden; }
 .artboard .bg img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.artboard .bg-move { position: absolute; inset: 0; transform-origin: 0 0; }
 .artboard .clip { position: absolute; inset: 0; pointer-events: none; z-index: 90; box-shadow: 0 0 0 100000px rgba(8, 8, 10, 0.72); }
 .artboard.drop-over { box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.9), 0 0 0 2px var(--lime); }
 
@@ -383,7 +389,7 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .scene-strip-all:hover .scene-thumb { color: var(--text); }
 .scenes-more-link { border: 0; background: none; color: var(--text-3); font-size: 12px; padding: 2px; align-self: center; }
 .scenes-more-link:hover { color: var(--text); }
-.rail-sep { width: 28px; height: 1px; background: var(--line-2); margin: 2px 0 4px; flex: none; }
+.rail-sep { width: 26px; height: 1px; background: var(--line-2); margin: 6px 0; flex: none; }
 
 /* Welcome: one job on an empty design, bringing in a screenshot. */
 .welcome { gap: 18px; }
@@ -429,6 +435,19 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .gc-title span { color: var(--text-3); font-size: 12px; }
 .gc-foot { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
 .design-tray { width: min(780px, calc(100% - 28px)); }
+/* Pick the still: the recording's moments in a row, each as tall as a template preview. */
+.still-picker { width: fit-content; min-width: min(500px, calc(100% - 28px)); max-width: min(820px, calc(100% - 28px)); }
+.still-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
+.still-row::-webkit-scrollbar { display: none; }
+.still-card { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 5px 5px 6px; border: 0; border-radius: 12px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font: 500 11px var(--mono); font-variant-numeric: tabular-nums; transition: background-color 140ms ease, box-shadow 140ms ease, transform 160ms ease-out; }
+.still-card:hover { background: var(--panel-3); color: var(--text); }
+.still-card:active { transform: scale(0.97); }
+.still-card.on { box-shadow: inset 0 0 0 2px var(--lime); color: var(--text); }
+.still-img { display: block; height: 150px; min-width: 70px; border-radius: 8px; overflow: hidden; background: var(--panel-3); }
+.still-img img { display: block; height: 100%; width: auto; }
+.still-card.busy .still-img { opacity: 0.55; }
+.still-card.loading .still-img { width: 70px; background: linear-gradient(110deg, var(--panel-3) 30%, var(--panel-4) 50%, var(--panel-3) 70%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; }
+@media (max-height: 780px) { .still-img { height: 112px; } }
 .dt-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
 .dt-row::-webkit-scrollbar { display: none; }
 .dt-card { flex: 1 0 96px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 5px 5px 7px; border: 0; border-radius: 12px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-size: 11.5px; font-weight: 560; transition: background-color 140ms ease, box-shadow 140ms ease, transform 160ms ease-out; }
@@ -745,6 +764,10 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 28px 70px -14px rgba(0, 0, 0, 0.85), 0 0 60px -30px rgba(139, 123, 255, 0.45);
   overflow: hidden;
 }
+/* Ask AI docked: it fills the right-hand panel, at least wide enough to read. */
+.app:not(.right-closed) .right.chat { width: max(var(--right), 340px); }
+.ai-chat.docked { position: relative; z-index: auto; width: 100%; height: 100%; border-radius: 0; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+.ai-chat.docked .ai-chat-head { cursor: default; }
 .ai-chat-head { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); cursor: grab; user-select: none; flex: none; }
 .ai-chat-head:active { cursor: grabbing; }
 .ai-chat-head b { font-size: 13px; }
@@ -935,6 +958,13 @@ li.done .work-shot .scan { display: none; }
 .insp-hero .meta { flex: 1; min-width: 0; }
 .insp-hero .meta b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .insp-hero .meta span { color: var(--text-3); font-size: 11.5px; }
+/* With a recording: name and still on one line each, the two actions on their own row. */
+.insp-hero.rec { flex-wrap: wrap; }
+.insp-hero.rec .meta { display: flex; flex-direction: column; gap: 3px; }
+.insp-hero.rec .meta span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.insp-hero.rec .meta span svg { display: inline-block; vertical-align: -2px; margin-right: 5px; }
+.hero-actions { flex-basis: 100%; display: flex; gap: 6px; }
+.hero-actions .btn { flex: 1; justify-content: center; gap: 6px; }
 .frames { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
 .frame-opt { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 0 7px; border-radius: 10px; border: 0; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font-size: 10.5px; font-weight: 580; transition: all 0.15s; }
 .frame-opt:hover { color: var(--text); background: var(--panel-3); }
@@ -1145,3 +1175,160 @@ li.done .work-shot .scan { display: none; }
 .recipe b { font-size: 12px; font-weight: 600; margin-top: 3px; }
 .recipe span { font-size: 11px; color: var(--text-3); line-height: 1.35; }
 @media (prefers-reduced-motion: reduce) { .dfm-card { animation: none; } }
+
+/* -------------------------------------------------------------------------------------------
+   Animate: the timeline under the canvas. A row per item, a bar per animation, a playhead. */
+/* The timeline's height: as dragged (--tl-h), else the usual; the canvas always keeps some room. */
+.stage { --tl-now: min(var(--tl-h, min(44%, 270px)), calc(100% - 150px)); }
+.tl-dock { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 62; height: var(--tl-now); display: flex; flex-direction: column; border-radius: 16px; background: rgba(20, 20, 24, 0.97); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: var(--shadow-pop); overflow: hidden; animation: pop-in 0.2s var(--ease); }
+.tl-head { flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px 0 8px; border-bottom: 1px solid var(--line); }
+.tl-play { width: 30px; height: 30px; border-radius: 50%; background: var(--text); color: #000; }
+.tl-play:hover { background: #fff; color: #000; }
+.tl-clock { font: 500 12px var(--mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tl-clock b { color: var(--text); font-weight: 600; }
+.tl-len { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
+.tl-len > * { width: 84px; }
+.tl-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 172px 1fr; align-content: start; overflow-y: auto; }
+.tl-names { border-right: 1px solid var(--line); }
+.tl-corner, .tl-ruler { height: 26px; position: sticky; top: 0; z-index: 3; background: #141418; border-bottom: 1px solid var(--line); }
+.tl-corner { display: flex; align-items: center; padding: 0 12px; font-size: 11px; color: var(--text-4); }
+.tl-name { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 12px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text-2); font-size: 12px; text-align: left; }
+.tl-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-name svg { flex: none; color: var(--text-4); }
+.tl-name:hover { background: var(--panel-2); color: var(--text); }
+.tl-name.on { background: var(--iris-soft); color: var(--text); }
+.tl-name.on svg { color: var(--iris); }
+/* A device's call-outs, tucked under it. */
+.tl-name.sub { padding-left: 30px; font-size: 11.5px; color: var(--text-3); }
+.tl-name.sub svg { width: 12px; height: 12px; }
+/* Time runs across the tracks: 0 at the left edge, the video's length at the right. */
+.tl-tracks { position: relative; min-width: 0; margin: 0 16px 0 12px; }
+.tl-ruler { cursor: ew-resize; margin: 0 -16px 0 -12px; padding: 0 16px 0 12px; }
+.tl-tick { position: absolute; top: 0; height: 100%; margin-left: 12px; padding: 7px 0 0 5px; border-left: 1px solid var(--line-2); font: 500 10px var(--mono); color: var(--text-4); pointer-events: none; }
+.tl-row { position: relative; height: 32px; margin: 0 -16px 0 -12px; border-bottom: 1px solid var(--line); }
+.tl-row.on { background: rgba(139, 123, 255, 0.07); }
+.tl-bar { position: absolute; top: 5px; height: 22px; margin-left: 12px; padding: 0 8px; display: flex; align-items: center; border-radius: 7px; background: var(--lime); color: var(--lime-ink); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; cursor: grab; transition: box-shadow 120ms ease; }
+.tl-bar:active { cursor: grabbing; }
+.tl-bar span { overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.tl-bar.change { background: var(--iris); color: #fff; }
+.tl-bar.exit { background: var(--pink); color: #fff; }
+.tl-bar.on { box-shadow: 0 0 0 2px var(--text); z-index: 2; }
+/* A dot marks an animation shared with other items: they move as one group. */
+.tl-bar.group::before { content: ""; flex: none; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; opacity: 0.55; }
+.tl-edge { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
+.tl-line { position: absolute; top: 0; bottom: 0; left: 0; width: 0; z-index: 4; pointer-events: none; will-change: transform; }
+.tl-line::before { content: ""; position: absolute; top: 0; bottom: 0; left: -0.75px; width: 1.5px; background: var(--guide); }
+.tl-line i { position: absolute; top: 0; left: -5.5px; width: 11px; height: 12px; border-radius: 3px 3px 6px 6px; background: var(--guide); }
+.tl-hint, .tl-empty { position: absolute; left: 0; right: 0; top: 44px; text-align: center; font-size: 12px; color: var(--text-3); pointer-events: none; }
+/* The selected animation, in the right-hand panel. */
+.clip-targets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.clip-targets .note { flex-basis: 100%; }
+.fx-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.ease-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.fx, .ease { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px 6px; border: 0; border-radius: 10px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font-size: 10.5px; font-weight: 560; line-height: 1.15; text-align: center; transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease; }
+.fx:hover, .ease:hover { background: var(--panel-3); color: var(--text); }
+.fx.on, .ease.on { background: var(--lime-soft); box-shadow: inset 0 0 0 1.5px rgba(210, 255, 77, 0.6); color: var(--text); }
+.fx.on svg, .ease.on svg { color: var(--lime); }
+.row:has(> .clip-x) { grid-template-columns: 74px 1fr 22px; gap: 6px; }
+.clip-x { color: var(--text-4); }
+/* Ask AI stays available in Animate, above the timeline. */
+.stage.animating .ai-chat { bottom: calc(var(--tl-now) + 20px) !important; height: min(520px, calc(100% - var(--tl-now) - 40px)); }
+.clip-head h2 { flex: none; }
+.clip-head .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Text drawn in pieces, for word and letter reveals. */
+.ent .u, .ent .uw { display: inline-block; }
+.ent .uw { white-space: nowrap; }
+/* Animate: nothing shows outside the image, so a zoomed-in camera looks like the video. */
+.stage.animating .artboard .clip { box-shadow: 0 0 0 100000px var(--stage); }
+.tl-bar.camera { background: var(--amber); color: #2a1a00; }
+.tl-bar.backdrop { background: #3fb8af; color: #04201e; }
+.tl-bar.loop { background: #54c7ec; color: #04202b; }
+/* A repeat: a faint mark where each play starts again. */
+.tl-bar.rep { background-image: repeating-linear-gradient(90deg, transparent 0 calc(var(--cyc) - 1.5px), rgba(0, 0, 0, 0.28) calc(var(--cyc) - 1.5px) var(--cyc)); }
+
+/* A motion path on the canvas: the route, where it sets off, and points to drag. */
+.motion-path { position: absolute; inset: 0; z-index: 64; pointer-events: none; }
+.motion-path svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.motion-path path { fill: none; stroke: #54c7ec; stroke-width: 2; stroke-dasharray: 6 5; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5)); }
+.mp-start { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #54c7ec; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); }
+.mp-pt { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #54c7ec, 0 2px 8px rgba(0, 0, 0, 0.5); pointer-events: auto; cursor: grab; display: grid; place-items: center; }
+.mp-pt:active { cursor: grabbing; }
+.mp-pt b { font: 700 10px/1 var(--font, -apple-system, system-ui); color: #04202b; font-style: normal; }
+/* The camera's frame for the selected move: drag to aim, a corner to zoom. */
+.viewfinder { position: absolute; z-index: 88; border: 2px solid var(--amber); border-radius: 4px; box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.5); cursor: move; }
+.vf-tag { position: absolute; left: -2px; top: -24px; display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--amber); color: #2a1a00; font: 650 11px var(--sans); white-space: nowrap; pointer-events: none; }
+.vf-h { position: absolute; width: 12px; height: 12px; border-radius: 3px; background: #fff; box-shadow: 0 0 0 2px var(--amber), 0 1px 3px rgba(0, 0, 0, 0.5); }
+.vf-h.nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.vf-h.ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.vf-h.sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.vf-h.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+/* A video's key moments, as Ask AI sees them: wide enough to make out. */
+.work-shot.sheet { width: 100%; max-width: 300px; }
+
+/* Drag the timeline's top edge to make it taller or shorter. */
+.tl-grip { position: absolute; left: 0; right: 0; top: 0; height: 8px; z-index: 3; cursor: ns-resize; display: grid; place-items: center; }
+.tl-grip::after { content: ""; width: 36px; height: 4px; margin-top: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.16); transition: background 0.15s, width 0.15s; }
+.tl-grip:hover::after, .stage.tl-sizing .tl-grip::after { background: var(--iris); width: 48px; }
+.stage.tl-sizing, .stage.tl-sizing * { cursor: ns-resize !important; user-select: none; }
+
+/* The shot strip: a video's shots in a row, a transition between each pair (like pages in Canva). */
+.tl-shots { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; scrollbar-width: thin; }
+.shot { position: relative; flex: none; height: 46px; width: 78px; padding: 0; border: 0; border-radius: 7px; overflow: hidden; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-2); cursor: pointer; }
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shot .shot-blank { display: block; width: 100%; height: 100%; background: linear-gradient(135deg, var(--panel-2), var(--panel-3)); }
+.shot.on { box-shadow: 0 0 0 2px var(--lime); }
+.shot:hover:not(.on) { box-shadow: inset 0 0 0 1px var(--text-4); }
+.shot-n, .shot-len { position: absolute; bottom: 3px; z-index: 1; padding: 0 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.66); color: #fff; font: 600 9.5px/14px var(--mono, ui-monospace, Menlo, monospace); }
+.shot-n { left: 3px; }
+.shot-len { right: 3px; }
+.shot-join { flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--text-3); display: grid; place-items: center; cursor: pointer; }
+.shot-join svg { width: 26px; height: 23px; }
+.shot-join:hover, .shot-join.on { background: var(--panel-2); color: var(--text); }
+.shot-add { flex: none; height: 44px; min-width: 44px; padding: 0 12px; border: 1px dashed var(--line-2); border-radius: 7px; background: none; color: var(--text-3); display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.shot-add span:empty { display: none; }
+.shot-add:hover { color: var(--text); border-color: var(--text-4); background: var(--panel-2); }
+.tl-total { font-size: 11.5px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.join-pop { width: 330px; padding: 12px; }
+.join-pop .join-head { font-size: 12px; font-weight: 650; color: var(--text-2); margin-bottom: 8px; }
+.join-pop .fx-grid { grid-template-columns: repeat(4, 1fr); }
+.join-pop .row { margin-top: 10px; }
+
+/* Export sizes: a chip per shape, drawn at its proportions. */
+.size-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.size-chip { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 9px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); text-align: left; cursor: pointer; min-width: 0; }
+.size-chip .shape { flex: none; height: 22px; max-width: 30px; border-radius: 3px; border: 1.5px solid currentColor; opacity: 0.55; }
+.size-chip span { display: flex; flex-direction: column; min-width: 0; }
+.size-chip b { font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.size-chip small { font-size: 10.5px; color: var(--text-4); white-space: nowrap; }
+.size-chip:hover { background: var(--panel-3); }
+.size-chip.on { box-shadow: inset 0 0 0 1.5px var(--lime); color: var(--text); }
+.size-chip.on .shape { opacity: 1; color: var(--lime); }
+.shots-note { display: flex; gap: 8px; align-items: flex-start; }
+
+/* The export panel scrolls when its options outgrow the window. */
+.export-pop { max-height: calc(100vh - 72px); overflow-y: auto; }
+
+/* A shot an AI change just touched. */
+.shot.pulse { animation: shot-pulse 1.6s var(--ease); }
+@keyframes shot-pulse { 0%, 60% { box-shadow: 0 0 0 2px var(--ai, #8b7bff), 0 0 18px 2px color-mix(in oklab, var(--ai, #8b7bff) 60%, transparent); } 100% { box-shadow: inset 0 0 0 1px var(--line-2); } }
+
+/* Which shot a change was in: a small numbered badge, like the strip's. */
+.op-shot { flex: none; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; background: var(--panel-3); color: var(--text-2); font: 650 10px/16px var(--mono, ui-monospace, Menlo, monospace); text-align: center; }
+.shot-of { color: var(--text-2); font-weight: 600; }
+
+/* Playing through a video of several shots: the other shots, drawn over the canvas when on screen. */
+.ghost-wrap { position: absolute; left: 0; top: 0; visibility: hidden; cursor: pointer; }
+.artboard.ghost { pointer-events: none; }
+.join-matte, .frame-clip { position: absolute; left: 0; top: 0; pointer-events: none; visibility: hidden; }
+.join-matte { z-index: 0; }
+.frame-clip { z-index: 5; box-shadow: 0 0 0 100000px rgba(8, 8, 10, 0.72); }
+
+/* The shot strip as the whole video's timeline: shots as long as they run, joins, one playhead. */
+.tl-shots.video .vt { position: relative; flex: 1; min-width: 160px; height: 46px; cursor: text; }
+.tl-shots.video .vt .shot { position: absolute; top: 0; height: 46px; }
+.tl-shots.video .vt .shot-join { position: absolute; top: 8px; margin-left: -15px; z-index: 2; background: var(--panel); box-shadow: 0 0 0 1px var(--line-2); }
+.tl-shots.video .vt .shot-join:hover, .tl-shots.video .vt .shot-join.on { background: var(--panel-2); }
+.vt-line { position: absolute; top: -4px; bottom: -4px; left: 0; width: 0; z-index: 3; pointer-events: none; will-change: transform; }
+.vt-line::before { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--guide); border-radius: 1px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
+.vt-line i { position: absolute; top: -2px; left: -5px; width: 10px; height: 8px; border-radius: 2px 2px 5px 5px; background: var(--guide); }
+.shot .shot-film { position: absolute; inset: 0; background-size: auto 100%; background-repeat: repeat-x; background-position: left center; }

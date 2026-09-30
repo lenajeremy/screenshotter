@@ -264,7 +264,11 @@ function content(o: FrameOptions, boxW: number, boxH: number, turn: number, u: n
   const clip = (bx: number, by: number) =>
     `background-image:url(&quot;${url}&quot;);background-size:${f(iw)} ${f(ih)};background-position:${f(-bx * s)} ${f(-by * s)};`;
 
-  for (const h of o.highlights) {
+  // Each call-out's elements say which call-out they are, so a video can bring each in on its own.
+  const tag = (html: string, k: number) => html.replace(/class="hlx/g, `data-callout="${k}" class="hlx`);
+  for (const [k, h] of o.highlights.entries()) {
+    const c0 = clipped.length;
+    const v0 = overlay.length;
     const b = h.box;
     if (h.style === "blur-rest") {
       clipped += `<img class="hlx" src="${url}" style="position:absolute;left:${f(ox)};top:${f(oy)};width:${f(iw)};height:${f(ih)};filter:blur(${f(5 * u)})">`;
@@ -368,6 +372,8 @@ function content(o: FrameOptions, boxW: number, boxH: number, turn: number, u: n
         `box-shadow:0 0 0 ${f(3 * u)} ${esc(h.color)}, 0 ${f(10 * u)} ${f(30 * u)} rgba(0,0,0,.28), 0 ${f(2 * u)} ${f(6 * u)} rgba(0,0,0,.16)">` +
         `<div style="position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 30% 25%, rgba(255,255,255,.35), rgba(255,255,255,0) 45%);box-shadow:inset 0 0 ${f(10 * u)} rgba(0,0,0,.18)"></div></div>`;
     }
+    clipped = clipped.slice(0, c0) + tag(clipped.slice(c0), k);
+    overlay = overlay.slice(0, v0) + tag(overlay.slice(v0), k);
   }
   return { clipped: wrap(clipped, false), overlay: overlay ? wrap(overlay, false) : "" };
 }

@@ -3,7 +3,8 @@ import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, ColorPicker, Dropdown, Num, Popover, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
-import { deleteEntity, duplicateEntity, replaceMode, uploadFiles } from "./actions.js";
+import { deleteEntity, duplicateEntity, openStills, replaceMode, uploadFiles } from "./actions.js";
+import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
 
 const FONTS = [
@@ -39,7 +40,9 @@ export function Inspector() {
   const s = useStore();
   const id = s.selected;
   let body;
-  if (!id) body = html`<${SceneInspector} />`;
+  // Animate: the selected animation takes the panel.
+  if (s.timelineOpen && s.animSel !== null && s.scene.animations?.[s.animSel]) body = html`<${ClipInspector} />`;
+  else if (!id) body = html`<${SceneInspector} />`;
   else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
   else if (id === "caption") body = html`<${CaptionInspector} />`;
   else if (id.startsWith("shape-")) body = html`<${ShapeInspector} id=${id} />`;
@@ -110,6 +113,20 @@ const HL_STYLES = [
   { value: "blur-rest", label: "Blur rest" },
 ];
 
+/** Soft focus for text and shapes, as a fraction of the canvas width (shown in pixels). */
+function BlurRow({ value, onChange }) {
+  const W = S.layout?.canvas.width ?? 1000;
+  return html`<div class="row"><label>Blur</label><${Slider} value=${value ?? 0} min=${0} max=${0.02} step=${0.0005} reset=${0}
+    format=${(v) => (v > 0.0002 ? Math.round(v * W) + " px" : "Sharp")} onChange=${(v) => onChange(v > 0.0002 ? Math.round(v * 10000) / 10000 : undefined)} /></div>`;
+}
+
+/** The moment of its recording a device's still shows (a picked still is named `.still-<ms>`). */
+function stillClock(still) {
+  const m = /\.still-(\d+)\.png$/i.exec(still ?? "");
+  const t = m ? Number(m[1]) / 1000 : 0;
+  return `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+}
+
 function DeviceInspector({ id }) {
   const s = useStore();
   const i = Number(id.split("-")[1]) - 1;
@@ -170,10 +187,16 @@ function DeviceInspector({ id }) {
   return html`
     <${Head} title=${entityLabel(id)} sub=${s.scene.devices.length > 1 ? `${i + 1} of ${s.scene.devices.length}` : ""} id=${id} />
     <div class="panel-body">
-      <div class="insp-hero">
+      <div class="insp-hero ${d.video ? "rec" : ""}">
         <div class="pic"><img src=${thumbUrl(d.screenshot, 120)} /></div>
-        <div class="meta"><b>${base(d.screenshot)}</b><span>${d.video ? html`<${Icon} n="video" s=${11} style=${{ display: "inline", verticalAlign: "-1px" }} /> Recording attached` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} on canvas` : ""}</span></div>
-        <button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>
+        <div class="meta"><b title=${base(d.video ?? d.screenshot)}>${base(d.video ?? d.screenshot)}</b>
+          <span>${d.video ? html`<${Icon} n="video" s=${11} />Recording · still at ${stillClock(d.screenshot)}` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} on canvas` : ""}</span></div>
+        ${d.video
+          ? html`<div class="hero-actions">
+              <button class="btn sm" title="Choose the moment of the recording this device shows in images" onClick=${() => openStills(id)}><${Icon} n="image" s=${13} />Pick the still</button>
+              <button class="btn sm" onClick=${() => replaceMode(id)}><${Icon} n="replace" s=${13} />Replace</button>
+            </div>`
+          : html`<button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>`}
       </div>
 
       ${frame === "device"
@@ -443,6 +466,7 @@ function CaptionInspector() {
           uppercase=${st.uppercase} onUpper=${(v) => upd((t) => (t.uppercase = v || undefined))}
           spacing=${st.letterSpacing} onSpacing=${(v) => upd((t) => (t.letterSpacing = v), "ls")} />
         <${Switch} checked=${Boolean(st.shadow)} onChange=${(v) => upd((t) => (t.shadow = v || undefined))} label="Soft text shadow" />
+        <${BlurRow} value=${st.blur} onChange=${(v) => upd((t) => (t.blur = v), "blur")} />
       <//>
       <//>
     </div>`;
@@ -492,6 +516,7 @@ function TextInspector({ id }) {
           uppercase=${t.uppercase} onUpper=${(v) => upd((x) => (x.uppercase = v || undefined))}
           spacing=${t.letterSpacing} onSpacing=${(v) => upd((x) => (x.letterSpacing = v), "ls")} />
         <div class="row"><label>Opacity</label><${Slider} value=${t.opacity} min=${0.1} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
+        <${BlurRow} value=${t.blur} onChange=${(v) => upd((x) => (x.blur = v), "blur")} />
       <//>
       <${Section} title="Badge">
         <div class="row"><label>Pill colour</label><${ColorButton} value=${t.background} auto="None" onChange=${(v) => upd((x) => (x.background = v), "bg")} /></div>
@@ -613,6 +638,7 @@ function ShapeInspector({ id }) {
       <//>
       <${Section} title="Look">
         <div class="row"><label>Opacity</label><${Slider} value=${g.opacity} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
+        <${BlurRow} value=${g.blur} onChange=${(v) => upd((x) => (x.blur = v), "blur")} />
         <${Switch} checked=${g.shadow} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft shadow" />
       <//>
       <//>

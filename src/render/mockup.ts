@@ -18,6 +18,7 @@ import { FRAME_CSS, MAC_MENU_BAR, WATCH_BAND, defaultBand, measureFrame, renderF
 import { resolveHighlights } from "./highlights.js";
 import { findText } from "../native/ocr.js";
 import { isLine, renderShape, shapeHtml, shapeSpec, type ShapeSpec } from "./shapes.js";
+import { textPieces, unitMode, type Unit } from "./animate.js";
 import { CANVAS_PRESETS, computeLayout, defaultCanvasFor, type DeviceSlot, type LayoutResult } from "./layouts.js";
 import type { DeviceInput, EffectsInput, MockupInput, ShadowInput, ShapeInput, TextInput } from "./schema.js";
 
@@ -63,7 +64,58 @@ interface AccentStyle {
 }
 
 /** Escape text and turn **accent** spans and newlines into markup. */
-function richText(text: string, accent: AccentStyle): string {
+/** The inline style of **accent** words, or undefined when they're just bold. */
+function accentCss(accent: AccentStyle): string | undefined {
+  if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return undefined;
+  return [
+    accent.color
+      ? /gradient\(/.test(accent.color)
+        ? `background:${esc(accent.color)};-webkit-background-clip:text;background-clip:text;color:transparent`
+        : `color:${esc(accent.color)}`
+      : "",
+    accent.font ? `font-family:${esc(fontStack(accent.font).stack)}` : "",
+    accent.weight !== undefined ? `font-weight:${accent.weight}` : "",
+    accent.italic ? "font-style:italic" : "",
+  ]
+    .filter(Boolean)
+    .join(";");
+}
+
+/**
+ * Text cut into words or letters, each its own element (.u) so a video can bring them in one at
+ * a time. Letters of a word stay together (.uw) so lines still break between words.
+ */
+function richUnits(text: string, accent: AccentStyle, by: Unit): string {
+  const css = accentCss(accent);
+  // data-acc: which starred phrase, so a gradient can be laid across the phrase's words (paintPieces).
+  const wrap = (html: string, on: boolean, seg: number) => (!on ? html : css === undefined ? `<strong>${html}</strong>` : `<span class="accent" data-acc="${seg}" style="${css}">${html}</span>`);
+  const pieces = textPieces(text, by);
+  let out = "";
+  for (let i = 0; i < pieces.length; ) {
+    const p = pieces[i];
+    if (p.kind === "break") {
+      out += "<br>";
+      i++;
+    } else if (p.kind === "space") {
+      out += " ";
+      i++;
+    } else {
+      // One word (.uw keeps it on one line): its pieces, accented runs wrapped in the accent.
+      let word = "";
+      while (i < pieces.length && pieces[i].kind === "unit" && pieces[i].w === p.w) {
+        const accented = pieces[i].accent;
+        let run = "";
+        while (i < pieces.length && pieces[i].kind === "unit" && pieces[i].w === p.w && pieces[i].accent === accented) run += `<span class="u">${esc(pieces[i++].text)}</span>`;
+        word += wrap(run, accented, pieces[i - 1].seg);
+      }
+      out += `<span class="uw">${word}</span>`;
+    }
+  }
+  return out;
+}
+
+function richText(text: string, accent: AccentStyle, by?: Unit): string {
+  if (by) return richUnits(text, accent, by);
   // A trailing newline (Enter at the end of a text box) would add an empty line.
   return text
     .replace(/(\\n|\n|\s)+$/, "")
@@ -92,7 +144,13 @@ function richText(text: string, accent: AccentStyle): string {
 const sizePx = (size: number | undefined, H: number, fallback: number) => (size === undefined ? fallback : size < 1 ? size * H : size);
 
 /** A text element: absolutely positioned on the canvas, or `flow` inside a stacked text block. */
-function textHtml(t: TextInput, W: number, H: number, flow = false): string {
+/** Soft focus as CSS: a fraction of the canvas width up to 0.5, or px. An animated one comes from --ablur. */
+function blurCss(b: number | undefined, W: number, animated = false): string {
+  const v = !b ? 0 : b <= 0.5 ? b * W : b;
+  return animated ? `filter:blur(var(--ablur, ${px(v)}));` : v > 0 ? `filter:blur(${px(v)});` : "";
+}
+
+function textHtml(t: TextInput, W: number, H: number, flow = false, id?: string, by?: Unit, animBlur = false): string {
   const align = t.align ?? "center";
   const anchor = t.anchor ?? "top";
   const tx = align === "left" ? "0" : align === "right" ? "-100%" : "-50%";
@@ -107,9 +165,9 @@ function textHtml(t: TextInput, W: number, H: number, flow = false): string {
   const justify = align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
   const style =
     `display:inline-block;font-family:${esc(fontStack(t.font).stack)};font-size:${px(size)};font-weight:${t.weight ?? 700};` +
-    `color:${esc(t.color ?? "#fff")};line-height:${t.lineHeight ?? 1.08};letter-spacing:${t.letterSpacing ?? -0.02}em;` +
+    `color:var(--acolor, ${esc(t.color ?? "#fff")});line-height:${t.lineHeight ?? 1.08};letter-spacing:${t.letterSpacing ?? -0.02}em;` +
     `opacity:${t.opacity ?? 1};${t.uppercase ? "text-transform:uppercase;" : ""}${shadow}${badge}`;
-  return `<div class="text" style="${box}display:flex;justify-content:${justify}"><div style="${style}">${richText(t.text, { color: t.accentColor, font: t.accentFont, weight: t.accentWeight, italic: t.accentItalic })}</div></div>`;
+  return `<div class="text"${id ? ` data-ent="${id}"` : ""} style="${box}display:flex;justify-content:${justify};${flow ? "" : blurCss(t.blur, W, animBlur)}"><div style="${style}">${richText(t.text, { color: t.accentColor, font: t.accentFont, weight: t.accentWeight, italic: t.accentItalic }, by)}</div></div>`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -242,6 +300,8 @@ interface Placed {
 
 /** Options for scenes that will be animated frame by frame (create_video). */
 export interface SceneAnimation {
+  /** Devices whose blur the animations change (their filter takes it from --ablur). */
+  blurred?: Set<string>;
   /** Devices will tilt in 3D during the animation, so give them depth and perspective. */
   motion3d: boolean;
 }
@@ -295,7 +355,7 @@ function placement(d: Prepared, slot: DeviceSlot, W: number, H: number, bar?: Mo
 }
 
 /** A device's soft focus and fade: a CSS blur for its wrapper, and a mask for its stage. */
-function focusStyles(i: DeviceInput, W: number): { blur: string; mask: string } {
+function focusStyles(i: DeviceInput, W: number, animBlur = false): { blur: string; mask: string } {
   const b = i.blur ? (i.blur <= 0.5 ? i.blur * W : i.blur) : 0;
   let mask = "";
   if (i.fade) {
@@ -305,23 +365,25 @@ function focusStyles(i: DeviceInput, W: number): { blur: string; mask: string } 
     const g = `linear-gradient(${dir}, #000 ${from}%, rgba(0,0,0,.55) ${Math.round((from + (100 - from) * 0.45) * 10) / 10}%, transparent 100%)`;
     mask = `-webkit-mask-image:${g};mask-image:${g};`;
   }
-  return { blur: b > 0 ? `blur(${px(b)})` : "", mask };
+  // A video that animates the blur sets it each frame (--ablur); it starts at the device's own.
+  return { blur: animBlur ? `blur(var(--ablur, ${px(b)}))` : b > 0 ? `blur(${px(b)})` : "", mask };
 }
 
-function place(d: Prepared, p: Placement, bgColor: string | undefined, W: number, anim?: SceneAnimation): Placed {
+function place(d: Prepared, p: Placement, bgColor: string | undefined, W: number, anim?: SceneAnimation, id?: string): Placed {
   const { unit, cx, cy, visH, rotate, rotateX, rotateY } = p;
   const is3d = Math.abs(rotateX) > 0.01 || Math.abs(rotateY) > 0.01 || Boolean(anim?.motion3d);
   const shadow = shadowFilter(d.input.shadow, visH, bgColor);
   const frame = renderFrame({ ...d.options, studio: shadow.studio }, unit, is3d && d.kind !== "none");
   const perspective = d.input.perspective ?? Math.max(frame.width, frame.height) * 2.6;
   // Animated scenes add per-frame offsets through CSS variables set on .dev-wrap.
+  // Timed animations add their own offsets on top (--a*, set by the video's timeline).
   const transform = anim
-    ? `rotateZ(calc(${rotate}deg + var(--dr, 0deg))) rotateX(calc(${rotateX}deg + var(--drx, 0deg))) rotateY(calc(${rotateY}deg + var(--dry, 0deg))) rotateZ(${frame.turn}deg)`
+    ? `rotateZ(calc(${rotate}deg + var(--dr, 0deg))) rotateX(calc(${rotateX}deg + var(--drx, 0deg) + var(--arx, 0deg))) rotateY(calc(${rotateY}deg + var(--dry, 0deg) + var(--ary, 0deg))) rotateZ(${frame.turn}deg)`
     : `rotateZ(${rotate}deg) rotateX(${rotateX}deg) rotateY(${rotateY}deg) rotateZ(${frame.turn}deg)`;
-  const focus = focusStyles(d.input, W);
+  const focus = focusStyles(d.input, W, Boolean(anim?.blurred?.has(id ?? "")));
   const filter = [shadow.filter, focus.blur].filter(Boolean).join(" ");
   const html =
-    `<div class="dev-wrap" style="left:${px(cx)};top:${px(cy)};z-index:${p.z};${anim ? "translate:var(--dx, 0px) var(--dy, 0px);" : ""}${filter ? `filter:${filter};` : ""}">` +
+    `<div class="dev-wrap"${id ? ` data-ent="${id}"` : ""} style="left:${px(cx)};top:${px(cy)};z-index:${p.z};${anim ? "translate:calc(var(--dx, 0px) + var(--ax, 0px)) calc(var(--dy, 0px) + var(--ay, 0px));scale:var(--asx, 1) var(--asy, 1);rotate:var(--ar, 0deg);opacity:var(--ao, 1);" : ""}${filter ? `filter:${filter};` : ""}">` +
     `<div class="dev-stage" style="width:${px(frame.width)};height:${px(frame.height)};left:${px(-frame.width / 2)};top:${px(-frame.height / 2)};${is3d ? `perspective:${px(perspective)};` : ""}${focus.mask}">` +
     `<div class="dev-rot" style="width:${px(frame.width)};height:${px(frame.height)};transform:${transform};${is3d ? "transform-style:preserve-3d;" : ""}">` +
     frame.html +
@@ -351,6 +413,8 @@ export interface SceneEntity {
   anchor?: "top" | "middle" | "bottom";
   align?: "left" | "center" | "right";
   screenshot?: string;
+  /** Devices: their soft focus, as set (a fraction of the canvas width up to 0.5, or px). */
+  blur?: number;
   frame?: FrameKind;
   device?: string;
   color?: string;
@@ -554,6 +618,7 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       rotateY: p.rotateY,
       z: p.z,
       screenshot: d.file,
+      blur: d.input.blur,
       frame: d.kind,
       device: d.resolved?.model.name,
       color: d.color?.hex,
@@ -585,6 +650,7 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       color: style.color ?? textColor,
       font: fontStack(style.font).stack,
       subFont: style.subheadlineFont ? fontStack(style.subheadlineFont).stack : undefined,
+      blur: style.blur,
     });
   }
   (input.texts ?? []).forEach((t, i) =>
@@ -604,6 +670,7 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       weight: t.weight ?? 700,
       color: t.color ?? textColor,
       font: fontStack(t.font).stack,
+      blur: t.blur,
     }),
   );
   plan.shapes.forEach((sh, i) => {
@@ -620,6 +687,7 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       rotate: line ? 0 : sh.rotate,
       z: input.shapes?.[i]?.z ?? 40,
       shape: sh,
+      blur: sh.blur || undefined,
     });
   });
   return entities;
@@ -689,21 +757,49 @@ export function resolveCanvas(canvas: MockupInput["canvas"], landscape: boolean 
   return { width, height, name };
 }
 
-export interface BuiltScene {
-  html: string;
+/**
+ * A frame of another shape to show the design in (a video's size, an App Store preview's): `fit`
+ * shows all of it, the backdrop filling the rest; `fill` fills the frame, trimming the edges.
+ */
+export interface SceneFrame {
   width: number;
   height: number;
+  fit: "fit" | "fill";
+}
+
+/** Where the design sits in the page: the page's size, and the design's offset and scale in it. */
+export interface SceneView {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  scale: number;
+}
+
+export interface BuiltScene {
+  html: string;
+  /** The design's own canvas (animations and layout are worked out in it). */
+  width: number;
+  height: number;
+  /** The page: the canvas itself, or a frame the canvas is fitted into. */
+  view: SceneView;
   layout: string;
   transparent: boolean;
   result: Omit<MockupResult, "path" | "width" | "height">;
 }
 
 /** Resolve everything in a mockup request and produce the page that renders it. */
-export async function buildScene(input: MockupInput, anim?: SceneAnimation): Promise<BuiltScene> {
+export async function buildScene(input: MockupInput, anim?: SceneAnimation, frame?: SceneFrame): Promise<BuiltScene> {
   const plan = await planScene(input);
   const { prepared, warnings, layout, caption } = plan;
   const W = plan.canvas.width;
   const H = plan.canvas.height;
+  // In a frame of another shape: scaled to fit (or fill) and centred.
+  const framed = frame && (Math.abs(frame.width - W) > 0.5 || Math.abs(frame.height - H) > 0.5) ? frame : undefined;
+  const k = framed ? (framed.fit === "fill" ? Math.max(framed.width / W, framed.height / H) : Math.min(framed.width / W, framed.height / H)) : 1;
+  const view: SceneView = framed
+    ? { width: framed.width, height: framed.height, scale: k, x: (framed.width - W * k) / 2, y: (framed.height - H * k) / 2 }
+    : { width: W, height: H, scale: 1, x: 0, y: 0 };
   const style = input.textStyle ?? {};
   const hasText = Boolean(caption);
 
@@ -711,6 +807,12 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation): Pro
   // A print or paint finish replaces the background with its processed image.
   const finish = typeof input.background === "object" ? input.background.finish : undefined;
   if (finish && !bg.transparent) Object.assign(bg, await finishBackground(bg, W, H, finish));
+  // Fitted into a frame, the backdrop fills the whole frame and the design sits on it.
+  let outer: typeof bg | undefined;
+  if (framed?.fit === "fit") {
+    outer = await resolveBackground(input.background, framed.width, framed.height, prepared[0].file, [], averageColor);
+    if (finish && !outer.transparent) Object.assign(outer, await finishBackground(outer, framed.width, framed.height, finish));
+  }
   const effects: NonNullable<EffectsInput> = { ...bg.lookEffects, ...(input.effects ?? {}) };
   const textColor = style.color ?? (bg.tone === "light" ? "#0b0b0f" : "#ffffff");
 
@@ -732,7 +834,9 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation): Pro
       shadow: style.shadow,
     };
     const lines: string[] = [];
-    if (input.headline) lines.push(textHtml({ ...common, text: input.headline, size: caption.headSize, weight: style.headlineWeight ?? 700 }, W, H, true));
+    // A headline animated by word or letter is drawn in pieces (the subheadline with it).
+    const by = unitMode(input.animations, "caption");
+    if (input.headline) lines.push(textHtml({ ...common, text: input.headline, size: caption.headSize, weight: style.headlineWeight ?? 700 }, W, H, true, undefined, by));
     if (input.subheadline) {
       lines.push(
         textHtml(
@@ -749,13 +853,15 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation): Pro
           W,
           H,
           true,
+          undefined,
+          by,
         ),
       );
     }
     const tx = align === "left" ? "0" : align === "right" ? "-100%" : "-50%";
     const ty = caption.anchor === "top" ? "0" : caption.anchor === "bottom" ? "-100%" : "-50%";
     textBlock =
-      `<div class="text-block" style="left:${px(caption.x * W)};top:${px(caption.y * H)};width:${px(caption.width * W)};transform:translate(${tx},${ty});gap:${px(headSize * 0.28)};align-items:${align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center"}">` +
+      `<div class="text-block" data-ent="caption" style="left:${px(caption.x * W)};top:${px(caption.y * H)};width:${px(caption.width * W)};transform:translate(${tx},${ty});gap:${px(headSize * 0.28)};align-items:${align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center"};${blurCss(style.blur, W, Boolean(anim?.blurred?.has("caption")))}">` +
       lines.join("") +
       `</div>`;
   }
@@ -798,7 +904,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation): Pro
     .map((f) => `@font-face{font-family:"${f.family.replace(/"/g, "")}";src:url("${fileUrl(f.path)}");font-display:block;}`)
     .join("\n");
 
-  const placed = prepared.map((d, i) => place(d, plan.placements[i], bg.color, W, anim));
+  const placed = prepared.map((d, i) => place(d, plan.placements[i], bg.color, W, anim, `device-${i + 1}`));
 
   // Effects.
   const grade = gradeFor(effects.grade);
@@ -817,15 +923,17 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation): Pro
     edge = edgeBlurHtml(edges, e.extent ?? 0.25, e.amount ?? 0.012, W, H);
   }
 
-  const bgGroup =
+  const groupOf = (b: typeof bg) =>
     `<div class="bg-group" style="${grade.filter && grade.scope === "background" ? `filter:${grade.filter};` : ""}">` +
-    bg.html +
+    // A video's backdrop moves on a layer of its own; vignette and grain stay put over it.
+    (anim ? `<div class="bg-move">${b.html}</div>` : b.html) +
     (grade.scope === "background" ? grade.overlays : "") +
     vignetteHtml(effects.vignette) +
     (grainScope === "background" ? grainHtml(effects.grain, 4) : "") +
     `</div>`;
+  const bgGroup = outer ? "" : groupOf(bg);
   // Shapes belong to the scene: a camera zoom or a video's push-in moves them with the devices.
-  const shapes = plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40)).join("");
+  const shapes = plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40, `shape-${i + 1}`)).join("");
   let scene = `${bgGroup}${placed.map((p) => p.html).join("\n")}${shapes}`;
   if (grade.scope === "all") scene = `<div class="scene" style="${grade.filter ? `filter:${grade.filter};` : ""}">${scene}${grade.overlays}</div>`;
   // A close-up: scale the scene about the focus and bring it to the centre, never past an edge.
@@ -856,28 +964,35 @@ html,body{margin:0;padding:0;background:transparent;}
 #canvas{position:relative;width:${W}px;height:${H}px;overflow:hidden;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
 .scene,.bg-group{position:absolute;inset:0;}
 .bg{position:absolute;inset:0;overflow:hidden;}
+.bg-move{position:absolute;inset:0;transform-origin:0 0;}
 .dev-wrap{position:absolute;width:0;height:0;}
 .dev-stage,.dev-rot{position:absolute;}
 .text-block{position:absolute;display:flex;flex-direction:column;z-index:30;}
 .text>div{text-wrap:balance;}
-.text-block,.text{opacity:var(--cap, 1);translate:0 calc((1 - var(--cap, 1)) * ${Math.round(H * 0.012)}px);}
+.u,.uw{display:inline-block;}
+.uw{white-space:nowrap;}
+.text-block,.text{opacity:calc(var(--cap, 1) * var(--ao, 1));translate:var(--ax, 0px) calc((1 - var(--cap, 1)) * ${Math.round(H * 0.012)}px + var(--ay, 0px));scale:var(--asx, 1) var(--asy, 1);rotate:var(--ar, 0deg);}
 .grain{background-position:var(--gx, 0px) var(--gy, 0px);}
 ${FRAME_CSS}
 </style></head><body>
-<svg width="0" height="0" style="position:absolute"><defs>${bg.defs}</defs></svg>
-<div id="canvas">
+<svg width="0" height="0" style="position:absolute"><defs>${bg.defs}${outer?.defs ?? ""}</defs></svg>
+${framed ? `<div id="frame" style="position:relative;width:${px(view.width)};height:${px(view.height)};overflow:hidden">${outer ? groupOf(outer) : ""}` : ""}
+<div id="canvas"${framed ? ` style="position:absolute;left:${px(view.x)};top:${px(view.y)};transform-origin:0 0;transform:scale(${view.scale});${outer ? "overflow:visible;" : ""}"` : ""}>
 ${scene}
 ${edge}
+${anim ? `<div id="overlay" class="scene" style="pointer-events:none">` : ""}
 ${sceneMenuBar}
 ${textBlock}
-${extraTexts.map((t) => textHtml(t, W, H)).join("\n")}
+${extraTexts.map((t, i) => textHtml(t, W, H, false, `text-${i + 1}`, unitMode(input.animations, `text-${i + 1}`), Boolean(anim?.blurred?.has(`text-${i + 1}`)))).join("\n")}
+${anim ? "</div>" : ""}
 ${grainScope === "all" ? grainHtml(effects.grain, 50) : ""}
-</div></body></html>`;
+</div>${framed ? "</div>" : ""}</body></html>`;
 
   return {
     html,
     width: W,
     height: H,
+    view,
     layout: layout.layout,
     transparent: bg.transparent,
     result: {
@@ -899,9 +1014,10 @@ ${grainScope === "all" ? grainHtml(effects.grain, 50) : ""}
 
 export const IMAGE_FORMATS = ["png", "jpeg", "webp"] as const;
 
-export async function createMockup(input: MockupInput): Promise<MockupResult> {
-  const scene = await buildScene(input);
-  const { html, width: W, height: H } = scene;
+export async function createMockup(input: MockupInput, frame?: SceneFrame): Promise<MockupResult> {
+  const scene = await buildScene(input, undefined, frame);
+  const { html } = scene;
+  const { width: W, height: H } = scene.view;
   const format = formatFor(input.format, input.output, IMAGE_FORMATS, "png", { jpg: "jpeg" });
   const out = outputPathFor(input.output, "mockups", `mockup-${scene.layout}`, format === "jpeg" ? "jpg" : format);
   const preview = input.quality === "preview";

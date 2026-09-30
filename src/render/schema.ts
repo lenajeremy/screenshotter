@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ARROW_HEADS, DASHES, SHAPE_TYPES } from "./shapes.js";
+import { EASES, EFFECTS, PATH_SHAPES, UNITS } from "./animate.js";
 
 // ---------------------------------------------------------------------------------------------
 // Background
@@ -292,6 +293,7 @@ export const TextInputSchema = z.object({
   opacity: z.number().optional(),
   rotate: z.number().optional(),
   shadow: z.union([z.boolean(), z.string()]).optional().describe("true for a soft shadow, or a CSS text-shadow."),
+  blur: z.number().min(0).optional().describe("Soft focus: a fraction of the canvas width up to 0.5 (0.004 soft, 0.012 clearly out of focus), or px. For depth, or to push it back behind what matters."),
   background: z.string().optional().describe("Pill background, turning the text into a badge."),
   z: z.number().optional(),
 });
@@ -338,6 +340,7 @@ export const ShapeInputSchema = z.object({
   seed: z.number().int().optional().describe("sketch: pick a different wobble."),
   opacity: z.number().min(0).max(1).optional(),
   shadow: z.boolean().optional().describe("A soft drop shadow, to lift the shape off a busy backdrop."),
+  blur: z.number().min(0).optional().describe("Soft focus: a fraction of the canvas width up to 0.5 (0.004 soft, 0.012 clearly out of focus), or px. For depth, or to push it back behind what matters."),
   z: z.number().optional().describe("Stacking order; higher is in front. Default 40, in front of devices and text."),
 });
 
@@ -363,11 +366,85 @@ export const TextStyleSchema = z
     letterSpacing: z.number().optional(),
     uppercase: z.boolean().optional(),
     shadow: z.union([z.boolean(), z.string()]).optional().describe("Text shadow for busy photo backgrounds."),
+    blur: z.number().min(0).optional().describe("Soft focus on the headline and subheadline: a fraction of the canvas width up to 0.5, or px."),
   })
   .optional()
   .describe("Headline/subheadline styling.");
 
 // ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
+// Animation (videos)
+
+const AnimPointSchema = z.object({ x: z.number(), y: z.number() });
+export const AnimPropsSchema = z
+  .object({
+    opacity: z.number().min(0).max(1).optional(),
+    x: z.number().optional().describe("Its centre, as a fraction of the canvas width."),
+    y: z.number().optional().describe("Its centre, as a fraction of the canvas height."),
+    dx: z.number().optional().describe("Moved by this share of the canvas width."),
+    dy: z.number().optional().describe("Moved by this share of the canvas height."),
+    scale: z.number().min(0).max(20).optional().describe("Size: 1 is as designed."),
+    scaleX: z.number().min(0).max(20).optional().describe("Width only: 1 is as designed."),
+    scaleY: z.number().min(0).max(20).optional().describe("Height only: 1 is as designed."),
+    rotate: z.number().optional().describe("Degrees turned, added to its own rotation."),
+    rotateX: z.number().optional().describe("Devices: degrees of 3D tilt (top away), added to its own."),
+    rotateY: z.number().optional().describe("Devices: degrees of 3D turn, added to its own."),
+    color: z.string().optional().describe("Text: its colour."),
+    fill: z.string().optional().describe("Shapes: fill colour (\"none\" for none)."),
+    stroke: z.string().optional().describe("Shapes: stroke colour."),
+    strokeWidth: z.number().min(0).optional().describe("Shapes: stroke width, as for the shape."),
+    radius: z.number().min(0).max(0.5).optional().describe("Rectangles: corner radius."),
+    start: AnimPointSchema.optional().describe("Lines and arrows: where it starts (its `from`), canvas fractions."),
+    end: AnimPointSchema.optional().describe("Lines and arrows: where it ends (its `to`, the arrowhead)."),
+    bend: z.number().min(-1).max(1).optional().describe("Lines and arrows: how far it bows."),
+    zoom: z.number().min(1).max(8).optional().describe("The camera and the backdrop: how far it's pushed in (1 is as designed). Their x and y are the point it pushes toward."),
+    blur: z.number().min(0).optional().describe("Soft focus, for anything (devices, text, shapes, the backdrop): a fraction of the canvas width up to 0.5 (0.004 soft, 0.012 clearly out of focus, 0.04 heavy), or px. 0 is sharp. Blurring one device while another sharpens racks focus between them."),
+    hue: z.number().optional().describe("The backdrop: turn its colours round the colour wheel, in degrees (30 is a gentle shift, 180 the opposite colours)."),
+  })
+  .describe("Values to animate. Anything left out keeps its designed value.");
+
+export const AnimationSchema = z
+  .object({
+    targets: z
+      .union([z.string(), z.array(z.string()).min(1).max(20)])
+      .describe(
+        'What it animates: item ids as layout_mockup lists them ("device-1", "caption", "text-2", "shape-3"). Several move as one group: a zoom or turn is about their shared centre. Or "backdrop": `to: { zoom, x, y, rotate, blur, hue }` moves only the backdrop (a slow push into a photo, a drifting glow, a colour shift). Or "camera": `to: { zoom, x, y }` pushes the view in on a point (the whole picture, text included), glides to another, and `to: { zoom: 1 }` pulls back out. Or a device\'s call-out, "device-1/callout-2" (its highlights, counting from 1): `enter` or `exit` sets when it appears or leaves, arriving the way its style does (a lift rises, a loupe grows); call-outs not animated appear at video.highlight\'s time.',
+      ),
+    at: z.number().min(0).max(120).describe("Seconds after the video starts."),
+    duration: z.number().min(0).max(30).optional().describe("Seconds. Default 0.6."),
+    ease: z.enum(EASES).optional().describe("ease-out (default: fast, then settles), ease-in, ease-in-out, linear, back-out (overshoots a little), spring (overshoots and settles), bounce."),
+    enter: z
+      .enum(EFFECTS)
+      .optional()
+      .describe("An entrance: it isn't there until `at`, then arrives. fade, zoom (grows in), blur (comes into focus), scale-x / scale-y (stretches in across / up), slide-up / slide-down / slide-left / slide-right (the way it moves), none (just appears)."),
+    exit: z.enum(EFFECTS).optional().describe("An exit: the same effects played out, leaving at `at`."),
+    amount: z.number().optional().describe("For enter/exit: zoom's starting size (default 0.6), scale-x/scale-y's (default 0), blur's softness as a fraction of the canvas width (default 0.012), or a slide's distance as a share of the canvas (default 0.2)."),
+    fade: z.boolean().optional().describe("Whether an enter/exit also fades. Default true."),
+    from: AnimPropsSchema.optional().describe("Start from these values and animate to how it's designed: an entrance of your own. With `enter`, adds to the preset."),
+    to: AnimPropsSchema.optional().describe("Animate from how it is to these values, and stay there: a change part way through."),
+    by: z.enum(UNITS).optional().describe("Text only: animate it a word or a letter at a time, in reading order, rather than as one block. Works with enter, exit, from and to (opacity, scale, rotate, dx/dy)."),
+    each: z.number().min(0).max(2).optional().describe("With `by`: seconds between each word (default 0.08) or letter (default 0.03) starting."),
+    stagger: z.number().min(0).max(10).optional().describe("With several targets: seconds between each one starting, in the order given (zooms and turns stay about the shared centre)."),
+    path: z
+      .object({
+        shape: z.enum(PATH_SHAPES).optional().describe("A ready-made loop that starts and ends where it is: circle (it hangs below), oval (flatter), figure-8 (crossing where it is)."),
+        size: z.number().min(0.001).max(1).optional().describe("With shape: how big the loop is, a fraction of the canvas width. Default 0.04."),
+        points: z.array(AnimPointSchema).max(12).optional().describe("A route of your own instead: points (canvas fractions) its centre passes through on a smooth curve, starting from where it is."),
+        closed: z.boolean().optional().describe("With points: come back round to where it started. Shapes are loops anyway."),
+        orient: z.boolean().optional().describe("Turn to face the way it's going (a paper plane, a car)."),
+        reverse: z.boolean().optional().describe("Go round (or along) the other way."),
+      })
+      .optional()
+      .describe("Travel along a curve: a Change whose item follows this route over `duration` (with `to`, both happen at once). With repeat: true and a loop it goes round for the whole video. Not for the camera, backdrop or call-outs."),
+    repeat: z
+      .union([z.number().int().min(1).max(200), z.literal(true)])
+      .optional()
+      .describe("A Change plays again: this many more times, or true to keep going until the video ends (a spin, a float, a pulse, a trip round a path). A looping clip runs at a steady speed unless `ease` says otherwise. Not for entrances or exits."),
+    yoyo: z.boolean().optional().describe("With repeat: every other play runs backwards, so it goes there and back (a pulse, a sway, a breathing glow)."),
+  })
+  .refine((a) => a.enter || a.exit || a.from || a.to || a.path, { message: "An animation needs enter, exit, from, to or path." })
+  .refine((a) => !(a.repeat && (a.enter || a.exit)), { message: "repeat is for Changes (to, from or path), not entrances or exits." });
 
 export const LAYOUTS = ["hero", "hero-bleed", "text-bottom", "tilted", "floating", "duo", "trio", "split", "stack", "grid", "staircase", "rising", "custom"] as const;
 
@@ -394,6 +471,13 @@ export const MockupInputShape = {
     .optional()
     .describe("Drawn shapes over the scene: arrows, lines, circles, boxes, stars and number badges, for pointing things out or decoration. Aim one at text on a screen with `around`."),
   menuBar: SceneMenuBarSchema.optional(),
+  animations: z
+    .array(AnimationSchema)
+    .max(80)
+    .optional()
+    .describe(
+      "For videos (create_video, and Studio video exports): when and how each item appears, changes and leaves. Items not animated are there from the start. Example: the headline slides up at 1 s, the MacBook and iPhone zoom in together at 2.5 s, an arrow's end moves at 4 s. Still images show the design as it is.",
+    ),
   camera: z
     .object({
       zoom: z.number().min(1).max(8).describe("How far to zoom in: 2 shows half the width and height."),

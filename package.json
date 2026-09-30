@@ -1,6 +1,6 @@
 {
   "name": "screenshotter-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MCP server and studio that capture iOS Simulator, web and Mac screens and turn them into polished device mockups, App Store sets and videos.",
   "type": "module",
   "license": "MIT",

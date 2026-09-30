@@ -230,7 +230,14 @@ await check("simulator lock: another process holding it makes us wait", async ()
     ["tsx", "-e", `import("./src/simulator/simctl.ts").then(m => m.withSimulatorLock(() => new Promise(r => { console.log("held"); setTimeout(r, 1500); })))`],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
-  await new Promise<void>((resolve) => child.stdout!.on("data", (d) => String(d).includes("held") && resolve()));
+  // A child that dies or stalls fails the check rather than hanging the run.
+  let said = "";
+  await new Promise<void>((resolve, reject) => {
+    child.stdout!.on("data", (d) => (said += d) && String(d).includes("held") && resolve());
+    child.on("exit", (code, sig) => reject(new Error(`the other process ended (${code ?? sig}) before holding the lock: ${said.trim().slice(0, 200)}`)));
+    child.on("error", reject);
+    setTimeout(() => reject(new Error(`the other process never held the lock in 30 s: ${said.trim().slice(0, 200)}`)), 30000).unref();
+  });
   const t = Date.now();
   await withSimulatorLock(async () => undefined);
   const waited = Date.now() - t;
@@ -465,6 +472,353 @@ await check("shapes: a target that isn't on the screen is a warning, not a failu
   const r = await layoutScene({ devices: [{ screenshot: shot }], shapes: [{ type: "ellipse", around: { text: "No such words" } }] } as never);
   assert(r.warnings.some((w) => /Shape 1/.test(w)), "no warning");
   assert(r.entities.some((e) => e.id === "shape-1"), "the shape should still be placed");
+});
+
+await check("animation: easings start at 0 and land on 1; entrances hide until their time; a group zooms about its shared centre", async () => {
+  const { EASES, ease, evaluate, timelineEnd } = await import("../src/render/animate.js");
+  for (const e of EASES) assert(ease(e, 0) === 0 && ease(e, 1) === 1 && Number.isFinite(ease(e, 0.37)), `${e} doesn't run from 0 to 1`);
+  assert(ease("back-out", 0.6) > 1 && ease("spring", 0.29) > 1.1, "back-out and spring should overshoot");
+  const ents = [
+    { id: "device-1", kind: "device" as const, x: 0.3, y: 0.5, width: 0.2, height: 0.5 },
+    { id: "device-2", kind: "device" as const, x: 0.7, y: 0.5, width: 0.2, height: 0.5 },
+    { id: "caption", kind: "caption" as const, x: 0.5, y: 0.1, width: 0.8, anchor: "top" as const, align: "center" as const, size: 0.05, color: "#ffffff" },
+  ];
+  const anims = [
+    { targets: "caption", at: 1, enter: "slide-up" as const, duration: 1, ease: "linear" as const },
+    { targets: ["device-1", "device-2"], at: 2, enter: "zoom" as const, amount: 0.5, duration: 1, ease: "linear" as const, fade: false },
+    { targets: "caption", at: 4, duration: 1, ease: "linear" as const, to: { color: "#000000", scale: 2 } },
+  ];
+  const at = (t: number) => evaluate(anims, ents, t, 1000, 1000);
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.001;
+  let st = at(0);
+  assert(st.get("caption")!.opacity === 0 && near(st.get("caption")!.dy, 200), "the headline should wait below, unseen, until 1 s");
+  // Half size about the centre between them (x 0.5): each sits half as far from it.
+  assert(near(st.get("device-1")!.sx, 0.5) && near(st.get("device-1")!.dx, 100) && near(st.get("device-2")!.dx, -100) && st.get("device-1")!.opacity === 1, "the pair should start half size, pulled toward their shared centre");
+  st = at(1.5);
+  assert(near(st.get("caption")!.opacity, 0.5) && near(st.get("caption")!.dy, 100), "halfway through sliding in");
+  st = at(3);
+  assert(near(st.get("device-1")!.sx, 1) && near(st.get("device-1")!.dx, 0), "the pair should be in place at 3 s");
+  st = at(4.5);
+  assert(near(st.get("caption")!.sx, 1.5) && st.get("caption")!.color === "rgba(128, 128, 128, 1)", `halfway through the change, got ${st.get("caption")!.sx} ${st.get("caption")!.color}`);
+  st = at(9);
+  assert(st.get("caption")!.sx === 2 && st.get("caption")!.color === "#000000", "a change should stay");
+  assert(timelineEnd(anims) === 5, "the timeline ends when the last animation does");
+});
+
+await check("animation: shapes are redrawn with animated values: size, turn, fill, an arrow's end and curve", async () => {
+  const { evaluate } = await import("../src/render/animate.js");
+  const { shapeSpec, renderShape } = await import("../src/render/shapes.js");
+  const arrow = shapeSpec({ type: "arrow", from: { x: 0.1, y: 0.1 }, to: { x: 0.3, y: 0.1 }, bend: 0 });
+  const circle = shapeSpec({ type: "ellipse", x: 0.5, y: 0.5, size: 0.1, aspect: 1, fill: "#ffd60a" });
+  const ents = [
+    { id: "shape-1", kind: "shape" as const, x: 0.2, y: 0.1, width: 0.2, shape: arrow },
+    { id: "shape-2", kind: "shape" as const, x: 0.5, y: 0.5, width: 0.1, shape: circle },
+  ];
+  const anims = [
+    { targets: "shape-1", at: 0, duration: 2, ease: "linear" as const, to: { end: { x: 0.5, y: 0.1 }, bend: 0.4 } },
+    { targets: "shape-2", at: 0, duration: 2, ease: "linear" as const, to: { scale: 2, fill: "#ff0000", rotate: 90 } },
+  ];
+  const st = evaluate(anims, ents, 1, 1000, 1000);
+  const a = st.get("shape-1")!.shape!;
+  const c = st.get("shape-2")!.shape!;
+  assert(Math.abs(a.to.x - 0.4) < 0.001 && Math.abs(a.bend - 0.2) < 0.001 && a.from.x === 0.1, `the arrow's end should be halfway there, got ${a.to.x} bend ${a.bend}`);
+  assert(Math.abs(c.size - 0.15) < 0.001 && c.rotate === 45 && c.fill === "rgba(255, 107, 5, 1)" && Math.abs(c.aspect - 1) < 0.001, `the circle should be halfway: ${c.size} ${c.rotate} ${c.fill}`);
+  assert(renderShape(a, 1000, 1000).svg.includes("<path") && renderShape(c, 1000, 1000).svg.includes("rgba(255, 107, 5, 1)"), "the animated shapes should draw");
+});
+
+await check("animation: the camera pushes in on a point, glides to the next and pulls back; its frame round-trips", async () => {
+  const { evaluateCamera, cameraView, cameraFor, cameraTransform, animatedIds } = await import("../src/render/animate.js");
+  const anims = [
+    { targets: "camera", at: 1, duration: 1, ease: "linear" as const, to: { zoom: 2, x: 0.3, y: 0.5 } },
+    { targets: "camera", at: 3, duration: 1, ease: "linear" as const, to: { zoom: 3, x: 0.8, y: 0.6 } },
+    { targets: "camera", at: 5, duration: 1, ease: "linear" as const, to: { zoom: 1 } },
+    { targets: "device-1", at: 0, enter: "fade" as const },
+  ];
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.002;
+  assert(evaluateCamera([anims[3]], 1) === undefined, "no camera moves, no camera");
+  assert(![...animatedIds(anims)].includes("camera"), "the camera isn't an item");
+  let c = evaluateCamera(anims, 1.5)!;
+  // Pushing in from the whole design goes straight at the point.
+  assert(near(c.zoom, 1.5) && near(c.x, 0.3) && near(c.y, 0.5), `halfway in: ${JSON.stringify(c)}`);
+  c = evaluateCamera(anims, 3.5)!;
+  assert(near(c.zoom, 2.5) && near(c.x, 0.55) && near(c.y, 0.55), `gliding between the two points: ${JSON.stringify(c)}`);
+  c = evaluateCamera(anims, 7)!;
+  assert(near(c.zoom, 1), "pulled back at the end");
+  // The frame it shows stays inside the image, and a frame gives back its camera.
+  for (const cam of [{ zoom: 2, x: 0.05, y: 0.95 }, { zoom: 3.5, x: 0.8, y: 0.6 }, { zoom: 1.4, x: 0.5, y: 0.2 }]) {
+    const v = cameraView(cam);
+    assert(v.x >= -1e-6 && v.y >= -1e-6 && v.x + v.width <= 1 + 1e-6 && v.y + v.height <= 1 + 1e-6 && near(v.width, 1 / cam.zoom), `the frame leaves the image: ${JSON.stringify(v)}`);
+    const back = cameraView(cameraFor(v, cam.zoom));
+    assert(near(back.x, v.x) && near(back.y, v.y), "a frame should give back the same frame");
+  }
+  const t = cameraTransform({ zoom: 2, x: 0.5, y: 0.5 }, 1000, 800);
+  assert(t.zoom === 2 && near(t.tx, 0) && near(t.ty, 0), "zooming on the middle doesn't move it");
+});
+
+await check("animation: text arrives a word or a letter at a time; an accented word keeps its punctuation", async () => {
+  const { evaluate, textPieces, unitMode, timelineEnd } = await import("../src/render/animate.js");
+  const words = textPieces("Plan it on the **Mac**. Cook it\nnow", "word").filter((p) => p.kind === "unit");
+  assert(words.map((p) => `${p.text}:${p.w}`).join(" ") === "Plan:0 it:1 on:2 the:3 Mac:4 .:4 Cook:5 it:6 now:7", `words: ${words.map((p) => `${p.text}:${p.w}`).join(" ")}`);
+  assert(textPieces("Hi **you**!", "letter").filter((p) => p.kind === "unit").map((p) => `${p.w}/${p.l}`).join(" ") === "0/0 0/1 1/2 1/3 1/4 1/5", "letters keep their word");
+  const ents = [{ id: "caption", kind: "caption" as const, x: 0.5, y: 0.1, width: 0.8, size: 0.05, text: "One two **three**.", subtext: "four" }];
+  const anims = [{ targets: "caption", at: 1, enter: "slide-up" as const, by: "word" as const, each: 0.5, duration: 1, ease: "linear" as const }];
+  assert(unitMode(anims, "caption") === "word" && unitMode(anims, "text-1") === undefined, "only the headline is in pieces");
+  const at = (t: number) => evaluate(anims, ents, t, 1000, 1000).get("caption")!;
+  let st = at(0);
+  // Five pieces: One, two, three, its full stop, four. The block itself isn't moved.
+  assert(st.units?.length === 5 && st.units.every((u) => u.opacity === 0) && st.opacity === 1 && st.dy === 0, "every word should wait, unseen; the block stays");
+  // A slide is 0.6 of the text's height (50 px here).
+  assert(Math.abs(st.units![0].dy - 30) < 0.001, `a word should start 30 px down, got ${st.units![0].dy}`);
+  st = at(2.25);
+  const o = st.units!.map((u) => u.opacity.toFixed(2)).join(" ");
+  assert(o === "1.00 0.75 0.25 0.25 0.00", `words arrive half a second apart, the full stop with its word: ${o}`);
+  assert(timelineEnd(anims, ents) === 3.5 && timelineEnd(anims) === 2, "the reveal runs until the last word is in");
+});
+
+await check("video: text drawn in pieces lays out like the still; the camera carries the text", async () => {
+  const { buildScene } = await import("../src/render/mockup.js");
+  const scene = { devices: [{ screenshot: shot }], headline: "Two **words**. Here", texts: [{ text: "AB" }] };
+  const plain = await buildScene(scene as never, { motion3d: false });
+  assert(!/class="u"/.test(plain.html) && /id="overlay"/.test(plain.html) && /data-ent="caption"/.test(plain.html), "a video scene has the text overlay and ids, and no pieces unless asked");
+  const pieces = await buildScene({ ...scene, animations: [{ targets: "caption", at: 0, enter: "fade", by: "word" }, { targets: "text-1", at: 0, enter: "fade", by: "letter" }] } as never, { motion3d: false });
+  assert((pieces.html.match(/class="u"/g) ?? []).length === 6, `4 pieces in the headline and 2 letters, got ${(pieces.html.match(/class="u"/g) ?? []).length}`);
+  assert(/<span class="uw"><span class="accent"[^>]*><span class="u">words<\/span><\/span><span class="u">\.<\/span><\/span>/.test(pieces.html) || /<span class="uw"><strong><span class="u">words<\/span><\/strong><span class="u">\.<\/span><\/span>/.test(pieces.html), "an accented word and its full stop stay together");
+  const still = await buildScene(scene as never);
+  assert(!/id="overlay"/.test(still.html), "stills have no overlay");
+});
+
+await check("storyboard: frames at key moments, at exact times, or every second, without rendering a video", async () => {
+  const { storyboard } = await import("../src/render/video.js");
+  const { keyMoments } = await import("../src/render/animate.js");
+  const anims = [{ targets: "device-1", at: 1, enter: "fade" as const, duration: 0.5 }, { targets: "camera", at: 2, duration: 2, to: { zoom: 2 } }];
+  assert(JSON.stringify(keyMoments(anims, [], 6)) === JSON.stringify([0, 1.55, 3, 4.05, 4.6]), `key moments: ${JSON.stringify(keyMoments(anims, [], 6))}`);
+  const scene = { devices: [{ screenshot: shot }], animations: anims, video: { duration: 5 } };
+  const started = Date.now();
+  const key = await storyboard(scene as any, { output: path.join(out, "board-key.jpg") });
+  const exact = await storyboard(scene as any, { times: [2.345, 0.5, 0.5], output: path.join(out, "board-exact.jpg") });
+  const every = await storyboard(scene as any, { every: 1, output: path.join(out, "board-every.jpg") });
+  assert(JSON.stringify(key.times) === JSON.stringify([0, 1.55, 3, 4.05, 4.6]) && magic(key.path) === "jpeg", "key moments sheet");
+  assert(JSON.stringify(exact.times) === JSON.stringify([0.5, 2.345]), `exact times, sorted and once each: ${exact.times}`);
+  assert(JSON.stringify(every.times) === JSON.stringify([0, 1, 2, 3, 4, 5]), `every second: ${every.times}`);
+  return `3 storyboards in ${Date.now() - started} ms`;
+});
+
+await check("video: a gradient accent shows when its text arrives word by word", async () => {
+  const { storyboard } = await import("../src/render/video.js");
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const pinkIn = async (by?: "word" | "letter") => {
+    const file = path.join(out, `gradient-${by ?? "block"}.jpg`);
+    await storyboard(
+      {
+        devices: [{ screenshot: shot, x: 0.8, y: 0.6, anchor: "center", height: 0.4 }],
+        canvas: "16:9",
+        background: "#101014",
+        headline: "Plan it on the **Mac**",
+        textStyle: { accentColor: "linear-gradient(90deg, #ff2d8a, #ff2d8a)" },
+        animations: [{ targets: "caption", at: 0, enter: "fade", duration: 0.2, ...(by ? { by } : {}) }],
+      } as any,
+      { times: [3], output: file },
+    );
+    await run("sips", ["-s", "format", "bmp", file, "--out", `${file}.bmp`]);
+    const img = readBmp(readFileSync(`${file}.bmp`));
+    let pink = 0;
+    for (let i = 0; i < img.rgba.length; i += 4) if (img.rgba[i] > 200 && img.rgba[i + 1] < 120 && img.rgba[i + 2] > 90) pink++;
+    return pink;
+  };
+  const block = await pinkIn();
+  const words = await pinkIn("word");
+  const letters = await pinkIn("letter");
+  assert(block > 200 && words > block * 0.6 && letters > block * 0.6, `the gradient word should show: ${block} pink pixels as a block, ${words} by word, ${letters} by letter`);
+  return `${block} / ${words} / ${letters} pink pixels`;
+});
+
+await check("animation: repeats and back-and-forth, loops round a path, and the backdrop's own move", async () => {
+  const { progressAt, evaluate, evaluateBackdrop, backdropStyle, pathMotion, timelineEnd } = await import("../src/render/animate.js");
+  const a = { at: 1, duration: 1, ease: "linear" as const };
+  // Plays three times, starting over; back and forth ends where it began after two plays.
+  const over = [0.5, 1.5, 2.25, 3.75, 5].map((t) => progressAt({ ...a, repeat: 2 }, 1, 1, t));
+  assert(JSON.stringify(over) === JSON.stringify([0, 0.5, 0.25, 0.75, 1]), `repeat: ${over}`);
+  const back = [1.5, 2.25, 3.5].map((t) => progressAt({ ...a, repeat: 1, yoyo: true }, 1, 1, t));
+  assert(JSON.stringify(back) === JSON.stringify([0.5, 0.75, 0]), `yoyo: ${back}`);
+  assert(progressAt({ ...a, repeat: true }, 1, 1, 100.25) === 0.25, "forever keeps going");
+  assert(timelineEnd([{ targets: "shape-1", ...a, to: { rotate: 360 }, repeat: 2 }]) === 4 && timelineEnd([{ targets: "shape-1", ...a, to: { rotate: 360 }, repeat: true }]) === 2, "a repeat's end counts its plays; forever counts one");
+  // A circle loop: round and back to where it started, passing below it half way.
+  const start = { x: 500, y: 300 };
+  const half = pathMotion({ shape: "circle", size: 0.05 }, start, 0.5, 1000, 600);
+  const whole = pathMotion({ shape: "circle", size: 0.05 }, start, 1, 1000, 600);
+  assert(Math.abs(half.dx) < 1 && Math.abs(half.dy - 100) < 1 && Math.hypot(whole.dx, whole.dy) < 0.5, `circle: half ${JSON.stringify(half)}, whole ${JSON.stringify(whole)}`);
+  // A route of your own ends at its last point; facing the way it goes turns it.
+  const ents = [{ id: "shape-1", kind: "shape" as const, x: 0.2, y: 0.5, width: 0.1, height: 0.1 }];
+  const route = [{ targets: "shape-1", at: 0, duration: 2, ease: "linear" as const, path: { points: [{ x: 0.5, y: 0.2 }, { x: 0.8, y: 0.5 }], orient: true } }];
+  const end = evaluate(route, ents, 3, 1000, 600).get("shape-1")!;
+  const mid = evaluate(route, ents, 1, 1000, 600).get("shape-1")!;
+  assert(Math.abs(end.dx - 600) < 1 && Math.abs(end.dy) < 1 && Math.abs(mid.rotate) > 20, `route: end ${end.dx},${end.dy}, turned ${mid.rotate}° half way`);
+  // Blur for anything, and the blur entrance.
+  const soft = evaluate([{ targets: "shape-1", at: 0, duration: 1, enter: "blur", ease: "linear" }], ents, 0.5, 1000, 600).get("shape-1")!;
+  assert(Math.abs(soft.blur! - 6) < 0.01 && Math.abs(soft.opacity - 0.5) < 0.01, `blur entrance half way: ${soft.blur}px, opacity ${soft.opacity}`);
+  // The backdrop: pushed in, turned and shifted, scaled enough never to show an edge.
+  const bd = evaluateBackdrop([{ targets: "backdrop", at: 0, duration: 2, ease: "linear", to: { zoom: 1.2, rotate: 10, hue: 40 } }], 1, 1000)!;
+  const css = backdropStyle(bd, 1000, 600);
+  assert(Math.abs(bd.zoom - 1.1) < 1e-9 && bd.hue === 20 && /hue-rotate\(20deg\)/.test(css.filter) && /rotate\(5deg\)/.test(css.transform), `backdrop: ${JSON.stringify(bd)} ${css.transform} ${css.filter}`);
+  return "repeats, loops, routes, blur and the backdrop";
+});
+
+await check("video: a looping path, a blur entrance and the backdrop's colour shift show in the frames", async () => {
+  const { storyboard } = await import("../src/render/video.js");
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const scene = {
+    devices: [{ screenshot: shot, x: 0.5, y: 0.55, anchor: "center", height: 0.7 }],
+    canvas: "16:9",
+    background: { colors: ["#1030ff", "#1030ff"] },
+    shapes: [{ type: "badge", x: 0.2, y: 0.3, size: 0.08, fill: "#ff2020", stroke: "none", label: " " }],
+    animations: [
+      { targets: "shape-1", at: 0, duration: 2, path: { shape: "circle", size: 0.1 }, repeat: true },
+      // Blue turned back a third of the way round the colour wheel is green (forward would be red, like the badge).
+      { targets: "backdrop", at: 0, duration: 2, ease: "linear", to: { hue: -120 } },
+    ],
+    video: { duration: 4, motion: "none" },
+  };
+  const at = async (t: number) => {
+    const file = path.join(out, `loop-${t}.jpg`);
+    await storyboard(scene as any, { times: [t], output: file });
+    await run("sips", ["-s", "format", "bmp", file, "--out", `${file}.bmp`]);
+    const img = readBmp(readFileSync(`${file}.bmp`));
+    // Where the red badge is (its middle), and the backdrop's colour at a corner.
+    let n = 0;
+    let sx = 0;
+    let sy = 0;
+    for (let y = 0; y < img.height; y++)
+      for (let x = 0; x < img.width; x++) {
+        const i = (y * img.width + x) * 4;
+        if (img.rgba[i] > 180 && img.rgba[i + 1] < 90 && img.rgba[i + 2] < 90) (n++, (sx += x), (sy += y));
+      }
+    // The backdrop, well inside the frame (the sheet has a margin), clear of the device and badge.
+    const c = (Math.round(img.height * 0.85) * img.width + Math.round(img.width * 0.92)) * 4;
+    return { x: sx / Math.max(1, n) / img.width, y: sy / Math.max(1, n) / img.height, corner: [img.rgba[c], img.rgba[c + 1], img.rgba[c + 2]] };
+  };
+  const [p0, p1, p2] = [await at(0.05), await at(1), await at(2)];
+  assert(p1.y - p0.y > 0.2 && Math.hypot(p2.x - p0.x, p2.y - p0.y) < 0.03, `the badge should go round and come back: ${JSON.stringify([p0, p1, p2].map((p) => [p.x.toFixed(2), p.y.toFixed(2)]))}`);
+  assert(p0.corner[2] > 150 && p2.corner[1] > p2.corner[2], `the backdrop should shift from blue toward green: ${p0.corner} → ${p2.corner}`);
+  return `badge round and back; backdrop ${p0.corner} → ${p2.corner}`;
+});
+
+await check("frames: a design fits whole into another shape, its backdrop filling the frame", async () => {
+  const { createMockup } = await import("../src/render/mockup.js");
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const file = path.join(out, "fit-frame.png");
+  const r = await createMockup({ devices: [{ screenshot: shot }], canvas: "16:9", background: "#2040ff", output: file, preview: false } as any, { width: 1080, height: 1920, fit: "fit" });
+  await run("sips", ["-s", "format", "bmp", file, "--out", `${file}.bmp`]);
+  const img = readBmp(readFileSync(`${file}.bmp`));
+  const at = (fx: number, fy: number) => { const i = (Math.round(img.height * fy) * img.width + Math.round(img.width * fx)) * 4; return [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]]; };
+  const top = at(0.5, 0.03);
+  const bottom = at(0.5, 0.97);
+  assert(r.width === 1080 && r.height === 1920, `size ${r.width}×${r.height}`);
+  assert(top[2] > 200 && bottom[2] > 200, `the backdrop should fill the frame top and bottom: ${top} / ${bottom}`);
+  return `${r.width}×${r.height}, backdrop ${top}`;
+});
+
+await check("sequence: shots joined by transitions, and an App Store version that follows Apple's rules", async () => {
+  const { spawnSync } = await import("node:child_process");
+  if (spawnSync("ffmpeg", ["-version"]).status !== 0) return "skipped: no ffmpeg";
+  const { createSequence, sequenceStoryboard } = await import("../src/render/sequence.js");
+  const input = {
+    size: "720x1280",
+    shots: [
+      { devices: [{ screenshot: shot }], canvas: "9:16", background: "#1030ff", video: { motion: "none" }, length: 2 },
+      { devices: [{ screenshot: shot }], canvas: "16:9", layout: "custom", background: "#ff3010", video: { motion: "none" }, length: 2, transition: { type: "push-left", duration: 0.5 } },
+    ],
+    quality: "preview",
+    output: path.join(out, "sequence.mp4"),
+  };
+  const board = await sequenceStoryboard(input as any, { times: [0.5, 3] });
+  assert(board.shots[1].start === 1.5 && board.duration === 3.5 && board.times.length === 2, `storyboard: ${JSON.stringify(board)}`);
+  const r = await createSequence({ ...input, versions: ["app-store-iphone"] } as any);
+  const probe = (f: string) => spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,profile,level,width,height,r_frame_rate,channels,sample_rate", "-of", "json", f]).stdout.toString();
+  const main = JSON.parse(probe(r.path));
+  const v = main.streams.find((x: any) => x.codec_type === "video");
+  assert(Math.abs(Number(main.format.duration) - 3.5) < 0.1 && v.width === 360 && v.height === 640, `main: ${main.format.duration}s ${v.width}×${v.height}`);
+  const store = JSON.parse(probe(r.versions![0].path));
+  const sv = store.streams.find((x: any) => x.codec_type === "video");
+  const sa = store.streams.find((x: any) => x.codec_type === "audio");
+  assert(sv.width === 886 && sv.height === 1920 && sv.profile === "High" && sv.level <= 40 && sv.r_frame_rate === "30/1", `App Store video: ${JSON.stringify(sv)}`);
+  assert(sa && sa.codec_name === "aac" && sa.channels === 2 && ["44100", "48000"].includes(sa.sample_rate), `App Store audio: ${JSON.stringify(sa)}`);
+  assert(Number(store.format.duration) >= 14.95 && Number(store.format.duration) <= 30, `App Store length ${store.format.duration}`);
+  return `3.5 s main; App Store ${sv.width}×${sv.height} ${sv.profile} ${sv.level} ${sv.r_frame_rate}, ${sa.codec_name} ${sa.channels}ch, ${Number(store.format.duration).toFixed(1)} s`;
+});
+
+await check("video: a call-out appears at its own time, and focus racks from one device to the other", async () => {
+  const { storyboard } = await import("../src/render/video.js");
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const scene = {
+    devices: [
+      { screenshot: shot, x: 0.3, y: 0.5, anchor: "center", height: 0.8 },
+      // Its call-out on the device that comes into focus (a blurred one would smear it).
+      { screenshot: shot, x: 0.7, y: 0.5, anchor: "center", height: 0.8, blur: 0.01, highlights: [{ style: "outline", color: "#00ff66", rect: { x: 60, y: 400, width: 1080, height: 150 } }] },
+    ],
+    canvas: "16:9",
+    background: "#101014",
+    animations: [
+      { targets: "device-2/callout-1", at: 1.5, enter: "fade", duration: 0.3 },
+      { targets: "device-1", at: 1.5, duration: 0.3, to: { blur: 0.01 } },
+      { targets: "device-2", at: 1.5, duration: 0.3, to: { blur: 0 } },
+    ],
+    video: { duration: 4 },
+  };
+  const at = async (t: number) => {
+    const file = path.join(out, `rack-${t}.jpg`);
+    await storyboard(scene as any, { times: [t], output: file });
+    await run("sips", ["-s", "format", "bmp", file, "--out", `${file}.bmp`]);
+    const img = readBmp(readFileSync(`${file}.bmp`));
+    // Green outline pixels, and how sharp each half is (the summed jumps between neighbours).
+    let green = 0;
+    const edges = [0, 0];
+    for (let y = 0; y < img.height; y++)
+      for (let x = 1; x < img.width; x++) {
+        const i = (y * img.width + x) * 4;
+        // Clearly green (the thin ring blends into the white screen, so not pure green).
+        if (img.rgba[i + 1] - img.rgba[i] > 50 && img.rgba[i + 1] - img.rgba[i + 2] > 30) green++;
+        edges[x < img.width / 2 ? 0 : 1] += Math.abs(img.rgba[i] - img.rgba[i - 4]);
+      }
+    return { green, left: edges[0], right: edges[1] };
+  };
+  const before = await at(1);
+  const after = await at(3);
+  assert(before.green < 20 && after.green > 60, `the outline should arrive at 1.5 s: ${before.green} green pixels at 1 s, ${after.green} at 3 s`);
+  assert(before.left > before.right * 1.3 && after.right > after.left * 1.3, `focus should rack: sharpness left/right ${before.left}/${before.right} at 1 s, ${after.left}/${after.right} at 3 s`);
+  return `outline ${before.green} → ${after.green} px; sharp side left → right`;
+});
+
+await check("video: animations play: an item isn't there before its entrance, and is after", async () => {
+  const { spawnSync } = await import("node:child_process");
+  if (spawnSync("ffmpeg", ["-version"]).status !== 0) return "skipped: no ffmpeg";
+  const { readBmp } = await import("../src/util/png.js");
+  const file = path.join(out, "animated.mp4");
+  const r = await createVideo({
+    devices: [{ screenshot: shot, x: 0.5, y: 0.5, anchor: "center", height: 0.7 }],
+    background: "#101014",
+    animations: [{ targets: "device-1", at: 1, enter: "fade", duration: 0.2 }, { targets: "nothing-9", at: 0, enter: "fade" }],
+    video: { duration: 2, fps: 10, motion: "none" },
+    quality: "preview",
+    preview: false,
+    output: file,
+  } as any);
+  assert(r.warnings?.some((w) => /nothing-9/.test(w)), "an unknown target should be a warning");
+  const middle = (t: number) => {
+    const bmp = path.join(out, `animated-${t}.bmp`);
+    spawnSync("ffmpeg", ["-v", "error", "-y", "-ss", String(t), "-i", file, "-frames:v", "1", bmp]);
+    const img = readBmp(readFileSync(bmp));
+    const i = (Math.round(img.height / 2) * img.width + Math.round(img.width / 2)) * 4;
+    return (img.rgba[i] + img.rgba[i + 1] + img.rgba[i + 2]) / 3;
+  };
+  const before = middle(0.5);
+  const after = middle(1.7);
+  // The backdrop is near black; the synthetic screen is light.
+  assert(before < 40 && after > 180, `the middle of the image should be backdrop at 0.5 s (${before}) and screen at 1.7 s (${after})`);
+  return `${before.toFixed(0)} → ${after.toFixed(0)}`;
 });
 
 await check("process still alive after all of the above", () => statSync(out).isDirectory());

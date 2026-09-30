@@ -1,4 +1,4 @@
-// Left panels: Screenshots, Templates, Backdrop, Text & shapes. Also the layers list and the exports grid.
+// Left panels: Screenshots, Templates, Backdrop, Text and Shapes. Also the layers list and the exports grid.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
@@ -524,28 +524,15 @@ export function BackgroundsPanel() {
 // Text
 
 /** Text and shapes share a tab in the rail: this switches between the two halves. */
-function AddSwitch() {
-  const s = useStore();
-  return html`<${Seg} value=${s.addTab} onChange=${(v) => {
-    set({ addTab: v });
-    persistPrefs();
-  }} options=${[{ value: "text", label: "Text", icon: "text" }, { value: "shapes", label: "Shapes", icon: "shapes" }]} />`;
-}
 
-export function AddPanel() {
-  const s = useStore();
-  return s.addTab === "shapes" ? html`<${ShapesPanel} />` : html`<${TextPanel} />`;
-}
-
-function TextPanel() {
+export function TextPanel() {
   const s = useStore();
   const scene = s.scene;
   const texts = scene.texts ?? [];
   const hasCaption = scene.headline !== undefined || scene.subheadline !== undefined;
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Text & shapes</h2></div>
+    <div class="panel-head"><h2>Text</h2></div>
     <div class="panel-body">
-      <${AddSwitch} />
       <div class="intro">A headline sells the screen. Add labels or badges for extra detail. Double-click any text in the design to retype it.</div>
       <${Section} title="Headline">
         ${hasCaption
@@ -696,7 +683,7 @@ function dragShape(ev, kind, tint) {
   addEventListener("keydown", key, true);
 }
 
-function ShapesPanel() {
+export function ShapesPanel() {
   const s = useStore();
   const tint = s.shapeTint;
   const shapes = s.scene.shapes ?? [];
@@ -724,9 +711,8 @@ function ShapesPanel() {
     <${ShapePreview} kind=${k} tint=${tint} /><span class="nm">${k.label}</span>
   </div>`;
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Text & shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
+    <div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
     <div class="panel-body">
-      <${AddSwitch} />
       <div class="intro">Drag a shape onto your design and drop it where you want it (or click to add it in the middle). Then move, resize, rotate and recolour it.</div>
       <${Section} title="Colour">
         <div class="tints">

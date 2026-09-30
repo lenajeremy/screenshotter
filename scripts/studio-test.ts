@@ -147,6 +147,24 @@ try {
     assert.equal((await editScene({ request, instruction: "Look", preview: false })).summary, "Blind.");
   });
 
+  // A question or an exact edit goes without a render; Claude can ask to see the design.
+  await fakeClaude((p: any) => ({ summary: p.__image ? "Saw the design." : "Blind.", operations: [] }));
+  await check("a question or an exact edit goes to Claude without rendering the design", async () => {
+    for (const instruction of ["What font is the headline?", "Make the headline blue"]) {
+      const steps: string[] = [];
+      assert.equal((await editScene({ request, instruction }, (p) => steps.push(p.step))).summary, "Blind.", instruction);
+      assert.ok(!steps.includes("look") && !steps.includes("render"), `${instruction}: ${steps.join(", ")}`);
+    }
+  });
+  await fakeClaude((p: any) => (p.__image ? { summary: "Seen it now.", operations: [] } : { summary: "", operations: [], see: true }));
+  await check("Claude can ask to see the design, and gets the render", async () => {
+    const steps: any[] = [];
+    assert.equal((await editScene({ request, instruction: "Should the headline go first?" }, (p) => steps.push(p))).summary, "Seen it now.");
+    assert.ok(steps.some((p) => p.step === "look" && typeof p.image === "string"), "the render was shown");
+    // With previews off it answers without looking (asked again, it can't have one).
+    assert.equal((await editScene({ request, instruction: "Should the headline go first?", preview: false })).summary, "");
+  });
+
   await fakeClaude(() => ({ summary: "Bad device.", operations: [{ op: "set", path: "/devices/0/height", value: "-3" }] }));
   await check("an invalid result is retried once, then reported", async () => {
     await assert.rejects(() => editScene({ request, instruction: "Break it" }), /height|Too small|>0/i);
@@ -195,6 +213,80 @@ try {
     assert.deepEqual(r.request.background, { generate: "a rainy neon street" });
   });
 
+  // The timeline: Ask AI adds animations to the design; one that says nothing is refused.
+  await fakeClaude(() => ({
+    summary: "The headline slides up, then the device zooms in.",
+    operations: [
+      { op: "append", path: "/animations", value: '{"targets":"caption","at":0.4,"enter":"slide-up"}' },
+      { op: "append", path: "/animations", value: '{"targets":["device-1"],"at":1.2,"enter":"zoom","ease":"back-out","duration":0.8}' },
+    ],
+  }));
+  await check("Ask AI can write the design's animations", async () => {
+    const r = await editScene({ request: { ...request, headline: "Hello" }, instruction: "Animate it", preview: false });
+    assert.deepEqual(r.request.animations, [
+      { targets: "caption", at: 0.4, enter: "slide-up" },
+      { targets: ["device-1"], at: 1.2, enter: "zoom", ease: "back-out", duration: 0.8 },
+    ]);
+  });
+  await fakeClaude(() => ({ summary: "Animated.", operations: [{ op: "append", path: "/animations", value: '{"targets":"caption","at":1}' }] }));
+  await check("an animation that doesn't say what happens is rejected", async () => {
+    await assert.rejects(() => editScene({ request, instruction: "Animate it", preview: false }), /enter, exit, from, to or path/);
+  });
+
+  // A video of several shots: Claude sees every shot and edits any of them, by /shots/N.
+  await fakeClaude((p: any) =>
+    p.video
+      ? {
+          summary: `Saw ${p.video.shots.length} shots, on ${p.video.onCanvas + 1}. Shot 1: white headline; added a copy of shot 2.`,
+          operations: [
+            { op: "set", path: "/shots/0/headline", value: '"Plan it"' },
+            { op: "copy", from: "/shots/1", path: "/shots/2", value: "null" },
+            { op: "set", path: "/shots/2/transition", value: '{"type":"push-left","duration":0.6}' },
+          ],
+        }
+      : { summary: "No video.", operations: [] },
+  );
+  await check("in a video of several shots, Claude sees them all and edits any, adding and copying shots", async () => {
+    const shots = [{ scene: { ...request, headline: "One" } }, { scene: { ...request, headline: "Two" }, length: 3 }];
+    const r = await editScene({ request: { ...request, headline: "Two, edited" }, shots, shot: 1, instruction: "Make shot 1 say Plan it and add a copy of this one at the end", preview: false } as any);
+    assert.match(r.summary, /^Saw 2 shots, on 2\./);
+    assert.ok(r.video, "a video result");
+    assert.equal(r.video!.shots.length, 3);
+    assert.equal(r.video!.shots[0].scene.headline, "Plan it");
+    // The shot on the canvas is taken as it is now, and its copy carries that.
+    assert.equal(r.video!.shots[1].scene.headline, "Two, edited");
+    assert.equal(r.video!.shots[2].scene.headline, "Two, edited");
+    assert.deepEqual(r.video!.shots[2].transition, { type: "push-left", duration: 0.6 });
+    assert.equal(r.video!.shots[2].length, 3);
+    // Files come back as themselves in every shot.
+    assert.equal(r.video!.shots[2].scene.devices[0].screenshot, shot);
+    assert.equal(r.video!.structural, true);
+    assert.deepEqual(r.video!.changed, [0, 2]);
+    assert.equal(r.request.headline, "Plan it");
+  });
+  await fakeClaude(() => ({ summary: "Removed everything.", operations: [{ op: "remove", path: "/shots/1", value: "null" }, { op: "remove", path: "/shots/0", value: "null" }] }));
+  await check("a video can't lose its last shot", async () => {
+    const shots = [{ scene: request }, { scene: request }];
+    await assert.rejects(() => editScene({ request, shots, shot: 0, instruction: "Delete them all", preview: false } as any), /at least one shot/);
+  });
+
+  // An animated design: Claude can ask to see particular moments before it answers.
+  await fakeClaude((p: any) =>
+    p.looked
+      ? { summary: `Saw ${p.looked.join(" and ")}.`, operations: [{ op: "set", path: "/animations/0/at", value: "0.8" }] }
+      : { summary: "", operations: [], look: [1.25, 0.5] },
+  );
+  await check("Claude can ask to see the video at chosen moments, and gets those frames", async () => {
+    const steps: any[] = [];
+    const r = await editScene({ request: { ...request, animations: [{ targets: "device-1", at: 1, enter: "fade" }] }, instruction: "Is the timing right?" }, (p) => steps.push(p));
+    assert.equal(r.summary, "Saw 1.25 and 0.5.");
+    assert.equal(r.request.animations?.[0].at, 0.8);
+    const frames = steps.filter((p) => p.step === "frames");
+    assert.deepEqual(frames[0].times, [1.25, 0.5]);
+    assert.ok(frames.some((p) => typeof p.image === "string" && p.image.length > 1000), "the frames were rendered and shown");
+    assert.ok(steps.some((p) => p.step === "look" && p.moments > 1), "an animated design is shown as its key moments");
+  });
+
   await check("Stop ends Claude Code at once and leaves the design as it was", async () => {
     const file = path.join(dir, "slow-claude.mjs");
     await writeFile(file, `#!${process.execPath}\nprocess.stdin.resume();\nsetTimeout(() => {}, 60000);\n`);
@@ -209,7 +301,8 @@ try {
     }, stop.signal);
     await assert.rejects(run, (e: Error) => e.name === "StoppedError");
     assert.ok(Date.now() - started < 5000, "it stopped promptly");
-    assert.deepEqual(steps, ["look", "read", "think"]);
+    // Reading only shows as a step when it takes a moment.
+    assert.deepEqual(steps.filter((x) => x !== "read"), ["think"]);
   });
 
   await check("AI backdrops: Fast asks OpenAI for medium quality, one image per prompt at a time, and images you have are reused", async () => {
@@ -444,6 +537,27 @@ try {
     assert.equal((await post("/api/delete", { path: r.poster })).status, 200);
     assert(!existsSync(r.path) && !existsSync(r.poster));
   });
+  await check("a recording's still: moments where the picture changes, saved beside it, kept out of the library, deleted with it", async () => {
+    if (!ffmpeg) return console.log("  (skipped: no ffmpeg)");
+    // Three screens: red, then blue, then green, a second each.
+    const clip = path.join(dir, "screens.mp4");
+    spawnSync("ffmpeg", ["-v", "error", "-y", ...["red", "blue", "green"].flatMap((c) => ["-f", "lavfi", "-i", `color=c=${c}:s=120x260:d=1`]), "-filter_complex", "concat=n=3:v=1:a=0", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
+    const r = await (await raw("/api/upload?name=Three%20screens.mp4", await readFile(clip))).json();
+    const { moments } = await (await fetch(`${base}/api/moments?path=${encodeURIComponent(r.path)}`)).json();
+    const times = moments.map((m: { t: number }) => m.t);
+    assert.equal(times[0], 0);
+    assert(times.length >= 5 && times.length <= 8, `5 to 8 moments, got ${times.length}`);
+    for (const screen of [1, 2]) assert(times.some((t: number) => Math.abs(t - screen) <= 0.35), `a moment near ${screen}s, where the screen changes`);
+    assert.equal((await fetch(base + moments[1].thumb)).headers.get("content-type"), "image/jpeg");
+    const still = await (await post("/api/still", { video: r.path, t: 1.5 })).json();
+    assert.equal(still.path, r.path.replace(/\.mp4$/, ".still-1500.png"));
+    assert(existsSync(still.path));
+    assert.equal((await (await post("/api/still", { video: r.path, t: 0 })).json()).path, r.poster, "the first moment is the recording's own still");
+    assert(!(await listed()).includes(still.path), "stills stay out of the library");
+    assert.equal((await post("/api/still", { video: "/etc/hosts.mp4", t: 1 })).status, 403);
+    assert.equal((await post("/api/delete", { path: r.path })).status, 200);
+    assert(!existsSync(still.path), "a recording's stills go with it");
+  });
   await check("AI status reports what's available", async () => {
     const s = await (await fetch(base + "/api/ai-status")).json();
     assert.equal(typeof s.available, "boolean");
@@ -463,8 +577,9 @@ try {
     const text = await (await post("/api/ai-edit?stream=1", { request, instruction: "Retitle it", preview: false })).text();
     const lines = text.trim().split("\n").map((l) => JSON.parse(l));
     const steps = lines.filter((l) => l.type === "progress").map((l) => l.step);
-    assert.deepEqual([...new Set(steps)], ["look", "read", "think"]);
-    assert.ok(lines.find((l) => l.step === "read").items.includes("Backdrop"));
+    assert.deepEqual([...new Set(steps)].filter((x) => x !== "read"), ["think"]);
+    const read = lines.find((l) => l.step === "read");
+    assert.ok(!read || read.items.includes("Backdrop"));
     const last = lines.at(-1);
     assert.equal(last.type, "result");
     assert.equal(last.request.headline, "New title");

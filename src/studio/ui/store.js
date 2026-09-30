@@ -54,6 +54,14 @@ export const S = {
   sceneName: "Untitled design",
   /** The saved scene being edited (null until it has something in it). */
   sceneId: null,
+  /**
+   * A video of several shots: each { scene, length?, transition? }, and which one is on the canvas
+   * (its scene is S.scene; the copy in the list is filled in when you switch). null for one design.
+   */
+  shots: null,
+  shot: 0,
+  /** Shots an AI change just touched, highlighted in the strip for a moment. */
+  shotPulse: [],
   scenes: [],
   scenesOpen: false,
   /** When the open scene was last saved, as the library has it: a newer save by an agent gets picked up. */
@@ -62,6 +70,8 @@ export const S = {
   rightOpen: false,
   leftW: null,
   rightW: null,
+  /** The timeline's height when dragged taller or shorter (null: the usual). */
+  tlH: null,
   focusRestore: null,
   /** The full-window Scenes page, and how it lists them. */
   scenesPage: false,
@@ -84,8 +94,6 @@ export const S = {
   leftTab: "captures",
   // Both side panels start tucked away: the design has the window, and a panel opens when asked for.
   leftOpen: false,
-  /** The merged Text & shapes panel: which half is showing. */
-  addTab: "text",
   /** A new design's first steps: "design" (pick a template), "headline" (write it), "export". */
   guide: null,
   busy: null,
@@ -96,7 +104,14 @@ export const S = {
   exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4" } },
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false },
   apps: { list: [], loading: false, for: "" },
-  ai: { open: false, busy: false, text: "", error: null, history: [], thread: [], model: "", preview: true, context: true, last: null, imageQuality: "fast" },
+  stillPick: null,
+  /** Animate: the timeline under the canvas, the selected animation, the rows chosen to animate. */
+  timelineOpen: false,
+  animSel: null,
+  animRows: [],
+  playing: false,
+  /** docked: Ask AI fills the right-hand panel instead of floating over the canvas. */
+  ai: { open: false, docked: false, busy: false, text: "", error: null, history: [], thread: [], model: "", preview: true, context: true, last: null, imageQuality: "fast" },
   pulse: [],
   toasts: [],
   modal: null,
@@ -236,7 +251,9 @@ const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
   sceneId: S.sceneId,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, addTab: S.addTab, layoutV: 2 },
+  shots: S.shots,
+  shot: S.shot,
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 2 },
 });
 export function persist() {
   persistPrefs();
@@ -254,7 +271,42 @@ export function persistPrefs() {
 // ---------------------------------------------------------------------------------------------
 // Saved scenes: the scene you're editing saves itself as you work.
 
+/** How one shot comes in from the one before, by name. */
+export const TRANSITION_NAMES = {
+  cut: "Cut",
+  fade: "Crossfade",
+  "fade-black": "Through black",
+  "fade-white": "Through white",
+  "push-left": "Push left",
+  "push-right": "Push right",
+  "push-up": "Push up",
+  "push-down": "Push down",
+  "wipe-left": "Wipe left",
+  "wipe-right": "Wipe right",
+  iris: "Iris",
+  zoom: "Zoom",
+  blur: "Blur",
+  dissolve: "Dissolve",
+};
+
 const hasContent = (sc) => Boolean(sc?.devices?.length || sc?.headline || sc?.texts?.length);
+
+/** Every shot with its scene, the one on the canvas included (null for a single design). */
+export function allShots() {
+  if (!S.shots || S.shots.length < 2) return null;
+  return S.shots.map((x, i) => (i === S.shot ? { ...x, scene: S.scene } : x));
+}
+/** What the library keeps: the first shot as the design's scene, and the shots (the first without its scene). */
+export function saveBody() {
+  const shots = allShots();
+  return {
+    id: S.sceneId ?? undefined,
+    name: S.sceneName,
+    scene: shots ? shots[0].scene : S.scene,
+    shots: shots ? shots.map((x, i) => (i === 0 ? { length: x.length, transition: x.transition } : x)) : null,
+    chat: S.ai.thread.slice(-60),
+  };
+}
 let sceneTimer = 0;
 let saving = Promise.resolve();
 function scheduleSceneSave() {
@@ -268,8 +320,8 @@ function scheduleSceneSave() {
 export function saveSceneNow() {
   clearTimeout(sceneTimer);
   sceneTimer = 0;
-  if (!hasContent(S.scene)) return saving;
-  const body = { id: S.sceneId ?? undefined, name: S.sceneName, scene: S.scene, chat: S.ai.thread.slice(-60) };
+  const body = saveBody();
+  if (!hasContent(body.scene)) return saving;
   const forScene = S.scene;
   saving = saving
     .then(() => api("/api/scenes/save", { ...body, id: S.sceneId ?? undefined }))
@@ -299,7 +351,7 @@ export function flushPersist() {
   if (sceneTimer && hasContent(S.scene)) {
     clearTimeout(sceneTimer);
     sceneTimer = 0;
-    jobs.push(fetch("/api/scenes/save", { method: "POST", keepalive: true, headers, body: JSON.stringify({ id: S.sceneId ?? undefined, name: S.sceneName, scene: S.scene, chat: S.ai.thread.slice(-60) }) }).catch(() => undefined));
+    jobs.push(fetch("/api/scenes/save", { method: "POST", keepalive: true, headers, body: JSON.stringify(saveBody()) }).catch(() => undefined));
   }
   if (persistTimer) {
     clearTimeout(persistTimer);
@@ -315,12 +367,12 @@ export async function restore() {
   const ui = saved.ui ?? {};
   const patch = {};
   if (saved.scene && Array.isArray(saved.scene.devices)) patch.scene = saved.scene;
+  if (Array.isArray(saved.shots) && saved.shots.length > 1) Object.assign(patch, { shots: saved.shots, shot: Math.min(saved.shots.length - 1, Math.max(0, saved.shot ?? 0)) });
   if (saved.sceneName) patch.sceneName = saved.sceneName;
   if (saved.sceneId) patch.sceneId = saved.sceneId;
   // Tabs that were merged or moved: Shapes joined Text; Layers and Exports left the rail.
-  if (ui.leftTab) patch.leftTab = { shapes: "text", layers: "captures", exports: "captures" }[ui.leftTab] ?? ui.leftTab;
-  if (ui.leftTab === "shapes") patch.addTab = "shapes";
-  if (ui.addTab === "text" || ui.addTab === "shapes") patch.addTab = ui.addTab;
+  // Text and Shapes were one panel for a while, with a switch between them (addTab).
+  if (ui.leftTab) patch.leftTab = ui.leftTab === "text" && ui.addTab === "shapes" ? "shapes" : ({ layers: "captures", exports: "captures" }[ui.leftTab] ?? ui.leftTab);
   // Which panels are open is remembered from the layout with closed-by-default panels onward.
   if (ui.layoutV === 2) {
     if (typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
@@ -328,9 +380,10 @@ export async function restore() {
   }
   if (Number.isFinite(ui.leftW)) patch.leftW = ui.leftW;
   if (Number.isFinite(ui.rightW)) patch.rightW = ui.rightW;
+  if (Number.isFinite(ui.tlH)) patch.tlH = ui.tlH;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
-  patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
+  patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", docked: ui.aiDocked === true, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;
   // Someone who used the app before this layout has done the first steps already.
   if (saved.ui && ui.layoutV !== 2) patch.guideDone = true;

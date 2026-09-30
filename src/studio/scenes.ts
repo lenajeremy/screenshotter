@@ -18,6 +18,11 @@ export interface SavedScene {
   scene: MockupInput | { devices: never[]; [k: string]: unknown };
   /** The Ask AI conversation that goes with this scene. */
   chat?: unknown[];
+  /**
+   * A video of several shots: each one's length and how it comes in, and (after the first, which is
+   * `scene`) its scene. Absent for a single design.
+   */
+  shots?: Array<{ scene?: unknown; length?: number; transition?: { type: string; duration?: number } }>;
   createdAt: string;
   updatedAt: string;
   /** Set when the last change came from an agent (the MCP server), so the Studio can pick it up. */
@@ -46,6 +51,8 @@ export interface SceneSummary {
   thumbAt?: number;
   /** "agent" when the last change was saved through the MCP server. */
   by?: "agent";
+  /** How many shots, when it's a video of several. */
+  shots?: number;
 }
 
 const THUMB_WIDTH = 640;
@@ -128,6 +135,7 @@ function summarize(s: SavedScene): SceneSummary {
     thumb: thumbAt ? thumb : undefined,
     thumbAt: thumbAt ? Math.round(thumbAt) : undefined,
     by: s.by,
+    shots: s.shots && s.shots.length > 1 ? s.shots.length : undefined,
   };
 }
 
@@ -158,7 +166,7 @@ export function getScene(id: unknown): SavedScene {
 }
 
 /** Save a scene: a new document when `id` is missing, else an update. Returns its summary. */
-export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; by?: "agent" }): SceneSummary {
+export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; by?: "agent" }): SceneSummary {
   if (!input.scene || typeof input.scene !== "object" || !Array.isArray((input.scene as { devices?: unknown }).devices)) throw new Error("A scene needs a devices array");
   const now = new Date().toISOString();
   const existing = validId(input.id) ? read(input.id) : undefined;
@@ -167,10 +175,12 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   const chat = Array.isArray(input.chat) ? input.chat.slice(-60) : existing?.chat;
   // Only a change to the design counts as an edit: not a rename, nor saving it unchanged (switching
   // scenes, opening the Scenes page), so the list keeps its order.
-  const changed = !existing || JSON.stringify(existing.scene) !== JSON.stringify(input.scene);
+  // Shots: as sent, cleared with null (a single design again), else kept (an agent saving the first).
+  const shots = input.shots === null ? undefined : Array.isArray(input.shots) && input.shots.length > 1 ? (input.shots.slice(0, 20) as SavedScene["shots"]) : Array.isArray(input.shots) ? undefined : existing?.shots;
+  const changed = !existing || JSON.stringify(existing.scene) !== JSON.stringify(input.scene) || JSON.stringify(existing.shots ?? null) !== JSON.stringify(shots ?? null);
   // Who made the last change: the Studio's own saves clear an agent's mark.
   const by = changed ? input.by : existing.by;
-  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
+  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, shots, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
   write(saved);
   if (changed || !existsSync(thumbFile(id))) scheduleThumb(id);
   return summarize(saved);
@@ -237,7 +247,7 @@ export function adoptFiles<T extends Record<string, unknown>>(scene: T): { scene
 
 export function duplicateScene(id: unknown): SceneSummary {
   const s = getScene(id);
-  const copy = saveScene({ name: `${s.name} copy`, scene: structuredClone(s.scene), chat: s.chat });
+  const copy = saveScene({ name: `${s.name} copy`, scene: structuredClone(s.scene), chat: s.chat, shots: s.shots ? structuredClone(s.shots) : undefined });
   return copy;
 }
 

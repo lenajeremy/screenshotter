@@ -18,7 +18,9 @@ import { cacheDir } from "../util/files.js";
 import { GRADES, LAYOUTS, MockupInputSchema, type BackgroundInput } from "../render/schema.js";
 import { madeBackdrop } from "../render/background.js";
 import { setImageQuality } from "../render/photos.js";
+import { STILL, isRecording, momentThumb, saveStill, stillMoments } from "./stills.js";
 import { createVideo, VideoInputSchema } from "../render/video.js";
+import { createSequence, sequenceStoryboard, SequenceInputSchema } from "../render/sequence.js";
 import { captureScreenshot } from "../simulator/capture.js";
 import { recordSimulator } from "../simulator/record.js";
 import * as sim from "../simulator/simctl.js";
@@ -150,6 +152,22 @@ function exportScene(file: string): { id: string; name: string } | undefined {
   }
 }
 
+const shotThumbs = new Map<string, Promise<string | undefined>>();
+async function shotThumb(scene: z.infer<typeof MockupInputSchema>): Promise<string | undefined> {
+  const key = createHash("sha1").update(JSON.stringify(scene)).digest("hex");
+  if (!shotThumbs.has(key)) {
+    if (shotThumbs.size > 200) shotThumbs.delete(shotThumbs.keys().next().value!);
+    const out = path.join(cacheDir("shot-thumbs"), `${key}.jpg`);
+    shotThumbs.set(
+      key,
+      (existsSync(out) ? Promise.resolve() : createMockup({ ...scene, quality: "preview", format: "jpeg", jpegQuality: 72, deliveryWidth: 240, preview: false, output: out }).then(() => undefined))
+        .then(() => `data:image/jpeg;base64,${readFileSync(out).toString("base64")}`)
+        .catch(() => undefined),
+    );
+  }
+  return shotThumbs.get(key);
+}
+
 function tagExport(file: string, url: URL) {
   const sceneId = url.searchParams.get("scene");
   if (!sceneId || !existsSync(`${file}.mockup.json`)) return;
@@ -169,7 +187,7 @@ function recentFiles(): Array<{ path: string; kind: string; mtime: number; scene
     const dir = path.join(outputRoot(), kind);
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
-      if (!/\.(png|jpe?g|webp|mp4|mov|webm|gif)$/i.test(f) || /\.(tmp|page)\.png$|\.poster\.|\.filmstrip\./.test(f)) continue;
+      if (!/\.(png|jpe?g|webp|mp4|mov|webm|gif)$/i.test(f) || /\.(tmp|page)\.png$|\.poster\.|\.filmstrip\./.test(f) || STILL.test(f)) continue;
       const p = path.join(dir, f);
       out.push({ path: p, kind, mtime: statSync(p).mtimeMs, scene: kind === "mockups" || kind === "videos" ? exportScene(p) : undefined });
     }
@@ -187,6 +205,8 @@ function deleteWithCompanions(file: string): string[] {
   const candidates = new Set([file, `${file}.json`, `${file}.mockup.json`, `${file}.html`]);
   if (/\.(mp4|mov|webm|gif)$/i.test(file)) {
     for (const extra of [".png", ".png.json", ".poster.jpg", ".filmstrip.jpg"]) candidates.add(stem + extra);
+    // The stills picked from it for designs.
+    for (const f of readdirSync(parsed.dir)) if (f.startsWith(`${parsed.name}.still-`)) candidates.add(path.join(parsed.dir, f));
   }
   // A recording's poster frame and the recording are one item in the library.
   if (/\.png$/i.test(file) && (parsed.dir.endsWith(`${path.sep}recordings`) || parsed.dir.endsWith(`${path.sep}uploads`))) {
@@ -272,8 +292,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   }
   // The canvas draws shapes with the engine's own code: its compiled module (from the build when
   // running from source).
-  if (req.method === "GET" && url.pathname === "/ui/shapes.js") {
-    const file = [path.join(here, "..", "render", "shapes.js"), path.join(here, "..", "..", "dist", "render", "shapes.js")].find((f) => existsSync(f));
+  // The engine's pure modules (shapes, animation), so the canvas draws and animates with the same code.
+  const engineModule = /^\/ui\/(shapes|animate)\.js$/.exec(url.pathname);
+  if (req.method === "GET" && engineModule) {
+    const name = `${engineModule[1]}.js`;
+    const file = [path.join(here, "..", "render", name), path.join(here, "..", "..", "dist", "render", name)].find((f) => existsSync(f));
     if (!file) throw new HttpError(404, "Not found");
     res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
     res.end(readFileSync(file, "utf8").replace(/\n\/\/# sourceMappingURL=.*$/, ""));
@@ -302,6 +325,22 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       }
     }
     res.writeHead(200, { "Content-Type": MIME[path.extname(file).toLowerCase()] ?? "image/jpeg", "Cache-Control": "max-age=86400" });
+    createReadStream(file).pipe(res);
+    return;
+  }
+  // A recording's moments to pick its still from, and a small picture of each.
+  if (req.method === "GET" && url.pathname === "/api/moments") {
+    const video = url.searchParams.get("path") ?? "";
+    if (!allowedFile(video) || !isRecording(video) || !existsSync(video)) throw new HttpError(404, "Not found");
+    const { duration, moments } = await stillMoments(video, Math.min(8, Math.max(5, Number(url.searchParams.get("n") ?? 8) || 8)));
+    return send(200, { duration, moments: moments.map((t) => ({ t, thumb: `/api/moment?path=${encodeURIComponent(video)}&t=${t}&w=240` })) });
+  }
+  if (req.method === "GET" && url.pathname === "/api/moment") {
+    const video = url.searchParams.get("path") ?? "";
+    const t = Number(url.searchParams.get("t") ?? 0);
+    if (!allowedFile(video) || !isRecording(video) || !existsSync(video) || !Number.isFinite(t) || t < 0) throw new HttpError(404, "Not found");
+    const file = await momentThumb(video, t, Number(url.searchParams.get("w") ?? 240));
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
     createReadStream(file).pipe(res);
     return;
   }
@@ -468,6 +507,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       if (!existsSync(dest)) copyFileSync(src, dest);
       return send(200, { path: dest });
     }
+    case "/api/still": {
+      const { video, t } = await json<{ video?: string; t?: number }>(req);
+      if (!video || !allowedFile(video) || !isRecording(video) || !existsSync(video)) throw new HttpError(403, "Recordings must be in the output folder");
+      if (typeof t !== "number" || !Number.isFinite(t) || t < 0) throw new HttpError(400, "t must be a time in seconds");
+      return send(200, await saveStill(video, t));
+    }
     case "/api/state": {
       const state = await json<{ ui?: { imageQuality?: unknown } }>(req);
       saveState(state);
@@ -530,7 +575,21 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/video": {
       const result = await createVideo(VideoInputSchema.parse(await json(req)));
       tagExport(result.path, url);
+      result.versions?.forEach((v) => tagExport(v.path, url));
       return send(200, result);
+    }
+    case "/api/sequence": {
+      const result = await createSequence(SequenceInputSchema.parse(await json(req)));
+      tagExport(result.path, url);
+      result.versions?.forEach((v) => tagExport(v.path, url));
+      return send(200, result);
+    }
+    case "/api/sequence-board":
+      return send(200, await sequenceStoryboard(SequenceInputSchema.parse(await json(req))));
+    case "/api/shot-thumb": {
+      // A small picture of a shot for the shot strip, remembered by its contents.
+      const scene = MockupInputSchema.parse(await json(req));
+      return send(200, { image: await shotThumb(scene) });
     }
     case "/api/delete": {
       const { path: p } = await json<{ path: string }>(req);

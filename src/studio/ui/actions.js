@@ -1,5 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
-import { DEFAULT_SCENE, S, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
+import { timelineEnd } from "./animate.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -9,7 +10,8 @@ const idx = (id) => Number(String(id).split("-")[1]) - 1;
 
 /** A recording that belongs to a poster frame (same name, .mp4). */
 export function recordingFor(p) {
-  const stem = p.replace(/\.(png|jpe?g|webp)$/i, "");
+  // A recording's own still is <name>.png; one picked for a design is <name>.still-<ms>.png.
+  const stem = p.replace(/\.still-\d+\.png$/i, "").replace(/\.(png|jpe?g|webp)$/i, "");
   return S.files.find((f) => f.path === `${stem}.mp4` || f.path === `${stem}.mov`)?.path;
 }
 
@@ -121,11 +123,56 @@ export function addDevice(path, at = {}) {
   const pristine = !S.scene.devices?.length && !S.scene.headline && !S.scene.layout && !S.scene.effects && S.scene.background === DEFAULT_SCENE.background && at.x === undefined && !at.frame;
   setScene(next);
   set({ selected: `device-${next.devices.length}`, view: "canvas", replacing: null });
+  // A recording: first choose the moment it shows (its first frame is often blank).
+  if (video) openStills(`device-${next.devices.length}`);
   if (pristine) {
     // A new design starts from a finished one, and offers a few others to choose from.
     set({ guide: "design", guidePick: "bold-hero", selected: null, designing: true });
     return applyRecipe("bold-hero", { silent: true }).finally(() => set({ designing: false }));
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A recording's still: the moment a device shows in images and on the canvas, picked from a
+// handful the engine finds in the recording. The picker sits under the canvas.
+
+/** Open the picker for a device that plays a recording. */
+export function openStills(id) {
+  const d = S.scene.devices[idx(id)];
+  if (!d?.video) return;
+  set({ stillPick: { id, video: d.video, before: d.screenshot } });
+}
+
+/** Show the moment at `t` seconds on the device (one undo step however many you try). */
+export async function pickStill(t) {
+  const p = S.stillPick;
+  if (!p) return;
+  set({ stillPick: { ...p, busy: t } });
+  try {
+    const r = await api("/api/still", { video: p.video, t });
+    if (S.stillPick?.video !== p.video) return;
+    const i = idx(p.id);
+    edit((d) => {
+      if (d.devices[i]?.video === p.video) d.devices[i].screenshot = r.path;
+    }, `still${i}`);
+    set({ stillPick: { ...S.stillPick, busy: null } });
+  } catch (e) {
+    set({ stillPick: S.stillPick && { ...S.stillPick, busy: null } });
+    fail(e, "Couldn't use that moment");
+  }
+}
+
+/** Close the picker; Cancel puts back the still the device had before. */
+export function closeStills(cancel = false) {
+  const p = S.stillPick;
+  if (!p) return;
+  const i = idx(p.id);
+  if (cancel && S.scene.devices[i]?.video === p.video && S.scene.devices[i].screenshot !== p.before) {
+    edit((d) => {
+      d.devices[i].screenshot = p.before;
+    });
+  }
+  set({ stillPick: null });
 }
 
 /** Bring in the sample screenshot (a made-up recipe app), for trying the app with nothing to hand. */
@@ -155,7 +202,9 @@ export function useCapture(path, { frame, video } = {}) {
       if (frame !== "device") delete dev.device;
     }
   });
-  set({ selected: `device-${Math.min(i, S.scene.devices.length - 1) + 1}`, replacing: null, view: "canvas" });
+  const id = `device-${Math.min(i, S.scene.devices.length - 1) + 1}`;
+  set({ selected: id, replacing: null, view: "canvas" });
+  if (S.scene.devices[idx(id)]?.video) openStills(id);
 }
 
 export function replaceMode(id) {
@@ -612,24 +661,137 @@ export async function exportImage() {
   }
 }
 
-export async function exportVideo() {
-  if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
-  if (S.rendering) return;
+/** A shot's video options: the camera motion chosen for export, and its own length when it has one. */
+function shotVideo(scene, length) {
   const v = S.exportOpts.video;
+  const d = length ?? Math.max(v.duration ?? 6, Math.ceil((timelineEnd(scene.animations) + (scene.animations?.length ? 1.2 : 0)) * 2) / 2);
+  return tidy({ duration: d, motion: v.motion, zoom: v.zoom ? { start: d * 0.35, end: d * 0.85 } : undefined });
+}
+
+/** Every shot as the engine renders them: its scene, video options, length and way in. */
+function sequenceShots() {
+  const shots = allShots() ?? [{ scene: S.scene }];
+  return shots.map((x, i) => {
+    const length = x.length ?? (shots.length === 1 ? shotVideo(x.scene).duration : undefined);
+    return tidy({ ...clone(x.scene), video: shotVideo(x.scene, length), length, transition: i ? (x.transition ?? { type: "fade", duration: 0.5 }) : undefined });
+  });
+}
+
+/**
+ * Export the video: every shot, at each size chosen (the first is the main file, the rest are
+ * versions), each fitted, filled or laid out again for its shape.
+ */
+export async function exportVideo() {
+  const shots = allShots();
+  if (!(shots ? shots[0].scene : S.scene).devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (S.rendering) return;
+  const o = S.exportOpts.video;
+  const sizes = o.sizes?.length ? o.sizes : ["design"];
+  const fit = o.fit && o.fit !== "auto" ? o.fit : undefined;
+  const [main, ...rest] = sizes;
+  const versions = rest.map((size) => (fit ? { size, fit } : size));
   const started = performance.now();
-  set({ rendering: { label: `Rendering ${v.duration}s video… this takes a little while` }, view: "render", exportOpen: false });
+  const what = shots ? `${shots.length} shots` : "video";
+  set({ rendering: { label: `Rendering the ${what}${sizes.length > 1 ? ` at ${sizes.length} sizes` : ""}… this takes a little while` }, view: "render", exportOpen: false });
   try {
-    const video = tidy({ duration: v.duration, motion: v.motion, zoom: v.zoom ? { start: v.duration * 0.35, end: v.duration * 0.85 } : undefined });
-    const r = await api(`/api/video${historyQuery()}`, { ...clone(S.scene), video, format: v.format, preview: false });
-    renderResult(r, { preview: false, isVideo: v.format !== "gif", ms: performance.now() - started });
+    let r;
+    if (!shots && main === "design") {
+      const video = shotVideo(S.scene, S.exportOpts.video.duration && Math.max(S.exportOpts.video.duration, shotVideo(S.scene).duration));
+      r = await api(`/api/video${historyQuery()}`, { ...clone(S.scene), video, format: o.format, preview: false, versions: versions.length ? versions : undefined });
+    } else {
+      r = await api(`/api/sequence${historyQuery()}`, { shots: sequenceShots(), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
+    }
+    renderResult(r, { preview: false, isVideo: o.format !== "gif", ms: performance.now() - started });
     touch("exported");
     refreshFiles();
-    toast({ kind: "ok", title: "Video exported", text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1) ?? v.duration}s`, actions: [{ label: "Show in Finder", run: () => reveal(r.path) }] });
+    const extra = r.versions?.length ? ` + ${r.versions.map((v) => v.label.split(" · ")[0] === "App Store" ? v.label : v.label.split(" · ")[0]).join(", ")}` : "";
+    toast({ kind: "ok", title: shots ? `${shots.length}-shot video exported` : "Video exported", text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, actions: [{ label: "Show in Finder", run: () => reveal(r.path) }] });
+    const notes = [...(r.warnings ?? []), ...(r.versions ?? []).flatMap((v) => (v.warnings ?? []).map((w) => `${v.label}: ${w}`))];
+    if (notes.length) toast({ kind: "warn", title: "Worth knowing", text: notes.slice(0, 3).join(" "), timeout: 12000 });
   } catch (e) {
     fail(e, "Video export failed");
   } finally {
     set({ rendering: null });
   }
+}
+
+/** Every shot at its key moments, as one contact sheet, without rendering the video (a second or two a shot). */
+export async function previewShots() {
+  const shots = allShots();
+  if (!shots || S.rendering) return;
+  const started = performance.now();
+  set({ rendering: { label: `Looking at ${shots.length} shots…` }, view: "render" });
+  try {
+    const r = await api("/api/sequence-board", { shots: sequenceShots(), size: (S.exportOpts.video.sizes ?? ["design"])[0] === "design" ? undefined : S.exportOpts.video.sizes[0] });
+    renderResult({ path: r.path, width: 0, height: 0, sheet: true, duration: r.duration }, { preview: true, ms: performance.now() - started });
+  } catch (e) {
+    fail(e, "Couldn't make the contact sheet");
+  } finally {
+    set({ rendering: null });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shots: a design can be a video of several, one after another. The one on the canvas is S.scene.
+
+/** Put another shot on the canvas (its own undo history). */
+export function goToShot(i) {
+  const shots = allShots();
+  if (!shots || i === S.shot || !shots[i]) return;
+  set({ shots, shot: i, scene: shots[i].scene, past: [], future: [], selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  scheduleLayout(0);
+  persist();
+}
+
+/** Add a shot after the one on the canvas: a copy of it, or a saved design (by id). */
+export async function addShot(from = "copy") {
+  let scene = clone(S.scene);
+  if (from !== "copy") {
+    try {
+      scene = (await api(`/api/scene?id=${encodeURIComponent(from)}`)).scene;
+    } catch (e) {
+      return fail(e, "Couldn't add that design");
+    }
+  }
+  const shots = allShots() ?? [{ scene: S.scene }];
+  const at = (S.shots ? S.shot : 0) + 1;
+  shots.splice(at, 0, { scene, transition: { type: "fade", duration: 0.5 } });
+  set({ shots, shot: S.shots ? S.shot : 0 });
+  goToShot(at);
+  toast({ kind: "ok", title: `Shot ${at + 1} added`, text: from === "copy" ? "A copy of the one before. Change it, then Play or Export video." : "Change it here: it's its own copy.", timeout: 3200 });
+}
+
+/** Take a shot out (with a way back). The last one left is a single design again. */
+export function deleteShot(i) {
+  const shots = allShots();
+  if (!shots) return;
+  const before = { shots, shot: S.shot, scene: S.scene };
+  const rest = shots.filter((_, n) => n !== i);
+  const next = Math.min(rest.length - 1, i === S.shot ? Math.max(0, i - 1) : S.shot > i ? S.shot - 1 : S.shot);
+  set({ shots: rest.length > 1 ? rest : null, shot: rest.length > 1 ? next : 0, scene: rest[next].scene, past: [], future: [], selected: null, animSel: null });
+  scheduleLayout(0);
+  persist();
+  toast({ kind: "ok", title: `Shot ${i + 1} removed`, timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
+}
+
+/** Move a shot one place earlier (-1) or later (1). */
+export function moveShot(i, by) {
+  const shots = allShots();
+  const j = i + by;
+  if (!shots || j < 0 || j >= shots.length) return;
+  [shots[i], shots[j]] = [shots[j], shots[i]];
+  set({ shots, shot: S.shot === i ? j : S.shot === j ? i : S.shot });
+  persist();
+}
+
+/** Change a shot's length or how it comes in. */
+export function updateShot(i, patch) {
+  const shots = allShots();
+  if (!shots?.[i]) return;
+  shots[i] = { ...shots[i], ...patch };
+  for (const [k, v] of Object.entries(patch)) if (v === undefined) delete shots[i][k];
+  set({ shots });
+  persist();
 }
 
 export async function reveal(p) {
@@ -664,7 +826,15 @@ async function toPng(blob) {
 // AI
 
 export function openAI(context) {
-  set({ ai: { ...S.ai, open: true, error: null, context: context !== false }, selected: typeof context === "string" ? context : S.selected, view: "canvas" });
+  // Docked, it opens in the right-hand panel (shown if it was hidden).
+  set({ ai: { ...S.ai, open: true, error: null, context: context !== false }, selected: typeof context === "string" ? context : S.selected, view: "canvas", ...(S.ai.docked ? { rightOpen: true } : {}) });
+  setTimeout(() => document.querySelector(".ai-chat textarea")?.focus(), 30);
+}
+
+/** Ask AI in the right-hand panel (docked), or floating over the canvas again. */
+export function dockAI(docked) {
+  set({ ai: { ...S.ai, open: true, docked }, ...(docked ? { rightOpen: true } : {}) });
+  persistPrefs();
   setTimeout(() => document.querySelector(".ai-chat textarea")?.focus(), 30);
 }
 
@@ -707,9 +877,14 @@ export async function aiEdit(text) {
     return;
   }
   const snapshot = S.scene;
+  // A video of several shots: Claude gets every shot, and which one is on the canvas.
+  const video = allShots();
+  const shotsSnapshot = S.shots;
+  const shotSnapshot = S.shot;
   const started = Date.now();
   const run = (aiRun = { stop: new AbortController(), takeDraft: false });
-  set({ ai: { ...S.ai, work: { started, steps: [{ key: "look", at: started }], items: [], retry: null, draft: null } } });
+  // Steps appear as the engine takes them: a question may go straight to Claude.
+  set({ ai: { ...S.ai, work: { started, steps: [], items: [], retry: null, draft: null } } });
   const work = (patch) => set({ ai: { ...S.ai, work: { ...S.ai.work, ...patch } } });
   // Each step the engine reports closes the one before it, so every step has its own time.
   const step = (key, extra = {}) => {
@@ -717,29 +892,41 @@ export async function aiEdit(text) {
     const steps = (S.ai.work?.steps ?? []).map((x) => (x.end ? x : { ...x, end: now }));
     work({ steps: [...steps, { key, at: now, ...extra }] });
   };
-  const doneSteps = () => (S.ai.work?.steps ?? []).map((x) => ({ key: x.key, ms: (x.end ?? Date.now()) - x.at, provider: x.provider, cut: x.cut }));
+  const doneSteps = (answer = false) => (S.ai.work?.steps ?? []).map((x) => ({ key: x.key, ms: (x.end ?? Date.now()) - x.at, provider: x.provider, cut: x.cut, moments: x.moments, times: x.times, answer }));
 
   /** Put a finished (or drafted) edit on the canvas and into the chat. */
   const finish = (r, { skippedCheck = false } = {}) => {
-    if (S.scene !== snapshot) throw new Error("The design changed while Claude was working. Ask again.");
+    if (S.scene !== snapshot || S.shots !== shotsSnapshot || S.shot !== shotSnapshot) throw new Error("The design changed while Claude was working. Ask again.");
     const via = r.provider === "api" ? r.model ?? "Claude" : "Claude Code";
     const took = Math.max(1, Math.round((Date.now() - started) / 1000));
-    const steps = { list: doneSteps(), items: S.ai.work?.items ?? [], retried: Boolean(S.ai.work?.retry), checked: r.checked, skippedCheck, remembered: r.remembered };
-    if (!r.operations?.length) {
-      const answer = msg({ role: "assistant", text: r.summary || "I didn't change anything.", via, took, steps, remembered: r.remembered, fresh: true });
+    const answered = !r.operations?.length;
+    const steps = { list: doneSteps(answered), items: S.ai.work?.items ?? [], retried: Boolean(S.ai.work?.retry), checked: r.checked, skippedCheck, remembered: r.remembered };
+    if (answered) {
+      // A plain answer: just the reply, unless Claude looked at something to give it.
+      const looked = steps.list.some((x) => x.key !== "think");
+      const answer = msg({ role: "assistant", text: r.summary || "I didn't change anything.", via, ...(looked ? { took, steps } : {}), remembered: r.remembered, fresh: true });
       set({ ai: { ...S.ai, busy: false, work: null, thread: [...S.ai.thread, answer] } });
       settle(answer.id);
       persist();
       return;
     }
-    const ops = r.operations.map((o) => describeOp(o, r.request));
-    const reply = msg({ role: "assistant", text: r.summary, changes: r.operations.length, changed: r.changed.map((c) => entityLabel(c, r.request)), ops, via, took, steps, remembered: r.remembered, fresh: true });
-    beforeAI.set(reply.id, snapshot);
-    setScene(r.request);
+    const ops = r.operations.map((o) => describeOp(o, r.request, r.video?.shots));
+    const reply = msg({ role: "assistant", text: r.summary, changes: r.operations.length, changed: r.video && r.video.changed.length > 1 ? r.video.changed.map((i) => `Shot ${i + 1}`) : r.changed.map((c) => entityLabel(c, r.request)), ops, via, took, steps, remembered: r.remembered, fresh: true });
+    if (r.video) {
+      // Every shot as it was, so Revert can put back the ones this changed.
+      beforeAI.set(reply.id, { kind: "video", shots: video, shot: shotSnapshot, changed: r.video.changed, structural: r.video.structural });
+      applyVideo(r.video);
+    } else {
+      // The shot it was made on, so Revert puts back that one (even from another shot).
+      beforeAI.set(reply.id, { kind: "scene", scene: snapshot, shot: S.shots ? S.shot : 0 });
+      setScene(r.request);
+    }
     if (r.changed.some((c) => c.startsWith("device"))) touch("moved");
     if (r.changed.includes("background")) touch("backdrop");
     const pulse = r.changed.filter((c) => !["background", "canvas"].includes(c));
-    set({ ai: { ...S.ai, busy: false, work: null, error: null, last: r, thread: [...S.ai.thread, reply] }, pulse, view: "canvas" });
+    // A change to the timeline shows in Animate.
+    const timeline = r.operations.some((o) => o.path.startsWith("/animations"));
+    set({ ai: { ...S.ai, busy: false, work: null, error: null, last: r, thread: [...S.ai.thread, reply] }, pulse, view: "canvas", ...(timeline ? { timelineOpen: true, animSel: null } : {}) });
     setTimeout(() => set({ pulse: [] }), 1700);
     settle(reply.id);
     persist();
@@ -747,20 +934,23 @@ export async function aiEdit(text) {
 
   try {
     const r = await streamEdit(
-      { request: snapshot, instruction, selection, history, model: S.ai.model || undefined, preview: S.ai.preview !== false },
+      { request: snapshot, instruction, selection, history, model: S.ai.model || undefined, preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
       (p) => {
         if (p.step === "look") {
-          if (!p.image) return;
+          if (!p.image) return step("look");
           // The design as Claude sees it: rendering (and any backdrop it waited for) is done.
           const now = Date.now();
-          work({ image: `data:image/jpeg;base64,${p.image}`, steps: S.ai.work.steps.map((x) => (x.end ? x : { ...x, end: now })) });
+          work({ image: `data:image/jpeg;base64,${p.image}`, steps: S.ai.work.steps.map((x) => ({ ...(x.end ? x : { ...x, end: now }), ...(x.key === "look" && p.moments ? { moments: p.moments } : {}) })) });
         } else if (p.step === "read") step("read"), work({ items: p.items });
         else if (p.step === "think") step("think");
         else if (p.step === "retry") step("retry", { reason: p.reason }), work({ retry: p.reason });
         else if (p.step === "draft") work({ draft: p.result });
         else if (p.step === "generate") step("generate", { provider: p.provider, prompt: p.prompt, reason: p.reason });
         else if (p.step === "render") step("render");
-        else if (p.step === "check") step("check"), work({ checkImage: `data:image/jpeg;base64,${p.image}` });
+        // Claude asked to see particular moments: a step while they render, then the frames.
+        else if (p.step === "frames" && !p.image) step("frames", { times: p.times });
+        else if (p.step === "frames") work({ steps: S.ai.work.steps.map((x, i, all) => (i === all.length - 1 && x.key === "frames" ? { ...x, image: `data:image/jpeg;base64,${p.image}` } : x)) });
+        else if (p.step === "check") step("check", { moments: p.moments }), work({ checkImage: `data:image/jpeg;base64,${p.image}` });
       },
       run.stop.signal,
     );
@@ -790,6 +980,7 @@ const STOPPED_AT = {
   read: "while reading the design",
   think: "while Claude was designing",
   retry: "while Claude was fixing its first try",
+  frames: "while Claude was looking at moments of the video",
   generate: "while the backdrop image was being made",
   render: "while rendering the result",
   check: "while Claude was checking its work",
@@ -835,6 +1026,7 @@ async function streamEdit(body, onProgress, signal) {
 }
 
 const OP_NAMES = {
+  animations: "Animation",
   rotateY: "Turn", rotateX: "Tilt", rotate: "Rotation", height: "Size", width: "Size", x: "Position", y: "Position", anchor: "Position",
   color: "Colour", accentColor: "Accent colour", headline: "Headline", subheadline: "Subheadline", headlineSize: "Headline size",
   subheadlineSize: "Subheadline size", font: "Font", headlineWeight: "Weight", weight: "Weight", letterSpacing: "Tracking",
@@ -845,8 +1037,26 @@ const OP_NAMES = {
 };
 
 /** One operation in plain words: what it touched, which property, and the new value. */
-function describeOp(op, scene) {
-  const parts = op.path.split("/").slice(1).map((p) => p.replace(/~1/g, "/").replace(/~0/g, "~"));
+function describeOp(op, scene, shots) {
+  let parts = op.path.split("/").slice(1).map((p) => p.replace(/~1/g, "/").replace(/~0/g, "~"));
+  // In a video of several shots, every change says which shot it's in.
+  let shot = "";
+  if (parts[0] === "shots" && /^\d+$/.test(parts[1] ?? "")) {
+    const n = Number(parts[1]);
+    shot = `Shot ${n + 1}`;
+    scene = shots?.[n]?.scene ?? scene;
+    parts = parts.slice(2);
+    const verb = { remove: "Removed", move: "Moved", copy: "Added a copy", insert: "Added", append: "Added" }[op.op];
+    if (!parts.length) return { shot: String(n + 1), target: "Shot", prop: verb ?? "Replaced", value: op.from && /^\/shots\/\d+$/.test(op.from) ? `from shot ${Number(op.from.split("/")[2]) + 1}` : "" };
+    if (parts[0] === "length") return { shot: String(n + 1), target: "Shot", prop: "Length", value: op.op === "remove" ? "as long as it needs" : `${JSON.parse(op.value)} s` };
+    if (parts[0] === "transition") {
+      let t;
+      try {
+        t = JSON.parse(op.value);
+      } catch {}
+      return { shot: String(n + 1), target: "Shot", prop: "Comes in", value: t?.type ? `${TRANSITION_NAMES[t.type] ?? t.type}${t.duration !== undefined && t.type !== "cut" ? ` · ${t.duration} s` : ""}` : "updated" };
+    }
+  }
   let target = "Design";
   let rest = parts;
   if (parts[0] === "devices" && /^\d+$/.test(parts[1] ?? "")) {
@@ -864,6 +1074,9 @@ function describeOp(op, scene) {
   } else if (parts[0] === "effects") {
     target = "Film look";
     rest = parts.slice(1);
+  } else if (parts[0] === "animations") {
+    target = "Timeline";
+    rest = ["animations"];
   }
   const key = rest.find((p) => !/^\d+$/.test(p)) ?? parts[0];
   const prop = OP_NAMES[key] ?? key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
@@ -883,14 +1096,62 @@ function describeOp(op, scene) {
   };
   const color = typeof value === "string" && /^#[0-9a-f]{3,8}$/i.test(value) ? value : undefined;
   const unit = ["rotateY", "rotateX", "rotate"].includes(key) ? "°" : "";
-  return { target, prop: op.op === "append" ? `Added ${prop.toLowerCase()}` : prop, value: op.op === "append" ? "" : short(value) + (typeof value === "number" ? unit : ""), color };
+  const moved = op.op === "copy" || op.op === "move";
+  return {
+    shot: shot ? shot.replace("Shot ", "") : undefined,
+    target,
+    prop: op.op === "append" || op.op === "insert" ? `Added ${prop.toLowerCase()}` : moved ? `${op.op === "copy" ? "Copied" : "Moved"} ${prop.toLowerCase()}` : prop,
+    value: op.op === "append" || op.op === "insert" ? "" : moved ? (op.from?.startsWith("/shots/") ? `from shot ${Number(op.from.split("/")[2]) + 1}` : "") : short(value) + (typeof value === "number" ? unit : ""),
+    color: moved ? undefined : color,
+  };
 }
 
-/** Put the design back to how it was before one of Claude's changes. */
+/**
+ * Put Claude's edit of a video on the canvas: the shot it changed (or the one you're on), with the
+ * shots it touched highlighted in the strip. An edit to just the shot on the canvas is one undo step.
+ */
+function applyVideo(v) {
+  const onlyHere = !v.structural && v.show === S.shot && v.changed.every((i) => i === S.shot);
+  if (onlyHere) {
+    const shots = v.shots.map((x, i) => (i === S.shot ? { ...x, scene: S.scene } : x));
+    set({ shots });
+    setScene(v.shots[v.show].scene);
+  } else {
+    const many = v.shots.length > 1;
+    set({ shots: many ? v.shots : null, shot: many ? v.show : 0, scene: v.shots[v.show].scene, past: [], future: [], selected: null, animSel: null, animRows: [] });
+    scheduleLayout(0);
+  }
+  set({ shotPulse: v.changed });
+  setTimeout(() => set({ shotPulse: [] }), 1800);
+  persist();
+}
+
+/**
+ * Put back what one of Claude's changes changed: the shots it touched (every shot, if it added,
+ * removed or reordered them), or the one shot it was made on, even when another is on the canvas.
+ */
 export function revertAI(id) {
   const before = beforeAI.get(id);
   if (!before) return toast({ kind: "warn", title: "Can't revert that one", text: "Use Undo (⌘Z) instead." });
-  setScene(before);
+  if (before.kind === "video") {
+    const now = allShots() ?? [{ scene: S.scene }];
+    const whole = before.structural || now.length !== before.shots.length;
+    const next = whole ? before.shots : now.map((x, i) => (before.changed.includes(i) ? before.shots[i] : x));
+    const show = whole ? before.shot : (before.changed[0] ?? S.shot);
+    set({ shots: next.length > 1 ? next : null, shot: next.length > 1 ? show : 0, scene: next[show].scene, past: [], future: [], selected: null, animSel: null, animRows: [], shotPulse: whole ? [] : before.changed });
+    setTimeout(() => set({ shotPulse: [] }), 1800);
+    scheduleLayout(0);
+  } else if (!S.shots || S.shot === before.shot) {
+    setScene(before.scene);
+  } else {
+    // Made on another shot: put that one back, and show it.
+    const shots = allShots();
+    if (shots[before.shot]) {
+      shots[before.shot] = { ...shots[before.shot], scene: before.scene };
+      set({ shots });
+      goToShot(before.shot);
+    }
+  }
   beforeAI.delete(id);
   set({ ai: { ...S.ai, thread: S.ai.thread.map((m) => (m.id === id ? { ...m, reverted: true } : m)) } });
   persist();
@@ -929,9 +1190,14 @@ export async function newScene() {
   await saveSceneNow();
   set({
     scene: { devices: [], background: DEFAULT_SCENE.background },
+    shots: null,
+    shot: 0,
     sceneId: null,
     sceneStamp: null,
     guide: null,
+    stillPick: null,
+    animSel: null,
+    animRows: [],
     sceneName: "Untitled design",
     past: [],
     future: [],
@@ -951,7 +1217,9 @@ export async function openScene(id) {
   await saveSceneNow();
   try {
     const saved = await api(`/api/scene?id=${encodeURIComponent(id)}`);
-    set({ scene: saved.scene, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    // A video of several shots opens on its first.
+    const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
+    set({ scene: saved.scene, shots, shot: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, animRows: [], sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
@@ -977,9 +1245,24 @@ export async function pickUpAgentChanges(scenes, known) {
   if (mine && mine.by === "agent" && mine.updatedAt !== S.sceneStamp && !savePending() && !S.ai.busy) {
     try {
       const saved = await api(`/api/scene?id=${encodeURIComponent(mine.id)}`);
-      const differs = JSON.stringify(saved.scene) !== JSON.stringify(S.scene);
+      // An agent saved a video of several shots (or made this one single again): take all of it.
+      const theirs = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
+      const ours = allShots();
+      if ((theirs || ours) && JSON.stringify(theirs?.map((x) => [x.scene, x.length, x.transition])) !== JSON.stringify(ours?.map((x) => [x.scene, x.length, x.transition]))) {
+        const shot = theirs ? Math.min(S.shot, theirs.length - 1) : 0;
+        set({ sceneStamp: saved.updatedAt, shots: theirs, shot, scene: theirs ? theirs[shot].scene : saved.scene, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false });
+        scheduleLayout(0);
+        toast({ kind: "ok", icon: "spark", title: theirs ? `An agent updated this video (${theirs.length} shots)` : "An agent updated this design", timeout: 9000 });
+        return;
+      }
+      // An agent saves the design's first shot: on the canvas if that's the one showing.
+      const elsewhere = S.shots && S.shot !== 0;
+      const differs = JSON.stringify(saved.scene) !== JSON.stringify(elsewhere ? S.shots[0].scene : S.scene);
       set({ sceneStamp: saved.updatedAt });
-      if (differs) {
+      if (differs && elsewhere) {
+        set({ shots: S.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) });
+        toast({ kind: "ok", icon: "spark", title: "An agent updated shot 1", timeout: 9000, actions: [{ label: "Show it", run: () => goToShot(0) }] });
+      } else if (differs) {
         setScene(saved.scene);
         set({ sceneName: saved.name, selected: null, render: null, renderStale: false });
         toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: "Its version is on the canvas.", timeout: 9000, actions: [{ label: "Undo", run: () => undo() }] });

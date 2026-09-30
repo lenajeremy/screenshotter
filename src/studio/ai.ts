@@ -19,6 +19,9 @@ import { DEVICE_MODELS, GENERIC_COLORS } from "../devices/catalog.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
 import { createMockup, layoutScene } from "../render/mockup.js";
+import { storyboard } from "../render/video.js";
+import { sequenceStoryboard, TRANSITIONS, type SequenceInput } from "../render/sequence.js";
+import { timelineEnd } from "../render/animate.js";
 import { cacheDir } from "../util/files.js";
 import { imageSize } from "../util/image.js";
 import { DESIGN_GUIDE } from "../design/guide.js";
@@ -45,13 +48,22 @@ export const AIEditSchema = z.object({
     .array(z.object({ user: z.string().max(4000), assistant: z.string().max(4000).optional() }))
     .max(40)
     .optional(),
+  /**
+   * A video of several shots: every shot (each a scene, its length and how it comes in), and which
+   * one is on the canvas (whose scene is `request`, as it is now). Claude sees and edits them all.
+   */
+  shots: z.array(z.object({ scene: MockupInputSchema, length: z.number().min(0.5).max(60).optional(), transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional() })).min(2).max(20).optional(),
+  shot: z.number().int().min(0).max(19).optional(),
 });
 export type AIEditInput = z.infer<typeof AIEditSchema>;
 
 export const OperationSchema = z.object({
-  op: z.enum(["set", "remove", "append"]).describe("set: create or replace the value at path. remove: delete it. append: push value onto the array at path."),
-  path: z.string().describe('JSON pointer into the scene, e.g. "/devices/0/x", "/background", "/texts".'),
-  value: z.string().describe('The new value encoded as JSON, e.g. "0.42", "\\"#ff5500\\"", "{\\"look\\":\\"dusk\\"}". Use "null" for remove.'),
+  op: z
+    .enum(["set", "remove", "append", "insert", "copy", "move"])
+    .describe("set: create or replace the value at path. remove: delete it. append: push value onto the array at path. insert: put value into the list at path's index, moving the rest along. copy / move: copy or move what's at `from` to path (at a list index it's inserted there); value is ignored."),
+  path: z.string().describe('JSON pointer into the scene, e.g. "/devices/0/x", "/background", "/texts" (in a video of several shots, "/shots/1/headline").'),
+  value: z.string().describe('The new value encoded as JSON, e.g. "0.42", "\\"#ff5500\\"", "{\\"look\\":\\"dusk\\"}". Use "null" for remove, copy and move.'),
+  from: z.string().optional().describe('copy and move only: where it comes from, e.g. "/shots/0" (a whole shot) or "/shots/2/devices/0".'),
 });
 export const EditReplySchema = z.object({
   summary: z
@@ -61,11 +73,24 @@ export const EditReplySchema = z.object({
   check: z
     .boolean()
     .optional()
-    .describe("True when you changed the look or composition and want to see the render before the person does (you'll get it and can fix anything). False for small exact edits and answers."),
+    .describe("True only when you can't tell from the settings how your edit will look: a redesign or a new composition, several things moved at once, new or re-timed animations. You'll see the render (for a timeline, the video's frames) before the person does and can fix anything. False for exact edits (text, a colour, a size, a named look, one shape) and answers."),
   remember: z
     .array(z.string())
     .optional()
     .describe("Lasting preferences the person just stated (\"I prefer…\", \"always…\", \"never…\", \"I love this font\"), each as one short note for the house style. Empty otherwise."),
+  see: z
+    .boolean()
+    .optional()
+    .describe(
+      "True only when no image came with the request and you can't do it well without seeing the design (judging how it looks, spacing, balance, contrast, what stands out, an open redesign). You'll get the render and answer again; operations in the same reply are ignored. Leave it out for questions the settings answer and for exact edits.",
+    ),
+  look: z
+    .array(z.number().min(0))
+    .max(12)
+    .optional()
+    .describe(
+      "Animated designs only: moments of the video you want to see before you answer, in seconds to the millisecond (e.g. [2.35, 4.1]). You'll get exactly those frames and answer again; operations in the same reply are ignored. Leave it out once you've seen enough.",
+    ),
   imageReason: z
     .string()
     .optional()
@@ -77,7 +102,16 @@ export type EditReply = z.infer<typeof EditReplySchema>;
 export type Operation = z.infer<typeof OperationSchema>;
 
 export interface EditResult {
+  /** The design to show: in a video of several shots, the shot to put on the canvas. */
   request: MockupInput;
+  /** A video of several shots: all of them as edited, which to show, and which changed. */
+  video?: {
+    shots: Array<{ scene: MockupInput; length?: number; transition?: { type: (typeof TRANSITIONS)[number]; duration?: number } }>;
+    show: number;
+    changed: number[];
+    /** Shots were added, removed or reordered (so their numbers moved). */
+    structural: boolean;
+  };
   summary: string;
   operations: Operation[];
   /** Entity ids whose placement or look changed, for highlighting on the canvas. */
@@ -95,9 +129,10 @@ export interface EditResult {
 
 const REMOTE = /^(https?:|unsplash:)/;
 
-export function sceneAssets(request: MockupInput) {
-  const assets = new Map<string, string>();
-  const byPath = new Map<string, string>();
+export function sceneAssets(request: MockupInput, shared?: { assets: Map<string, string>; byPath: Map<string, string> }) {
+  // Several shots share one set of tokens, so the same screenshot is the same token in each.
+  const assets = shared?.assets ?? new Map<string, string>();
+  const byPath = shared?.byPath ?? new Map<string, string>();
   const token = (file: string) => {
     const known = byPath.get(file);
     if (known) return known;
@@ -156,13 +191,60 @@ const decodePointer = (pointer: string): string[] => {
 type JSONValue = unknown;
 const isIndex = (k: string) => /^(0|[1-9]\d*)$/.test(k);
 
+const SAFE_KEY = (k: string) => k !== "__proto__" && k !== "constructor" && k !== "prototype";
+
+/** The value at a path, or undefined. */
+function getAt(root: unknown, keys: string[]): unknown {
+  let node: any = root;
+  for (const k of keys) {
+    if (node === null || typeof node !== "object") return undefined;
+    node = node[k];
+  }
+  return node;
+}
+
+/** Walk to a path's parent, making objects and lists on the way when `create`. */
+function parentOf(root: any, keys: string[], create: boolean): any {
+  let node = root;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i];
+    if (node[k] === undefined || node[k] === null || typeof node[k] !== "object") {
+      if (!create) return undefined;
+      node[k] = isIndex(keys[i + 1]) || keys[i + 1] === "-" ? [] : {};
+    }
+    node = node[k];
+  }
+  return node;
+}
+
 /** Apply operations to a copy of `scene`. Throws with a readable message on a bad path. */
 export function applyOperations(scene: unknown, operations: Operation[]): unknown {
   const root = structuredClone(scene) as Record<string, JSONValue>;
-  for (const { op, path: pointer, value } of operations) {
+  for (const { op, path: pointer, value, from } of operations) {
     const keys = decodePointer(pointer);
     if (!keys.length) throw new Error("AI Edit tried to replace the whole scene.");
-    if (keys.some((k) => k === "__proto__" || k === "constructor" || k === "prototype")) throw new Error(`Invalid path ${pointer}`);
+    if (!keys.every(SAFE_KEY)) throw new Error(`Invalid path ${pointer}`);
+    const last = keys[keys.length - 1];
+    // Copy and move: take what's at `from` (moving takes it out first), then put it at path.
+    if (op === "copy" || op === "move") {
+      const fromKeys = decodePointer(from ?? "");
+      if (!fromKeys.length || !fromKeys.every(SAFE_KEY)) throw new Error(`${op} needs a "from" path.`);
+      const found = getAt(root, fromKeys);
+      if (found === undefined) throw new Error(`There's nothing at ${from} to ${op}.`);
+      const moving = structuredClone(found);
+      if (op === "move") {
+        const src = parentOf(root, fromKeys, false);
+        const k = fromKeys[fromKeys.length - 1];
+        if (Array.isArray(src) && isIndex(k)) src.splice(Number(k), 1);
+        else delete src[k];
+      }
+      const node = parentOf(root, keys, true);
+      if (Array.isArray(node) && (isIndex(last) || last === "-")) {
+        if (last !== "-" && Number(last) > node.length) throw new Error(`${pointer} is past the end of the list.`);
+        node.splice(last === "-" ? node.length : Number(last), 0, moving);
+      } else node[last] = moving;
+      continue;
+    }
     let parsed: JSONValue = null;
     if (op !== "remove") {
       try {
@@ -172,23 +254,15 @@ export function applyOperations(scene: unknown, operations: Operation[]): unknow
         parsed = value;
       }
     }
-    let node: any = root;
-    for (let i = 0; i < keys.length - 1; i++) {
-      const k = keys[i];
-      if (node[k] === undefined || node[k] === null || typeof node[k] !== "object") {
-        if (op === "remove") {
-          node = undefined;
-          break;
-        }
-        node[k] = isIndex(keys[i + 1]) || keys[i + 1] === "-" ? [] : {};
-      }
-      node = node[k];
-    }
+    const node = parentOf(root, keys, op !== "remove");
     if (node === undefined) continue;
-    const last = keys[keys.length - 1];
     if (op === "remove") {
       if (Array.isArray(node) && isIndex(last)) node.splice(Number(last), 1);
       else delete node[last];
+    } else if (op === "insert") {
+      if (!Array.isArray(node) || !(isIndex(last) || last === "-")) throw new Error(`insert needs a list index: ${pointer}.`);
+      if (last !== "-" && Number(last) > node.length) throw new Error(`${pointer} is past the end of the list.`);
+      node.splice(last === "-" ? node.length : Number(last), 0, parsed);
     } else if (op === "append" || last === "-") {
       const target = last === "-" ? node : (node[last] ??= []);
       if (!Array.isArray(target)) throw new Error(`${pointer} is not a list.`);
@@ -235,9 +309,11 @@ How scenes work:
 - A device's x/y is its centre. Set "anchor": "center" whenever you set a device's y. Size devices with "height" (fraction of canvas height). rotate is 2D degrees clockwise; rotateX/rotateY are 3D tilt/turn.
 - The caption can follow the layout (no textStyle.x/y) or be placed with textStyle.x/y/anchor/align. headlineSize is a fraction of canvas height when < 1.
 - "entities" is where everything is now (after automatic layout), even when the scene has no x/y. A shape's entity carries "shape": everything about it as drawn, with an \`around\` target already found.
+- "animations" is the design's timeline, for videos: when each item enters, changes and leaves. Targets are entity ids ("device-1", "caption", "text-1", "shape-2"); several in one animation move as a group; "camera" is a target too (to: { zoom, x, y } pushes in on a point; zoom 1 pulls back), and text can arrive with by: "word" or "letter". A device's call-outs (its highlights, counting from 1) are targets as "device-1/callout-2": enter or exit sets when each appears. Anything's blur animates (to: { blur }; texts, shapes, devices and textStyle also have a blur of their own), and enter/exit "blur" brings something into focus. "backdrop" is a target: to: { zoom, x, y, rotate, blur, hue } moves only the backdrop (a slow push, a drift, a colour shift). A Change can travel along a curve (path: { shape: "circle" | "oval" | "figure-8", size } loops, or path: { points } a route of your own) and repeat (repeat: a count, or true for the whole video; yoyo: true goes back and forth), for floats, pulses, spins and orbits. Add one with op "append" at "/animations" (the list is created if it's missing). Requests like "make the phone slide in after the headline" or "draw the arrow at 3 seconds" are timeline edits. When you add or re-time animations, ask to check (check: true): you'll get the video's frames at its key moments and can fix what's off.
 - To mark something on a screen, add a shape with "around": { "device": N, "text": "…" } rather than working out coordinates. Add one with op "append" at "/shapes" (the list is created if it's missing).
 - If "selected" is given, "this", "it" and "the selection" mean that entity (device-N → /devices/N-1, text-N → /texts/N-1, shape-N → /shapes/N-1, caption → headline/subheadline/textStyle).
-- An image usually comes with the request: a quick render of the design as it is now. Look at it before deciding anything. The JSON is the source of truth for exact values.
+- "image" in the request says whether a picture of the design came with it. When the request is about how the design looks, one does: a quick render of the design as it is now (for an animated design, a contact sheet of its video: frames at the moments labelled on them, in order, so you can judge timing and framing). Look at it before deciding anything. The JSON is the source of truth for exact values. Otherwise there's none, to keep things quick: answer questions and make exact edits from the settings, entities and screens. If you truly need to see the design to do the request well, set see: true and leave operations empty.
+- A video of several shots: when the request has "video", the design is several shots played one after another, and your operations go into that whole document, so every path starts with /shots/N (N counts from 0; the person counts from 1, so shot 1 is /shots/0 and "the last shot" is the highest). Each shot is a scene as described above, plus "length" (seconds on screen, its way in included; leave it out and it runs as long as its animations need, at least 6 s) and "transition" (how it comes in from the shot before: { type: cut, fade, fade-black, fade-white, push-left, push-right, push-up, push-down, wipe-left, wipe-right, iris, zoom, blur or dissolve, duration } in seconds; ignored on the first). "video.onCanvas" is the shot the person is looking at: "this", "it", "the headline" mean that shot unless they name another ("shot 2", "the first shot", "every shot", "all of them"). Change only the shots they mean. Add a shot with op "insert" at /shots/N and a whole shot as the value, or "copy" from /shots/K to /shots/N and then change the copy; remove one with "remove" at /shots/N; reorder with "move" from /shots/K to /shots/N; "copy" or "move" also carries an item from one shot to another (from /shots/0/devices/0 to /shots/2/devices/-). "shots" lists each at a glance: its number, when it starts, its length, how it comes in and its entities. "look" times are across the whole video. Your summary names the shots you changed ("Shot 2: …").
 - "screens" describes each device's screenshot: its palette (dominant colours with their share, the accent colour, dark or light UI) and the text visible on it, top to bottom, with where it sits (fractions of the screenshot). Build colour decisions on the palette, and aim callouts at text copied exactly from this list.
 - "available" says what can be used right now: "aiImages" names the image generator, or is null (then never use background.generate). "appleArt" lists the devices that have Apple's product art installed.
 - "houseStyle" is what this person likes, remembered from before. Follow it unless they ask otherwise.
@@ -249,7 +325,9 @@ How to respond:
 - Use device names, finishes, looks, grades, layouts and canvases from the lists below.
 - If the request can't be expressed in the scene, return no operations and say why.
 - summary is your chat reply: after an edit, one or two plain sentences on what you changed and the idea behind it ("Made the phone huge and let it rise from the bottom over a deep green that matches the app, and lifted the Today card so the headline has something to point at."). For a question, a short direct answer and no operations.
-- check: true when you changed the look or composition, so you see the render before the person does and can fix what's off. false for small exact edits and answers.
+- look: for an animated design, when you need to see particular moments before answering (a camera move half way, a word mid-reveal, what's on screen at 3.2 s), list their times and leave operations empty; you'll get exactly those frames and answer again. At most twice, so ask for what matters.
+- see: true only when no image came and you can't do the request well without looking (a judgement about how it looks, an open redesign). Never for questions the settings answer or exact edits.
+- check: true only when you can't tell from the settings how your edit will look (a redesign or new composition, several things moved at once, new or re-timed animations), so you see the render (for a timeline, the video's frames) before the person does and can fix what's off. false for exact edits (text, a colour, a size, a named look, one shape) and answers. Every look costs the person time, so look only when it matters.
 - New AI images: add or change background.generate only when the person asks for a generated or AI image, or when nothing built in can meet the request (no look, painting, Unsplash photo, gradient or colour fits it). Then say why in imageReason. A new image takes half a minute or more and costs money; built-in backdrops are instant, so "better", "premium" or "a new backdrop" means a built-in one. Keep an existing generated backdrop exactly as it is unless the person asks to change it: any change to its prompt or seed makes a new image.
 - remember: when the person states a lasting preference ("I prefer…", "always…", "never…", "love this font"), add one short note for each; they're saved to the house style. Otherwise leave it empty.
 - This is a chat. "history" lists earlier turns; the scene already includes every edit made so far. Use it for follow-ups like "bigger", "the other one", "go back to the blue" or "try again".
@@ -290,7 +368,7 @@ async function screenFacts(request: MockupInput): Promise<unknown[]> {
   );
 }
 
-async function userMessage(input: AIEditInput, safe: MockupInput): Promise<string> {
+async function userMessage(input: AIEditInput, safe: MockupInput, shown: boolean): Promise<string> {
   const layout = await layoutScene(input.request);
   const entities = layout.entities.map(({ screenshot, screen, ...e }) => e);
   const art = [...new Set(listBezels().map((b) => DEVICE_MODELS.find((m) => m.id === b.model)?.name).filter(Boolean))];
@@ -298,6 +376,13 @@ async function userMessage(input: AIEditInput, safe: MockupInput): Promise<strin
   return JSON.stringify({
     history: input.history?.length ? input.history.slice(-12) : undefined,
     instruction: input.instruction,
+    image: !shown
+      ? input.preview === false
+        ? "None: the person turned previews off. Work from the settings."
+        : "None: work from the settings. Set see: true only if you can't do this well without looking."
+      : input.request.animations?.length
+        ? "A contact sheet of this design's video: frames at the moments labelled on them (seconds), in order. The last frame is the design once it settles."
+        : "A quick render of the design as it is now.",
     selected: input.selection || undefined,
     houseStyle: style.length ? style : undefined,
     available: { aiImages: availableImageProvider() ?? null, appleArt: art },
@@ -309,14 +394,15 @@ async function userMessage(input: AIEditInput, safe: MockupInput): Promise<strin
 }
 
 /** The follow-up that shows Claude its own render, to fix what's off before the person sees it. */
-async function reviewMessage(input: AIEditInput, edited: MockupInput, restored: MockupInput, first: EditReply): Promise<string> {
+async function reviewMessage(input: AIEditInput, edited: MockupInput, restored: MockupInput, first: EditReply, frames = false): Promise<string> {
   const layout = await layoutScene(restored);
   const entities = layout.entities.map(({ screenshot, screen, ...e }) => e);
   return JSON.stringify({
     review: true,
     instruction: input.instruction,
-    note:
-      "The image is how your edit renders. Check it against 'Check your work' in the guide. If something is off (text touching the device, weak contrast, a device too small, empty space, a callout on the wrong thing, clashing colours), return operations that fix it; they apply on top of this scene. Don't add or change a generated image here. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished design.",
+    note: frames
+      ? "The image is a contact sheet of the video your edit makes: frames at the moments labelled on them (seconds), in order; the last is the design once it settles. Check each beat against the guide's pacing: is everything that should be on screen there when it should be, with nothing left alone on an empty frame and nothing arriving before the viewer has read what came before; does each camera close-up frame what it's about without cutting through it; does anything overlap or sit half out of frame; does it end settled on the whole design. Check the last frame against 'Check your work' too. If something is off, return operations that fix it; they apply on top of this scene. Don't add or change a generated image here. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished video."
+      : "The image is how your edit renders. Check it against 'Check your work' in the guide. If something is off (text touching the device, weak contrast, a device too small, empty space, a callout on the wrong thing, clashing colours), return operations that fix it; they apply on top of this scene. Don't add or change a generated image here. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished design.",
     yourEarlierReply: first.summary,
     scene: edited,
     canvas: layout.canvas,
@@ -364,7 +450,8 @@ const FRAME_NAMES: Record<string, string> = { browser: "Browser", window: "Windo
 
 /** What the Studio is told while an edit runs, so it can show the agent at work. */
 export type AIProgress =
-  | { step: "look"; image?: string }
+  /** `moments`: the image is a contact sheet of the design's video, with this many frames. */
+  | { step: "look"; image?: string; moments?: number }
   | { step: "read"; items: string[] }
   | { step: "think" }
   | { step: "retry"; reason: string }
@@ -374,7 +461,9 @@ export type AIProgress =
   | { step: "generate"; provider: string; prompt: string; reason?: string }
   /** Rendering the edit, for Claude to check. */
   | { step: "render" }
-  | { step: "check"; image: string };
+  | { step: "check"; image: string; moments?: number }
+  /** Claude asked to see the video at these moments; `image` is them once rendered. */
+  | { step: "frames"; times: number[]; image?: string };
 
 /** The person pressed Stop. */
 export class StoppedError extends Error {
@@ -410,11 +499,93 @@ const makesNewImage = (before: MockupInput, after: MockupInput) => {
 const NO_IMAGE_REASON =
   "background.generate makes a new AI image, which takes half a minute or more. Make one only when the person asked for a generated image, or when no look, painting, Unsplash photo, gradient or colour can meet the request, and then say why in imageReason. Otherwise use a built-in backdrop and leave imageReason out.";
 
+/** The video's frames at chosen moments: a storyboard of exactly those times. */
+async function framesAt(request: MockupInput, times: number[]): Promise<string | undefined> {
+  const file = path.join(cacheDir("ai"), `frames-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`);
+  try {
+    const { output: _o, format: _f, quality: _q, jpegQuality: _j, deliveryWidth: _d, preview: _p, ...scene } = structuredClone(request);
+    await storyboard(scene, { output: file, times });
+    return (await readFile(file)).toString("base64");
+  } catch {
+    return undefined;
+  } finally {
+    await rm(file, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Claude asked to see the video at some moments (`look`): render exactly those frames and ask
+ * again, with them, up to twice. The second time it's told to answer.
+ */
+/** What Claude can be shown: frames at moments, or the whole thing (a render, or a contact sheet). */
+interface View {
+  animated: boolean;
+  frames(times: number[]): Promise<string | undefined>;
+  whole(): Promise<Seen | undefined>;
+}
+const sceneView = (request: MockupInput, onProgress: (p: AIProgress) => void, signal?: AbortSignal): View => ({
+  animated: Boolean(request.animations?.length),
+  frames: (times) => framesAt(request, times),
+  whole: () => renderFor(request, onProgress, signal),
+});
+
+async function lookAgain<T extends { look?: number[]; see?: boolean }>(
+  view: View,
+  reply: T,
+  model: string | undefined,
+  text: string,
+  ask: (text: string, image: string | undefined) => Promise<{ reply: T; model?: string }>,
+  onProgress: (p: AIProgress) => void,
+  signal?: AbortSignal,
+  mayShow = false,
+): Promise<{ reply: T; model?: string }> {
+  for (let round = 1; round <= 2; round++) {
+    const times = reply.look?.length && view.animated ? [...new Set(reply.look.map((t) => Math.round(t * 1000) / 1000))].slice(0, 12) : undefined;
+    // It asked to see the design, which it wasn't shown: the render (or the video's key moments).
+    const show = !times && mayShow && reply.see;
+    if (!times && !show) break;
+    let image: string | undefined;
+    let note: string;
+    const next = round === 2 ? "Now answer: no more looking." : "Answer now, or look once more if you really need to.";
+    if (times) {
+      onProgress({ step: "frames", times });
+      image = await until(view.frames(times), signal);
+      if (!image) break;
+      onProgress({ step: "frames", times, image });
+      note = `You asked to see the video at ${times.map((t) => `${t} s`).join(", ")}: the image shows those frames, labelled. ${next}`;
+    } else {
+      mayShow = false;
+      onProgress({ step: "look" });
+      const seen = await view.whole();
+      if (!seen) break;
+      onProgress({ step: "look", ...seen });
+      image = seen.image;
+      note = `You asked to see the design: the image is ${seen.moments ? "a contact sheet of its video, frames at the moments labelled on them (seconds), in order; the last is the design once it settles" : "a quick render of it as it is now"}. ${next}`;
+    }
+    let base: Record<string, unknown>;
+    try {
+      base = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      base = { request: text };
+    }
+    ({ reply, model } = await ask(JSON.stringify({ ...base, image: note, looked: times }), image));
+  }
+  return { reply, model };
+}
+
+/**
+ * Requests about how the design looks, worth a render up front so Claude sees it on its first
+ * try. Anything else (a question, an exact edit) goes without, and Claude can ask to see it.
+ */
+const LOOK_WORDS =
+  /\b(looks?|looking|see|visual\w*|spacing|spaced|balance\w*|contrast|readab\w*|legib\w*|overlap\w*|cramped|crowded|clutter\w*|busy|pop|better|improve\w*|nicer|prettier|premium|polish\w*|redesign\w*|amazing|beautiful|stunning|ugly|messy|off|wrong|fix\w*|critique|feedback|opinion|think|review|tidy|awkward|weird|stand ?out|hierarchy|composition|empty|feel|vibe|style|timing|pacing|pace|flow|smooth\w*|jerky|choppy)\b/i;
+export const aboutTheLook = (instruction: string) => LOOK_WORDS.test(instruction);
+
 /**
  * Render the scene for Claude. Says first when that means waiting for an AI image generator to
  * make a new backdrop (`generate`), or with `announce`, that it's rendering.
  */
-async function renderFor(request: MockupInput, onProgress: (p: AIProgress) => void, signal?: AbortSignal, announce = false, reason?: string): Promise<string | undefined> {
+async function renderFor(request: MockupInput, onProgress: (p: AIProgress) => void, signal?: AbortSignal, announce = false, reason?: string): Promise<Seen | undefined> {
   const canvas = (await layoutScene(request).catch(() => undefined))?.canvas;
   const pending = canvas && pendingBackdrop(request.background, canvas.width, canvas.height);
   if (pending) onProgress({ step: "generate", ...pending, reason: reason?.trim() || undefined });
@@ -422,14 +593,30 @@ async function renderFor(request: MockupInput, onProgress: (p: AIProgress) => vo
   return until(previewImage(request), signal);
 }
 
-async function previewImage(request: MockupInput): Promise<string | undefined> {
+/** What Claude is shown: the design as a still, or for an animated design, its video's key moments. */
+interface Seen {
+  image: string;
+  moments?: number;
+}
+
+/**
+ * The design for Claude to look at. An animated design comes as a contact sheet of its video
+ * (frames at the moments labelled on them), so timing and framing can be judged; `frames: false`
+ * asks for the still regardless.
+ */
+async function previewImage(request: MockupInput, o: { frames?: boolean } = {}): Promise<Seen | undefined> {
   const file = path.join(cacheDir("ai"), `preview-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`);
   try {
+    if (o.frames !== false && request.animations?.length) {
+      const { output: _o, format: _f, quality: _q, jpegQuality: _j, deliveryWidth: _d, preview: _p, ...scene } = structuredClone(request);
+      const board = await storyboard(scene, { output: file });
+      return { image: (await readFile(file)).toString("base64"), moments: board.times.length };
+    }
     const layout = await layoutScene(request);
     const { width: W, height: H } = layout.canvas;
     const deliveryWidth = Math.max(200, Math.round(W >= H ? Math.min(1400, W / 2) : Math.min(W / 2, (1400 * W) / H)));
     await createMockup({ ...structuredClone(request), quality: "preview", format: "jpeg", jpegQuality: 80, deliveryWidth, preview: false, output: file });
-    return (await readFile(file)).toString("base64");
+    return { image: (await readFile(file)).toString("base64") };
   } catch {
     return undefined;
   } finally {
@@ -597,22 +784,31 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
   if (!hasApiCredentials() && !cli) {
     throw new Error("AI Edit needs Claude. Sign in to Claude Code (run `claude` once in Terminal) or add an Anthropic API key in Settings.");
   }
-  // Let Claude see the design, not just its settings. Reading each screenshot's colours and words
-  // (on-device) runs alongside the render.
-  onProgress({ step: "look" });
-  const reading = userMessage(input, safe);
+  // A video of several shots: Claude sees and edits all of them.
+  if (input.shots && input.shots.length > 1) return editVideo(input, cli, onProgress, signal);
+  // Claude sees the design up front only when the request is about how it looks; questions and
+  // exact edits go straight from the settings (it can still ask to see it). Reading each
+  // screenshot's colours and words (on-device) runs alongside any render.
+  const eyes = input.preview !== false && aboutTheLook(input.instruction);
+  if (eyes) onProgress({ step: "look" });
+  const reading = userMessage(input, safe, eyes);
   reading.catch(() => undefined);
-  const image = input.preview === false ? undefined : await renderFor(input.request, onProgress, signal);
-  if (image) onProgress({ step: "look", image });
-  // Reading: what's in the scene, and what's on each screen.
-  const layout = await layoutScene(input.request).catch(() => undefined);
-  onProgress({
-    step: "read",
-    items: [
-      ...(layout?.entities ?? []).map((e) => (e.kind === "device" ? (e.device ?? (FRAME_NAMES[e.frame ?? "none"] ?? "Device")) : e.kind === "caption" ? "Headline" : `“${String(e.text ?? "Text").replace(/\*\*/g, "").slice(0, 18)}”`)),
-      "Backdrop",
-    ],
-  });
+  const seen = eyes ? await renderFor(input.request, onProgress, signal) : undefined;
+  const image = seen?.image;
+  if (seen) onProgress({ step: "look", ...seen });
+  // Reading what's in the scene and on each screen is usually instant (it's remembered); it only
+  // shows as a step when it takes a moment, the first time a screenshot is read.
+  const quick = await Promise.race([reading.then(() => true, () => true), new Promise<boolean>((r) => setTimeout(() => r(false), 500))]);
+  if (!quick) {
+    const layout = await layoutScene(input.request).catch(() => undefined);
+    onProgress({
+      step: "read",
+      items: [
+        ...(layout?.entities ?? []).map((e) => (e.kind === "device" ? (e.device ?? (FRAME_NAMES[e.frame ?? "none"] ?? "Device")) : e.kind === "caption" ? "Headline" : `“${String(e.text ?? "Text").replace(/\*\*/g, "").slice(0, 18)}”`)),
+        "Backdrop",
+      ],
+    });
+  }
   const prompt = await until(reading, signal);
   onProgress({ step: "think" });
   const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) =>
@@ -628,6 +824,8 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
   };
 
   let { reply, model } = await ask();
+  // Claude may ask to see the design, or the video at particular moments, first (twice at most).
+  ({ reply, model } = await lookAgain(sceneView(input.request, onProgress, signal), reply, model, prompt, (text, img) => askWith(text, img), onProgress, signal, input.preview !== false && !image));
   let result: { edited: MockupInput; restored: MockupInput };
   try {
     result = await apply(safe, reply.operations);
@@ -688,14 +886,236 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
     onProgress({ step: "draft", result: finish() });
     const shot = await renderFor(scene, onProgress, signal, true, reply.imageReason);
     if (shot) {
-      onProgress({ step: "check", image: shot });
+      onProgress({ step: "check", ...shot });
       try {
-        const review = await askWith(await reviewMessage(input, result.edited, scene, reply), shot);
+        const note = await reviewMessage(input, result.edited, scene, reply, Boolean(shot.moments));
+        const first = await askWith(note, shot.image);
+        const review = await lookAgain(sceneView(scene, onProgress, signal), first.reply, first.model, note, (text, img) => askWith(text, img), onProgress, signal);
         if (review.reply.operations.length) {
           const fixed = await apply(result.edited, review.reply.operations);
           // Fixes never start a new AI image; a review that would is dropped.
           if (!makesNewImage(scene, fixed.restored)) {
             scene = fixed.restored;
+            operations = [...operations, ...review.reply.operations];
+          }
+        }
+        if (review.reply.summary.trim()) summary = review.reply.summary;
+        checked = { fixes: review.reply.operations.length };
+      } catch (e) {
+        if (e instanceof StoppedError) throw e;
+        checked = { fixes: 0 };
+      }
+    }
+  }
+  return finish();
+}
+
+// ---------------------------------------------------------------------------------------------
+// A video of several shots: one document with every shot, edited with /shots/N paths
+
+type Shot = NonNullable<AIEditInput["shots"]>[number];
+const ShotMetaSchema = z.object({
+  length: z.number().min(0.5).max(60).optional(),
+  transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
+});
+/** A scene without its destination and delivery settings (they aren't part of the design). */
+const designOf = (scene: MockupInput): MockupInput => {
+  const { output: _o, format: _f, quality: _q, jpegQuality: _j, deliveryWidth: _d, preview: _p, ...rest } = structuredClone(scene);
+  return rest as MockupInput;
+};
+/** How long a shot runs when it doesn't say: as the video engine works it out (6 s, or longer for its animations). */
+const shotLength = (s: Shot) => s.length ?? Math.max(6, s.scene.animations?.length ? timelineEnd(s.scene.animations) + 1.2 : 0);
+
+/** The whole video as one contact sheet: each shot's key moments (or `times`), labelled with the time and shot. */
+async function videoSheet(shots: Shot[], times?: number[]): Promise<Seen | undefined> {
+  const file = path.join(cacheDir("ai"), `video-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`);
+  try {
+    const input = { shots: shots.map((s) => ({ ...designOf(s.scene), ...(s.length ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) })) } as SequenceInput;
+    const board = await sequenceStoryboard(input, { output: file, times, max: 12 });
+    return { image: (await readFile(file)).toString("base64"), moments: board.times.length };
+  } catch {
+    return undefined;
+  } finally {
+    await rm(file, { force: true }).catch(() => undefined);
+  }
+}
+
+/** What Claude is told about a video: the whole document, and each shot at a glance. */
+async function videoMessage(input: AIEditInput, shots: Shot[], safeShots: unknown[], onCanvas: number, shown: boolean): Promise<string> {
+  const layouts = await Promise.all(shots.map((s) => layoutScene(s.scene).catch(() => undefined)));
+  const art = [...new Set(listBezels().map((b) => DEVICE_MODELS.find((m) => m.id === b.model)?.name).filter(Boolean))];
+  const style = houseStyle().map((n) => n.text);
+  // What's on each screen, once per screenshot (the same one in several shots is said once).
+  const facts = await Promise.all(shots.map((s) => screenFacts(s.scene)));
+  const described = new Map<string, string>();
+  const screens: unknown[] = [];
+  facts.forEach((list, i) =>
+    (list as Array<Record<string, unknown>>).forEach((f, d) => {
+      const file = shots[i].scene.devices[d]?.screenshot;
+      const where = `shot ${i + 1}, device ${d + 1}`;
+      if (file && described.has(file)) screens.push({ shot: i + 1, device: d + 1, sameAs: described.get(file) });
+      else {
+        if (file) described.set(file, where);
+        screens.push({ shot: i + 1, ...f });
+      }
+    }),
+  );
+  let start = 0;
+  const overview = shots.map((s, i) => {
+    const t = i === 0 ? undefined : (s.transition ?? { type: "fade" as const, duration: 0.5 });
+    if (i > 0) start -= t!.type === "cut" ? 0 : (t!.duration ?? 0.5);
+    const row = {
+      shot: i + 1,
+      path: `/shots/${i}`,
+      onCanvas: i === onCanvas || undefined,
+      headline: s.scene.headline?.replace(/\*\*/g, ""),
+      starts: Math.round(Math.max(0, start) * 100) / 100,
+      length: Math.round(shotLength(s) * 100) / 100,
+      lengthSet: s.length !== undefined || undefined,
+      comesIn: t,
+      canvas: layouts[i]?.canvas,
+      entities: layouts[i]?.entities.map(({ screenshot: _s, screen: _sc, ...e }) => e),
+    };
+    start += shotLength(s);
+    return row;
+  });
+  return JSON.stringify({
+    history: input.history?.length ? input.history.slice(-12) : undefined,
+    instruction: input.instruction,
+    image: shown
+      ? "A contact sheet of the whole video: each shot's key moments, in order, each labelled with its time in the video and its shot number."
+      : input.preview === false
+        ? "None: the person turned previews off. Work from the settings."
+        : "None: work from the settings. Set see: true only if you can't do this well without looking.",
+    selected: input.selection ? `${input.selection}, in shot ${onCanvas + 1}` : undefined,
+    houseStyle: style.length ? style : undefined,
+    available: { aiImages: availableImageProvider() ?? null, appleArt: art },
+    video: { onCanvas, shots: safeShots },
+    shots: overview,
+    screens,
+  });
+}
+
+async function editVideo(input: AIEditInput, cli: string | undefined, onProgress: (p: AIProgress) => void, signal?: AbortSignal): Promise<EditResult> {
+  const onCanvas = Math.min(input.shots!.length - 1, input.shot ?? 0);
+  // Every shot as it is now (the one on the canvas as the person has it), without delivery settings.
+  const before: Shot[] = input.shots!.map((s, i) => ({ ...s, scene: designOf(i === onCanvas ? input.request : s.scene) }));
+  const shared = { assets: new Map<string, string>(), byPath: new Map<string, string>() };
+  const safeShots = before.map((s) => ({ ...sceneAssets(s.scene, shared).safe, ...(s.length !== undefined ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) }));
+  const assets = shared.assets;
+  const view = (shots: Shot[]): View => ({ animated: true, frames: async (times) => (await videoSheet(shots, times))?.image, whole: () => videoSheet(shots) });
+
+  const eyes = input.preview !== false && aboutTheLook(input.instruction);
+  if (eyes) onProgress({ step: "look" });
+  const reading = videoMessage(input, before, safeShots, onCanvas, eyes);
+  reading.catch(() => undefined);
+  const seen = eyes ? await until(videoSheet(before), signal) : undefined;
+  const image = seen?.image;
+  if (seen) onProgress({ step: "look", ...seen });
+  const quick = await Promise.race([reading.then(() => true, () => true), new Promise<boolean>((res) => setTimeout(() => res(false), 500))]);
+  if (!quick) onProgress({ step: "read", items: before.map((s, i) => `Shot ${i + 1}${s.scene.headline ? ` · “${s.scene.headline.replace(/\*\*/g, "").slice(0, 16)}”` : ""}`) });
+  const prompt = await until(reading, signal);
+  onProgress({ step: "think" });
+  const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) =>
+    cli ? viaClaudeCode(input, text, img, cli, retry, undefined, signal) : viaApi(input, text, img, retry, undefined, signal);
+  const ask = (retry?: { previous: string; error: string }) => askWith(prompt, image, retry);
+
+  // Operations on the whole video (in token space), each shot checked the way a render would be.
+  const apply = async (base: unknown, ops: Operation[]) => {
+    const edited = applyOperations(base, ops) as { shots?: unknown };
+    if (!Array.isArray(edited.shots) || !edited.shots.length) throw new Error("A video needs at least one shot.");
+    if (edited.shots.length > 20) throw new Error("A video can have 20 shots at most.");
+    const shots = edited.shots.map((raw, i) => {
+      if (!raw || typeof raw !== "object") throw new Error(`Shot ${i + 1} isn't a scene.`);
+      const { length, transition, ...scene } = raw as Record<string, unknown>;
+      return { scene: MockupInputSchema.parse(scene), ...ShotMetaSchema.parse({ length, transition }) };
+    });
+    const restored: Shot[] = shots.map((sh) => ({ ...sh, scene: restoreAssets(structuredClone(sh.scene), assets) }));
+    await Promise.all(restored.map((sh) => layoutScene(sh.scene)));
+    // The document for a follow-up (the review): shots in token space, as Claude wrote them.
+    return { doc: { shots: shots.map((sh) => ({ ...sh.scene, ...(sh.length !== undefined ? { length: sh.length } : {}), ...(sh.transition ? { transition: sh.transition } : {}) })) }, restored };
+  };
+
+  let { reply, model } = await ask();
+  // Claude may ask to see the video, or moments of it, first (twice at most).
+  ({ reply, model } = await lookAgain(view(before), reply, model, prompt, (text, img) => askWith(text, img), onProgress, signal, input.preview !== false && !image));
+  const base = { shots: safeShots };
+  let result: Awaited<ReturnType<typeof apply>>;
+  try {
+    result = await apply(base, reply.operations);
+  } catch (e) {
+    const error = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message;
+    if (/isn't in this scene/.test(error)) throw e;
+    onProgress({ step: "retry", reason: error.slice(0, 160) });
+    ({ reply, model } = await ask({ previous: JSON.stringify(reply), error }));
+    result = await apply(base, reply.operations);
+  }
+  // A new AI image only when asked for or needed, with its reason (as for one design).
+  const newImage = (shots: Shot[]) =>
+    shots.some((s) => {
+      const g = generatedBackdrop(s.scene);
+      return g !== undefined && !before.some((b) => generatedBackdrop(b.scene) === g);
+    });
+  if (newImage(result.restored) && !reply.imageReason?.trim()) {
+    onProgress({ step: "retry", reason: "Checking a new AI image is really needed" });
+    try {
+      const again = await ask({ previous: JSON.stringify(reply), error: NO_IMAGE_REASON });
+      const applied = await apply(base, again.reply.operations);
+      ({ reply, model } = again);
+      result = applied;
+    } catch (e) {
+      if (e instanceof StoppedError) throw e;
+    }
+  }
+  let shots = result.restored;
+  let summary = reply.summary;
+  let operations = reply.operations;
+  let checked: EditResult["checked"];
+  const remembered = (reply.remember ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 5);
+  if (remembered.length) updateHouseStyle({ add: remembered });
+
+  // Which shots changed, and which to show: the one on the canvas if it changed (or nothing did),
+  // else the first that changed. Added, removed or reordered shots renumber the rest.
+  const finish = (): EditResult => {
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    const structural = shots.length !== before.length || operations.some((o) => /^\/shots\/(\d+|-)$/.test(o.path) || /^\/shots\/\d+$/.test(o.from ?? ""));
+    const changed = shots.map((s, i) => ((structural ? !before.some((b) => same(b, s)) : !same(s, before[i])) ? i : -1)).filter((i) => i >= 0);
+    const show = structural ? (changed[0] ?? Math.min(onCanvas, shots.length - 1)) : changed.length && !changed.includes(onCanvas) ? changed[0] : onCanvas;
+    return {
+      request: shots[show].scene,
+      summary,
+      operations,
+      changed: !structural && before[show] ? changedEntities(before[show].scene, shots[show].scene) : [],
+      provider: cli ? "claude-code" : "api",
+      model,
+      checked,
+      remembered: remembered.length ? remembered : undefined,
+      video: { shots, show, changed, structural },
+    };
+  };
+
+  // Look at the edited video before the person does, and fix what's off (the draft goes out first).
+  if (reply.check && operations.length && input.preview !== false) {
+    onProgress({ step: "draft", result: finish() });
+    onProgress({ step: "render" });
+    const sheet = await until(videoSheet(shots), signal);
+    if (sheet) {
+      onProgress({ step: "check", ...sheet });
+      try {
+        const note = JSON.stringify({
+          review: true,
+          instruction: input.instruction,
+          note: "The image is a contact sheet of the whole video your edit makes: each shot's key moments, labelled with the time in the video and the shot number. Check each shot against 'Check your work' in the guide, and the video as a whole: does each shot land its point, do the shots follow on, is anything cut off, overlapping or alone on an empty frame. If something is off, return operations that fix it; they apply on top of this video (the same /shots/N paths). Don't add or change a generated image here. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished video, naming the shots you changed.",
+          yourEarlierReply: reply.summary,
+          video: result.doc,
+        });
+        const first = await askWith(note, sheet.image);
+        const review = await lookAgain(view(shots), first.reply, first.model, note, (text, img) => askWith(text, img), onProgress, signal);
+        if (review.reply.operations.length) {
+          const fixed = await apply(result.doc, review.reply.operations);
+          // Fixes never start a new AI image; a review that would is dropped.
+          if (!newImage(fixed.restored)) {
+            shots = fixed.restored;
             operations = [...operations, ...review.reply.operations];
           }
         }
@@ -748,10 +1168,12 @@ export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgr
         "Design it for me. Propose three distinct directions for this design, each a complete redesign following the guide: different backdrop worlds (for example a tonal colour glow, a painting or photograph from the looks or Unsplash, a warm or dark studio), different compositions and different type. Use built-in backdrops only: don't use background.generate, and keep an existing generated backdrop only as it is. Keep the screenshots and any words the person wrote. Each direction is its own set of operations on the current scene.",
     },
     safe,
+    input.preview !== false,
   );
   reading.catch(() => undefined);
-  const image = input.preview === false ? undefined : await renderFor(input.request, onProgress, signal);
-  if (image) onProgress({ step: "look", image });
+  const seen = input.preview === false ? undefined : await renderFor(input.request, onProgress, signal);
+  const image = seen?.image;
+  if (seen) onProgress({ step: "look", ...seen });
   const layout = await layoutScene(input.request).catch(() => undefined);
   onProgress({ step: "read", items: [...(layout?.entities ?? []).map((e) => (e.kind === "device" ? (e.device ?? "Device") : e.kind === "caption" ? "Headline" : "Text")), "Backdrop"] });
   const prompt = await until(reading, signal);
@@ -777,8 +1199,8 @@ export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgr
   for (const p of pending) p.canvas = (await layoutScene(p.d.request).catch(() => undefined))?.canvas;
   const painting = pending.map((p) => p.canvas && pendingBackdrop(p.d.request.background, p.canvas.width, p.canvas.height)).find(Boolean);
   onProgress(painting ? { step: "generate", ...painting } : { step: "render" });
-  const shots = await until(Promise.all(directions.map((d) => previewImage(d.request))), signal);
-  directions.forEach((d, i) => (d.image = shots[i]));
-  if (shots[0]) onProgress({ step: "check", image: shots[0] });
+  const shots = await until(Promise.all(directions.map((d) => previewImage(d.request, { frames: false }))), signal);
+  directions.forEach((d, i) => (d.image = shots[i]?.image));
+  if (shots[0]) onProgress({ step: "check", image: shots[0].image });
   return { directions, provider: cli ? "claude-code" : "api", model };
 }

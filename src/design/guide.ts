@@ -154,13 +154,35 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 - Menu bar apps: scene \`menuBar\` { status, size } and the captured menu with \`frame: "none"\`; \`size\` 0.06–0.1 for a close, readable shot.
 - Close-ups: \`camera\` { zoom, x, y }, focused on a point taken from the entities' positions.
 
-## 12. Sets
+## 12. Animation (videos)
+
+\`animations\` on a scene say when and how each item appears, changes and leaves in a video (create_video, and the Studio's video export). Still images ignore them. Items not animated are there from the start.
+
+- **Targets** are item ids as the layout lists them: \`"device-1"\`, \`"caption"\`, \`"text-2"\`, \`"shape-1"\`. Several in one animation move as a group: \`{ targets: ["device-1", "device-2"], at: 2.5, enter: "zoom" }\` zooms a laptop and phone in together from their shared centre. \`stagger\` starts them one after another.
+- **Entrances** (\`enter\`): fade, zoom, scale-x, scale-y, slide-up, slide-down, slide-left, slide-right (the way it moves), none. \`amount\` sets zoom's starting size or a slide's distance. \`exit\` plays the same effects out.
+- **Changes** (\`to\`): animate to new values and stay there. Anything: opacity, scale, scaleX, scaleY, rotate, dx/dy (move by a share of the canvas), x/y (move its centre there). Devices: rotateX (tilt), rotateY (turn). Text: color. Shapes: fill, stroke, strokeWidth, radius; lines and arrows: start, end (its two ends) and bend. \`from\` is the reverse: start from these values and arrive at the design.
+- **The camera** is a target too: \`{ targets: "camera", at: 3, duration: 1, to: { zoom: 2.5, x: 0.8, y: 0.6 } }\` pushes in on a point (canvas fractions, taken from the entities), another such move glides from there to the next point, and \`to: { zoom: 1 }\` pulls back. It moves the whole picture, text included. Use it to go from the whole design into a detail on a screen: the row, number or button the headline is about. Hold each close-up for a second or more; two or three moves in a video, not more.
+- **Call-outs on cue**: a device's highlights are targets too, \`"device-1/callout-2"\` (its highlights, counting from 1). \`{ targets: "device-1/callout-1", at: 2.4, enter: "fade" }\` brings the lift, loupe or outline in when the story reaches it (it arrives the way its style does: a lift rises, a loupe grows); \`exit\` takes it away. Several in one animation with \`stagger\` walk through them in turn. Call-outs you don't time appear together a quarter of the way in.
+- **Loops**: a Change with \`repeat: true\` keeps going for the whole video. A float, \`{ targets: "device-1", at: 1, duration: 1.6, to: { dy: -0.012 }, repeat: true, yoyo: true }\`; a pulse on a badge, \`to: { scale: 1.08 }\` with \`yoyo\`; a slow spin on a star, \`to: { rotate: 360 }\` over 6 s. Loops are ambience: one or two small ones, on decoration or the hero device, never on the words the viewer is reading.
+- **Along a curve**: \`path\` sends an item along a route from where it is: \`{ shape: "circle", size: 0.03 }\` (an orbit; also "oval" and "figure-8") or \`{ points: [{ x, y }, …] }\` through points on a smooth curve (\`closed\` comes back round; \`orient\` turns it to face the way it goes, like a paper plane). With \`repeat: true\` a loop goes round for the whole video.
+- **The backdrop** moves on its own: \`{ targets: "backdrop", at: 0, duration: 6, to: { zoom: 1.15 } }\` is a slow push into a photo (the Ken Burns look), \`x\`/\`y\` aim it, \`rotate\` turns it, \`hue\` shifts its colours (30 is gentle) and \`blur\` softens it; \`from: { blur: 0.02 }\` brings it into focus. Slow and steady: it should be felt more than seen.
+- **Blur**: anything can be soft (\`blur\` on a text, a shape, a device or the headline's textStyle) and anything's blur animates. \`enter: "blur"\` brings text into focus, beautiful \`by: "word"\`.
+- **Rack focus**: a device's \`blur\` animates. Two Changes at the same moment, \`{ targets: "device-1", to: { blur: 0.012 } }\` and \`{ targets: "device-2", to: { blur: 0 } }\`, shift the eye from the laptop to the phone (start device-2 with its own \`blur\` so it begins soft). Use it once, when the story moves from one screen to the other.
+- **Text by word or letter**: \`by: "word"\` (or \`"letter"\`) on a text's entrance brings it in a piece at a time, \`each\` seconds apart (default 0.08 per word, 0.03 per letter): \`{ targets: "caption", at: 0.3, enter: "slide-up", by: "word" }\`. Words suit headlines; letters suit short labels and numbers. Keep the whole reveal under about 1.5 s.
+- **Timing**: \`at\` (seconds), \`duration\` (default 0.6), \`ease\`: ease-out (default), ease-in, ease-in-out, linear, back-out (a little overshoot), spring, bounce.
+- **Pacing that works**: open on the backdrop; headline in by 0.3–0.6 s; the hero device 0.4–0.8 s later (zoom or slide-up, 0.7–0.9 s, back-out for energy or ease-out for calm); supporting devices, call-outs and shapes after, 0.3–0.6 s apart. One idea per beat, nothing moving while the viewer should be reading, and leave a second at the end. Draw an arrow by animating its \`end\` from its start point; grow a circle around something with \`enter: "zoom"\`.
+- **Look at it.** preview_video returns the video's frames at its key moments (each animation's end, the middle of long ones, the settled end) in about a second, without rendering the video. Check each one: nothing alone on an empty frame, nothing half out of frame, each close-up on its subject. create_video's filmstrip shows the same moments.
+- The video runs long enough for the animations to finish unless \`video.duration\` says otherwise.
+- **Several shots** (create_sequence): one idea a shot, 2 to 4 seconds each, the first shot the strongest (it's the App Store's poster, and what people see before they scroll). Let each shot's animations land in its first second or so, then hold. Transitions: a crossfade by default; a push when one shot follows from the last (the next screen, the next step); a cut for rhythm; through black between chapters; an iris or zoom once, at most. Keep one backdrop family across shots so it feels like one film. preview_sequence shows every shot's key moments before rendering.
+- **Sizes**: an App Store preview is 886×1920 for iPhone, 1200×1600 for iPad, 1920×1080 for Mac, 15 to 30 seconds (\`size: "app-store-iphone"\` and the like follow Apple's rules). Design at the shape you'll use most; \`versions\` makes the rest (9:16 for Reels and TikTok, 4:5 for feeds, 1:1, 16:9). A hand-placed design fits whole into another shape; an automatic layout is laid out again.
+
+## 13. Sets
 
 - **Arc**: 1 hero (the main outcome, plus any real proof) → 2 what makes it different → 3–N one feature each, most important first → last: everything else (a mosaic with layout "grid", or a short feature list).
 - **Consistent**: the same fonts, palette, backdrop family and device finish across the set; vary layout and composition.
 - A backdrop or a device can cross from one image into the next for a panorama, but every image must still work alone.
 
-## 13. Check your work
+## 14. Check your work
 
 Before you call it done, look at the render and fix anything that fails:
 - Headline readable at thumbnail size? Not touching the device? No orphan words? At most three lines?
@@ -172,7 +194,7 @@ Before you call it done, look at the render and fix anything that fails:
 - Did you keep what the person asked to keep, and follow the house style?
 - Nothing invented: no fake ratings, awards, quotes or UI.
 
-## 14. Turning vague requests into settings
+## 15. Turning vague requests into settings
 
 - **"Make it pop" / "more striking"**: bigger device (bleed), bolder headline (weight 700–800, larger), one saturated accent, a stronger backdrop (colour block or a photo), a callout on the key element.
 - **"More premium" / "more Apple"**: fewer elements, more space, a neutral or dark studio backdrop, grain 0.1, a silver or black device, serif-italic or tight-sans type, a studio shadow, no clutter.

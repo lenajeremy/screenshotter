@@ -430,6 +430,7 @@ import WebKit
         ])
         _ = submenu("View", [
             item("Edit", "canvas", "1"),
+            item("Animate", "animate", "3"),
             item("Preview", "showPreview", "2"),
             item("Update Preview", "preview", "r"),
             .separator(),

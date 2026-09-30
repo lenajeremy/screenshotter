@@ -1,10 +1,13 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { createContext } from "preact";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ColorPicker, Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
+import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
+import { textPieces, unitMode } from "./animate.js";
 import { S, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode, togglePanel } from "./actions.js";
+import { addDevice, closeStills, deleteEntity, duplicateEntity, goToShot, moveZ, openAI, openStills, recordingFor, replaceMode, togglePanel } from "./actions.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
 export const canvasApi = { fit: () => {}, zoomBy: () => {}, zoomTo: () => {}, editText: () => {} };
@@ -84,9 +87,10 @@ function Backdrop({ bg, W, H }) {
   const key = JSON.stringify(bg ?? null);
   const [ready, setReady] = useState(null);
   const still = needsStill(bg, looks) ? `/api/bg-preview?bg=${encodeURIComponent(key)}&w=${Math.round(Math.min(720, W / 3))}&h=${Math.round((Math.min(720, W / 3) * H) / W)}` : null;
-  return html`<div class="bg" style=${{ background: guess }}>
+  // The backdrop's own move (Animate) turns and scales the inner layer; the camera moves the outer.
+  return html`<div class="bg"><div class="bg-move" style=${{ background: guess }}>
     ${still && html`<img key=${still} src=${still} style=${{ opacity: ready === still ? 1 : 0, transition: "opacity .35s" }} onLoad=${() => setReady(still)} onError=${() => setReady(null)} />`}
-  </div>`;
+  </div></div>`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -125,26 +129,64 @@ function useSceneFonts(scene) {
   }
 }
 
+const accentStyle = (accent) => ({
+  ...(accent.color
+    ? /gradient\(/.test(accent.color)
+      ? { backgroundImage: accent.color, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }
+      : { color: accent.color }
+    : {}),
+  fontFamily: stackFor(accent.font),
+  fontWeight: accent.weight,
+  fontStyle: accent.italic ? "italic" : undefined,
+});
+
+/** Text cut into words or letters (.u), like the video renderer, so Animate can move each one. */
+function richUnits(text, accent, by) {
+  const plain = !accent.color && !accent.font && accent.weight === undefined && !accent.italic;
+  const wrap = (nodes, on, seg) => (!on ? nodes : plain ? html`<strong>${nodes}</strong>` : html`<span class="accent" data-acc=${seg} style=${accentStyle(accent)}>${nodes}</span>`);
+  const pieces = textPieces(text, by);
+  const out = [];
+  for (let i = 0; i < pieces.length; ) {
+    const p = pieces[i];
+    if (p.kind === "break") {
+      out.push(html`<br />`);
+      i++;
+    } else if (p.kind === "space") {
+      out.push(" ");
+      i++;
+    } else {
+      // One word (.uw keeps it on one line): its pieces, accented runs wrapped in the accent.
+      const word = [];
+      while (i < pieces.length && pieces[i].kind === "unit" && pieces[i].w === p.w) {
+        const accented = pieces[i].accent;
+        const run = [];
+        while (i < pieces.length && pieces[i].kind === "unit" && pieces[i].w === p.w && pieces[i].accent === accented) run.push(html`<span class="u">${pieces[i++].text}</span>`);
+        word.push(wrap(run, accented, pieces[i - 1].seg));
+      }
+      out.push(html`<span class="uw">${word}</span>`);
+    }
+  }
+  return out;
+}
+
 /** **accent** spans like the renderer: accent colour (or gradient), font, weight and italic; just bold without any. */
-const rich = (text, accent = {}) =>
+const rich = (text, accent = {}, by) =>
+  by ? richUnits(text, accent, by) :
   String(text ?? "")
     .replace(/(\\n|\n|\s)+$/, "")
     .split(/\*\*(.+?)\*\*/g)
     .map((part, i) => {
       if (i % 2 === 0) return part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
       if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${part}</strong>`;
-      const style = {
-        ...(accent.color
-          ? /gradient\(/.test(accent.color)
-            ? { backgroundImage: accent.color, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }
-            : { color: accent.color }
-          : {}),
-        fontFamily: stackFor(accent.font),
-        fontWeight: accent.weight,
-        fontStyle: accent.italic ? "italic" : undefined,
-      };
-      return html`<span style=${style}>${part}</span>`;
+      return html`<span style=${accentStyle(accent)}>${part}</span>`;
     });
+
+/**
+ * The shot a canvas item belongs to: the one being edited (the store's), or another shot of the
+ * video drawn read-only behind it (for playing through the whole video).
+ */
+const ShotCtx = createContext(null);
+const useShot = () => useContext(ShotCtx) ?? { scene: S.scene, layout: S.layout, ghost: false };
 
 function place(e, W, H) {
   if (e.kind === "shape") return placeShape(e, W, H);
@@ -175,7 +217,8 @@ function DeviceEnt({ e, W, H }) {
   const s = e.screen ?? { x: 0, y: 0, width: 1, height: 1, radius: 0.1 };
   const bw = e.width * W;
   const frame = e.frame ?? "device";
-  const dev = S.scene.devices?.[e.index] ?? {};
+  const { scene, layout, ghost } = useShot();
+  const dev = scene.devices?.[e.index] ?? {};
   const bar = dev.chrome === "dark" ? "#2a2a2f" : "#e9e9ec";
   const body = frame === "device" ? e.color || "#1d1d1f" : frame === "browser" || frame === "window" ? bar : "transparent";
   const screen = { left: s.x * 100 + "%", top: s.y * 100 + "%", width: s.width * 100 + "%", height: s.height * 100 + "%", borderRadius: Math.max(0, (s.radius - s.x) * bw) + "px" };
@@ -187,9 +230,9 @@ function DeviceEnt({ e, W, H }) {
     const bar = s.height * e.menuBar;
     Object.assign(screen, { top: (s.y + bar) * 100 + "%", height: (s.height - bar) * 100 + "%", objectPosition: "top", borderRadius: 0 });
   }
-  const tags = [dev.video && "▶ Recording", (Math.abs(e.rotateX || 0) > 0.5 || Math.abs(e.rotateY || 0) > 0.5) && "3D tilt applied on render"].filter(Boolean);
+  const tags = [dev.video && (S.stillPick?.id === e.id ? "Still" : "▶ Recording"), (Math.abs(e.rotateX || 0) > 0.5 || Math.abs(e.rotateY || 0) > 0.5) && "3D tilt applied on render"].filter(Boolean);
   // Soft focus and fade, like the render: blur is a fraction of canvas width (or canvas px).
-  const cw = S.layout?.canvas.width || W;
+  const cw = layout?.canvas.width || W;
   const blur = dev.blur ? (dev.blur <= 0.5 ? dev.blur * W : (dev.blur * W) / cw) : 0;
   const fade = dev.fade ? (typeof dev.fade === "number" ? { edge: "bottom", extent: dev.fade } : { edge: "bottom", extent: 0.4, ...dev.fade }) : null;
   const mask = fade && `linear-gradient(to ${fade.edge}, #000 ${(1 - fade.extent) * 100}%, rgba(0,0,0,.55) ${(1 - fade.extent * 0.55) * 100}%, transparent 100%)`;
@@ -198,18 +241,29 @@ function DeviceEnt({ e, W, H }) {
   const caseBox = band ? { position: "absolute", left: 0, right: 0, top: band.stub * 100 + "%", bottom: band.stub * 100 + "%", background: body, borderRadius: s.radius * bw + "px" } : null;
   const stub = (top) => ({ position: "absolute", left: (1 - band.width) * 50 + "%", width: band.width * 100 + "%", top: top ? 0 : undefined, bottom: top ? undefined : 0, height: band.stub * 100 + 6 + "%", background: band.color, borderRadius: top ? "8% 8% 0 0 / 20% 20% 0 0" : "0 0 8% 8% / 0 0 20% 20%" });
   // With an installed product bezel, the canvas shows the real art over the screen.
-  return html`<div class="body" style=${{ background: e.bezel || band ? "transparent" : body, borderRadius: s.radius * bw + "px", filter: blur ? `blur(${blur}px)` : undefined, WebkitMaskImage: mask || undefined, maskImage: mask || undefined }}>
+  // A blur the timeline animates comes from --ablur, set as the playhead moves.
+  const filter = blurAnimated(e.id, scene) ? `blur(var(--ablur, ${blur}px))` : blur ? `blur(${blur}px)` : undefined;
+  return html`<div class="body" style=${{ background: e.bezel || band ? "transparent" : body, borderRadius: s.radius * bw + "px", filter, WebkitMaskImage: mask || undefined, maskImage: mask || undefined }}>
     ${band && html`<div style=${stub(true)}></div><div style=${stub(false)}></div><div style=${caseBox}></div>`}
     ${menuStrip && html`<div style=${menuStrip}></div>`}
     <img draggable=${false} src=${thumbUrl(e.screenshot, Math.min(900, Math.max(240, Math.round(bw * s.width * 2))))} style=${screen} />
-    ${dev.video && html`<video key=${dev.video} src=${fileUrl(dev.video)} muted loop autoplay playsinline preload="auto" style=${{ ...screen, objectFit: "cover" }}></video>`}
+    ${dev.video && !ghost && S.stillPick?.id !== e.id && html`<video key=${dev.video} src=${fileUrl(dev.video)} muted loop autoplay playsinline preload="auto" style=${{ ...screen, objectFit: "cover" }}></video>`}
     ${e.bezel && html`<img class="bezel-art" draggable=${false} src=${fileUrl(e.bezel)} />`}
   </div>
   ${tags.length > 0 && html`<span class="tag">${tags.join(" · ")}</span>`}`;
 }
 
+/** A text's soft focus on the canvas, like the render; an animated one comes from --ablur. */
+function textBlur(e, b, H, shot) {
+  const c = shot.layout?.canvas ?? { width: 1, height: 1 };
+  const w = (H * c.width) / c.height;
+  const v = !b ? 0 : b <= 0.5 ? b * w : (b * w) / c.width;
+  return blurAnimated(e.id, shot.scene) ? `blur(var(--ablur, ${v}px))` : v > 0 ? `blur(${v}px)` : undefined;
+}
+
 function TextEnt({ e, H, editing, onDone }) {
-  const scene = S.scene;
+  const shot = useShot();
+  const scene = shot.scene;
   const t = e.kind === "text" ? scene.texts?.[e.index] ?? {} : {};
   const style = scene.textStyle ?? {};
   useSceneFonts(scene);
@@ -222,7 +276,7 @@ function TextEnt({ e, H, editing, onDone }) {
     italic: own.accentItalic ?? style.accentItalic,
   };
   const base = {
-    color: e.color || "#fff",
+    color: `var(--acolor, ${e.color || "#fff"})`,
     fontFamily: e.font || "-apple-system, system-ui, sans-serif",
     fontWeight: e.weight || 700,
     textAlign: e.align || "center",
@@ -230,7 +284,10 @@ function TextEnt({ e, H, editing, onDone }) {
     textTransform: (e.kind === "text" ? t.uppercase : style.uppercase) ? "uppercase" : undefined,
     letterSpacing: (e.kind === "text" ? t.letterSpacing : style.letterSpacing) !== undefined ? `${e.kind === "text" ? t.letterSpacing : style.letterSpacing}em` : undefined,
     opacity: t.opacity,
+    filter: textBlur(e, e.kind === "text" ? t.blur : style.blur, H, shot),
   };
+  // In Animate, text revealed by word or letter is drawn in pieces.
+  const by = S.timelineOpen && !editing ? unitMode(scene.animations, e.id) : undefined;
   const ref = useRef();
   useEffect(() => {
     if (!editing || !ref.current) return;
@@ -260,11 +317,11 @@ function TextEnt({ e, H, editing, onDone }) {
   const editable = (part, text, cls) =>
     editing
       ? html`<div class="editing ${cls}" data-part=${part} contenteditable="plaintext-only" onBlur=${(ev) => finish(ev, part)} onKeyDown=${(ev) => keys(ev, part)}>${text}</div>`
-      : html`<div class=${cls} data-part=${part}>${rich(text, accent)}</div>`;
+      : html`<div class=${cls} data-part=${part}>${rich(text, accent, by)}</div>`;
   if (e.kind === "caption") {
     return html`<div ref=${ref} style=${base}>
       ${(e.text || editing) && editable("headline", e.text ?? "", "h")}
-      ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px", fontFamily: e.subFont, fontWeight: style.subheadlineWeight }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent)}</div>`}
+      ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px", fontFamily: e.subFont, fontWeight: style.subheadlineWeight }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent, by)}</div>`}
     </div>`;
   }
   const pill = t.background ? { display: "inline-block", background: t.background, padding: ".35em .8em", borderRadius: "2em" } : null;
@@ -272,6 +329,108 @@ function TextEnt({ e, H, editing, onDone }) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Other shots of a video, drawn read-only over the canvas while the video plays through them
+
+// Each shot's layout from the engine, remembered by its scene (the newest few).
+const shotLayouts = new Map();
+function useShotLayouts(on) {
+  const s = useStore();
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    let alive = true;
+    (s.shots ?? []).forEach((x, i) => {
+      if (i === s.shot || !x.scene?.devices?.length) return;
+      const key = JSON.stringify(x.scene);
+      if (shotLayouts.has(key)) return;
+      shotLayouts.set(key, null);
+      if (shotLayouts.size > 60) shotLayouts.delete(shotLayouts.keys().next().value);
+      api("/api/layout", x.scene)
+        .then((l) => {
+          shotLayouts.set(key, l);
+          if (alive) bump((n) => n + 1);
+        })
+        .catch(() => shotLayouts.delete(key));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [on, s.shots, s.shot]);
+  return (scene) => shotLayouts.get(JSON.stringify(scene)) ?? null;
+}
+
+/** Another shot, as it looks (fitted into the frame): click it to edit it. */
+function ShotGhost({ index, scene, layout, W, H }) {
+  const gW0 = layout.canvas.width;
+  const gH0 = layout.canvas.height;
+  const k = Math.min(W / gW0, H / gH0);
+  const gw = gW0 * k;
+  const gh = gH0 * k;
+  return html`<div class="ghost-wrap" data-shot=${index} style=${{ width: W + "px", height: H + "px" }} title=${`Shot ${index + 1}: click to edit it`}
+      onPointerDown=${(ev) => {
+        ev.stopPropagation();
+        goToShot(index);
+      }}>
+    <${ShotCtx.Provider} value=${{ scene, layout, ghost: true }}>
+      <div class="artboard ghost" style=${{ width: gw + "px", height: gh + "px", left: (W - gw) / 2 + "px", top: (H - gh) / 2 + "px" }}>
+        <${Backdrop} bg=${scene.background} W=${gW0} H=${gH0} />
+        ${scene.menuBar && html`<${SceneMenuBar} bar=${scene.menuBar} H=${gh} />`}
+        ${layout.entities.map(
+          (e) => html`<div key=${e.id} class="ent ent-${e.kind}" data-id=${e.id} style=${place(e, gw, gh)}>
+            ${e.kind === "shape" ? html`<${ShapeEnt} e=${e} W=${gw} H=${gh} />` : e.kind === "device" ? html`<${DeviceEnt} e=${e} W=${gw} H=${gh} />` : html`<${TextEnt} e=${e} H=${gh} editing=${null} onDone=${() => undefined} />`}
+          </div>`,
+        )}
+      </div>
+    <//>
+  </div>`;
+}
+
+const JOIN_PROPS = ["transform", "opacity", "clipPath", "filter", "maskImage", "webkitMaskImage", "visibility", "zIndex"];
+
+/**
+ * Show what's on screen at the video's time T: the shot being edited, another shot, or two part
+ * way through the transition between them, each at its own moment of its own timeline.
+ */
+function composite(world, art, T, plan, ghosts) {
+  if (!world || !art) return;
+  const els = new Map([[S.shot, art]]);
+  world.querySelectorAll(":scope > .ghost-wrap").forEach((g) => els.set(Number(g.dataset.shot), g));
+  for (const el of els.values()) for (const k of JOIN_PROPS) el.style[k] = "";
+  for (const el of els.values()) if (el !== art) el.style.visibility = "hidden";
+  const matte = world.querySelector(":scope > .join-matte");
+  const frameClip = world.querySelector(":scope > .frame-clip");
+  const ownClip = art.querySelector(":scope > .clip");
+  const vis = shotsAt(plan, T);
+  const show = (i, style, z) => {
+    const el = els.get(i);
+    if (!el) return;
+    el.style.visibility = "visible";
+    el.style.zIndex = z;
+    for (const [k, v] of Object.entries(style)) el.style[k] = v;
+    if (style.maskImage) el.style.webkitMaskImage = style.maskImage;
+    if (el !== art) {
+      const g = ghosts.get(i);
+      if (g) applyPreview(el.querySelector(".artboard"), true, Math.max(0, T - plan.starts[i]), { scene: g.scene, layout: g.layout, held: false });
+    }
+  };
+  // The shot being edited is hidden while another is on screen.
+  if (vis.only !== undefined ? vis.only !== S.shot : vis.in !== S.shot && vis.out !== S.shot) art.style.visibility = "hidden";
+  const joining = vis.only === undefined;
+  if (!joining) show(vis.only, {}, 2);
+  else {
+    const st = joinStyles(vis.type, vis.p, art.offsetWidth, art.offsetHeight);
+    show(vis.out, st.out, 1);
+    show(vis.in, st.in, 2);
+    if (matte) {
+      matte.style.visibility = st.matte ? "visible" : "hidden";
+      matte.style.background = st.matte ?? "";
+    }
+  }
+  if (!joining && matte) matte.style.visibility = "hidden";
+  // Mid-transition, one dim over the frame for both shots (the design's own would darken the other).
+  if (ownClip) ownClip.style.visibility = joining ? "hidden" : "";
+  if (frameClip) frameClip.style.visibility = joining ? "visible" : "hidden";
+}
 
 export function CanvasView() {
   const s = useStore();
@@ -301,7 +460,8 @@ export function CanvasView() {
   const W0 = layout?.canvas.width ?? 1320;
   const H0 = layout?.canvas.height ?? 2868;
   // While a first-steps card sits at the bottom, the design fits in the room above it.
-  const bottom = s.guide === "design" ? Math.min(size.h * 0.46, 290) : s.guide ? 210 : BOTTOM;
+  // The timeline as tall as it's been dragged (else the usual), with a gap above it.
+  const bottom = s.timelineOpen ? Math.max(0, Math.min(s.tlH ?? Math.min(size.h * 0.44, 270), size.h - 150)) + 30 : s.guide === "design" || s.stillPick ? Math.min(size.h * 0.46, 290) : s.guide ? 210 : BOTTOM;
   const fitS = Math.max(0.02, Math.min((size.w - PAD * 2) / W0, (size.h - TOP - bottom) / H0));
   const scale = view.zoom ?? fitS;
   const W = W0 * scale;
@@ -393,10 +553,26 @@ export function CanvasView() {
     };
   }, []);
 
+  // A video of several shots in Animate: the other shots, ready to show as the video plays.
+  const multi = s.timelineOpen && manyShots();
+  const layoutOf = useShotLayouts(multi);
+  const world = useRef();
+  const ghosts = new Map();
+  if (multi && layout) {
+    s.shots.forEach((x, i) => {
+      if (i === s.shot) return;
+      const l = layoutOf(x.scene);
+      if (l) ghosts.set(i, { scene: x.scene, layout: l });
+    });
+  }
+  const ghostsRef = useRef(ghosts);
+  ghostsRef.current = ghosts;
+
   const entities = useMemo(() => {
     if (!layout) return [];
-    return layout.entities.map((e) => (live && live.e.id === e.id ? live.e : pending.current?.id === e.id ? pending.current : e));
-  }, [layout, live]);
+    // With a Change selected in the timeline, its items are drawn as they end up (afterEntity).
+    return layout.entities.map((e) => (live && live.e.id === e.id ? live.e : pending.current?.id === e.id ? pending.current : afterEntity(e, withShape)));
+  }, [layout, live, s.timelineOpen, s.animSel, s.scene.animations]);
 
   // ------------------------------------------------------------------ interactions
 
@@ -648,21 +824,37 @@ export function CanvasView() {
   // Text boxes are measured from the DOM, so paint once more after they render.
   const [, remeasure] = useState(0);
   useLayoutEffect(() => remeasure((n) => n + 1), [s.selected, layout, W, H, s.hover]);
+  // Animate: the canvas shows the design at the playhead (and as designed everywhere else).
+  useLayoutEffect(() => applyPreview(art.current, S.timelineOpen, playhead.t));
+  useEffect(() => onPlayhead((t) => applyPreview(art.current, S.timelineOpen, t)), []);
+  // Playing through a video of several shots: show what's on screen at the video's time.
+  useLayoutEffect(() => {
+    if (multi) composite(world.current, art.current, video.T, videoPlan(), ghostsRef.current);
+    else if (art.current) {
+      for (const k of JOIN_PROPS) art.current.style[k] = "";
+      const own = art.current.querySelector(":scope > .clip");
+      if (own) own.style.visibility = "";
+    }
+  });
+  useEffect(() => onVideoTime((T, plan) => S.timelineOpen && manyShots() && composite(world.current, art.current, T, plan, ghostsRef.current)), []);
 
   return html`<div class="viewport ${space ? "space" : ""}" ref=${vp} onPointerDown=${onPointerDown} onDblClick=${onDblClick}
       onPointerMove=${(e) => {
-        const id = e.target.closest?.(".ent")?.dataset.id ?? null;
+        const id = e.target.closest?.(".ghost-wrap") ? null : (e.target.closest?.(".ent")?.dataset.id ?? null);
         if (id !== S.hover) set({ hover: id });
       }}
       onPointerLeave=${() => S.hover && set({ hover: null })}
       onDragOver=${onDragOver} onDragLeave=${() => setDropOver(false)} onDrop=${onDrop}>
     <div class="dots" style=${{ "--dot": 22 * Math.max(0.5, Math.min(2, scale / fitS)) + "px", "--dot-x": ox + "px", "--dot-y": oy + "px" }}></div>
     ${layout &&
-    html`<div class="world" style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
+    html`<div class="world" ref=${world} style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
+      ${multi && html`<div class="join-matte" style=${{ width: W + "px", height: H + "px" }}></div>`}
+      ${multi && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`g${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} />`)}
+      ${multi && html`<div class="frame-clip" style=${{ width: W + "px", height: H + "px" }}></div>`}
       <div class="artboard-label" style=${{ top: H + 12 + "px" }}><button class="size-btn" title="Change the image size" onPointerDown=${(e) => e.stopPropagation()} onClick=${() => {
         set({ selected: null, rightOpen: true });
         persistPrefs();
-      }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><${Icon} n="down" s=${11} /></button><span class="faint">· Edit view shows placement. Preview shows the finished look.</span></div>
+      }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><${Icon} n="down" s=${11} /></button><span class="faint">${s.shots?.length > 1 ? html`· <b class="shot-of">Shot ${s.shot + 1} of ${s.shots.length}</b> ` : ""}· Edit view shows placement. Preview shows the finished look.</span></div>
       <div class="artboard ${dropOver ? "drop-over" : ""} ${s.ai.busy || s.designing ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px" }}>
         <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} />
         ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
@@ -676,6 +868,7 @@ export function CanvasView() {
           </div>`,
         )}
         <div class="clip"></div>
+        ${s.timelineOpen && html`<${Viewfinder} /><${MotionPathOverlay} />`}
         ${guides.map((g) => (g.v !== undefined ? html`<div class="guide v" style=${{ left: g.v * W + "px", top: -4000 + "px", height: 8000 + "px" }}></div>` : html`<div class="guide h" style=${{ top: g.h * H + "px", left: -4000 + "px", width: 8000 + "px" }}></div>`))}
         ${hovBox && !live && html`<div class="hover-box" style=${hovBox}></div>`}
         ${sel?.kind === "shape" && isLine(sel.shape.type) && html`<${LineHandles} sh=${sel.shape} W=${W} H=${H} dims=${dims} />`}
@@ -690,7 +883,7 @@ export function CanvasView() {
         </div>`}
       </div>
     </div>`}
-    ${sel && selBox && !live && !editing && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
+    ${sel && selBox && !live && !editing && !s.timelineOpen && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>
@@ -751,6 +944,8 @@ function dimsText(e, mode, W0, H0) {
 
 /** Write an entity's canvas position back into the scene. */
 function commit(e) {
+  // Animate, with a Change selected: the drag sets what the animation changes it to.
+  if (commitKeyframe(e)) return;
   touch("moved");
   edit((d) => {
     if (e.kind === "device") {
@@ -890,6 +1085,7 @@ function ContextBar({ sel, box, vp }) {
     <span class="sep"></span>
     ${text && html`<button class="btn" title="Change the words (double-click, or ↩)" onClick=${() => canvasApi.editText(sel.id)}><${Icon} n="text" s=${14} />Edit</button>`}
     ${sel.kind === "device" && html`<button class="btn" title="Use a different screenshot in this device" onClick=${() => replaceMode(sel.id)}><${Icon} n="replace" s=${14} />Replace</button>`}
+    ${sel.kind === "device" && S.scene.devices[sel.index]?.video && html`<button class="btn ${S.stillPick?.id === sel.id ? "on" : ""}" title="Choose the moment of the recording this device shows in images" onClick=${() => (S.stillPick?.id === sel.id ? closeStills() : openStills(sel.id))}><${Icon} n="image" s=${14} />Still</button>`}
     ${colours.map(
       (c) => html`<button key=${c.key} class="qc ${c.ring ? "ring" : ""} ${off(c.value) ? "off" : ""} ${pick?.key === c.key ? "on" : ""}" title=${c.label} data-colour=${c.key}
         onClick=${() => setPick(pick?.key === c.key ? null : { key: c.key })}>

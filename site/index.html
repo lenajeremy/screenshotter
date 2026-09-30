@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Screenshotter: App Store screenshots from your real app</title>
-<meta name="description" content="Store-ready screenshots and launch images from your real app, in minutes. One click, a sentence to Claude, or your coding agent does the whole set.">
+<meta name="description" content="Store-ready screenshots, App Store preview videos and launch images from your real app, in minutes. One click, a sentence to Claude, or your coding agent does the whole set.">
 <meta name="theme-color" content="#070708">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -485,6 +485,28 @@ footer a:hover { color: var(--text); }
   .chip.c3 { display: none; }
   .chip.c4 { display: inline-flex; right: 0; bottom: 7%; }
 }
+/* ============================================================ motion (Animate) */
+.motion { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr); gap: 48px; align-items: center; margin-top: 52px; }
+.motion-reel { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.motion-reel video { display: block; width: min(100%, 360px); aspect-ratio: 9 / 16; border-radius: 26px; background: #111; box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.95), 0 0 0 1px var(--line), 0 0 80px -20px rgba(124, 207, 157, 0.18); }
+.motion-reel figcaption { font-size: 13px; color: var(--text-3); text-align: center; max-width: 30em; }
+.motion-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px 30px; }
+.motion-list li { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+.motion-list .ic { flex: none; width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: var(--lime); background: rgba(210, 255, 77, 0.07); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.16); }
+.motion-list b { display: block; font: 600 16px var(--sans); letter-spacing: -0.01em; color: var(--text); margin: 7px 0 4px; }
+.motion-list p { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--text-3); }
+.motion-ui { margin: 64px 0 0; display: flex; flex-direction: column; gap: 14px; }
+.motion-ui img { display: block; width: 100%; height: auto; border-radius: 18px; box-shadow: 0 50px 120px -40px rgba(0, 0, 0, 0.95), 0 0 0 1px var(--line); }
+.motion-ui figcaption { font-size: 13.5px; color: var(--text-3); text-align: center; }
+@media (max-width: 980px) {
+  .motion { grid-template-columns: 1fr; gap: 40px; }
+  .motion-reel video { width: min(100%, 320px); }
+}
+@media (max-width: 560px) {
+  .motion-list { grid-template-columns: 1fr; gap: 20px; }
+  .motion-ui { margin-top: 44px; }
+  .motion-ui img { border-radius: 12px; }
+}
 </style>
 </head>
 <body>
@@ -495,6 +517,7 @@ footer a:hover { color: var(--text); }
     <a class="brand" href="#top"><img src="assets/icon.svg" alt="">Screenshotter</a>
     <nav class="links" aria-label="Sections">
       <a href="#how">How it works</a>
+      <a href="#motion">Animate</a>
       <a href="#ways">Ways to work</a>
       <a href="#agent">For agents</a>
       <a href="features.html">All features</a>
@@ -511,12 +534,12 @@ footer a:hover { color: var(--text); }
 <section class="hero">
   <div class="wrap">
     <div class="hero-copy">
-      <a class="pill" href="changelog.html"><b>✦ New in 0.3</b><span class="long">Shapes, a Scenes page and one-click designs</span><span class="short">Shapes and one-click designs</span><span aria-hidden="true">→</span></a>
+      <a class="pill" href="#motion"><b>✦ New in 0.5</b><span class="long">Animate: motion, shots and App Store preview videos</span><span class="short">Motion and preview videos</span><span aria-hidden="true">→</span></a>
       <h1 aria-label="Make your app look incredible.">
         <span class="w" style="--i:0">Make</span> <span class="w" style="--i:1">your</span> <span class="w" style="--i:2">app</span> <span class="w" style="--i:3">look</span>
         <span class="line2"><span class="w grad" style="--i:4">incredible.</span></span>
       </h1>
-      <p class="lede">Store-ready screenshots and launch images from your real app, in minutes instead of an afternoon in Figma. One click, a sentence to Claude, or your coding agent does the whole set.</p>
+      <p class="lede">Store-ready screenshots, App Store preview videos and launch images from your real app, in minutes instead of an afternoon in Figma. One click, a sentence to Claude, or your coding agent does the whole set.</p>
       <div class="ctas">
         <a class="btn primary lg" href="#download" data-download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
@@ -564,8 +587,39 @@ footer a:hover { color: var(--text); }
     <ul class="proof reveal">
       <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Real captures</b> from the iOS Simulator, a website or your Mac</span></li>
       <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Every App Store size</b> for iPhone, iPad, Watch and Mac</span></li>
-      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Images and video</b>, ready to upload</span></li>
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Images and preview videos</b>, ready to upload</span></li>
     </ul>
+  </div>
+</section>
+
+<!-- ============================================================ motion -->
+<section class="pad" id="motion" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><i></i>New in 0.5 · Animate</span>
+      <h2 class="h2">Now it <span class="ital grad">moves.</span></h2>
+      <p class="lede">Turn the same designs into an App Store preview or a launch video. Choose when everything arrives, move the camera, put shots one after another, and export at Apple’s preview sizes.</p>
+    </div>
+    <div class="motion">
+      <figure class="motion-reel reveal-scale">
+        <video src="assets/motion-reel.mp4" poster="assets/motion-reel.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A ten-second preview video of a recipe app in three shots: the headline comes into focus word by word, a push to the next screen, a loupe on the cooking time, then an iris into a tilted phone with a hand-drawn circle"></video>
+        <figcaption>Three shots, made in Animate. Not a frame of it was edited by hand.</figcaption>
+      </figure>
+      <ul class="motion-list">
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18M3 12h12M3 17h7"/><circle cx="18" cy="15.5" r="3"/></svg></span><div><b>A timeline for everything</b><p>Devices, text and shapes fade, zoom, blur or slide in, change part way through and leave, when you say.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></svg></span><div><b>Camera moves</b><p>Push in on a detail, glide to the next one, then pull back to the whole design.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h7M4 12h11M4 17h5"/><path d="M18 14l2 2-2 2" opacity=".6"/></svg></span><div><b>Words that arrive</b><p>Headlines land a word or a letter at a time, coming into focus as they do.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16c3-8 6-8 8-4s5 4 8-4"/><circle cx="4" cy="16" r="1.5"/><circle cx="20" cy="8" r="1.5"/></svg></span><div><b>Loops and curves</b><p>Float, pulse, spin or orbit for the whole video, or travel along a curve you draw.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></span><div><b>Call-outs on cue</b><p>Each lift, loupe or circle appears exactly when the story gets to it.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 15l3-3 2 2 3-4"/></svg></span><div><b>Backdrops that breathe</b><p>A slow push into a photo, a drift, a shift in colour, or a rack of focus.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="8" height="12" rx="1.5"/><rect x="13.5" y="6" width="8" height="12" rx="1.5"/><path d="M10.5 12h3"/></svg></span><div><b>Shots and transitions</b><p>Several designs, one after another, joined by a push, a wipe, an iris or a crossfade. Play it all before you export.</p></div></li>
+        <li class="reveal"><span class="ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg></span><div><b>App Store preview videos</b><p>Apple’s preview sizes for iPhone, iPad and Mac, 15 to 30 seconds, ready to upload. Plus 9:16, 4:5, 1:1 and 16:9 in one go.</p></div></li>
+      </ul>
+    </div>
+    <figure class="motion-ui reveal-scale">
+      <img src="assets/ui-animate.webp" alt="The Studio in Animate: the video's three shots across the top of the timeline, a row each for the camera, backdrop, headline and phone, and the headline's word-by-word blur being edited on the right" width="2880" height="1800" loading="lazy">
+      <figcaption>Animate in the Studio: the video's shots across the top, a row for each thing below, and the canvas plays the whole video, transitions included.</figcaption>
+    </figure>
   </div>
 </section>
 
@@ -587,7 +641,7 @@ footer a:hover { color: var(--text); }
       <article class="way reveal">
         <span class="tag">Ask AI</span>
         <h3>Say what you want</h3>
-        <p>“Tilt the phone, put it on a dinner table and make ‘both hands’ green.” Claude designs it, checks its own render, and every change is one undo away.</p>
+        <p>“Tilt the phone, put it on a dinner table and make ‘both hands’ green.” Claude designs it, checks its own render, and every change is one undo away. It animates too, across every shot of a video.</p>
         <div class="way-art pair">
           <img class="after" src="assets/ai-after.webp" alt="After: the phone tilted over a dinner table, with two words in green" width="720" height="900" loading="lazy">
           <img class="before" src="assets/ai-before.webp" alt="Before: the same phone upright on a plain backdrop" width="720" height="900" loading="lazy">
@@ -617,7 +671,7 @@ footer a:hover { color: var(--text); }
           </div>
         </div>
         <div class="oneline"><code>claude mcp add screenshotter -- node /path/to/screenshotter/dist/index.js</code><button class="copy" data-copy="claude mcp add screenshotter --scope user -- node /path/to/screenshotter/dist/index.js">Copy</button></div>
-        <a class="go" href="features.html#mcp">Codex, OpenCode and all 24 tools <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="go" href="features.html#mcp">Codex, OpenCode and all 27 tools <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
       </article>
     </div>
   </div>
@@ -660,7 +714,7 @@ footer a:hover { color: var(--text); }
       </article>
       <article class="tile span-2 reveal">
         <h3>Video, not just stills</h3>
-        <p>Play a real recording inside the frame, with gentle camera moves and zooms that follow the action.</p>
+        <p>Play a real recording inside the frame, move the camera, and export at every App Store preview size.</p>
         <div class="cycle"><video src="assets/video-drift.mp4" poster="assets/video-drift.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A phone drifting gently over a dinner table"></video></div>
       </article>
       <article class="tile span-2 reveal">
@@ -689,7 +743,7 @@ footer a:hover { color: var(--text); }
   <div class="glow" aria-hidden="true"></div>
   <div class="wrap">
     <div class="reveal">
-      <h2>Ship screenshots<br>you're <span class="ital grad">proud of.</span></h2>
+      <h2>Ship screenshots<br>and videos you're <span class="ital grad">proud of.</span></h2>
       <div class="ctas">
         <a class="btn primary lg" href="downloads/Screenshotter.dmg" data-download-file>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
@@ -697,7 +751,7 @@ footer a:hover { color: var(--text); }
         </a>
         <a class="btn ghost lg" href="#agent">Add it to your agent</a>
       </div>
-      <p class="dl-meta">Version 0.3.0 · <a href="changelog.html">What's new</a> · 30 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
+      <p class="dl-meta">Version 0.5.0 · <a href="changelog.html">What's new</a> · 28 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
     </div>
     <div class="how">
       <ol>

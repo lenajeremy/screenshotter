@@ -45,6 +45,8 @@ export interface ShapeSpec {
   seed: number;
   opacity: number;
   shadow: boolean;
+  /** Soft focus: a fraction of the canvas width up to 0.5, or px. */
+  blur: number;
 }
 
 /** What each type looks like when nothing is said: red marks for pointing, warm fills for decoration. */
@@ -94,6 +96,7 @@ export function shapeSpec(input: Loose, index = 0): ShapeSpec {
     seed: pick("seed", index + 1),
     opacity: pick("opacity", 1),
     shadow: pick("shadow", false),
+    blur: Math.max(0, pick("blur", 0)),
   };
 }
 
@@ -224,7 +227,8 @@ export function renderShape(s: ShapeSpec, W: number, H: number, opts: { hit?: nu
   const stroke = s.stroke !== "none" && sw > 0;
   const fill = s.fill !== "none";
   const strokeAttrs = stroke ? `stroke="${esc(s.stroke)}" stroke-width="${f(sw)}" stroke-linecap="round" stroke-linejoin="round"${dashAttr(s, sw)}` : `stroke="none"`;
-  const filter = s.shadow ? `drop-shadow(0 ${f(H * 0.004)}px ${f(H * 0.01)}px rgba(0,0,0,0.35))` : undefined;
+  const soft = !s.blur ? 0 : s.blur <= 0.5 ? s.blur * W : s.blur;
+  const filter = [s.shadow ? `drop-shadow(0 ${f(H * 0.004)}px ${f(H * 0.01)}px rgba(0,0,0,0.35))` : "", soft > 0.05 ? `blur(${f(soft)}px)` : ""].filter(Boolean).join(" ") || undefined;
   const hitPath = (d: string, closedFill = false) =>
     opts.hit ? `<path class="hit" d="${d}" fill="${closedFill ? "transparent" : "none"}" stroke="transparent" stroke-width="${f(Math.max(opts.hit, sw))}" pointer-events="${closedFill ? "all" : "stroke"}"/>` : "";
   let body = "";
@@ -346,8 +350,8 @@ export function renderShape(s: ShapeSpec, W: number, H: number, opts: { hit?: nu
   return { left: s.x * W - w / 2, top: s.y * H - h / 2, width: w, height: h, rotate: s.rotate, filter, svg };
 }
 
-/** The shape as an absolutely positioned element of a W×H page. */
-export function shapeHtml(s: ShapeSpec, W: number, H: number, z: number): string {
+/** The shape as an absolutely positioned element of a W×H page (`id` marks it for animation). */
+export function shapeHtml(s: ShapeSpec, W: number, H: number, z: number, id?: string): string {
   const r = renderShape(s, W, H);
   const style = [
     "position:absolute",
@@ -362,5 +366,5 @@ export function shapeHtml(s: ShapeSpec, W: number, H: number, z: number): string
   ]
     .filter(Boolean)
     .join(";");
-  return `<div class="shape" style="${style}">${r.svg}</div>`;
+  return `<div class="shape"${id ? ` data-ent="${esc(id)}"` : ""} style="${style}">${r.svg}</div>`;
 }

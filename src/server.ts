@@ -25,10 +25,11 @@ import { LOOKS } from "./render/looks.js";
 import { GRADES } from "./render/schema.js";
 import { readSidecar, resolveDevice } from "./devices/resolve.js";
 import { recordSimulator } from "./simulator/record.js";
-import { createVideo, VideoInputShape } from "./render/video.js";
+import { createVideo, storyboard, VideoInputShape } from "./render/video.js";
+import { createSequence, sequenceStoryboard, SequenceInputShape, TRANSITIONS } from "./render/sequence.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
@@ -43,9 +44,11 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 - Effects: film grain, vignette, edge blur, colour grade. Shadows: soft/medium/strong/studio. Per device: \`blur\` (soft focus behind a sharp hero device) and \`fade\` (dissolve into the backdrop).
 - Highlights call out UI: lift a row (\`breakout\` makes a card wider than the device), loupe (can sit beside the device), outline, spotlight, blur-rest, blur (hide something private), highlighter, numbered step markers and curved arrows. Target by visible text (on-device OCR) or a rect; find_text lists the text boxes.
 - Shapes: arrows, lines, circles, boxes, triangles, stars and number badges drawn over the scene, each with a fill and a stroke, clean or hand-drawn (sketch). Aim one at text on a screen with \`around\` (an ellipse goes around it, a badge beside it, an arrow to its edge), or place it freely with x/y, or from/to.
+- Animation: a scene's \`animations\` time each item's entrance, changes and exit in a video (create_video): \`{ targets: "caption", at: 0.5, enter: "slide-up" }\`, \`{ targets: ["device-1", "device-2"], at: 2, enter: "zoom", ease: "back-out" }\` (a group, zooming from its shared centre), \`{ targets: "shape-1", at: 3.5, to: { fill: "#ff3b30", scale: 1.3 } }\`, \`{ targets: "shape-2", at: 4, to: { end: { x: 0.6, y: 0.4 }, bend: 0.4 } }\` (an arrow's end and curve), \`{ targets: "camera", at: 5, to: { zoom: 2.5, x: 0.8, y: 0.6 } }\` (the camera pushes in on a point; \`zoom: 1\` pulls back), \`{ targets: "caption", at: 0.3, enter: "blur", by: "word" }\` (text a word or letter at a time, here coming into focus), \`{ targets: "shape-1", at: 0, duration: 3, path: { shape: "circle", size: 0.03 }, repeat: true }\` (a loop round a circle for the whole video; \`path: { points: [...] }\` is a route of your own), \`{ targets: "device-1", at: 1, duration: 1.6, to: { dy: -0.015 }, repeat: true, yoyo: true }\` (a float), \`{ targets: "backdrop", at: 0, duration: 6, to: { zoom: 1.15, hue: 30 } }\` (only the backdrop pushes in and shifts colour). Anything can blur (\`blur\` on texts, shapes, devices, textStyle; animate \`to: { blur }\`). Item ids come from layout_mockup. The design guide has the pacing. preview_video shows the frames at the key moments in a second or so: check the timing there before create_video.
 - Studio scenes: list_scenes and get_scene open the designs the person saved in the Studio; save_scene puts a design into it (a new scene by default; replace an existing one only when asked). Every element stays editable there.
 - Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic), fonts from Google Fonts, top/bottom/left/right.
 - Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
+- Several shots in one video: create_sequence joins scenes (each with its own animations and length) with transitions (cut, crossfade, fade through black, push, wipe, iris, zoom, blur). preview_sequence shows its key moments first. For the App Store, \`size: "app-store-iphone"\` (or app-store-ipad, app-store-mac) follows Apple's app preview rules (15–30 s, 30 fps, H.264, a stereo track); \`versions\` on create_video or create_sequence also makes vertical, square, 4:5, widescreen or App Store copies, each design fitted (or laid out again) for that shape.
 - Layouts include grid (a mosaic of screens). \`camera\` zooms the scene in on a point for a crisp close-up.
 - Recipes: apply_recipe builds a complete, proven design (bold hero, art director, gallery painting, risograph, 3D tilt, depth of field, rising pair, staircase, mosaic, feature call-out, how-to, dissolve) from your screenshots: a strong start to refine.
 - Finished images: crop_image crops or zooms into part of any image; create_grid lays images out as a contact sheet or mosaic. Use a grid to compare variants side by side, and a crop to check small details before you call something done.
@@ -534,7 +537,9 @@ export function createServer(): McpServer {
     (a) =>
       guard(async () => {
         const s = findScene(a);
-        const content: Content = [text({ id: s.id, name: s.name, editedAt: s.updatedAt, request: s.scene })];
+        // A video of several shots: each shot's scene, length and way in (the first is `request`).
+        const shots = s.shots && s.shots.length > 1 ? s.shots.map((x, i) => ({ ...x, scene: i === 0 ? s.scene : x.scene })) : undefined;
+        const content: Content = [text({ id: s.id, name: s.name, editedAt: s.updatedAt, request: s.scene, shots, note: shots ? `A video of ${shots.length} shots: render it with create_sequence (each shot's scene, length and transition), and save changes with save_scene's shots.` : undefined })];
         const thumb = await sceneThumb(s.id);
         const img = thumb ? await image(thumb, 1200) : undefined;
         if (img) content.push(img);
@@ -547,12 +552,24 @@ export function createServer(): McpServer {
     {
       title: "Save a scene to the Studio",
       description:
-        "Save a design into the Studio's Scenes, where the person can open it and keep editing: every device, caption, text, shape and call-out stays editable there. By default it is saved as a NEW scene and nothing existing changes. To change an existing scene in place, pass its `id` and `replace: true`, and only when the person asked you to change that scene: if they have it open, the change appears on their canvas (as one step they can undo). Files from outside the library are copied in. Render with create_mockup first and look at it; save what you'd be happy to hand over.",
+        "Save a design into the Studio's Scenes, where the person can open it and keep editing: every device, caption, text, shape and call-out stays editable there. For a video of several shots, pass `shots` (the first shot's scene is also `scene`). By default it is saved as a NEW scene and nothing existing changes. To change an existing scene in place, pass its `id` and `replace: true`, and only when the person asked you to change that scene: if they have it open, the change appears on their canvas (as one step they can undo). Files from outside the library are copied in. Render with create_mockup first and look at it; save what you'd be happy to hand over.",
       inputSchema: {
         scene: z.object(MockupInputShape).describe("The design: a create_mockup request (output and format settings are ignored)."),
         name: z.string().max(120).optional().describe("The scene's name. Default: the original's name (a copy is marked as the agent's), else \"Untitled scene\"."),
         id: z.string().optional().describe("The scene this is an edit of (from list_scenes or get_scene)."),
         replace: z.boolean().optional().describe("With `id`: overwrite that scene instead of saving a copy. Default false."),
+        shots: z
+          .array(
+            z.object({
+              scene: z.object(MockupInputShape),
+              length: z.number().min(0.5).max(60).optional(),
+              transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
+            }),
+          )
+          .min(2)
+          .max(20)
+          .optional()
+          .describe("A video of several shots, in order: each a scene, its length (seconds) and how it comes in (as create_sequence takes them). The first shot's scene is the design's `scene`. Leave out to keep the scene's shots as they are."),
       },
     },
     (a) =>
@@ -561,14 +578,30 @@ export function createServer(): McpServer {
         const original = a.id ? getScene(a.id) : undefined;
         // Rendering settings belong to an export, not to the design.
         const { output: _o, preview: _p, quality: _q, format: _f, jpegQuality: _j, deliveryWidth: _d, ...design } = a.scene;
-        const adopted = adoptFiles(design);
+        const first = a.shots ? a.shots[0].scene : design;
+        const { output: _o2, preview: _p2, quality: _q2, format: _f2, jpegQuality: _j2, deliveryWidth: _d2, ...firstDesign } = first as typeof a.scene;
+        const adopted = adoptFiles(a.shots ? firstDesign : design);
         // Laying it out checks every file and target before anything is written.
         const layout = await layoutScene(adopted.scene as Parameters<typeof layoutScene>[0]);
+        const shots = a.shots
+          ? await Promise.all(
+              a.shots.map(async (x, i) => {
+                if (i === 0) return { length: x.length, transition: x.transition };
+                const { output: _o3, preview: _p3, quality: _q3, format: _f3, jpegQuality: _j3, deliveryWidth: _d3, ...rest } = x.scene;
+                const own = adoptFiles(rest);
+                adopted.copied.push(...own.copied);
+                await layoutScene(own.scene as Parameters<typeof layoutScene>[0]);
+                return { scene: own.scene, length: x.length, transition: x.transition };
+              }),
+            )
+          : undefined;
         const saved = saveScene({
           id: a.replace ? a.id : undefined,
           name: a.name ?? (original ? (a.replace ? original.name : `${original.name} (agent's version)`) : undefined),
           scene: adopted.scene,
           chat: a.replace ? undefined : original?.chat,
+          // A copy keeps the original's shots unless new ones are given.
+          shots: shots ?? (!a.replace ? original?.shots : undefined),
           by: "agent",
         });
         const content: Content = [
@@ -719,11 +752,73 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    "preview_video",
+    {
+      title: "Preview a video's key moments",
+      description:
+        "Frames of a video as one image, each labelled with its time, without rendering the video (about a second). Ask for exact moments (`times`, to the millisecond), one every so many seconds (`every`), or by default the key moments: the start, just after each animation ends, the middle of long ones, and the settled end. Takes the same input as create_video. Use it to check an animation's timing and framing (is anything alone on an empty frame, cut off, or late? what exactly is on screen at 2.35 s?) before rendering. Up to 16 frames.",
+      inputSchema: {
+        ...VideoInputShape,
+        times: z.array(z.number().min(0)).min(1).max(16).optional().describe("Exact moments to see, in seconds (to the millisecond: 1.25, 3.5). Instead of the key moments."),
+        every: z.number().min(0.05).max(10).optional().describe("A frame every this many seconds (1 = each second), from the start. Instead of the key moments."),
+        moments: z.number().int().min(2).max(16).optional().describe("With neither: how many key moments at most. Default 8."),
+      },
+    },
+    ({ moments, times, every, ...a }) =>
+      guard(async () => {
+        const r = await storyboard(a, { max: moments, times, every });
+        const img = await image(r.path, 1800);
+        return [text({ times: r.times, duration: r.duration, warnings: r.warnings }), ...(img ? [img] : [])];
+      }),
+  );
+
+  server.registerTool(
+    "preview_sequence",
+    {
+      title: "Preview a video of several shots",
+      description:
+        "Frames of a several-shot video (create_sequence's input) as one image, without rendering it: a second or two a shot. By default each shot's key moments; or exact times across the whole video (`times`), or one `every` so many seconds. Each frame is labelled with its time and shot, and the result says when each shot starts. During a transition it shows the shot mostly on screen. Up to 16 frames.",
+      inputSchema: {
+        ...SequenceInputShape,
+        times: z.array(z.number().min(0)).min(1).max(16).optional().describe("Exact moments across the whole video, in seconds."),
+        every: z.number().min(0.1).max(10).optional().describe("A frame every this many seconds, from the start."),
+        moments: z.number().int().min(2).max(16).optional().describe("With neither: how many frames at most. Default 12."),
+      },
+    },
+    ({ moments, times, every, ...a }) =>
+      guard(async () => {
+        const r = await sequenceStoryboard(a, { max: moments, times, every });
+        const img = await image(r.path, 1800);
+        return [text({ times: r.times, duration: r.duration, shots: r.shots, warnings: r.warnings }), ...(img ? [img] : [])];
+      }),
+  );
+
+  server.registerTool(
+    "create_sequence",
+    {
+      title: "Create a video of several shots",
+      description:
+        "Several scenes (shots) one after another as one video, joined by transitions: cut, fade (a crossfade), fade-black, fade-white, push-left/right/up/down, wipe-left/right, iris, zoom, blur, dissolve. Each shot is a scene as create_video takes it (with its own animations and video options), plus `length` (seconds on screen, transitions included) and `transition` (how it comes in). `size` is the video's size: a preset (app-store-iphone 886×1920, app-store-ipad 1200×1600, app-store-mac 1920×1080, vertical, portrait, square, widescreen) or WIDTHxHEIGHT; default the first shot's canvas. A shot of another shape is fitted (whole, its backdrop filling the rest), filled or laid out again (`fit`). App Store sizes follow Apple's app preview rules: 15 to 30 s (a short one holds its last shot), 30 fps, H.264, a silent stereo track. `versions` also makes it at other sizes. Returns the file, when each shot starts, and a filmstrip of each shot and transition. Check the timing with preview_sequence first.",
+      inputSchema: SequenceInputShape,
+    },
+    (a) =>
+      guard(async () => {
+        const r = await createSequence(a);
+        const content: Content = [text(r)];
+        if (a.preview !== false && r.filmstrip) {
+          const img = await image(r.filmstrip, 1800);
+          if (img) content.push(img);
+        }
+        return content;
+      }),
+  );
+
+  server.registerTool(
     "create_video",
     {
       title: "Create an animated mockup video",
       description:
-        "Render the same scene as create_mockup as a video (mp4/mov/webm/gif) with ambient motion (subtle, float, drift, push-in), a camera zoom onto a point or highlight, timed highlight and caption reveals, animated grain, and optional screen recordings playing inside device frames. Returns the file plus a filmstrip preview.",
+        "Render the same scene as create_mockup as a video (mp4/mov/webm/gif). `animations` choreograph it: when each item (device, headline, text, shape) enters, changes and leaves, with a transition and an easing; several items can move as one group, and shapes can change colour, size, and an arrow's ends and curve. Anything can blur or come into focus, travel along a curve, and loop (repeat, back and forth) for the whole video; the backdrop moves on its own (a slow push, drift, colour shift). Plus ambient motion (subtle, float, drift, push-in), camera zooms onto a point or highlight, a drawn cursor, animated grain, and screen recordings playing inside device frames. `versions` also makes it at other sizes (App Store preview sizes that follow Apple's rules, vertical, square, 4:5, widescreen). Returns the file plus a filmstrip preview. For several scenes in one video, use create_sequence.",
       inputSchema: VideoInputShape,
     },
     (a) =>
