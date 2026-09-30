@@ -163,7 +163,7 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   const now = new Date().toISOString();
   const existing = validId(input.id) ? read(input.id) : undefined;
   const id = existing?.id ?? randomBytes(8).toString("hex");
-  const name = (typeof input.name === "string" && input.name.trim().slice(0, 120)) || existing?.name || "Untitled scene";
+  const name = (typeof input.name === "string" && input.name.trim().slice(0, 120)) || existing?.name || "Untitled design";
   const chat = Array.isArray(input.chat) ? input.chat.slice(-60) : existing?.chat;
   // Only a change to the design counts as an edit: not a rename, nor saving it unchanged (switching
   // scenes, opening the Scenes page), so the list keeps its order.

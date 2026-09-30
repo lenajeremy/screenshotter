@@ -78,17 +78,23 @@ function ocrBinary(): Promise<string> {
   return binary;
 }
 
-const cache = new Map<string, TextBox[]>();
+// Keyed by file and its modified time. The promise is kept, so several callers asking about the
+// same screenshot at once (six template previews, say) share one run.
+const cache = new Map<string, Promise<TextBox[]>>();
 
 /** Recognise text in an image with Apple's Vision framework (on-device). */
-export async function recognizeText(file: string): Promise<TextBox[]> {
+export function recognizeText(file: string): Promise<TextBox[]> {
   const key = `${file}:${statSync(file).mtimeMs}`;
   const hit = cache.get(key);
   if (hit) return hit;
-  const { stdout } = await run(await ocrBinary(), [file], { timeoutMs: 180_000 });
-  const boxes = (JSON.parse(stdout) as TextBox[]).sort((a, b) => a.y - b.y || a.x - b.x);
-  cache.set(key, boxes);
-  return boxes;
+  const job = (async () => {
+    const { stdout } = await run(await ocrBinary(), [file], { timeoutMs: 180_000 });
+    return (JSON.parse(stdout) as TextBox[]).sort((a, b) => a.y - b.y || a.x - b.x);
+  })();
+  cache.set(key, job);
+  // A failed run isn't remembered: the next call tries again.
+  job.catch(() => cache.delete(key));
+  return job;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();

@@ -6,6 +6,7 @@ import { Icon } from "./icons.js";
 import { S, fileUrl, persistPrefs, refreshScenes, saveSceneNow, set, thumbUrl, useStore } from "./store.js";
 import { addDevice, deleteSavedScene, designForMe, duplicateSavedScene, newScene, openScene, renameSavedScene } from "./actions.js";
 import { openMenu } from "./menu.js";
+import { ExportsGrid } from "./panels.js";
 
 // ---------------------------------------------------------------------------------------------
 // Dates, the way people say them
@@ -75,11 +76,11 @@ export function ScenesPopover({ anchor }) {
   const list = s.scenes.filter((x) => !q || x.name.toLowerCase().includes(q.toLowerCase()));
   return html`<${Popover} anchor=${anchor} class="scenes-pop" width=${440} onClose=${() => set({ scenesOpen: false })}>
     <div class="scenes-head">
-      <b>Scenes</b><span class="faint">${s.scenes.length || ""}</span><span class="grow"></span>
-      <button class="btn sm ghost" onClick=${openScenesPage} title="Every scene, full window (⇧⌘O)"><${Icon} n="grid" s=${13} />See all</button>
-      <button class="btn sm primary" onClick=${newScene}><${Icon} n="plus" s=${12} w=${2.4} />New scene</button>
+      <b>My designs</b><span class="faint">${s.scenes.length || ""}</span><span class="grow"></span>
+      <button class="btn sm ghost" onClick=${openScenesPage} title="Every design, full window (⇧⌘O)"><${Icon} n="grid" s=${13} />See all</button>
+      <button class="btn sm primary" onClick=${newScene}><${Icon} n="plus" s=${12} w=${2.4} />New design</button>
     </div>
-    ${s.scenes.length > 6 && html`<div class="input-wrap scenes-search"><${Icon} n="search" s=${13} /><input class="input sm" placeholder="Search scenes" value=${q} autoFocus onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} /></div>`}
+    ${s.scenes.length > 6 && html`<div class="input-wrap scenes-search"><${Icon} n="search" s=${13} /><input class="input sm" placeholder="Search designs" value=${q} autoFocus onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} /></div>`}
     ${list.length
       ? html`<div class="scene-grid">${list.slice(0, 12).map(
           (x) => html`<div class="scene-card ${x.id === s.sceneId ? "on" : ""}" role="button" tabindex="0" data-scene=${x.id} title=${x.name}
@@ -93,9 +94,9 @@ export function ScenesPopover({ anchor }) {
             }}><${Icon} n="dots" s=${14} /></button>
           </div>`,
         )}</div>
-        ${list.length > 12 && html`<button class="scenes-more-link" onClick=${openScenesPage}>${list.length - 12} more · See all scenes</button>`}`
-      : html`<div class="empty-note">${q ? "No scenes match." : "Scenes save themselves as you work. Start designing and this one appears here."}</div>`}
-    <div class="scenes-foot"><${Icon} n="check" s=${12} />Saved automatically · <span class="kbd">⌘S</span> saves now<span class="grow"></span><span class="kbd">⇧⌘O</span> all scenes</div>
+        ${list.length > 12 && html`<button class="scenes-more-link" onClick=${openScenesPage}>${list.length - 12} more · See all designs</button>`}`
+      : html`<div class="empty-note">${q ? "No designs match." : "Designs save themselves as you work. Start one and it appears here."}</div>`}
+    <div class="scenes-foot"><${Icon} n="check" s=${12} />Saved automatically · <span class="kbd">⌘S</span> saves now<span class="grow"></span><span class="kbd">⇧⌘O</span> all designs</div>
   <//>`;
 }
 
@@ -192,7 +193,7 @@ function Thumb({ x, mini }) {
   if (x.thumb) return html`<img src=${fileUrl(x.thumb, x.thumbAt ?? x.updatedAt)} class=${loaded ? "in" : ""} loading="lazy" decoding="async" draggable=${false} alt="" onLoad=${() => setLoaded(true)} />`;
   if (mini) return x.devices ? html`<span class="spinner"></span>` : html`<${Icon} n="canvas" s=${14} />`;
   if (x.devices) return html`<div class="sp-placeholder"><span class="spinner"></span>Drawing a preview…</div>`;
-  return html`<div class="sp-placeholder">${x.headline ? html`<span class="hl">${x.headline}</span>` : html`<${Icon} n="canvas" s=${22} /><span>Empty scene</span>`}</div>`;
+  return html`<div class="sp-placeholder">${x.headline ? html`<span class="hl">${x.headline}</span>` : html`<${Icon} n="canvas" s=${22} /><span>Empty design</span>`}</div>`;
 }
 
 function NameEdit({ x }) {
@@ -270,6 +271,9 @@ export function ScenesPage() {
   const s = useStore();
   const p = s.scenesPrefs;
   const [q, setQ] = useState("");
+  // Two shelves: the designs themselves, and the images and videos exported from them.
+  const [shelf, setShelf] = useState("designs");
+  const exported = s.files.filter((f) => f.kind === "mockups" || f.kind === "videos").length;
   const search = useRef();
 
   useEffect(() => {
@@ -347,53 +351,62 @@ export function ScenesPage() {
     if (how === "blank") return;
     if (how === "ai") set({ leftTab: "designs", leftOpen: true });
     await addDevice(latest.path);
-    if (how === "ai") designForMe();
+    if (how === "ai") {
+      set({ guide: null });
+      designForMe();
+    }
   };
   const sortMenu = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     openMenu(r.left, r.bottom + 4, SORTS.map((o) => ({ label: o.label, icon: o.id === sort ? "check" : undefined, run: () => prefs({ sort: o.id }) })));
   };
 
-  return html`<div class="scenes-page" role="dialog" aria-label="Scenes">
+  return html`<div class="scenes-page" role="dialog" aria-label="My designs">
     <header class="sp-bar" data-drag>
       <div class="brand">
         <div class="brand-mark"></div>
         <span class="brand-name">Screenshotter</span>
         <span class="crumb-sep">/</span>
-        <span class="sp-crumb">Scenes</span>
+        <span class="sp-crumb">My designs</span>
       </div>
       <div class="sp-search input-wrap" data-nodrag>
         <${Icon} n="search" s=${14} />
-        <input ref=${search} class="input" placeholder="Search by name, headline or device" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} />
+        <input ref=${search} class="input" placeholder="Search designs by name, headline or device" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} />
         ${q ? html`<button class="suffix sp-clear" title="Clear" onClick=${() => (setQ(""), search.current?.focus())}><${Icon} n="x" s=${12} w=${2.2} /></button>` : html`<span class="suffix kbd">/</span>`}
       </div>
       <span class="spacer"></span>
       <div class="hstack" data-nodrag>
         <button class="btn ghost sp-back" onClick=${closeScenesPage} title="Back to the editor (Esc)"><${Icon} n="left" s=${15} /><span>${current ? current.name : "Back to editor"}</span></button>
-        <button class="btn primary" onClick=${() => start("blank")}><${Icon} n="plus" s=${14} w=${2.2} />New scene</button>
+        <button class="btn primary" onClick=${() => start("blank")}><${Icon} n="plus" s=${14} w=${2.2} />New design</button>
       </div>
     </header>
     <div class="sp-scroll">
       <div class="sp-inner">
         <div class="sp-head">
-          <h1>Scenes</h1>
+          <h1>My designs</h1>
           <p>Every design saves itself here as you work. Pick one up, or start something new.</p>
         </div>
         <div class="sp-starts">
           <button class="sp-start" onClick=${() => start("blank")}>
             <span class="ico"><${Icon} n="plus" s=${18} w=${2} /></span>
-            <span class="txt"><b>Blank scene</b><span>Start from the Simulator, a website or a file</span></span>
+            <span class="txt"><b>New design</b><span>Start from a screenshot, the Simulator or a website</span></span>
           </button>
           <button class="sp-start" disabled=${!latest} onClick=${() => start("latest")}>
             ${latest ? html`<img class="shot" src=${thumbUrl(latest.path, 120)} alt="" />` : html`<span class="ico"><${Icon} n="image" s=${18} /></span>`}
-            <span class="txt"><b>Your latest screen</b><span>${latest ? "Framed in a finished design, ready to tweak" : "Capture or import a screen first"}</span></span>
+            <span class="txt"><b>Your latest screenshot</b><span>${latest ? "Framed in a finished design, ready to tweak" : "Bring in a screenshot first"}</span></span>
           </button>
           <button class="sp-start ai" disabled=${!latest} onClick=${() => start("ai")}>
             <span class="ico"><${Icon} n="spark" s=${18} /></span>
-            <span class="txt"><b>Design it for me</b><span>${latest ? "Claude makes three designs from your latest screen" : "Needs a screen to design around"}</span></span>
+            <span class="txt"><b>Design it for me</b><span>${latest ? "Claude makes three designs from your latest screenshot" : "Needs a screenshot to design around"}</span></span>
           </button>
         </div>
-        ${all.length
+        <div class="sp-shelves" role="tablist">
+          <button role="tab" aria-selected=${shelf === "designs"} class=${shelf === "designs" ? "on" : ""} onClick=${() => setShelf("designs")}>Designs<span class="n">${all.length}</span></button>
+          <button role="tab" aria-selected=${shelf === "exported"} class=${shelf === "exported" ? "on" : ""} onClick=${() => setShelf("exported")}>Exported<span class="n">${exported}</span></button>
+        </div>
+        ${shelf === "exported"
+          ? html`<${ExportsGrid} />`
+          : all.length
           ? html`<div class="sp-toolbar">
                 <div class="sp-chips">
                   <button class="chip ${kind === "all" ? "on" : ""}" onClick=${() => prefs({ kind: "all" })}>All<span class="n">${all.length}</span></button>
@@ -407,8 +420,8 @@ export function ScenesPage() {
                 </div>
               </div>
               ${!list.length
-                ? html`<div class="sp-empty"><${Icon} n="search" s=${22} /><b>${q ? `No scenes match “${q.trim()}”` : "No scenes here"}</b>
-                    <button class="btn sm" onClick=${() => (setQ(""), prefs({ kind: "all" }))}>Show all scenes</button></div>`
+                ? html`<div class="sp-empty"><${Icon} n="search" s=${22} /><b>${q ? `No designs match “${q.trim()}”` : "No designs here"}</b>
+                    <button class="btn sm" onClick=${() => (setQ(""), prefs({ kind: "all" }))}>Show all designs</button></div>`
                 : p.layout === "list"
                   ? html`<${ListView} list=${list} sort=${sort} s=${s} />`
                   : groupsOf(list, sort).map(
@@ -417,7 +430,7 @@ export function ScenesPage() {
                         <div class="sp-grid">${g.items.map((x) => html`<${Card} key=${x.id} x=${x} sort=${sort} on=${x.id === s.sceneId} fresh=${x.id === s.freshScene} renaming=${s.renaming === x.id} />`)}</div>
                       </section>`,
                     )}`
-          : html`<div class="sp-empty big"><div class="art"><${Icon} n="grid" s=${24} /></div><b>No scenes yet</b><span>Every design saves itself here as you work.</span></div>`}
+          : html`<div class="sp-empty big"><div class="art"><${Icon} n="grid" s=${24} /></div><b>No designs yet</b><span>Every design saves itself here as you work.</span></div>`}
       </div>
     </div>
   </div>`;

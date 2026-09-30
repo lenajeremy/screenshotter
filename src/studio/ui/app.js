@@ -3,9 +3,12 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, api, base, dismiss, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, undo, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
+  applyRecipe,
+  recipeInput,
+  trySample,
   pickUpAgentChanges,
   toggleFocus,
   togglePanel,
@@ -21,6 +24,8 @@ import {
   addDevice,
   addText,
   aiEdit,
+  stopAI,
+  useAIDraft,
   moveZ,
   placeImports,
   replaceMode,
@@ -40,7 +45,7 @@ import {
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
-import { BackgroundsPanel, CapturesPanel, DesignsPanel, ExportsPanel, LayersPanel, ShapesPanel, TextPanel } from "./panels.js";
+import { AddPanel, BackgroundsPanel, CapturesPanel, DesignsPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
@@ -79,18 +84,18 @@ function Topbar() {
       <span class="brand-name">Screenshotter</span>
       <span class="crumb-sep">/</span>
       <div class="scene-switch ${s.scenesOpen ? "open" : ""}" data-nodrag ref=${scenesBtn}>
-        <input class="scene-name" value=${s.sceneName} spellcheck=${false} title="Rename this scene"
+        <input class="scene-name" value=${s.sceneName} spellcheck=${false} title="Rename this design"
           onKeyDown=${(e) => {
             e.stopPropagation();
             if (e.key === "Enter" || e.key === "Escape") e.target.blur();
           }}
           onChange=${(e) => {
-            set({ sceneName: e.target.value.trim() || "Untitled scene" });
+            set({ sceneName: e.target.value.trim() || "Untitled design" });
             persist();
           }} />
-        <button class="scene-chev" title="Switch scene" onClick=${() => set({ scenesOpen: !s.scenesOpen })}><${Icon} n="down" s=${13} /></button>
+        <button class="scene-chev" title="Switch design" onClick=${() => set({ scenesOpen: !s.scenesOpen })}><${Icon} n="down" s=${13} /></button>
       </div>
-      <button class="icon-btn sm" data-nodrag title="New scene (⌘N)" onClick=${newScene}><${Icon} n="plus" s=${15} /></button>
+      <button class="icon-btn sm" data-nodrag title="New design (⌘N)" onClick=${newScene}><${Icon} n="plus" s=${15} /></button>
     </div>
     ${s.scenesOpen && html`<${ScenesPopover} anchor=${scenesBtn.current} />`}
     <div class="topbar-center">
@@ -101,7 +106,6 @@ function Topbar() {
     <div class="hstack" data-nodrag>
       <button class="icon-btn" title="Undo (⌘Z)" disabled=${!s.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!s.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
-      <button class="icon-btn ${s.jsonOpen ? "on" : ""}" title="Developer view: the JSON an AI agent sends to make this image" onClick=${() => set({ jsonOpen: !s.jsonOpen })}><${Icon} n="code" s=${16} /></button>
       <span style=${{ width: "6px" }}></span>
       <button class="btn ai" onClick=${() => (s.ai.open ? set({ ai: { ...s.ai, open: false } }) : openAI())} title="Describe a change in plain words and AI makes it (⌘K)"><${Icon} n="spark" s=${15} class="spark" />Ask AI<span class="kbd">⌘K</span></button>
       <button class="btn primary" ref=${exportBtn} disabled=${!s.scene.devices.length || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => set({ exportOpen: !s.exportOpen })}><${Icon} n="export" s=${15} w=${2} />Export</button>
@@ -170,29 +174,26 @@ const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
 // Rail and left panel
 
 const TABS = [
-  { id: "captures", label: "Screens", icon: "captures", tip: "Capture or import screenshots" },
-  { id: "designs", label: "Designs", icon: "wand", tip: "Complete designs from your screens, or three from Claude" },
-  { id: "backgrounds", label: "Backdrop", icon: "background", tip: "Photos, gradients and colours behind your device" },
-  { id: "text", label: "Text", icon: "text", tip: "Headline, labels and badges" },
-  { id: "shapes", label: "Shapes", icon: "shapes", tip: "Arrows, circles, numbers and shapes" },
-  { id: "layers", label: "Layers", icon: "layers", tip: "Everything in the image, front to back" },
-  { id: "exports", label: "Exports", icon: "exports", tip: "Images and videos you've exported" },
+  { id: "captures", label: "Screenshots", icon: "captures", tip: "Bring in a screenshot of your app" },
+  { id: "designs", label: "Templates", icon: "wand", tip: "Finished designs made from your screenshot" },
+  { id: "backgrounds", label: "Backdrop", icon: "background", tip: "What sits behind your device" },
+  { id: "text", label: "Text & shapes", icon: "text", tip: "Headline, labels, arrows and shapes" },
 ];
 
 function Rail() {
   const s = useStore();
   const pick = (id) => {
     set(s.leftTab === id && s.leftOpen ? { leftOpen: false } : { leftTab: id, leftOpen: true });
-    persist();
+    persistPrefs();
   };
   return html`<nav class="rail">
-    <button class="rail-btn" onClick=${openScenesPage}><${Icon} n="grid" s=${19} /><span class="rl">Scenes</span><span class="tip">All your designs (⇧⌘O)</span></button>
-    <span class="rail-sep"></span>
     ${TABS.map((t) => html`<button class="rail-btn ${s.leftOpen && s.leftTab === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
       <${Icon} n=${t.icon} s=${19} />
       <span class="rl">${t.label}</span>
       <span class="tip">${t.tip}</span>
     </button>`)}
+    <span class="rail-sep"></span>
+    <button class="rail-btn" onClick=${openScenesPage}><${Icon} n="grid" s=${19} /><span class="rl">My designs</span><span class="tip">Everything you've made and exported (⇧⌘O)</span></button>
     <span class="grow"></span>
     <button class="rail-btn" onClick=${() => set({ modal: { kind: "help" } })}><${Icon} n="info" s=${18} /><span class="rl">Help</span><span class="tip">How Screenshotter works</span></button>
     <button class="rail-btn ${s.modal?.kind === "settings" ? "on" : ""}" onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${18} /><span class="rl">Settings</span><span class="tip">AI, output folder, shortcuts</span></button>
@@ -201,86 +202,172 @@ function Rail() {
 
 function LeftPanel() {
   const s = useStore();
-  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: TextPanel, shapes: ShapesPanel, layers: LayersPanel, exports: ExportsPanel }[s.leftTab] ?? CapturesPanel;
+  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: AddPanel }[s.leftTab] ?? CapturesPanel;
   return html`<${P} />`;
 }
 
 // =============================================================================================
 // Stage
 
-function Hero() {
+/** The first thing anyone sees: one job, bringing in a screenshot. */
+function Welcome() {
   const s = useStore();
-  const shots = s.files.filter((f) => ["raw", "uploads", "recordings"].includes(f.kind) && /\.(png|jpe?g|webp)$/i.test(f.path)).slice(0, 7);
+  const input = useRef();
   const booted = s.opts?.simulators?.find((x) => x.state === "Booted");
-  const recent = s.scenes.filter((x) => x.id !== s.sceneId && x.devices > 0).slice(0, 5);
+  const hasSim = (s.opts?.simulators ?? []).length > 0;
+  const shots = s.files.filter((f) => ["raw", "uploads", "recordings"].includes(f.kind) && /\.(png|jpe?g|webp)$/i.test(f.path)).slice(0, 6);
+  const recent = s.scenes.filter((x) => x.id !== s.sceneId && x.devices > 0).slice(0, 4);
   const go = (source) => set({ leftTab: "captures", leftOpen: true, capture: { ...S.capture, source } });
-  return html`<div class="hero"><div class="hero-inner">
+  return html`<div class="hero"><div class="hero-inner welcome">
     <h1>Make your app look <em>incredible.</em></h1>
-    <div class="steps">
-      <div class="step on"><span class="n">1</span>Add a screenshot</div><span class="step-line"></span>
-      <div class="step"><span class="n">2</span>Make it yours</div><span class="step-line"></span>
-      <div class="step"><span class="n">3</span>Export</div>
+    <p>Start with a screenshot of your app. You get a finished design to make your own.</p>
+    <button class="drop-target" onClick=${() => input.current.click()}>
+      <span class="ico"><${Icon} n="upload" s=${24} /></span>
+      <b>Drop a screenshot here</b>
+      <span>or click to choose one. You can also paste with <span class="kbd">⌘V</span></span>
+    </button>
+    <input type="file" ref=${input} hidden multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime" onChange=${(e) => {
+      uploadFiles(e.target.files);
+      e.target.value = "";
+    }} />
+    <div class="welcome-alt">
+      ${hasSim && html`<button class="alt" onClick=${() => go("simulator")} title=${booted ? `Grabs whatever ${booted.name} is showing, with a clean status bar` : "Opens an iPhone simulator and grabs its screen"}><${Icon} n="sim" s=${15} />From the iOS Simulator</button>`}
+      <button class="alt" onClick=${() => go("web")} title="Type an address; it's captured on a phone or a desktop"><${Icon} n="globe" s=${15} />From a website</button>
+      <button class="alt" onClick=${trySample} title="See what it does with a made-up app's screenshot"><${Icon} n="spark" s=${15} />Try a sample</button>
     </div>
-    <p>Start by bringing in a screen from your app. Pick one:</p>
-    <div class="starts">
-      <button class="start" onClick=${() => go("simulator")}><span class="ico"><${Icon} n="sim" s=${18} /></span><b>From the iOS Simulator</b><span>${booted ? `Grabs whatever ${booted.name} shows, with a clean status bar` : "Boots an iPhone simulator and grabs the screen"}</span></button>
-      <button class="start" onClick=${() => go("web")}><span class="ico"><${Icon} n="globe" s=${18} /></span><b>From a website</b><span>Type a URL; captured on a phone or desktop</span></button>
-      <button class="start" onClick=${() => go("import")}><span class="ico"><${Icon} n="upload" s=${18} /></span><b>From a file</b><span>Drop images anywhere in this window, or paste with ⌘V</span></button>
-    </div>
+    ${shots.length > 0 &&
+    html`<div class="welcome-more">
+      <span class="note">Or use a screenshot you already have</span>
+      <div class="recent-strip">${shots.map((f) => html`<button title=${base(f.path)} onClick=${() => addDevice(f.path)}><img src=${thumbUrl(f.path, 160)} /></button>`)}</div>
+    </div>`}
     ${recent.length > 0 &&
-    html`<div class="vstack" style=${{ alignItems: "center", gap: "10px" }}>
-      <span class="note">…or pick up a scene</span>
+    shots.length === 0 &&
+    html`<div class="welcome-more">
+      <span class="note">Or pick up a design</span>
       <div class="scene-strip">${recent.map((x) => html`<button title=${x.name} data-scene=${x.id} onClick=${() => openScene(x.id)}><${SceneThumb} x=${x} /><span>${x.name}</span></button>`)}
         <button class="scene-strip-all" onClick=${openScenesPage}><div class="scene-thumb"><${Icon} n="grid" s=${18} /></div><span>See all ${s.scenes.length}</span></button></div>
-    </div>`}
-    ${shots.length > 0 &&
-    html`<div class="vstack" style=${{ alignItems: "center", gap: "10px" }}>
-      <span class="note">…or click one you captured before</span>
-      <div class="recent-strip">${shots.map((f) => html`<button title=${base(f.path)} onClick=${() => addDevice(f.path)}><img src=${thumbUrl(f.path, 160)} /></button>`)}</div>
     </div>`}
   </div></div>`;
 }
 
-/** A small checklist that teaches the flow once there's something on the canvas. */
-function Checklist() {
+// ---------------------------------------------------------------------------------------------
+// A new design's first steps: pick a template, write the headline, export. The strip across the
+// top shows the four steps until the first export; the step in hand sits at the bottom.
+
+const GUIDE_STEPS = [
+  ["shot", "Screenshot"],
+  ["design", "Design"],
+  ["headline", "Headline"],
+  ["export", "Export"],
+];
+const stop = (e) => e.stopPropagation();
+
+function GuideStrip() {
   const s = useStore();
+  const done = { shot: true, design: Boolean(s.touched.design), headline: Boolean(s.touched.headline), export: Boolean(s.touched.exported) };
+  const allDone = GUIDE_STEPS.every(([k]) => done[k]);
+  useEffect(() => {
+    if (!allDone || s.guideDone) return;
+    const t = setTimeout(() => {
+      set({ guideDone: true });
+      persistPrefs();
+    }, 2600);
+    return () => clearTimeout(t);
+  }, [allDone, s.guideDone]);
   if (s.guideDone) return null;
-  const sc = s.scene;
-  const steps = [
-    { done: sc.devices.length > 0, label: "Add a screenshot", hint: "Screens panel" },
-    { done: s.touched.backdrop || (sc.background !== "meadow-motion" && sc.background !== undefined), label: "Choose a backdrop", hint: "Backdrop panel", go: () => set({ leftTab: "backgrounds", leftOpen: true }) },
-    { done: Boolean(sc.headline), label: "Write a headline", hint: "Text panel or double-click", go: () => set({ leftTab: "text", leftOpen: true }) },
-    { done: s.touched.moved, label: "Drag the device where you like", hint: "Or ask AI to do it" },
-    { done: s.files.some((f) => f.kind === "mockups" || f.kind === "videos") && s.touched.exported, label: "Export the image", hint: "Top-right button", go: () => set({ exportOpen: true }) },
-  ];
-  const n = steps.filter((x) => x.done).length;
-  const next = steps.find((x) => !x.done);
-  const dismiss = () => {
-    set({ guideDone: true });
-    persist();
+  const current = s.guide ?? GUIDE_STEPS.map(([k]) => k).find((k) => !done[k]);
+  const go = (k) => (k === "shot" ? set({ leftTab: "captures", leftOpen: true }) : set({ guide: s.guide === k ? null : k }));
+  const hide = () => {
+    set({ guideDone: true, guide: s.guide === "export" ? null : s.guide });
+    persistPrefs();
   };
-  if (n === steps.length) setTimeout(dismiss, 2500);
-  // A small pill showing the next step, so it never covers the design; click it for the list.
-  const open = S.guideOpen ?? false;
-  const toggle = () => set({ guideOpen: !open });
-  if (!open) {
-    return html`<div class="checklist mini" onPointerDown=${(e) => e.stopPropagation()}>
-      <button class="cl-mini" onClick=${toggle} title="Show the getting-started checklist">
-        <span class="cl-ring" style=${{ "--p": n / steps.length }}></span>
-        <span class="grow">${next ? html`<span class="faint">Next:</span> ${next.label}` : "All done"}</span>
-        <${Icon} n="down" s=${12} style=${{ transform: "rotate(180deg)" }} />
-      </button>
-    </div>`;
-  }
-  return html`<div class="checklist" onPointerDown=${(e) => e.stopPropagation()}>
-    <div class="cl-head"><b>Getting started</b><span class="faint">${n}/${steps.length}</span><span class="grow"></span>
-      <button class="icon-btn sm" title="Minimise" onClick=${toggle}><${Icon} n="down" s=${12} /></button>
-      <button class="icon-btn sm" title="Don't show again" onClick=${dismiss}><${Icon} n="x" s=${12} /></button></div>
-    <div class="cl-bar"><i style=${{ width: (n / steps.length) * 100 + "%" }}></i></div>
-    ${steps.map((x) => html`<button class="cl-item ${x.done ? "done" : ""}" onClick=${x.go} disabled=${!x.go || x.done} title=${x.hint}>
-      <span class="cl-dot">${x.done && html`<${Icon} n="check" s=${10} w=${3} />`}</span>
-      <span class="grow">${x.label}</span>${!x.done && x.go && html`<${Icon} n="right" s=${12} class="go" />`}
-    </button>`)}
+  return html`<div class="guide-strip" onPointerDown=${stop}>
+    ${GUIDE_STEPS.map(
+      ([k, label], i) => html`${i > 0 && html`<span class="gs-line ${done[k] || current === k ? "on" : ""}"></span>`}
+        <button class="gs ${done[k] ? "done" : ""} ${current === k ? "on" : ""}" onClick=${() => go(k)}>
+          <span class="n">${done[k] ? html`<${Icon} n="check" s=${10} w=${3} />` : i + 1}</span>${label}
+        </button>`,
+    )}
+    <span class="gs-sep"></span>
+    <button class="gs-skip" title="Hide these steps. Help has “Show the first steps again”." onClick=${hide}>Skip</button>
+  </div>`;
+}
+
+/** Templates to offer first, best suited to how many screenshots there are. */
+function starterTemplates(recipes, n) {
+  const order = n >= 3 ? ["mosaic", "rising", "staircase", "bold-hero", "tilted", "gallery"] : n === 2 ? ["rising", "staircase", "bold-hero", "tilted", "gallery", "art-director"] : ["bold-hero", "tilted", "gallery", "art-director", "risograph", "callout"];
+  return order.map((id) => recipes.find((r) => r.id === id)).filter((r) => r && r.screens <= Math.max(1, n));
+}
+
+function DesignTray() {
+  const s = useStore();
+  const body = recipeInput(s.scene);
+  const q = encodeURIComponent(JSON.stringify(body));
+  const picks = starterTemplates(s.recipes, body.devices.length);
+  const next = () => {
+    touch("design");
+    set({ guide: "headline" });
+  };
+  return html`<div class="guide-card design-tray" onPointerDown=${stop}>
+    <div class="gc-head">
+      <div class="gc-title"><b>Pick a starting design</b><span>Made from your screenshot. You can change everything afterwards.</span></div>
+      <button class="btn ghost sm" onClick=${() => {
+        touch("design");
+        set({ guide: null, leftTab: "designs", leftOpen: true });
+      }}>All templates</button>
+      <button class="btn primary sm" onClick=${next}>Continue<${Icon} n="right" s=${13} w=${2.2} /></button>
+    </div>
+    <div class="dt-row">${picks.map(
+      (r) => html`<button class="dt-card ${s.guidePick === r.id ? "on" : ""}" key=${r.id} title=${r.description} disabled=${s.designing} onClick=${() => {
+        set({ guidePick: r.id });
+        applyRecipe(r.id, { silent: true });
+      }}>
+        <span class="dt-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} alt="" />`}</span>
+        <span class="dt-name">${r.name}</span>
+      </button>`,
+    )}</div>
+  </div>`;
+}
+
+function HeadlineStep() {
+  const s = useStore();
+  const ref = useRef();
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const next = () => {
+    touch("headline");
+    set({ guide: S.guideDone || S.touched.exported ? null : "export" });
+  };
+  return html`<div class="guide-card headline-step" onPointerDown=${stop}>
+    <label class="gc-title" for="guide-headline"><b>Write your headline</b><span>What does this screen let people do? Put **stars** around words to colour them.</span></label>
+    <textarea id="guide-headline" class="textarea" ref=${ref} rows="2" spellcheck=${false} placeholder="Dinner, **sorted**" value=${s.scene.headline ?? ""}
+      onInput=${(e) => edit((d) => (d.headline = e.target.value || undefined), "headline")}
+      onKeyDown=${(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          next();
+        } else if (e.key === "Escape") set({ guide: null });
+      }}></textarea>
+    <div class="gc-foot"><span class="faint"><span class="kbd">⇧↩</span> for a new line</span><span class="grow"></span>
+      <button class="btn ghost sm" onClick=${() => set({ guide: null })}>Later</button>
+      <button class="btn primary sm" onClick=${next}>Next<${Icon} n="right" s=${13} w=${2.2} /></button>
+    </div>
+  </div>`;
+}
+
+function ExportStep() {
+  return html`<div class="guide-card export-step" onPointerDown=${stop}>
+    <div class="gc-title"><b>Happy with it? Export it.</b><span>You get a full-size image, ready for the App Store. You can keep changing the design afterwards.</span></div>
+    <div class="gc-foot"><span class="grow"></span>
+      <button class="btn ghost sm" onClick=${() => set({ guide: null })}>Keep editing</button>
+      <button class="btn primary sm" onClick=${() => {
+        set({ guide: null });
+        exportImage();
+      }}><${Icon} n="export" s=${13} w=${2} />Export image</button>
+    </div>
   </div>`;
 }
 
@@ -344,7 +431,7 @@ function Stage() {
   const s = useStore();
   const empty = !s.scene.devices.length;
   const focused = !s.leftOpen && !s.rightOpen;
-  return html`<main class="stage">
+  return html`<main class="stage ${s.guide && !empty ? "guiding" : ""}">
     <div class="stage-glow"></div>
     <div class="float panel-toggle l">
       <button class="icon-btn sm ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the side panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${15} /></button>
@@ -353,9 +440,12 @@ function Stage() {
       <button class="icon-btn sm ${focused ? "on" : ""}" title=${focused ? "Leave focus mode (⌘\\)" : "Focus mode: hide both panels (⌘\\)"} onClick=${toggleFocus}><${Icon} n="focus" s=${15} /></button>
       <button class="icon-btn sm ${s.rightOpen ? "on" : ""}" title=${`${s.rightOpen ? "Hide" : "Show"} the inspector (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${15} /></button>
     </div>
-    ${s.view === "render" ? html`<${RenderView} />` : empty ? html`<div class="dots"></div><${Hero} />` : html`<${CanvasView} />`}
-    ${s.view === "canvas" && !empty && html`<${Checklist} />`}
-    ${s.view === "canvas" && !empty && html`<${AIChat} />`}
+    ${s.view === "render" ? html`<${RenderView} />` : empty ? html`<div class="dots"></div><${Welcome} />` : html`<${CanvasView} />`}
+    ${s.view === "canvas" && !empty && html`<${GuideStrip} />`}
+    ${s.view === "canvas" && !empty && s.guide === "design" && html`<${DesignTray} />`}
+    ${s.view === "canvas" && !empty && s.guide === "headline" && html`<${HeadlineStep} />`}
+    ${s.view === "canvas" && !empty && s.guide === "export" && html`<${ExportStep} />`}
+    ${s.view === "canvas" && !empty && !s.guide && html`<${AIChat} />`}
     ${s.jsonOpen && html`<${JsonDrawer} />`}
   </main>`;
 }
@@ -373,9 +463,27 @@ function suggestionsFor(sel) {
 const StepIcon = ({ state }) =>
   html`<span class="step-ico ${state}">${state === "done" ? html`<${Icon} n="check" s=${10} w=${3} />` : state === "active" ? html`<i class="ring"></i>` : html`<i class="dot"></i>`}</span>`;
 
+/** Each step the agent takes: what it says while it runs, and once it's done. */
+const provider = (x) => IMAGE_PROVIDERS[x?.provider] ?? "The image generator";
+const AI_STEPS = {
+  look: { now: "Rendering your design", done: "Looked at your design" },
+  read: { now: "Reading the screenshots", done: "Read the design" },
+  think: { now: "Claude is designing the change", done: "Designed the change" },
+  retry: { now: "Fixing a mistake in its first try", done: "Fixed a mistake in its first try" },
+  generate: { now: (x) => `${provider(x)} is making the new backdrop image`, done: (x) => `${provider(x)} made the backdrop image`, cut: (x) => `You used it while ${provider(x)} was still making the backdrop image` },
+  render: { now: "Rendering the result", done: "Rendered the result", cut: "You used it before Claude checked it" },
+  check: { now: "Claude is checking the render", done: "Checked the render", cut: "You used it before Claude finished checking it" },
+};
+const stepText = (x, active) => {
+  const t = AI_STEPS[x.key]?.[active ? "now" : x.cut ? "cut" : "done"] ?? AI_STEPS[x.key]?.done ?? x.key;
+  return typeof t === "function" ? t(x) : t;
+};
+const secs = (ms) => (ms >= 60000 ? `${Math.floor(ms / 60000)}m ${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}s` : `${Math.max(0, Math.floor(ms / 1000))}s`);
+
 /**
- * The agent at work, step by step, as the engine reports it: what it's looking at (the very
- * image Claude sees), what it found in the scene, and how long it has been thinking.
+ * The agent at work, step by step, as the engine reports it: what it's doing now and for how
+ * long, the image Claude looks at, and Stop. Once Claude has made its change, "Use it now" puts
+ * it on the canvas without waiting for the check.
  */
 function AIWork() {
   const s = useStore();
@@ -386,47 +494,57 @@ function AIWork() {
     return () => clearInterval(t);
   }, []);
   if (!w) return null;
-  const order = ["look", "read", "think", "check"];
-  const at = order.indexOf(w.step);
-  const state = (k) => (order.indexOf(k) < at ? "done" : order.indexOf(k) === at ? "active" : "todo");
-  const secs = Math.max(0, Math.floor((now - w.started) / 1000));
+  const steps = w.steps ?? [];
+  const scroll = (e) => {
+    const b = e.target.closest(".ai-chat-body");
+    b?.scrollTo({ top: b.scrollHeight, behavior: "smooth" });
+  };
+  const via = s.opts?.ai?.provider === "api" ? s.opts.ai.model : "Claude Code";
   return html`<div class="msg assistant work">
     <ol class="work-steps">
-      <li class=${state("look")}><${StepIcon} state=${state("look")} /><div class="step-body"><b>Looking at your design</b>
-        ${w.image && html`<div class="work-shot"><img src=${w.image} onLoad=${(e) => {
-          const b = e.target.closest(".ai-chat-body");
-          b?.scrollTo({ top: b.scrollHeight, behavior: "smooth" });
-        }} /><i class="scan"></i></div>`}</div></li>
-      ${at >= 1 &&
-      html`<li class=${state("read")}><${StepIcon} state=${state("read")} /><div class="step-body"><b>Reading the scene</b>
-        <div class="work-items">${w.items.map((x, i) => html`<span style=${{ "--i": i }}>${x}</span>`)}</div></div></li>`}
-      ${at >= 2 &&
-      html`<li class=${state("think")}><${StepIcon} state=${state("think")} /><div class="step-body"><b class=${at === 2 ? "shimmer-text" : ""}>${w.retry ? "Fixing a mistake" : at > 2 ? "Designed the change" : "Designing the change"}</b>
-        ${at === 2 && html`<span class="work-time">${secs}s</span>`}</div></li>`}
-      ${at >= 3 &&
-      html`<li class=${state("check")}><${StepIcon} state=${state("check")} /><div class="step-body"><b class="shimmer-text">Checking the result</b>
-        ${w.checkImage && html`<div class="work-shot"><img src=${w.checkImage} onLoad=${(e) => {
-          const b = e.target.closest(".ai-chat-body");
-          b?.scrollTo({ top: b.scrollHeight, behavior: "smooth" });
-        }} /><i class="scan"></i></div>`}
-        <span class="work-time">${secs}s</span></div></li>`}
+      ${steps.map((x, i) => {
+        const active = !x.end;
+        const st = active ? "active" : "done";
+        return html`<li class=${st} key=${i}><${StepIcon} state=${st} /><div class="step-body">
+          <div class="step-head"><b class=${active ? "shimmer-text" : ""}>${stepText(x, active)}</b><span class="work-time">${secs((x.end ?? now) - x.at)}</span></div>
+          ${x.key === "look" && w.image && html`<div class="work-shot"><img src=${w.image} onLoad=${scroll} /><i class="scan"></i></div>`}
+          ${x.key === "read" && html`<div class="work-items">${w.items.map((t, j) => html`<span style=${{ "--i": j }}>${t}</span>`)}</div>`}
+          ${x.key === "think" && active && html`<span class="step-note">${via} · usually 10 to 30 seconds</span>`}
+          ${x.key === "retry" && x.reason && html`<span class="step-note">${x.reason}</span>`}
+          ${x.key === "generate" &&
+          html`<span class="step-note">${x.reason && html`<b class="why">Why a new image: </b>${x.reason}<br />`}${x.prompt ? `“${x.prompt.length > 110 ? x.prompt.slice(0, 110).trim() + "…" : x.prompt}”` : ""}${active ? html`<br />${x.provider === "openai" ? (s.ai.imageQuality === "best" ? "At Best quality this usually takes a minute or more." : "This usually takes about half a minute.") : "This can take a minute."}${w.draft ? " Use it now to skip the wait: the image appears on the canvas when it's made." : ""}` : ""}</span>`}
+          ${x.key === "check" && w.checkImage && html`<div class="work-shot"><img src=${w.checkImage} onLoad=${scroll} /><i class="scan"></i></div>`}
+        </div></li>`;
+      })}
     </ol>
+    <div class="work-actions">
+      <span class="work-time">${secs(now - w.started)} in all</span><span class="grow"></span>
+      ${w.draft && html`<button class="btn sm" title="Put Claude's change on the canvas now, without waiting for it to check its work" onClick=${useAIDraft}>Use it now</button>`}
+      <button class="btn sm ghost stop" title="Stop Claude. The design stays as it was." onClick=${stopAI}><span class="stop-sq"></span>Stop</button>
+    </div>
   </div>`;
 }
 
-/** After an answer: the steps it took, folded into one line you can open. */
+/** After an answer: the steps it took, each with its time, folded into one line you can open. */
 function WorkedFor({ m }) {
   const [open, setOpen] = useState(false);
+  const list = m.steps?.list;
   return html`<div class="worked ${open ? "open" : ""}">
     <button class="worked-toggle" onClick=${() => setOpen(!open)}><${Icon} n="spark" s=${11} />Worked for ${m.took}s<${Icon} n="down" s=${11} class="chev" /></button>
     ${open &&
-    html`<ol class="work-steps done">
-      <li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Looked at your design</b></div></li>
-      <li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Read the scene</b>${m.steps?.items?.length ? html`<div class="work-items static">${m.steps.items.map((x) => html`<span>${x}</span>`)}</div>` : ""}</div></li>
-      ${m.steps?.retried && html`<li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Fixed a mistake in its first try</b></div></li>`}
-      <li class="done"><${StepIcon} state="done" /><div class="step-body"><b>${m.changes ? `Made ${m.changes} change${m.changes === 1 ? "" : "s"}` : "Answered"}</b></div></li>
-      ${m.steps?.checked && html`<li class="done"><${StepIcon} state="done" /><div class="step-body"><b>${m.steps.checked.fixes ? `Checked the render and fixed ${m.steps.checked.fixes} thing${m.steps.checked.fixes === 1 ? "" : "s"}` : "Checked the render"}</b></div></li>`}
-    </ol>`}
+    (list?.length
+      ? html`<ol class="work-steps done">
+          ${list.map((x) => html`<li class="done"><${StepIcon} state="done" /><div class="step-body"><div class="step-head"><b>${stepText(x, false)}</b><span class="work-time">${secs(x.ms)}</span></div>
+            ${x.key === "read" && m.steps.items?.length ? html`<div class="work-items static">${m.steps.items.map((t) => html`<span>${t}</span>`)}</div>` : ""}</div></li>`)}
+          ${m.steps.checked?.fixes > 0 && html`<li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Fixed ${m.steps.checked.fixes} thing${m.steps.checked.fixes === 1 ? "" : "s"} it saw in the render</b></div></li>`}
+        </ol>`
+      : html`<ol class="work-steps done">
+          <li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Looked at your design</b></div></li>
+          <li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Read the design</b>${m.steps?.items?.length ? html`<div class="work-items static">${m.steps.items.map((x) => html`<span>${x}</span>`)}</div>` : ""}</div></li>
+          ${m.steps?.retried && html`<li class="done"><${StepIcon} state="done" /><div class="step-body"><b>Fixed a mistake in its first try</b></div></li>`}
+          <li class="done"><${StepIcon} state="done" /><div class="step-body"><b>${m.changes ? `Made ${m.changes} change${m.changes === 1 ? "" : "s"}` : "Answered"}</b></div></li>
+          ${m.steps?.checked && html`<li class="done"><${StepIcon} state="done" /><div class="step-body"><b>${m.steps.checked.fixes ? `Checked the render and fixed ${m.steps.checked.fixes} thing${m.steps.checked.fixes === 1 ? "" : "s"}` : "Checked the render"}</b></div></li>`}
+        </ol>`)}
   </div>`;
 }
 
@@ -466,7 +584,7 @@ function AIChat() {
   // Follow the agent as each step appears.
   useEffect(() => {
     body.current?.scrollTo({ top: body.current.scrollHeight, behavior: "smooth" });
-  }, [ai.work?.step, ai.work?.image, ai.work?.retry]);
+  }, [ai.work?.steps?.length, ai.work?.image, ai.work?.checkImage, Boolean(ai.work?.draft)]);
   const setAi = (patch) => set({ ai: { ...S.ai, ...patch } });
   const status = s.opts?.ai;
   if (!ai.open) {
@@ -525,7 +643,7 @@ function AIChat() {
         m.role === "user"
           ? html`<div class="msg user" key=${m.id}>${m.about && html`<span class="msg-about"><${Icon} n="phone" s=${10} />${m.about}</span>`}<p>${m.text}</p></div>`
           : m.role === "error"
-            ? html`<div class="msg error" key=${m.id}><p>${m.text}</p>${m.retry && html`<button class="btn sm" onClick=${() => aiEdit(m.retry)}>Try again</button>`}</div>`
+            ? html`<div class="msg error ${m.stopped ? "stopped" : ""}" key=${m.id}><p>${m.text}</p>${m.retry && html`<button class="btn sm" onClick=${() => aiEdit(m.retry)}>Try again</button>`}</div>`
             : html`<div class="msg assistant ${m.reverted ? "reverted" : ""} ${m.fresh ? "fresh" : ""}" key=${m.id}>
                 ${m.took && html`<${WorkedFor} m=${m} />`}
                 ${m.ops?.length > 0 &&
@@ -578,7 +696,9 @@ function AIChat() {
               }
             }
           }}></textarea>
-        <button class="send" disabled=${!ai.text.trim() || ai.busy} onClick=${send} title="Send (Enter)"><${Icon} n="up" s=${16} w=${2.4} /></button>
+        ${ai.busy
+          ? html`<button class="send stop" onClick=${stopAI} title="Stop Claude. The design stays as it was."><span class="stop-sq"></span></button>`
+          : html`<button class="send" disabled=${!ai.text.trim()} onClick=${send} title="Send (Enter)"><${Icon} n="up" s=${16} w=${2.4} /></button>`}
       </div>
     </div>
   </section>`;
@@ -598,18 +718,18 @@ function JsonDrawer() {
   const apply = async () => {
     try {
       const next = JSON.parse(text);
-      if (!Array.isArray(next.devices)) throw new Error("The scene needs a devices array.");
+      if (!Array.isArray(next.devices)) throw new Error("The design needs a devices array.");
       if (next.devices.length) await api("/api/layout", next);
       setScene(next);
       setDirty(false);
       setErr(null);
-      toast({ kind: "ok", title: "Scene updated from JSON", timeout: 2500 });
+      toast({ kind: "ok", title: "Design updated from JSON", timeout: 2500 });
     } catch (e) {
       setErr(e.message);
     }
   };
   return html`<div class="json-drawer" onPointerDown=${(e) => e.stopPropagation()}>
-    <div class="panel-head"><h2>Scene JSON <span class="sub">create_mockup arguments</span></h2>
+    <div class="panel-head"><h2>Design as JSON <span class="sub">create_mockup arguments</span></h2>
       <button class="icon-btn sm" onClick=${() => set({ jsonOpen: false })}><${Icon} n="x" s=${14} /></button></div>
     <textarea spellcheck=${false} value=${text} onKeyDown=${(e) => {
       e.stopPropagation();
@@ -667,7 +787,7 @@ function Settings() {
             <span class="grow"></span>
             ${ai?.provider === "api" ? html`<span class="pill ok"><span class="status-dot ok"></span>Anthropic API</span>` : ai?.provider === "claude-code" ? html`<span class="pill ok"><span class="status-dot ok"></span>Claude Code</span>` : html`<span class="pill"><span class="status-dot warn"></span>Not set up</span>`}
           </h4>
-          <div class="note">Describe a change and Claude edits the scene. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design, so it can judge spacing and contrast. Your original files stay on your Mac.</div>
+          <div class="note">Describe a change and Claude edits the design. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design, so it can judge spacing and contrast. Your original files stay on your Mac.</div>
           <${Switch} checked=${s.ai.preview !== false} onChange=${(v) => {
             set({ ai: { ...S.ai, preview: v } });
             persist();
@@ -697,13 +817,24 @@ function Settings() {
               }
             }}>Change…</button>`}
           </div>
-          <div class="note">Captures, imports, renders and your current scene live here.</div>
+          <div class="note">Your screenshots, designs and exports live here.</div>
         </div>
         <${DeviceArt} />
         <${HouseStyle} />
         <div class="card">
+          <h4><${Icon} n="code" s=${15} />For developers</h4>
+          <div class="note">Every design is plain JSON: exactly what an AI agent sends to make this image. You can read it, edit it and apply it.</div>
+          <div class="hstack"><button class="btn sm" onClick=${() => set({ modal: null, jsonOpen: true })}>Show this design as JSON</button><span class="kbd">⌥⌘J</span></div>
+        </div>
+        <div class="card">
           <h4><${Icon} n="wand" s=${15} />AI backgrounds</h4>
-          <div class="note">${s.opts?.aiProviders?.length ? html`Using <b>${s.opts.aiProviders.join(", ")}</b>.` : html`Add <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>REPLICATE_API_TOKEN</code> or <code>FAL_KEY</code> to your shell profile (~/.zshrc) and restart Screenshotter.`}</div>
+          <div class="note">${s.opts?.aiProviders?.length ? html`Using <b>${s.opts.aiProviders.map((p) => IMAGE_PROVIDERS[p] ?? p).join(", ")}</b>. Ask AI only makes a new image when you ask for one, or when none of the looks, paintings, photos or colours can do what you asked.` : html`Add <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>REPLICATE_API_TOKEN</code> or <code>FAL_KEY</code> to your shell profile (~/.zshrc) and restart Screenshotter.`}</div>
+          ${s.opts?.aiProviders?.[0] === "openai" &&
+          html`<div class="row"><label>New images</label><${Seg} value=${s.ai.imageQuality === "best" ? "best" : "fast"} options=${[{ value: "fast", label: "Fast" }, { value: "best", label: "Best" }]} onChange=${(v) => {
+              set({ ai: { ...S.ai, imageQuality: v } });
+              persistPrefs();
+            }} /></div>
+            <div class="note">${s.ai.imageQuality === "best" ? "Best: the finest detail. A new image takes a minute or more." : "Fast: a new image in about half a minute, with a little less fine detail. Best takes a minute or more."} Images you already have are kept either way.</div>`}
         </div>
         <div class="card">
           <h4><${Icon} n="bolt" s=${15} />Shortcuts</h4>
@@ -712,7 +843,9 @@ function Settings() {
               ["Ask AI", "⌘K"],
               ["Quick preview", "⌘R"],
               ["Export image / video", "⌘E / ⇧⌘E"],
-              ["Canvas / Render", "⌘1 / ⌘2"],
+              ["Edit / Preview", "⌘1 / ⌘2"],
+              ["My designs", "⇧⌘O"],
+              ["Focus mode (hide both panels)", "⌘\\"],
               ["Undo / Redo", "⌘Z / ⇧⌘Z"],
               ["Duplicate / Delete", "⌘D / ⌫"],
               ["Nudge (×10 with ⇧)", "← ↑ → ↓"],
@@ -885,14 +1018,15 @@ function WhatsNew() {
 function Help() {
   const close = () => set({ modal: null });
   const steps = [
-    ["sim", "1 · Add a screenshot", "Capture your app from the iOS Simulator, a website, or a Mac window, or drop in image files. They collect in the Screens panel; click one to use it."],
-    ["canvas", "2 · Make it yours", "Edit mode shows where things go. Drag the device to move it, pull a corner to resize, use the round handle to rotate. Double-click text to retype it. Pick a Backdrop, add a headline in Text, and point things out with arrows, circles and numbers from Shapes."],
+    ["sim", "1 · Add a screenshot", "Drop in an image, or capture your app from the iOS Simulator, a website or a Mac window. They collect under Screenshots."],
+    ["wand", "2 · Pick a design", "You get finished designs made from your screenshot. Pick one, or open Templates for more. Claude can make three for you there too."],
+    ["text", "3 · Write your headline", "Double-click the headline to retype it. Put **stars** around words to colour them."],
+    ["canvas", "Make it yours", "Click anything to select it, then drag to move, pull a corner to resize and use the round handle to rotate. The bar above a selection has the everyday edits (words, colours, Replace); Settings opens the rest. Backdrop and Text & shapes are in the rail."],
     ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset backdrop”. Undo (⌘Z) reverts anything."],
-    ["wand", "Or start from a design", "Designs turns your screen into a finished design in one click, or asks Claude for three to pick from."],
-    ["eye", "Preview", "Edit mode is a quick layout guide. Preview renders the finished image with the real frame, lighting and effects."],
-    ["export", "3 · Export", "Export saves a full-size PNG, JPEG or WebP, or a video with gentle camera motion. Everything lands in your output folder."],
-    ["grid", "Scenes", "Every design saves itself as you work. Scenes (⇧⌘O) shows them all: search, open, rename, duplicate, or start a new one."],
+    ["export", "4 · Export", "Export saves a full-size PNG, JPEG or WebP, or a video with gentle camera motion. Preview shows the finished look first."],
+    ["grid", "My designs", "Every design saves itself as you work. My designs (⇧⌘O) has them all, and everything you've exported."],
   ];
+
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
     <div class="sheet">
       <div class="sheet-head"><h2>How Screenshotter works</h2><button class="icon-btn" onClick=${close}><${Icon} n="x" s=${16} /></button></div>
@@ -900,9 +1034,9 @@ function Help() {
         ${steps.map(([icon, title, text]) => html`<div class="help-row"><span class="ico"><${Icon} n=${icon} s=${18} /></span><div><b>${title}</b><div class="note" style=${{ fontSize: "12.5px" }}>${text}</div></div></div>`)}
         <div class="hstack">
           <button class="btn" onClick=${() => {
-            set({ guideDone: false, modal: null });
-            persist();
-          }}>Show the getting-started checklist</button>
+            set({ guideDone: false, modal: null, touched: { ...S.touched, design: false, headline: false, exported: false } });
+            persistPrefs();
+          }}>Show the first steps again</button>
           <button class="btn ghost" onClick=${() => (native ? native.call("openURL", { url: `${location.origin}/docs` }) : window.open("/docs", "_blank"))}><${Icon} n="book" s=${14} />Full documentation</button>
           <button class="btn ghost" onClick=${() => openWhatsNew(true)}><${Icon} n="spark" s=${14} />What's new</button>
         </div>
@@ -1031,7 +1165,7 @@ function App() {
     ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
     <${Toasts} />
     <${ContextMenu} />
-    ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new scene" : "Drop to add to the scene"}</div></div>`}
+    ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new design" : "Drop to add to the design"}</div></div>`}
   </div>`;
 }
 
@@ -1154,8 +1288,10 @@ window.addEventListener("keydown", (e) => {
   if (mod && e.code === "Backslash") return e.preventDefault(), commands.focus();
   if (mod && e.altKey && e.code === "KeyS") return e.preventDefault(), commands.toggleLeft();
   if (mod && e.altKey && e.code === "KeyI") return e.preventDefault(), commands.toggleRight();
+  if (mod && e.altKey && e.code === "KeyJ") return e.preventDefault(), commands.json();
   if (mod) return;
   if (e.key === "Escape") {
+    if (S.guide) return set({ guide: null });
     if (S.exportOpen) return set({ exportOpen: false });
     if (S.jsonOpen) return set({ jsonOpen: false });
     if (S.ai.open) return set({ ai: { ...S.ai, open: false } });

@@ -403,8 +403,8 @@ import WebKit
             action("Quit Screenshotter", #selector(NSApplication.terminate(_:)), "q"),
         ])
         _ = submenu("File", [
-            item("New Scene", "newScene", "n"),
-            item("Open Scene…", "scenes", "o", [.command, .shift]),
+            item("New Design", "newScene", "n"),
+            item("My Designs", "scenes", "o", [.command, .shift]),
             item("Save", "save", "s"),
             .separator(),
             action("Import Screenshots…", #selector(openFilesPanel(_:)), "o", target: self),
@@ -440,7 +440,7 @@ import WebKit
             item("Toggle Side Panel", "toggleLeft", "s", [.command, .option]),
             item("Toggle Inspector", "toggleRight", "i", [.command, .option]),
             item("Focus Mode", "focus", "\\"),
-            item("Scene JSON", "json", "j", [.command, .option]),
+            item("Design as JSON", "json", "j", [.command, .option]),
             .separator(),
             action("Reload Interface", #selector(reloadUI(_:)), "r", [.command, .option, .shift], target: self),
             action("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),

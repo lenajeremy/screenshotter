@@ -51,7 +51,7 @@ export const S = {
   bootError: null,
   opts: null,
   scene: DEFAULT_SCENE,
-  sceneName: "Untitled scene",
+  sceneName: "Untitled design",
   /** The saved scene being edited (null until it has something in it). */
   sceneId: null,
   scenes: [],
@@ -59,7 +59,7 @@ export const S = {
   /** When the open scene was last saved, as the library has it: a newer save by an agent gets picked up. */
   sceneStamp: null,
   /** Side panels: the inspector can be hidden too, each can be dragged wider, and focus mode hides both. */
-  rightOpen: true,
+  rightOpen: false,
   leftW: null,
   rightW: null,
   focusRestore: null,
@@ -82,7 +82,12 @@ export const S = {
   hover: null,
   view: "canvas",
   leftTab: "captures",
-  leftOpen: true,
+  // Both side panels start tucked away: the design has the window, and a panel opens when asked for.
+  leftOpen: false,
+  /** The merged Text & shapes panel: which half is showing. */
+  addTab: "text",
+  /** A new design's first steps: "design" (pick a template), "headline" (write it), "export". */
+  guide: null,
   busy: null,
   rendering: null,
   render: null,
@@ -91,7 +96,7 @@ export const S = {
   exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4" } },
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false },
   apps: { list: [], loading: false, for: "" },
-  ai: { open: false, busy: false, text: "", error: null, history: [], thread: [], model: "", preview: true, context: true, last: null },
+  ai: { open: false, busy: false, text: "", error: null, history: [], thread: [], model: "", preview: true, context: true, last: null, imageQuality: "fast" },
   pulse: [],
   toasts: [],
   modal: null,
@@ -231,7 +236,7 @@ const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
   sceneId: S.sceneId,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW },
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, addTab: S.addTab, layoutV: 2 },
 });
 export function persist() {
   persistPrefs();
@@ -312,15 +317,23 @@ export async function restore() {
   if (saved.scene && Array.isArray(saved.scene.devices)) patch.scene = saved.scene;
   if (saved.sceneName) patch.sceneName = saved.sceneName;
   if (saved.sceneId) patch.sceneId = saved.sceneId;
-  if (ui.leftTab) patch.leftTab = ui.leftTab;
-  if (typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
-  if (typeof ui.rightOpen === "boolean") patch.rightOpen = ui.rightOpen;
+  // Tabs that were merged or moved: Shapes joined Text; Layers and Exports left the rail.
+  if (ui.leftTab) patch.leftTab = { shapes: "text", layers: "captures", exports: "captures" }[ui.leftTab] ?? ui.leftTab;
+  if (ui.leftTab === "shapes") patch.addTab = "shapes";
+  if (ui.addTab === "text" || ui.addTab === "shapes") patch.addTab = ui.addTab;
+  // Which panels are open is remembered from the layout with closed-by-default panels onward.
+  if (ui.layoutV === 2) {
+    if (typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
+    if (typeof ui.rightOpen === "boolean") patch.rightOpen = ui.rightOpen;
+  }
   if (Number.isFinite(ui.leftW)) patch.leftW = ui.leftW;
   if (Number.isFinite(ui.rightW)) patch.rightW = ui.rightW;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
-  patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
+  patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;
+  // Someone who used the app before this layout has done the first steps already.
+  if (saved.ui && ui.layoutV !== 2) patch.guideDone = true;
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
   if (ui.scenesPrefs) patch.scenesPrefs = { ...S.scenesPrefs, ...ui.scenesPrefs };
   set(patch);
@@ -388,9 +401,12 @@ export const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "
 export const isVideo = (p) => /\.(mp4|mov|webm)$/i.test(p ?? "");
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
+/** Image generators by the names people know them by. */
+export const IMAGE_PROVIDERS = { openai: "OpenAI", gemini: "Gemini", replicate: "Replicate", fal: "fal" };
+
 export function entityLabel(id, scene = S.scene, layout = S.layout) {
   if (!id) return "";
-  if (id === "caption") return "Caption";
+  if (id === "caption") return "Headline";
   const [kind, n] = id.split("-");
   if (kind === "text") return (scene.texts?.[n - 1]?.text || "Text").replace(/\*\*/g, "").slice(0, 28);
   if (kind === "shape") {

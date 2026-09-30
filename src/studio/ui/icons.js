@@ -73,6 +73,7 @@ const P = {
   fadeRight: '<path d="M14 4H8a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h6"/><path d="M18.5 4h.01M18.5 9.3h.01M18.5 14.7h.01M18.5 20h.01" stroke-width="2.2"/>',
   sidebarR: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M14.5 4v16"/>',
   focus: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9.5 9.5L7 12l2.5 2.5M14.5 9.5L17 12l-2.5 2.5"/>',
+  sliders: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
   pen: '<path d="M4 20l1.2-4.6L15.8 4.8a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z"/><path d="M13.8 6.8l3.4 3.4"/>',
   shapes: '<circle cx="8" cy="8" r="4.5"/><rect x="12.5" y="12.5" width="8" height="8" rx="1.8"/><path d="M4 20l3.5-6 3.5 6z"/>',
   arrow: '<path d="M5 19C8 11 12 8 19 6"/><path d="M13.5 5.2L19 6l-2.6 5"/>',

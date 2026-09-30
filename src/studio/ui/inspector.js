@@ -1,10 +1,10 @@
 // Right panel: properties of the selection, or of the scene when nothing is selected.
 import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, ColorPicker, Dropdown, Num, Popover, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
-import { Icon, LayoutIcon } from "./icons.js";
+import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
 import { deleteEntity, duplicateEntity, replaceMode, uploadFiles } from "./actions.js";
-import { bgObj } from "./panels.js";
+import { LayersList, bgObj } from "./panels.js";
 
 const FONTS = [
   { value: "", label: "SF Pro", font: "-apple-system" },
@@ -45,6 +45,33 @@ export function Inspector() {
   else if (id.startsWith("shape-")) body = html`<${ShapeInspector} id=${id} />`;
   else body = html`<${TextInspector} id=${id} />`;
   return html`<aside class="panel right">${body}</aside>`;
+}
+
+/**
+ * The settings most people change come first; the rest sit behind "More options". Whether it's
+ * open is remembered per kind of thing (device, text, shape, image).
+ */
+function More({ id, children }) {
+  const key = `more:${id}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem(key, open ? "0" : "1");
+    } catch {
+      // Private window: it just won't be remembered.
+    }
+  };
+  return html`<button class="more-options ${open ? "open" : ""}" onClick=${toggle} aria-expanded=${open}>
+      <${Icon} n=${open ? "down" : "right"} s=${13} />${open ? "Fewer options" : "More options"}
+    </button>
+    ${open && children}`;
 }
 
 function Head({ title, sub, id }) {
@@ -105,7 +132,7 @@ function DeviceInspector({ id }) {
   const artUnused = currentIsApple && !e?.bezel;
   const family = (m) => (m.family === "iphone" ? "iPhone" : m.family === "ipad" ? "iPad" : m.family === "watch" ? "Watch" : m.family === "mac" ? "Mac" : m.family);
   const modelOpts = [
-    { value: "", label: "Match the capture", hint: e?.device ?? "" },
+    { value: "", label: "Match the screenshot", hint: e?.device ?? "" },
     ...models.map((m) => ({ value: m.name, label: m.name, group: family(m) })),
     ...(s.opts?.extraDevices ?? []).map((n) => ({ value: n, label: n, group: "From Xcode" })),
   ];
@@ -124,44 +151,9 @@ function DeviceInspector({ id }) {
       if (patch.height !== undefined) delete dev.width;
     }, key);
   const custom = d.x !== undefined || d.y !== undefined || d.height !== undefined || d.rotate;
-  return html`
-    <${Head} title=${entityLabel(id)} sub=${s.scene.devices.length > 1 ? `${i + 1} of ${s.scene.devices.length}` : ""} id=${id} />
-    <div class="panel-body">
-      <div class="insp-hero">
-        <div class="pic"><img src=${thumbUrl(d.screenshot, 120)} /></div>
-        <div class="meta"><b>${base(d.screenshot)}</b><span>${d.video ? html`<${Icon} n="video" s=${11} style=${{ display: "inline", verticalAlign: "-1px" }} /> Recording attached` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} on canvas` : ""}</span></div>
-        <button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>
-      </div>
-
-      <${Section} title="Frame style">
+  // The frame chooser and its extras. Everyday for a browser, window or card; an extra for a device.
+  const frameSection = html`<${Section} title="Frame style">
         <div class="frames">${FRAMES.map((f) => html`<button class="frame-opt ${frame === f.value ? "on" : ""}" onClick=${() => upd((dev) => (dev.frame = f.value === "device" ? undefined : f.value))}><${Icon} n=${f.icon} s=${17} />${f.label}</button>`)}</div>
-        ${frame === "device" &&
-        html`<div class="row"><label>Device</label><${Dropdown} value=${d.device ?? ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
-          dev.device = v || undefined;
-          delete dev.color;
-        })} /></div>
-          <div class="row top"><label>Colour</label><div class="vstack colour-groups">
-            <div class="colour-group">
-              <span class="colour-head"><${Icon} n="image" s=${11} />Apple product art</span>
-              ${appleColors.length
-                ? html`<div class="swatches">${appleColors.map(
-                    (c) => html`<button class="swatch art ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: Apple's photographic render`} onClick=${() => upd((dev) => {
-                      dev.color = c.name;
-                      if (dev.bezel === false) delete dev.bezel;
-                    })}></button>`,
-                  )}</div>`
-                : html`<button class="link colour-get" onClick=${() => set({ modal: { kind: "settings" } })}>${artNames.length === 0 && model ? `Get Apple's art for the ${model.name}…` : "Get Apple's device art…"}</button>`}
-            </div>
-            <div class="colour-group">
-              <span class="colour-head"><${Icon} n="wand" s=${11} />Drawn</span>
-              <div class="swatches">
-                ${drawnColors.map((c) => html`<button class="swatch ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: drawn`} onClick=${() => upd((dev) => (dev.color = c.name))}></button>`)}
-                <${ColorPickSwatch} value=${/^#/.test(d.color ?? "") ? d.color : undefined} onChange=${(v) => upd((dev) => (dev.color = v), "color")} />
-              </div>
-            </div>
-            <span class="swatch-name">${current}<span class="faint"> · ${currentIsApple && !artUnused ? "Apple product art" : "drawn"}</span></span>
-            ${artUnused && html`<span class="note">${d.bezel === false ? "Art is set to Drawn below." : "Web pages use drawn frames: Apple's licence covers mock-ups of apps."}</span>`}
-          </div></div>`}
         ${frame === "browser" && html`<div class="row"><label>Address</label><${TextField} value=${d.url} placeholder="Page URL by default" onChange=${(v) => upd((dev) => (dev.url = v || undefined), "url")} /></div>`}
         ${frame === "window" && html`<div class="row"><label>Title</label><${TextField} value=${d.title} placeholder="Window title" onChange=${(v) => upd((dev) => (dev.title = v || undefined), "title")} /></div>`}
         ${(frame === "browser" || frame === "window") && html`<div class="row"><label>Chrome</label><${Seg} value=${d.chrome ?? "light"} options=${["light", "dark"]} onChange=${(v) => upd((dev) => (dev.chrome = v === "light" ? undefined : v))} /></div>`}
@@ -174,20 +166,73 @@ function DeviceInspector({ id }) {
           <${Switch} checked=${d.buttons !== false} onChange=${(v) => upd((dev) => (dev.buttons = v ? undefined : false))} label="Buttons" />
           <${Switch} checked=${Boolean(d.glare)} onChange=${(v) => upd((dev) => (dev.glare = v || undefined))} label="Glass glare" />
         </div>`}
+      <//>`;
+  return html`
+    <${Head} title=${entityLabel(id)} sub=${s.scene.devices.length > 1 ? `${i + 1} of ${s.scene.devices.length}` : ""} id=${id} />
+    <div class="panel-body">
+      <div class="insp-hero">
+        <div class="pic"><img src=${thumbUrl(d.screenshot, 120)} /></div>
+        <div class="meta"><b>${base(d.screenshot)}</b><span>${d.video ? html`<${Icon} n="video" s=${11} style=${{ display: "inline", verticalAlign: "-1px" }} /> Recording attached` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} on canvas` : ""}</span></div>
+        <button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>
+      </div>
+
+      ${frame === "device"
+        ? html`<${Section} title="Device">
+        <div class="row"><label>Device</label><${Dropdown} value=${d.device ?? ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
+          dev.device = v || undefined;
+          delete dev.color;
+        })} /></div>
+          <div class="row top"><label>Colour</label><div class="vstack colour-groups">
+            ${appleColors.length > 0 &&
+            html`<div class="colour-group">
+              <span class="colour-head"><${Icon} n="image" s=${11} />Apple product art</span>
+              ${html`<div class="swatches">${appleColors.map(
+                    (c) => html`<button class="swatch art ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: Apple's photographic render`} onClick=${() => upd((dev) => {
+                      dev.color = c.name;
+                      if (dev.bezel === false) delete dev.bezel;
+                    })}></button>`,
+                  )}</div>`}
+            </div>`}
+            <div class="colour-group">
+              ${appleColors.length > 0 && html`<span class="colour-head"><${Icon} n="wand" s=${11} />Drawn</span>`}
+              <div class="swatches">
+                ${drawnColors.map((c) => html`<button class="swatch ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: drawn`} onClick=${() => upd((dev) => (dev.color = c.name))}></button>`)}
+                <${ColorPickSwatch} value=${/^#/.test(d.color ?? "") ? d.color : undefined} onChange=${(v) => upd((dev) => (dev.color = v), "color")} />
+              </div>
+            </div>
+            <span class="swatch-name">${current}<span class="faint"> · ${currentIsApple && !artUnused ? "Apple product art" : "drawn"}</span></span>
+            ${artUnused && html`<span class="note">${d.bezel === false ? "Art is set to Drawn below." : "Web pages use drawn frames: Apple's licence covers mock-ups of apps."}</span>`}
+          </div></div>
+      <//>`
+        : frameSection}
+
+      <${Section} title="Size & tilt" right=${d.rotateX || d.rotateY ? html`<button class="btn sm ghost" onClick=${() => upd((dev) => {
+        delete dev.rotateX;
+        delete dev.rotateY;
+      })}>Make flat</button>` : null}>
+        <div class="row"><label>Size</label><${Slider} value=${Hh} min=${0.1} max=${1.6} step=${0.005} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => place({ height: v === undefined ? undefined : r4(v) }, "h")} /></div>
+        <${Pad3D} rx=${d.rotateX ?? 0} ry=${d.rotateY ?? 0} onChange=${(rx, ry) => upd((dev) => {
+          dev.rotateX = rx || undefined;
+          dev.rotateY = ry || undefined;
+        }, "3d")} />
       <//>
 
-      <${Section} title="Size & position" right=${custom ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((dev) => {
+      <${More} id="device">
+        ${frame === "device" && frameSection}
+        <${Section} title="Position" right=${custom ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((dev) => {
         for (const k of ["x", "y", "anchor", "height", "width", "rotate"]) delete dev[k];
       })}><${Icon} n="refresh" s=${12} />Auto-place</button>` : null}>
-        <div class="row"><label>Size</label><${Slider} value=${Hh} min=${0.1} max=${1.6} step=${0.005} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => place({ height: v === undefined ? undefined : r4(v) }, "h")} /></div>
         <div class="row"><label>Rotation</label><${Slider} value=${d.rotate ?? 0} min=${-45} max=${45} step=${0.5} centered reset=${0} format=${(v) => Math.round(v * 10) / 10 + "°"} onChange=${(v) => upd((dev) => (dev.rotate = v ? Math.round(v * 10) / 10 : undefined), "rot")} /></div>
         <div class="row"><label>Position</label><div class="grid2">
           <${Num} label="X" title="Horizontal: 0% left edge, 100% right edge" value=${X} ...${pct} onChange=${(v) => place({ x: v === undefined ? undefined : r4(v) }, "x")} />
           <${Num} label="Y" title="Vertical: 0% top, 100% bottom" value=${Y} ...${pct} onChange=${(v) => place({ y: v === undefined ? undefined : r4(v) }, "y")} />
         </div></div>
+        <div class="row"><label>3D</label><div class="grid2">
+          <${Num} label="↕" title="Tilt: top leans away" value=${d.rotateX ?? 0} unit="°" digits=${1} min=${-60} max=${60} onChange=${(v) => upd((dev) => (dev.rotateX = v || undefined), "rx")} />
+          <${Num} label="↔" title="Turn: right edge turns away" value=${d.rotateY ?? 0} unit="°" digits=${1} min=${-70} max=${70} onChange=${(v) => upd((dev) => (dev.rotateY = v || undefined), "ry")} />
+        </div></div>
         <div class="note">Tip: drag the device on the canvas. Hold ⌥ to turn snapping off.</div>
       <//>
-
       <${Section} title="Focus">
         <div class="row"><label>Blur</label><${Slider} value=${d.blur ?? 0} min=${0} max=${0.012} step=${0.0005} reset=${0}
           format=${(v) => (v ? Math.round((v / 0.012) * 100) + "%" : "Sharp")} onChange=${(v) => upd((dev) => (dev.blur = v ? Math.round(v * 10000) / 10000 : undefined), "blur")} /></div>
@@ -205,20 +250,6 @@ function DeviceInspector({ id }) {
         <div class="note">Blur a device to put it out of focus behind a sharp one. Fade dissolves one edge of it into the background${d.fade ? `: the ${typeof d.fade === "number" ? "bottom" : d.fade.edge ?? "bottom"} edge` : ""}.</div>
       <//>
 
-      <${Section} title="3D angle" right=${d.rotateX || d.rotateY ? html`<button class="btn sm ghost" onClick=${() => upd((dev) => {
-        delete dev.rotateX;
-        delete dev.rotateY;
-      })}>Make flat</button>` : null}>
-        <${Pad3D} rx=${d.rotateX ?? 0} ry=${d.rotateY ?? 0} onChange=${(rx, ry) => upd((dev) => {
-          dev.rotateX = rx || undefined;
-          dev.rotateY = ry || undefined;
-        }, "3d")} />
-        <div class="grid2">
-          <${Num} label="↕" title="Tilt: top leans away" value=${d.rotateX ?? 0} unit="°" digits=${1} min=${-60} max=${60} onChange=${(v) => upd((dev) => (dev.rotateX = v || undefined), "rx")} />
-          <${Num} label="↔" title="Turn: right edge turns away" value=${d.rotateY ?? 0} unit="°" digits=${1} min=${-70} max=${70} onChange=${(v) => upd((dev) => (dev.rotateY = v || undefined), "ry")} />
-        </div>
-      <//>
-
       <${Section} title="Shadow">
         <div class="chips">${SHADOWS.map((sh) => html`<button class="chip sm ${(typeof d.shadow === "string" ? d.shadow : d.shadow ? "custom" : "medium") === sh ? "on" : ""}" onClick=${() => upd((dev) => (dev.shadow = sh === "medium" ? undefined : sh))}>${sh}</button>`)}</div>
       <//>
@@ -226,6 +257,7 @@ function DeviceInspector({ id }) {
       <${Highlights} i=${i} d=${d} />
 
       <${Recording} id=${id} d=${d} upd=${upd} />
+      <//>
     </div>`;
 }
 
@@ -337,14 +369,17 @@ function Highlights({ i, d }) {
 // =============================================================================================
 // Text styling shared by the caption and text items
 
-function TypeControls({ font, weight, color, onFont, onWeight, onColor, align, onAlign, uppercase, onUpper, spacing, onSpacing, colorAuto = "Auto" }) {
+/** Font and colour are the everyday part ("basic"); weight, alignment, tracking and case are the rest. */
+function TypeControls({ part, font, weight, color, onFont, onWeight, onColor, align, onAlign, uppercase, onUpper, spacing, onSpacing, colorAuto = "Auto" }) {
+  const basic = part !== "rest";
+  const rest = part !== "basic";
   return html`
-    <div class="row"><label>Font</label><${Dropdown} value=${font ?? ""} options=${FONTS} search onChange=${onFont} render=${(o) => html`<span style=${{ fontFamily: o.font }}>${o.label}</span>`} /></div>
-    <div class="row"><label>Weight</label><${Dropdown} value=${nearestWeight(weight ?? 700)} options=${WEIGHTS} onChange=${onWeight} /></div>
-    ${onAlign && html`<div class="row"><label>Align</label><${Seg} class="icons" value=${align ?? "center"} options=${[{ value: "left", label: "", icon: "alignL", title: "Left" }, { value: "center", label: "", icon: "alignC", title: "Centre" }, { value: "right", label: "", icon: "alignR", title: "Right" }]} onChange=${onAlign} /></div>`}
-    <div class="row"><label>Colour</label><${ColorButton} value=${color} auto=${colorAuto} onChange=${onColor} /></div>
-    <div class="row"><label>Tracking</label><${Slider} value=${spacing} min=${-0.1} max=${0.3} step=${0.005} fallback=${-0.02} centered format=${(v) => v.toFixed(3)} onChange=${onSpacing} /></div>
-    <${Switch} checked=${Boolean(uppercase)} onChange=${onUpper} label="Uppercase" />
+    ${basic && html`<div class="row"><label>Font</label><${Dropdown} value=${font ?? ""} options=${FONTS} search onChange=${onFont} render=${(o) => html`<span style=${{ fontFamily: o.font }}>${o.label}</span>`} /></div>
+      <div class="row"><label>Colour</label><${ColorButton} value=${color} auto=${colorAuto} onChange=${onColor} /></div>`}
+    ${rest && html`<div class="row"><label>Weight</label><${Dropdown} value=${nearestWeight(weight ?? 700)} options=${WEIGHTS} onChange=${onWeight} /></div>
+      ${onAlign && html`<div class="row"><label>Align</label><${Seg} class="icons" value=${align ?? "center"} options=${[{ value: "left", label: "", icon: "alignL", title: "Left" }, { value: "center", label: "", icon: "alignC", title: "Centre" }, { value: "right", label: "", icon: "alignR", title: "Right" }]} onChange=${onAlign} /></div>`}
+      <div class="row"><label>Tracking</label><${Slider} value=${spacing} min=${-0.1} max=${0.3} step=${0.005} fallback=${-0.02} centered format=${(v) => v.toFixed(3)} onChange=${onSpacing} /></div>
+      <${Switch} checked=${Boolean(uppercase)} onChange=${onUpper} label="Uppercase" />`}
   `;
 }
 
@@ -359,7 +394,7 @@ function CaptionInspector() {
   }, key && `cap.${key}`);
   const placed = st.x !== undefined || st.y !== undefined;
   return html`
-    <${Head} title="Caption" id="caption" />
+    <${Head} title="Headline" id="caption" />
     <div class="panel-body">
       <${Section} title="Words">
         <${AccentText} rows=${2} value=${sc.headline} placeholder="Headline" onChange=${(v) => edit((d) => (d.headline = v || undefined), "headline")} />
@@ -367,10 +402,20 @@ function CaptionInspector() {
         <div class="row"><label>Star colour</label><${ColorButton} value=${st.accentColor} auto="Bold only" onChange=${(v) => upd((t) => (t.accentColor = v), "accent")} /></div>
         <div class="note">Words in **stars** take this colour, in the headline and in extra text that doesn't pick its own.</div>
       <//>
-      <${Section} title="Size & position" right=${placed ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((t) => {
+      <${Section} title="Style">
+        <${TypeControls} part="basic" font=${st.font} weight=${st.headlineWeight} color=${st.color}
+          onFont=${(v) => upd((t) => (t.font = v || undefined))}
+          onWeight=${(v) => upd((t) => (t.headlineWeight = v === 700 ? undefined : v))}
+          onColor=${(v) => upd((t) => (t.color = v), "color")}
+          align=${st.align ?? e?.align} onAlign=${(v) => upd((t) => (t.align = v))}
+          uppercase=${st.uppercase} onUpper=${(v) => upd((t) => (t.uppercase = v || undefined))}
+          spacing=${st.letterSpacing} onSpacing=${(v) => upd((t) => (t.letterSpacing = v), "ls")} />
+        <div class="row"><label>Size</label><${Slider} value=${st.headlineSize ?? e?.size} min=${0.015} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((t) => (t.headlineSize = v && r4(v)), "hs")} /></div>
+      <//>
+      <${More} id="text">
+      <${Section} title="Position" right=${placed ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((t) => {
         for (const k of ["x", "y", "anchor", "width"]) delete t[k];
       })}><${Icon} n="refresh" s=${12} />Auto-place</button>` : null}>
-        <div class="row"><label>Size</label><${Slider} value=${st.headlineSize ?? e?.size} min=${0.015} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((t) => (t.headlineSize = v && r4(v)), "hs")} /></div>
         <div class="row"><label>Place</label><${Seg} value=${placed ? "" : st.position ?? "top"} options=${["top", "bottom", "left", "right"]} onChange=${(v) => upd((t) => {
           for (const k of ["x", "y", "anchor"]) delete t[k];
           t.position = v === "top" ? undefined : v;
@@ -389,8 +434,8 @@ function CaptionInspector() {
           <${Num} label="W" title="Width of the text block, % of the image" value=${st.width ?? e?.width} ...${pct} min=${0.1} max=${1.2} onChange=${(v) => upd((t) => (t.width = v && r4(v)), "w")} />
         </div>
       <//>
-      <${Section} title="Style">
-        <${TypeControls} font=${st.font} weight=${st.headlineWeight} color=${st.color}
+      <${Section} title="Type details">
+        <${TypeControls} part="rest" font=${st.font} weight=${st.headlineWeight} color=${st.color}
           onFont=${(v) => upd((t) => (t.font = v || undefined))}
           onWeight=${(v) => upd((t) => (t.headlineWeight = v === 700 ? undefined : v))}
           onColor=${(v) => upd((t) => (t.color = v), "color")}
@@ -398,6 +443,7 @@ function CaptionInspector() {
           uppercase=${st.uppercase} onUpper=${(v) => upd((t) => (t.uppercase = v || undefined))}
           spacing=${st.letterSpacing} onSpacing=${(v) => upd((t) => (t.letterSpacing = v), "ls")} />
         <${Switch} checked=${Boolean(st.shadow)} onChange=${(v) => upd((t) => (t.shadow = v || undefined))} label="Soft text shadow" />
+      <//>
       <//>
     </div>`;
 }
@@ -419,16 +465,26 @@ function TextInspector({ id }) {
           onChange=${(v) => upd((x) => (x.accentColor = v), "accent")} /></div>
         <div class="note">Words in **stars** take the star colour${headAccent ? " (the headline's until you pick one)" : ""}.</div>
       <//>
-      <${Section} title="Size & position">
+      <${Section} title="Style">
+        <${TypeControls} part="basic" font=${t.font} weight=${t.weight} color=${t.color}
+          onFont=${(v) => upd((x) => (x.font = v || undefined))}
+          onWeight=${(v) => upd((x) => (x.weight = v))}
+          onColor=${(v) => upd((x) => (x.color = v), "color")}
+          align=${t.align ?? "center"} onAlign=${(v) => upd((x) => (x.align = v))}
+          uppercase=${t.uppercase} onUpper=${(v) => upd((x) => (x.uppercase = v || undefined))}
+          spacing=${t.letterSpacing} onSpacing=${(v) => upd((x) => (x.letterSpacing = v), "ls")} />
+        <div class="row"><label>Size</label><${Slider} value=${t.size ?? e?.size} min=${0.008} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((x) => (x.size = v && r4(v)), "size")} /></div>
+      <//>
+      <${More} id="text">
+      <${Section} title="Position">
         <div class="grid2">
           <${Num} label="X" value=${t.x ?? e?.x} ...${pct} onChange=${(v) => upd((x) => (x.x = v === undefined ? undefined : r4(v)), "x")} />
           <${Num} label="Y" value=${t.y ?? e?.y} ...${pct} onChange=${(v) => upd((x) => (x.y = v === undefined ? undefined : r4(v)), "y")} />
         </div>
-        <div class="row"><label>Size</label><${Slider} value=${t.size ?? e?.size} min=${0.008} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((x) => (x.size = v && r4(v)), "size")} /></div>
         <div class="row"><label>Rotation</label><${Slider} value=${t.rotate ?? 0} min=${-45} max=${45} step=${0.5} centered reset=${0} format=${(v) => v + "°"} onChange=${(v) => upd((x) => (x.rotate = v || undefined), "rot")} /></div>
       <//>
-      <${Section} title="Style">
-        <${TypeControls} font=${t.font} weight=${t.weight} color=${t.color}
+      <${Section} title="Type details">
+        <${TypeControls} part="rest" font=${t.font} weight=${t.weight} color=${t.color}
           onFont=${(v) => upd((x) => (x.font = v || undefined))}
           onWeight=${(v) => upd((x) => (x.weight = v))}
           onColor=${(v) => upd((x) => (x.color = v), "color")}
@@ -440,6 +496,7 @@ function TextInspector({ id }) {
       <${Section} title="Badge">
         <div class="row"><label>Pill colour</label><${ColorButton} value=${t.background} auto="None" onChange=${(v) => upd((x) => (x.background = v), "bg")} /></div>
         <${Switch} checked=${Boolean(t.shadow)} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft text shadow" />
+      <//>
       <//>
     </div>`;
 }
@@ -527,9 +584,12 @@ function ShapeInspector({ id }) {
             if (v && !(g.strokeWidth > 0)) x.strokeWidth = 0.005;
           }, "stroke")} /></div>
         ${strokeOn &&
-        html`<div class="row"><label>Width</label><${Slider} value=${widthFrac} min=${0.001} max=${0.03} step=${0.0005} format=${(v) => Math.max(1, Math.round(v * H0)) + " px"} onChange=${(v) => upd((x) => (x.strokeWidth = v ?? 0.005), "sw")} /></div>
-          <div class="row"><label>Style</label><${Seg} value=${g.dash} options=${DASH_OPTIONS} onChange=${(v) => upd((x) => (x.dash = v === "solid" ? undefined : v))} /></div>`}
+        html`<div class="row"><label>Width</label><${Slider} value=${widthFrac} min=${0.001} max=${0.03} step=${0.0005} format=${(v) => Math.max(1, Math.round(v * H0)) + " px"} onChange=${(v) => upd((x) => (x.strokeWidth = v ?? 0.005), "sw")} /></div>`}
       <//>
+      <${More} id="shape">
+      ${strokeOn && html`<${Section} title="Line style">
+        <${Seg} value=${g.dash} options=${DASH_OPTIONS} onChange=${(v) => upd((x) => (x.dash = v === "solid" ? undefined : v))} />
+      <//>`}
       <${Section} title="Size & position">
         ${line
           ? html`<div class="row"><label>From</label><div class="grid2">
@@ -555,6 +615,7 @@ function ShapeInspector({ id }) {
         <div class="row"><label>Opacity</label><${Slider} value=${g.opacity} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
         <${Switch} checked=${g.shadow} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft shadow" />
       <//>
+      <//>
     </div>`;
 }
 
@@ -571,19 +632,6 @@ const CANVASES = [
   { value: "1:1", label: "Square", w: 1, h: 1, hint: "1:1" },
   { value: "16:9", label: "Wide", w: 16, h: 9, hint: "16:9 for websites, X and YouTube" },
 ];
-const LAYOUT_NAMES = { hero: "Title on top", "hero-bleed": "Big device", "text-bottom": "Title below", tilted: "Tilted", floating: "No title", duo: "Two devices", trio: "Three devices", split: "Title beside", stack: "Stacked" };
-const LAYOUT_TIPS = {
-  hero: "Headline at the top, device underneath",
-  "hero-bleed": "A large device that runs off the bottom edge",
-  "text-bottom": "Device on top, headline underneath",
-  tilted: "Device angled in 3D",
-  floating: "Just the device, no headline space",
-  duo: "Two devices side by side",
-  trio: "Three devices in a row",
-  split: "Headline on one side, device on the other",
-  stack: "Devices overlapping, e.g. a Mac and an iPhone",
-};
-
 function SceneInspector() {
   const s = useStore();
   const sc = s.scene;
@@ -592,35 +640,19 @@ function SceneInspector() {
   const cur = typeof sc.canvas === "string" ? sc.canvas : sc.canvas ? `${sc.canvas.width}x${sc.canvas.height}` : "";
   const custom = cur && !canvases.some((c) => c.value === cur);
   const [cw, ch] = (/^(\d+)x(\d+)$/.exec(cur) ?? []).slice(1).map(Number);
-  const layouts = (s.opts?.layouts ?? []).filter((l) => l !== "custom");
   const o = bgObj(sc.background);
   const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
   const bgStill = sc.background && !o.generate && o.type !== "transparent" ? `/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(sc.background))}&w=120&h=120` : null;
   return html`
     <div class="panel-head"><h2>Whole image</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
     <div class="panel-body">
-      <div class="intro">Nothing is selected, so these settings apply to the whole image. Click something in the design to edit it.</div>
+      <div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>
       <${Section} title="Image size">
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;
           const box = r >= 1 ? { width: "26px", height: 26 / r + "px" } : { width: 30 * r + "px", height: "30px" };
           return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => edit((d) => (d.canvas = c.value || undefined))}><i style=${box}></i>${c.label}</button>`;
         })}</div>
-        <div class="grid2">
-          <${Num} label="W" value=${custom ? cw : undefined} placeholder=${s.layout?.canvas.width ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${Math.round(v)}x${ch || s.layout?.canvas.height || Math.round(v)}`))} />
-          <${Num} label="H" value=${custom ? ch : undefined} placeholder=${s.layout?.canvas.height ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${cw || s.layout?.canvas.width || Math.round(v)}x${Math.round(v)}`))} />
-        </div>
-        <${Switch} checked=${Boolean(sc.landscape)} onChange=${(v) => edit((d) => (d.landscape = v || undefined))} label="Landscape" />
-      <//>
-      <${Section} title="Arrangement">
-        <div class="layouts">
-          <button class="layout-opt ${!sc.layout ? "on" : ""}" title="Picks an arrangement for the number of devices" onClick=${() => edit((d) => delete d.layout)}><${LayoutIcon} n="custom" />Automatic</button>
-          ${layouts.map((l) => html`<button class="layout-opt ${sc.layout === l ? "on" : ""}" title=${LAYOUT_TIPS[l] ?? ""} onClick=${() => edit((d) => (d.layout = l))}><${LayoutIcon} n=${l} />${LAYOUT_NAMES[l] ?? l}</button>`)}
-        </div>
-        ${sc.devices.some((d) => d.x !== undefined || d.y !== undefined) &&
-        html`<button class="btn sm" onClick=${() => edit((d) => d.devices.forEach((dev) => ["x", "y", "anchor", "height", "width", "rotate"].forEach((k) => delete dev[k])))}>
-          <${Icon} n="refresh" s=${12} />Undo hand placement on all devices</button>`}
-        <div class="note">Devices you drag by hand keep their spot. Everything else follows the arrangement.</div>
       <//>
       <${Section} title="Backdrop">
         <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
@@ -628,6 +660,18 @@ function SceneInspector() {
           <span class="grow"><b style=${{ display: "block", textTransform: "capitalize" }}>${String(bgName).replace(/-/g, " ")}</b><span class="note">Change the look, colours or photo</span></span>
           <${Icon} n="right" s=${14} />
         </button>
+      <//>
+      <${Section} title="In this design">
+        <${LayersList} />
+      <//>
+      <${More} id="image">
+      <${Section} title="Custom size">
+        <div class="grid2">
+          <${Num} label="W" value=${custom ? cw : undefined} placeholder=${s.layout?.canvas.width ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${Math.round(v)}x${ch || s.layout?.canvas.height || Math.round(v)}`))} />
+          <${Num} label="H" value=${custom ? ch : undefined} placeholder=${s.layout?.canvas.height ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${cw || s.layout?.canvas.width || Math.round(v)}x${Math.round(v)}`))} />
+        </div>
+        <${Switch} checked=${Boolean(sc.landscape)} onChange=${(v) => edit((d) => (d.landscape = v || undefined))} label="Landscape" />
+      <//>
       <//>
       ${s.layout?.warnings?.length ? html`<${Section} title="Notes">${s.layout.warnings.map((w) => html`<div class="note warn">${w}</div>`)}<//>` : null}
       ${s.layoutError && html`<${Section} title="Problem"><div class="note err">${s.layoutError}</div><//>`}

@@ -169,7 +169,7 @@ export function Section({ title, count, children, right, collapsible = false, op
 // ---------------------------------------------------------------------------------------------
 // Popover anchored to an element. Closes on outside click or Escape.
 
-export function Popover({ anchor, onClose, children, class: cls = "", align = "start", offset = 6, width }) {
+export function Popover({ anchor, onClose, children, class: cls = "", align = "start", offset = 6, width, avoid }) {
   const ref = useRef();
   const [pos, setPos] = useState(null);
   useLayoutEffect(() => {
@@ -181,6 +181,21 @@ export function Popover({ anchor, onClose, children, class: cls = "", align = "s
       const hgt = el.offsetHeight;
       let left = align === "end" ? a.right - w : align === "center" ? a.left + a.width / 2 - w / 2 : a.left;
       left = clamp(left, 8, window.innerWidth - w - 8);
+      // `avoid`: an element to keep in view (what the popover changes). Try below, above, then
+      // either side of the anchor, and take the first spot that fits and leaves it uncovered.
+      if (avoid) {
+        const k = avoid.getBoundingClientRect();
+        const spots = [
+          { left, top: a.bottom + offset },
+          { left, top: a.top - offset - hgt },
+          { left: a.right + offset, top: a.top },
+          { left: a.left - offset - w, top: a.top },
+        ];
+        const fits = (p) => p.left >= 8 && p.top >= 8 && p.left + w <= window.innerWidth - 8 && p.top + hgt <= window.innerHeight - 8;
+        const clear = (p) => p.left >= k.right || p.left + w <= k.left || p.top >= k.bottom || p.top + hgt <= k.top;
+        const spot = spots.find((p) => fits(p) && clear(p));
+        if (spot) return setPos(spot);
+      }
       let top = a.bottom + offset;
       if (top + hgt > window.innerHeight - 8 && a.top - offset - hgt > 8) top = a.top - offset - hgt;
       setPos({ left, top: clamp(top, 8, window.innerHeight - 40) });

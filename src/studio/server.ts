@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import http from "node:http";
 import path from "node:path";
@@ -9,12 +9,15 @@ import { z } from "zod";
 import { captureMac, listMacWindows } from "../capture/mac.js";
 import { captureWeb, WEB_VIEWPORTS } from "../capture/web.js";
 import { DEVICE_MODELS, GENERIC_COLORS, findModel } from "../devices/catalog.js";
-import { recognizeText } from "../native/ocr.js";
+import { recognizeText, warmUpOcr } from "../native/ocr.js";
+import { getBrowser } from "../render/browser.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
 import { createMockup, layoutScene } from "../render/mockup.js";
 import { cacheDir } from "../util/files.js";
-import { GRADES, LAYOUTS, MockupInputSchema } from "../render/schema.js";
+import { GRADES, LAYOUTS, MockupInputSchema, type BackgroundInput } from "../render/schema.js";
+import { madeBackdrop } from "../render/background.js";
+import { setImageQuality } from "../render/photos.js";
 import { createVideo, VideoInputSchema } from "../render/video.js";
 import { captureScreenshot } from "../simulator/capture.js";
 import { recordSimulator } from "../simulator/record.js";
@@ -23,7 +26,7 @@ import { run } from "../util/exec.js";
 import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { noteStudioFolder } from "../util/studio.js";
 import { imageSize } from "../util/image.js";
-import { aiStatus, designDirections, editScene, AIEditSchema } from "./ai.js";
+import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
 import { backgroundPreview, loadState, lookThumbnail, saveState, searchUnsplash, thumbnail } from "./assets.js";
 import { houseStyle, updateHouseStyle } from "../util/style.js";
@@ -94,6 +97,15 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
+/** Aborts when the Studio drops a streamed request before it's answered: its Stop button. */
+function stopOnClose(res: http.ServerResponse): AbortController {
+  const stop = new AbortController();
+  res.on("close", () => {
+    if (!res.writableFinished) stop.abort();
+  });
+  return stop;
+}
+
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -132,7 +144,7 @@ function allowedFile(p: string): boolean {
 function exportScene(file: string): { id: string; name: string } | undefined {
   try {
     const meta = JSON.parse(readFileSync(`${file}.mockup.json`, "utf8")) as { studio?: { sceneId?: string; sceneName?: string } };
-    return meta.studio?.sceneId ? { id: meta.studio.sceneId, name: meta.studio.sceneName ?? "Untitled scene" } : undefined;
+    return meta.studio?.sceneId ? { id: meta.studio.sceneId, name: meta.studio.sceneName ?? "Untitled design" } : undefined;
   } catch {
     return undefined;
   }
@@ -306,8 +318,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     } catch {
       throw new HttpError(400, "bg must be JSON");
     }
-    if (bg && typeof bg === "object" && "generate" in bg) throw new HttpError(400, "AI backgrounds are generated when rendering");
-    const file = await backgroundPreview(bg, Number(url.searchParams.get("w") ?? 360), Number(url.searchParams.get("h") ?? 480));
+    const w = Number(url.searchParams.get("w") ?? 360);
+    const h = Number(url.searchParams.get("h") ?? 480);
+    // An AI backdrop shows once its image is made (waiting if it's being made); the canvas never
+    // starts a generation, since each one costs.
+    if (bg && typeof bg === "object" && "generate" in bg && !(await madeBackdrop(bg as BackgroundInput, w, h))) throw new HttpError(404, "AI backgrounds are generated when rendering");
+    const file = await backgroundPreview(bg, w, h);
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
     createReadStream(file).pipe(res);
     return;
@@ -411,26 +427,29 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const input = AIEditSchema.parse(await json(req));
       if (url.searchParams.get("stream") !== "1") return send(200, await editScene(input));
       // Streamed: one JSON object per line: progress steps as they happen, then the result.
+      // Stop in the Studio closes the request, which stops the edit at whatever step it's on.
+      const stop = stopOnClose(res);
       res.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" });
-      const line = (o: unknown) => res.write(JSON.stringify(o) + "\n");
+      const line = (o: unknown) => !res.destroyed && res.write(JSON.stringify(o) + "\n");
       try {
-        const result = await editScene(input, (p) => line({ type: "progress", ...p }));
+        const result = await editScene(input, (p) => line({ type: "progress", ...p }), stop.signal);
         line({ type: "result", ...result });
       } catch (e) {
-        line({ type: "error", error: e instanceof z.ZodError ? e.issues.map((i) => i.message).join("; ") : (e as Error).message });
+        if (!(e instanceof StoppedError)) line({ type: "error", error: e instanceof z.ZodError ? e.issues.map((i) => i.message).join("; ") : (e as Error).message });
       }
       res.end();
       return;
     }
     case "/api/ai-directions": {
       const input = AIEditSchema.parse({ instruction: "Design it for me", ...(await json<object>(req)) });
+      const stop = stopOnClose(res);
       res.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" });
-      const line = (o: unknown) => res.write(JSON.stringify(o) + "\n");
+      const line = (o: unknown) => !res.destroyed && res.write(JSON.stringify(o) + "\n");
       try {
-        const result = await designDirections(input, (p) => line({ type: "progress", ...p }));
+        const result = await designDirections(input, (p) => line({ type: "progress", ...p }), stop.signal);
         line({ type: "result", ...result });
       } catch (e) {
-        line({ type: "error", error: e instanceof z.ZodError ? e.issues.map((i) => i.message).join("; ") : (e as Error).message });
+        if (!(e instanceof StoppedError)) line({ type: "error", error: e instanceof z.ZodError ? e.issues.map((i) => i.message).join("; ") : (e as Error).message });
       }
       res.end();
       return;
@@ -441,9 +460,20 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       for (const d of devices) if (!allowedFile(d.screenshot)) throw new HttpError(403, "Screenshots must be in the output folder");
       return send(200, { scene: await buildRecipe(id, devices, { headline, subheadline }) });
     }
-    case "/api/state":
-      saveState(await json(req));
+    case "/api/sample": {
+      // The sample screenshot joins the person's own, so it behaves like any other.
+      const src = path.join(uiDir(), "sample", "mise-tonight.png");
+      if (!existsSync(src)) throw new HttpError(404, "The sample screenshot is missing from this build");
+      const dest = path.join(ensureDir(path.join(outputRoot(), "uploads")), "sample-recipe-app.png");
+      if (!existsSync(dest)) copyFileSync(src, dest);
+      return send(200, { path: dest });
+    }
+    case "/api/state": {
+      const state = await json<{ ui?: { imageQuality?: unknown } }>(req);
+      saveState(state);
+      setImageQuality(state?.ui?.imageQuality);
       return send(200, { ok: true });
+    }
     case "/api/scenes/save":
       return send(200, saveScene(await json(req)));
     case "/api/scenes/delete":
@@ -584,6 +614,11 @@ export async function startStudio(port = Number(process.env.SCREENSHOTTER_STUDIO
   const url = `http://127.0.0.1:${port}`;
   // Agents using the MCP server find this Studio's library through this note.
   noteStudioFolder(outputRoot());
+  // Start the renderer and the text helper now, so the first design doesn't wait for them.
+  void getBrowser().catch(() => undefined);
+  warmUpOcr();
+  // Settings › AI backdrops: Fast or Best, as the Studio last saved it.
+  setImageQuality((loadState() as { ui?: { imageQuality?: unknown } })?.ui?.imageQuality);
   console.error(`Screenshotter Studio running at ${url} (output: ${outputRoot()})`);
   console.error(`SCREENSHOTTER_STUDIO_PORT=${port}`);
   if (open) await run("open", [url]).catch(() => undefined);

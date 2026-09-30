@@ -150,7 +150,19 @@ const paletteCache = new Map<string, Palette | undefined>();
  * The colours of a screenshot, for design decisions: its dominant colours, its accent (the most
  * saturated colour with a real presence) and whether the UI is dark or light.
  */
-export async function screenshotPalette(file: string): Promise<Palette | undefined> {
+export function screenshotPalette(file: string): Promise<Palette | undefined> {
+  // Callers asking about the same screenshot at once share one reading.
+  const key = `${file}:${statSync(file).mtimeMs}`;
+  let job = paletteJobs.get(key);
+  if (!job) {
+    job = readPalette(file).finally(() => paletteJobs.delete(key));
+    paletteJobs.set(key, job);
+  }
+  return job;
+}
+const paletteJobs = new Map<string, Promise<Palette | undefined>>();
+
+async function readPalette(file: string): Promise<Palette | undefined> {
   const key = `${file}:${statSync(file).mtimeMs}`;
   if (paletteCache.has(key)) return paletteCache.get(key);
   let result: Palette | undefined;

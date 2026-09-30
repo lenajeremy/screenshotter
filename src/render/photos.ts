@@ -129,7 +129,18 @@ function aspectFor(width: number, height: number): Aspect {
   return options.reduce((best, o) => (Math.abs(Math.log(o.w / o.h / r)) < Math.abs(Math.log(best.w / best.h / r)) ? o : best));
 }
 
-async function generateOpenAI(prompt: string, aspect: Aspect, model?: string): Promise<Buffer> {
+/**
+ * How new AI backdrops are made: "fast" (the default: OpenAI's medium quality, much quicker, a
+ * little less fine detail) or "best" (high quality, a minute or two). Other generators have one
+ * speed. The Studio sets it from Settings; SCREENSHOTTER_IMAGE_QUALITY sets it for the MCP server.
+ */
+export type ImageQuality = "fast" | "best";
+let quality: ImageQuality = process.env.SCREENSHOTTER_IMAGE_QUALITY === "best" ? "best" : "fast";
+export function setImageQuality(q: unknown): void {
+  if (q === "fast" || q === "best") quality = q;
+}
+
+async function generateOpenAI(prompt: string, aspect: Aspect, model?: string, q: ImageQuality = quality): Promise<Buffer> {
   const size = aspect.w === aspect.h ? "1024x1024" : aspect.w > aspect.h ? "1536x1024" : "1024x1536";
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
@@ -138,7 +149,7 @@ async function generateOpenAI(prompt: string, aspect: Aspect, model?: string): P
       model: model ?? process.env.SCREENSHOTTER_OPENAI_IMAGE_MODEL ?? "gpt-image-2",
       prompt,
       size,
-      quality: "high",
+      quality: q === "best" ? "high" : "medium",
       n: 1,
     }),
   });
@@ -208,23 +219,67 @@ async function generateFal(prompt: string, aspect: Aspect, model?: string): Prom
   return Buffer.from(await (await fetch(url)).arrayBuffer());
 }
 
-export async function generateImage(opts: GenerateOptions, width: number, height: number): Promise<Photo> {
+/**
+ * Where a generated image is kept, and who makes it; undefined when no generator is set up.
+ * `file` is where a new one goes at the current quality; `made` is one that exists at either
+ * quality, so switching Fast and Best never makes an image you already have again.
+ */
+function generation(opts: GenerateOptions, width: number, height: number) {
   const provider = opts.provider ?? availableProvider();
-  if (!provider) {
+  if (!provider) return undefined;
+  const aspect = aspectFor(width, height);
+  const prompt = opts.raw ? opts.prompt : `${opts.prompt.replace(/[.\s]+$/, "")}${PROMPT_SUFFIX}`;
+  const base = `${provider}|${opts.model ?? ""}|${aspect.ratio}|${prompt}|${opts.seed ?? 0}`;
+  // Best keeps the original key: images made before there was a choice were made at high quality.
+  const at = (q: ImageQuality) => path.join(cacheDir("generated"), `${hash(provider === "openai" && q === "fast" ? `${base}|medium` : base)}.png`);
+  const file = at(quality);
+  const files = provider === "openai" ? [file, at(quality === "fast" ? "best" : "fast")] : [file];
+  return { provider, aspect, prompt, file, files, made: () => files.find((f) => existsSync(f)) };
+}
+
+/** Images being generated right now, so two renders of the same design pay for one. */
+const generating = new Map<string, Promise<void>>();
+
+export async function generateImage(opts: GenerateOptions, width: number, height: number): Promise<Photo> {
+  const g = generation(opts, width, height);
+  if (!g) {
     throw new Error(
       "AI backgrounds need an image API key in the MCP server's environment: OPENAI_API_KEY, GEMINI_API_KEY, REPLICATE_API_TOKEN or FAL_KEY. " +
         "Alternatively generate an image with another tool and pass its path as `photo`.",
     );
   }
-  const aspect = aspectFor(width, height);
-  const prompt = opts.raw ? opts.prompt : `${opts.prompt.replace(/[.\s]+$/, "")}${PROMPT_SUFFIX}`;
-  const file = path.join(cacheDir("generated"), `${hash(`${provider}|${opts.model ?? ""}|${aspect.ratio}|${prompt}|${opts.seed ?? 0}`)}.png`);
-  if (!existsSync(file)) {
-    const run = { openai: generateOpenAI, gemini: generateGemini, replicate: generateReplicate, fal: generateFal }[provider];
-    writeFileSync(file, await run(prompt, aspect, opts.model));
-    writeFileSync(`${file}.json`, JSON.stringify({ credit: `AI generated (${provider}): ${opts.prompt}` }));
+  if (!g.made()) {
+    let job = g.files.map((f) => generating.get(f)).find(Boolean);
+    if (!job) {
+      const run = { openai: generateOpenAI, gemini: generateGemini, replicate: generateReplicate, fal: generateFal }[g.provider];
+      job = (async () => {
+        const image = await run(g.prompt, g.aspect, opts.model);
+        writeFileSync(`${g.file}.json`, JSON.stringify({ credit: `AI generated (${g.provider}): ${opts.prompt}` }));
+        writeFileSync(g.file, image);
+      })().finally(() => generating.delete(g.file));
+      generating.set(g.file, job);
+    }
+    await job;
   }
+  const file = g.made() ?? g.file;
   return { path: file, ...readMeta(file) };
+}
+
+/**
+ * A generated image that still has to be made before this backdrop can be drawn: who makes it.
+ * Undefined when it's already made (or nothing is set up to make it).
+ */
+export function pendingImage(opts: GenerateOptions, width: number, height: number): { provider: string } | undefined {
+  const g = generation(opts, width, height);
+  return g && !g.made() ? { provider: g.provider } : undefined;
+}
+
+/** A generated image that's made, or being made right now (then wait for it). Never starts one. */
+export async function madeImage(opts: GenerateOptions, width: number, height: number): Promise<string | undefined> {
+  const g = generation(opts, width, height);
+  if (!g) return undefined;
+  if (!g.made()) await g.files.map((f) => generating.get(f)).find(Boolean)?.catch(() => undefined);
+  return g.made();
 }
 
 // ---------------------------------------------------------------------------------------------

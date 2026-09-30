@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { LOOKS, findLook, type Look } from "./looks.js";
-import { generateImage, resolvePhoto, type Photo } from "./photos.js";
+import { generateImage, madeImage, pendingImage, resolvePhoto, type Photo } from "./photos.js";
 import type { BackgroundInput, BackgroundObject, EffectsInput } from "./schema.js";
 
 export const px = (n: number) => `${Math.round(n * 100) / 100}px`;
@@ -251,6 +251,26 @@ function photoHtml(src: string, bg: BackgroundObject, W: number, H: number): { h
   }
   if (bg.dim) html += `<div class="bg" style="background:#000;opacity:${bg.dim}"></div>`;
   return { html, defs };
+}
+
+/** The AI image options of a backdrop that uses one. */
+function generateOptions(bg: BackgroundInput | undefined) {
+  if (!bg || typeof bg !== "object" || !bg.generate) return undefined;
+  const g = typeof bg.generate === "string" ? { prompt: bg.generate } : bg.generate;
+  return { ...g, seed: bg.seed };
+}
+
+/** For an AI backdrop whose image isn't made yet: who will make it, and from what prompt. */
+export function pendingBackdrop(bg: BackgroundInput | undefined, W: number, H: number): { provider: string; prompt: string } | undefined {
+  const g = generateOptions(bg);
+  const pending = g && pendingImage(g, W, H);
+  return pending && g ? { provider: pending.provider, prompt: g.prompt } : undefined;
+}
+
+/** An AI backdrop's image if it's made (or being made: then wait). Never starts one. */
+export async function madeBackdrop(bg: BackgroundInput | undefined, W: number, H: number): Promise<string | undefined> {
+  const g = generateOptions(bg);
+  return g ? madeImage(g, W, H) : undefined;
 }
 
 async function photoSource(bg: BackgroundObject, W: number, H: number, firstScreenshot: string, type: string): Promise<Photo> {

@@ -1,5 +1,41 @@
 # What's new
 
+## 0.4.0 · 30 September 2026
+
+### Highlights
+- **Easier from the first click.** A new design opens on one job: drop a screenshot. Or grab one from the iOS Simulator or a website, or try it with a sample.
+- **Your first design in four steps.** Pick a starting design (six templates, each made from your screenshot), write your headline, export. A strip across the top shows where you are, and Skip hides it.
+- **A calmer workspace.** The side panels start closed, so the design fills the window. The rail has five places: Screenshots, Templates, Backdrop, Text & shapes, and My designs.
+- **The everyday edits, right on the design.** The bar above a selection now has Edit for text, Replace for a screenshot, and colour dots for text, fill and stroke. Duplicate and layer order are under ⋯.
+- **Ask AI is faster, shows its work, and you can stop it.** It only makes a new AI image when you ask for one or nothing built in will do, and new images are about 2.5 times quicker. Every step is named and timed, Stop works at any step, and Use it now takes Claude's change without waiting for its check.
+
+### Ask AI
+- Faster. It makes a new AI image only when you ask for one, or when none of the looks, paintings, photos, gradients or colours can do what you asked, and it says why while the image is being made. "Make it better" or "a new backdrop" now uses a built-in backdrop, so it's done in seconds.
+- New AI images are about 2.5 times quicker: Settings › AI backgrounds › New images is Fast by default (about half a minute with OpenAI, against a minute and a half at Best). Images you already have are kept either way.
+- Reading your screenshots now happens while your design renders, not after.
+- You can see what it's doing. Each step is named and timed as it happens: rendering your design, reading it, Claude designing the change, an image generator making a new AI backdrop, and Claude checking the render. Making an AI backdrop is the slow part (usually a minute or two), and now it says so.
+- Stop at any step. Stop (or the send button, which turns into Stop while Claude works) ends it straight away and leaves your design as it was.
+- Use it now: once Claude has made its change, put it on the canvas without waiting for it to check its own render. A backdrop image that's still being made appears on the canvas when it's ready.
+- "Worked for…" under each reply lists every step with how long it took.
+- AI backdrops now show on the canvas, not only in Preview.
+- The same AI backdrop is never generated twice at once (for example by the check render and the canvas).
+- Design it for me has a Stop button too, and says when it's making AI backdrops.
+
+### Simpler settings
+- Each panel shows the few settings you'll use most. The rest are under More options, which remembers whether you opened it.
+- The button under the design shows the image size and opens its settings, including App Store sizes.
+- Layers are now "In this design" in the image settings; everything you export is on the My designs page.
+- Plainer words throughout: scenes are designs, the caption is the headline, and the JSON view is in Settings › For developers (⌥⌘J).
+
+### Templates
+- Designs are now called Templates. "Just rearrange" keeps your look and only moves the devices.
+- The gallery and risograph templates now keep your headline.
+- The first design is quicker: the Studio gets ready while you pick a screenshot.
+- Fixed: picking a second template while the first was still loading could put the first one back.
+
+### My designs
+- The Scenes page is now My designs, with two shelves: your designs and what you've exported.
+
 ## 0.3.0 · 30 September 2026
 
 ### Highlights

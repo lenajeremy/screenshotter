@@ -1,8 +1,8 @@
-// Left panels: Captures, Backgrounds, Text, Layers, Exports.
+// Left panels: Screenshots, Templates, Backdrop, Text & shapes. Also the layers list and the exports grid.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
-import { Icon } from "./icons.js";
-import { S, api, base, edit, entityLabel, fail, isVideo, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
+import { Icon, LayoutIcon } from "./icons.js";
+import { IMAGE_PROVIDERS, S, api, base, edit, entityLabel, fail, isVideo, persistPrefs, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import {
   SHAPE_KINDS,
@@ -22,6 +22,7 @@ import {
   applyRecipe,
   applyDirection,
   designForMe,
+  stopDesignForMe,
   recipeInput,
   reveal,
   uploadFiles,
@@ -58,7 +59,7 @@ function SimulatorForm() {
     return html`<div class="note">No simulators found. Install Xcode and a simulator runtime, then restart Screenshotter. You can still import screenshots or capture websites.</div>`;
   }
   const simOpts = [
-    { value: "", label: "Automatic", hint: "booted or newest iPhone" },
+    { value: "", label: "Any open simulator", hint: "or the newest iPhone" },
     ...sims.map((x) => ({ value: x.udid, label: x.name, hint: `${x.state === "Booted" ? "● " : ""}${x.runtimeName ?? ""}`, group: x.name.startsWith("iPad") ? "iPad" : x.name.includes("Watch") ? "Watch" : x.name.includes("Vision") ? "Vision" : "iPhone" })),
   ];
   const appOpts = [{ value: "", label: "Home screen" }, ...s.apps.list.map((a) => ({ value: a.bundleId, label: a.name, hint: a.bundleId }))];
@@ -70,10 +71,10 @@ function SimulatorForm() {
     <button class="more-toggle" onClick=${() => setCap({ more: !c.more })}><${Icon} n=${c.more ? "down" : "right"} s=${12} />Options</button>
     ${c.more &&
     html`<div class="vstack">
-      <div class="row"><label>Link</label><${TextField} value=${c.deepLink} placeholder="myapp://screen" onChange=${(v) => setCap({ deepLink: v })} /></div>
+      <div class="row"><label>Open link</label><${TextField} value=${c.deepLink} placeholder="myapp://screen" onChange=${(v) => setCap({ deepLink: v })} /></div>
       <div class="row"><label>Look</label><${Seg} value=${c.appearance} options=${[{ value: "light", label: "Light", icon: "sun" }, { value: "dark", label: "Dark", icon: "moon" }]} onChange=${(v) => setCap({ appearance: v })} /></div>
       <div class="row"><label>Time</label><${TextField} value=${c.time} placeholder="9:41" onChange=${(v) => setCap({ time: v })} /></div>
-      <${Switch} checked=${c.grant} onChange=${(v) => setCap({ grant: v })} label="Pre-grant permissions" />
+      <${Switch} checked=${c.grant} onChange=${(v) => setCap({ grant: v })} label="Allow permission pop-ups for me" />
       <${Switch} checked=${c.system} onChange=${(v) => setCap({ system: v })} label="Show system apps" />
     </div>`}
     <div class="grid2" style=${{ gridTemplateColumns: "1fr auto" }}>
@@ -180,11 +181,11 @@ export function CapturesPanel() {
   const shown = shots.filter((f) => filter === "all" || (filter === "screens" && f.kind === "raw") || (filter === "recordings" && f.kind === "recordings") || (filter === "uploads" && f.kind === "uploads"));
   const used = new Set(s.scene.devices.map((d) => d.screenshot));
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Screens</h2>
+    <div class="panel-head"><h2>Screenshots</h2>
       <button class="icon-btn sm" title="Refresh the list" onClick=${() => refreshFiles().catch(fail)}><${Icon} n="refresh" s=${14} /></button>
     </div>
     <div class="panel-body">
-      <div class="intro">Bring in a screen from your app, then click it to put it in the design.</div>
+      <div class="intro">Bring in a screenshot of your app, then click it to put it in the design.</div>
       ${s.replacing &&
       html`<div class="insp-hero" style=${{ boxShadow: "inset 0 0 0 1px var(--iris)", background: "var(--iris-soft)" }}>
         <${Icon} n="replace" s=${16} />
@@ -207,7 +208,7 @@ export function CapturesPanel() {
         ]} />`}>
         ${shown.length
           ? html`<div class="shots">${shown.map((f) => html`<${Shot} key=${f.path} f=${f} used=${used.has(f.path)} replacing=${s.replacing} />`)}</div>`
-          : html`<div class="empty-note">${shots.length ? "Nothing here." : "Screens you capture or import appear here. Click one to use it, or drag it onto the design."}</div>`}
+          : html`<div class="empty-note">${shots.length ? "Nothing here." : "Screenshots you capture or import appear here. Click one to use it, or drag it onto the design."}</div>`}
       <//>
     </div>
   </div>`;
@@ -522,14 +523,29 @@ export function BackgroundsPanel() {
 // =============================================================================================
 // Text
 
-export function TextPanel() {
+/** Text and shapes share a tab in the rail: this switches between the two halves. */
+function AddSwitch() {
+  const s = useStore();
+  return html`<${Seg} value=${s.addTab} onChange=${(v) => {
+    set({ addTab: v });
+    persistPrefs();
+  }} options=${[{ value: "text", label: "Text", icon: "text" }, { value: "shapes", label: "Shapes", icon: "shapes" }]} />`;
+}
+
+export function AddPanel() {
+  const s = useStore();
+  return s.addTab === "shapes" ? html`<${ShapesPanel} />` : html`<${TextPanel} />`;
+}
+
+function TextPanel() {
   const s = useStore();
   const scene = s.scene;
   const texts = scene.texts ?? [];
   const hasCaption = scene.headline !== undefined || scene.subheadline !== undefined;
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Text</h2></div>
+    <div class="panel-head"><h2>Text & shapes</h2></div>
     <div class="panel-body">
+      <${AddSwitch} />
       <div class="intro">A headline sells the screen. Add labels or badges for extra detail. Double-click any text in the design to retype it.</div>
       <${Section} title="Headline">
         ${hasCaption
@@ -568,25 +584,18 @@ export function TextPanel() {
 // =============================================================================================
 // Layers
 
-export function LayersPanel() {
+/** Everything in the image, front to back: click one to select it. Lives in the right panel. */
+export function LayersList() {
   const s = useStore();
   const ents = [...(s.layout?.entities ?? [])].sort((a, b) => b.z - a.z);
-  return html`<div class="panel left">
-    <div class="panel-head"><h2>Layers</h2><span class="sub">${ents.length}</span></div>
-    <div class="panel-body" style=${{ gap: "2px" }}>
-      <div class="intro" style=${{ marginBottom: "8px" }}>Everything in the image, front to back. Click to select.</div>
-      ${ents.map(
-        (e) => html`<div class="layer ${s.selected === e.id ? "on" : ""}" onClick=${() => set({ selected: e.id, view: "canvas" })} onMouseEnter=${() => set({ hover: e.id })} onMouseLeave=${() => set({ hover: null })}>
-          <span class="thumb">${e.kind === "device" ? html`<img src=${thumbUrl(e.screenshot, 80)} />` : html`<${Icon} n=${e.kind === "shape" ? "shapes" : "text"} s=${13} />`}</span>
-          <span class="nm">${entityLabel(e.id)}</span>
-          <span class="faint mono">${Math.round(e.z)}</span>
-        </div>`,
-      )}
-      <div class="layer ${!s.selected ? "on" : ""}" onClick=${() => set({ selected: null, view: "canvas" })}>
-        <span class="thumb"><${Icon} n="background" s=${13} /></span><span class="nm">Background</span><span class="faint">${typeof s.scene.background === "string" ? s.scene.background : bgObj(s.scene.background).look ?? ""}</span>
-      </div>
-      ${!ents.length && html`<div class="empty-note">Add a screenshot to start the scene.</div>`}
-    </div>
+  if (!ents.length) return html`<div class="empty-note">Add a screenshot to start the design.</div>`;
+  return html`<div class="layers">
+    ${ents.map(
+      (e) => html`<div class="layer ${s.selected === e.id ? "on" : ""}" onClick=${() => set({ selected: e.id, view: "canvas" })} onMouseEnter=${() => set({ hover: e.id })} onMouseLeave=${() => set({ hover: null })}>
+        <span class="thumb">${e.kind === "device" ? html`<img src=${thumbUrl(e.screenshot, 80)} />` : html`<${Icon} n=${e.kind === "shape" ? "shapes" : "text"} s=${13} />`}</span>
+        <span class="nm">${entityLabel(e.id)}</span>
+      </div>`,
+    )}
   </div>`;
 }
 
@@ -687,7 +696,7 @@ function dragShape(ev, kind, tint) {
   addEventListener("keydown", key, true);
 }
 
-export function ShapesPanel() {
+function ShapesPanel() {
   const s = useStore();
   const tint = s.shapeTint;
   const shapes = s.scene.shapes ?? [];
@@ -715,8 +724,9 @@ export function ShapesPanel() {
     <${ShapePreview} kind=${k} tint=${tint} /><span class="nm">${k.label}</span>
   </div>`;
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
+    <div class="panel-head"><h2>Text & shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
     <div class="panel-body">
+      <${AddSwitch} />
       <div class="intro">Drag a shape onto your design and drop it where you want it (or click to add it in the middle). Then move, resize, rotate and recolour it.</div>
       <${Section} title="Colour">
         <div class="tints">
@@ -770,7 +780,8 @@ const since = (ms) => {
  * Everything exported, newest first. Exports of the same scene stack into one card with its
  * versions: open a version to view it, or restore it as the working design.
  */
-export function ExportsPanel() {
+/** Everything exported, newest first, as a grid for the My designs page. */
+export function ExportsGrid() {
   const s = useStore();
   const [open, setOpen] = useState(null);
   const outs = s.files.filter((f) => f.kind === "mockups" || f.kind === "videos");
@@ -785,7 +796,7 @@ export function ExportsPanel() {
       groups.push(g);
     }
   }
-  const view = (f) => set({ render: { path: f.path, isVideo: isVideo(f.path), preview: false, at: f.mtime }, renderStale: false, view: "render" });
+  const view = (f) => set({ render: { path: f.path, isVideo: isVideo(f.path), preview: false, at: f.mtime }, renderStale: false, view: "render", scenesPage: false });
   const tile = (f, g) => html`<div class="shot wide" key=${f.path} data-file=${f.path} data-kind="saved" title=${base(f.path)} onClick=${() => view(f)}>
     ${isVideo(f.path) ? html`<video src=${`/file?path=${encodeURIComponent(f.path)}#t=0.5`} muted preload="metadata" style=${{ width: "100%", height: "100%", objectFit: "contain" }}></video>` : html`<img loading="lazy" src=${thumbUrl(f.path, 360)} />`}
     <div class="veil"></div>
@@ -799,33 +810,26 @@ export function ExportsPanel() {
       <button class="icon-btn" title="Delete" onClick=${() => deleteFile(f.path)}><${Icon} n="trash" s=${13} /></button>
     </div>
   </div>`;
-  return html`<div class="panel left">
-    <div class="panel-head"><h2>Saved</h2><span class="sub">${outs.length}</span></div>
-    <div class="panel-body">
-      <div class="intro">Images and videos you've exported. Each scene keeps its versions; click one to view it.</div>
-      ${groups.length
-        ? html`<div class="shots two">${groups.map((g) => [
-            tile(g.versions[0], g),
-            open === g.key &&
-              html`<div class="history" key=${`${g.key}-history`}>
-                <div class="history-head"><b>${g.scene?.name ?? "Scene"}</b><span class="faint">${g.versions.length} versions</span></div>
-                ${g.versions.map(
-                  (v, i) => html`<div class="history-row" key=${v.path}>
-                    <button class="history-pick" onClick=${() => view(v)}><img loading="lazy" src=${thumbUrl(v.path, 120)} /><span>${i === 0 ? "Latest" : `Version ${g.versions.length - i}`}<em>${since(v.mtime)}</em></span></button>
-                    ${!isVideo(v.path) && html`<button class="btn sm ghost" title="Make this version the working design" onClick=${() => restoreVersion(v.path)}>Restore</button>`}
-                  </div>`,
-                )}
-              </div>`,
-          ])}</div>`
-        : html`<div class="empty-note">Images and videos you export appear here.</div>`}
-    </div>
-  </div>`;
+  if (!groups.length) return html`<div class="sp-empty big"><div class="art"><${Icon} n="exports" s=${24} /></div><b>Nothing exported yet</b><span>Images and videos you export appear here, with every version of each design.</span></div>`;
+  return html`<div class="shots exports-grid">${groups.map((g) => [
+    tile(g.versions[0], g),
+    open === g.key &&
+      html`<div class="history" key=${`${g.key}-history`}>
+        <div class="history-head"><b>${g.scene?.name ?? "Design"}</b><span class="faint">${g.versions.length} versions</span></div>
+        ${g.versions.map(
+          (v, i) => html`<div class="history-row" key=${v.path}>
+            <button class="history-pick" onClick=${() => view(v)}><img loading="lazy" src=${thumbUrl(v.path, 120)} /><span>${i === 0 ? "Latest" : `Version ${g.versions.length - i}`}<em>${since(v.mtime)}</em></span></button>
+            ${!isVideo(v.path) && html`<button class="btn sm ghost" title="Make this version the working design" onClick=${() => restoreVersion(v.path).then(() => set({ scenesPage: false }))}>Restore</button>`}
+          </div>`,
+        )}
+      </div>`,
+  ])}</div>`;
 }
 
 // =============================================================================================
 // Designs
 
-const DIRECTION_STEPS = { look: "Looking at your design", read: "Reading your screens", think: "Designing three directions", render: "Rendering them" };
+const DIRECTION_STEPS = { look: "Rendering your design", read: "Reading your screens", think: "Claude is designing three directions", render: "Rendering them", generate: "Making their AI backdrops" };
 
 /** Claude proposes three directions, rendered side by side; pick one. */
 function DesignForMe() {
@@ -845,7 +849,10 @@ function DesignForMe() {
         ${d?.busy ? html`<span class="spinner"></span>Designing…` : html`<${Icon} n="spark" s=${13} />${d?.items?.length ? "Three more" : "Design it"}`}
       </button>
     </div>
-    ${d?.busy && html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint">${Math.max(0, Math.round((now - d.started) / 1000))}s</span></div>`}
+    ${d?.busy &&
+    html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint" title="This step · in all">${Math.max(0, Math.round((now - (d.stepAt ?? d.started)) / 1000))}s · ${Math.max(0, Math.round((now - d.started) / 1000))}s</span>
+      <button class="btn sm ghost" title="Stop Claude. Your design stays as it is." onClick=${stopDesignForMe}>Stop</button></div>
+      ${d.step === "generate" && html`<div class="note">${IMAGE_PROVIDERS[d.provider] ?? "The image generator"} is making a new backdrop image. This can take a minute.</div>`}`}
     ${d?.error && html`<div class="note warn">${d.error}</div>`}
     ${d?.items?.length > 0 &&
     html`<div class="dfm-grid">${d.items.map(
@@ -858,6 +865,40 @@ function DesignForMe() {
   </div>`;
 }
 
+const LAYOUT_NAMES = { hero: "Title on top", "hero-bleed": "Big device", "text-bottom": "Title below", tilted: "Tilted", floating: "No title", duo: "Two devices", trio: "Three devices", split: "Title beside", stack: "Stacked", grid: "Grid", staircase: "Staircase", rising: "Rising pair" };
+const LAYOUT_TIPS = {
+  hero: "Headline at the top, device underneath",
+  "hero-bleed": "A large device that runs off the bottom edge",
+  "text-bottom": "Device on top, headline underneath",
+  tilted: "Device angled in 3D",
+  floating: "Just the device, no headline space",
+  duo: "Two devices side by side",
+  trio: "Three devices in a row",
+  split: "Headline on one side, device on the other",
+  stack: "Devices overlapping, e.g. a Mac and an iPhone",
+  grid: "Every screen in a tidy grid",
+  staircase: "Screens stepping up to the right",
+  rising: "Two screens leaning toward each other",
+};
+
+/** Where the devices and headline sit, without changing colours or type. */
+function Arrangement() {
+  const s = useStore();
+  const sc = s.scene;
+  const layouts = (s.opts?.layouts ?? []).filter((l) => l !== "custom");
+  return html`<${Section} title="Just rearrange" collapsible open=${false} id="arrange">
+    <div class="note">Move the devices and headline around, keeping your colours and type.</div>
+    <div class="layouts">
+      <button class="layout-opt ${!sc.layout ? "on" : ""}" title="Picks an arrangement for the number of devices" onClick=${() => edit((d) => delete d.layout)}><${LayoutIcon} n="custom" />Automatic</button>
+      ${layouts.map((l) => html`<button class="layout-opt ${sc.layout === l ? "on" : ""}" title=${LAYOUT_TIPS[l] ?? ""} onClick=${() => edit((d) => (d.layout = l))}><${LayoutIcon} n=${l} />${LAYOUT_NAMES[l] ?? l}</button>`)}
+    </div>
+    ${sc.devices.some((d) => d.x !== undefined || d.y !== undefined) &&
+    html`<button class="btn sm" onClick=${() => edit((d) => d.devices.forEach((dev) => ["x", "y", "anchor", "height", "width", "rotate"].forEach((k) => delete dev[k])))}>
+      <${Icon} n="refresh" s=${12} />Undo hand placement on all devices</button>
+      <div class="note">Devices you dragged by hand keep their spot until you undo that.</div>`}
+  <//>`;
+}
+
 /** Complete designs built from your own screens, headline and colours. */
 export function DesignsPanel() {
   const s = useStore();
@@ -865,12 +906,12 @@ export function DesignsPanel() {
   const has = body.devices.length > 0;
   const q = encodeURIComponent(JSON.stringify(body));
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Designs</h2><span class="sub">${s.recipes.length}</span></div>
+    <div class="panel-head"><h2>Templates</h2><span class="sub">${s.recipes.length}</span></div>
     <div class="panel-body">
-      <div class="intro">Start from a design that works. Each one uses your screenshots, your headline and your app's colours. One click; undo goes back.</div>
+      <div class="intro">Finished designs made from your screenshot, your headline and your app's colours. One click to try one; undo goes back.</div>
       <${DesignForMe} />
-      <${Section} title="Recipes" count=${s.recipes.length}>
-        ${!has && html`<div class="empty-note">Add a screenshot and the recipes preview with it.</div>`}
+      <${Section} title="Templates" count=${s.recipes.length}>
+        ${!has && html`<div class="empty-note">Add a screenshot and each template shows a preview made from it.</div>`}
         <div class="recipes">${s.recipes.map(
           (r) => html`<button class="recipe" key=${r.id} disabled=${!has} onClick=${() => applyRecipe(r.id)} title=${r.description}>
             <div class="recipe-img">${has && html`<img loading="lazy" src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} />`}</div>
@@ -878,6 +919,7 @@ export function DesignsPanel() {
           </button>`,
         )}</div>
       <//>
+      ${has && html`<${Arrangement} />`}
     </div>
   </div>`;
 }

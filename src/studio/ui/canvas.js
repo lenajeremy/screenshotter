@@ -1,9 +1,10 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { html } from "./controls.js";
+import { ColorPicker, Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, api, clamp, edit, entityLabel, fileUrl, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode } from "./actions.js";
+import { openMenu } from "./menu.js";
+import { S, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
+import { addDevice, deleteEntity, duplicateEntity, moveZ, openAI, recordingFor, replaceMode, togglePanel } from "./actions.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
 export const canvasApi = { fit: () => {}, zoomBy: () => {}, zoomTo: () => {}, editText: () => {} };
@@ -63,8 +64,8 @@ function bgGuess(bg, looks) {
 function needsStill(bg, looks) {
   if (!bg) return false;
   if (typeof bg === "string") return Boolean(looks?.some((l) => l.name === bg));
-  if (bg.type === "transparent" || bg.generate) return false;
-  return true;
+  // AI backdrops too: the engine serves one once it's made, and never starts one for the canvas.
+  return bg.type !== "transparent";
 }
 
 /** A scene's macOS menu bar, sketched on the canvas (the render draws the real one). */
@@ -299,12 +300,14 @@ export function CanvasView() {
 
   const W0 = layout?.canvas.width ?? 1320;
   const H0 = layout?.canvas.height ?? 2868;
-  const fitS = Math.max(0.02, Math.min((size.w - PAD * 2) / W0, (size.h - TOP - BOTTOM) / H0));
+  // While a first-steps card sits at the bottom, the design fits in the room above it.
+  const bottom = s.guide === "design" ? Math.min(size.h * 0.46, 290) : s.guide ? 210 : BOTTOM;
+  const fitS = Math.max(0.02, Math.min((size.w - PAD * 2) / W0, (size.h - TOP - bottom) / H0));
   const scale = view.zoom ?? fitS;
   const W = W0 * scale;
   const H = H0 * scale;
   const ox = view.zoom === null ? (size.w - W) / 2 : view.x;
-  const oy = view.zoom === null ? TOP + (size.h - TOP - BOTTOM - H) / 2 : view.y;
+  const oy = view.zoom === null ? TOP + (size.h - TOP - bottom - H) / 2 : view.y;
 
   // The view as it is right now. Trackpad events arrive faster than the canvas re-renders, so
   // each one builds on the last one's result rather than on the last render.
@@ -428,7 +431,7 @@ export function CanvasView() {
     if (ev.button !== 0) return;
     const entEl = ev.target.closest(".ent");
     const handle = ev.target.closest("[data-handle]")?.dataset.handle;
-    if (ev.target.closest(".editing")) return;
+    if (ev.target.closest(".editing, .pop")) return;
     if (!entEl && !handle) {
       if (editing) return;
       set({ selected: null });
@@ -656,8 +659,11 @@ export function CanvasView() {
     <div class="dots" style=${{ "--dot": 22 * Math.max(0.5, Math.min(2, scale / fitS)) + "px", "--dot-x": ox + "px", "--dot-y": oy + "px" }}></div>
     ${layout &&
     html`<div class="world" style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
-      <div class="artboard-label" style=${{ top: H + 12 + "px" }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><span class="faint">· Edit view shows placement. Preview shows the finished look.</span></div>
-      <div class="artboard ${dropOver ? "drop-over" : ""} ${s.ai.busy ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px" }}>
+      <div class="artboard-label" style=${{ top: H + 12 + "px" }}><button class="size-btn" title="Change the image size" onPointerDown=${(e) => e.stopPropagation()} onClick=${() => {
+        set({ selected: null, rightOpen: true });
+        persistPrefs();
+      }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><${Icon} n="down" s=${11} /></button><span class="faint">· Edit view shows placement. Preview shows the finished look.</span></div>
+      <div class="artboard ${dropOver ? "drop-over" : ""} ${s.ai.busy || s.designing ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px" }}>
         <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} />
         ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
         ${entities.map(
@@ -801,38 +807,104 @@ function LineHandles({ sh, W, H, dims }) {
 // Floating actions above the selection
 
 function ContextBar({ sel, box, vp }) {
+  const [pick, setPick] = useState(null);
+  const barRef = useRef();
+  useEffect(() => setPick(null), [sel.id]);
   if (!box || !vp) return null;
   // Sit above the selection (clear of the rotate handle), else below it, else at the top of the
   // canvas; prefer a spot that doesn't cover another item, like the headline.
   const r = box.getBoundingClientRect();
   const v = vp.getBoundingClientRect();
-  const left = clamp(r.left + r.width / 2 - v.left, 170, v.width - 170);
-  const half = sel.kind === "device" ? 150 : 125;
+  const left = clamp(r.left + r.width / 2 - v.left, 200, v.width - 200);
+  const half = 185;
   // Also keep clear of the "3D tilt" tag and the artboard's own label.
-  const others = [...vp.querySelectorAll(".ent, .ent-device .tag, .artboard-label")].filter((el) => el.dataset.id !== sel.id).map((el) => el.getBoundingClientRect());
+  const others = [...vp.querySelectorAll(".ent, .ent-device .tag, .artboard-label"), ...(vp.parentElement?.querySelectorAll(".guide-strip") ?? [])].filter((el) => el.dataset.id !== sel.id).map((el) => el.getBoundingClientRect());
   const fits = (bottom) => bottom - 40 >= 8 && bottom <= v.height - 70;
   const clear = (bottom) =>
     !others.some((o) => o.left - v.left < left + half && o.right - v.left > left - half && o.top - v.top < bottom && o.bottom - v.top > bottom - 40);
-  const candidates = [r.top - v.top - (sel.kind === "caption" ? 12 : 50), r.bottom - v.top + 50, 50];
-  const top = candidates.find((c) => fits(c) && clear(c)) ?? candidates.find(fits) ?? 50;
+  // The nearest free spot above the selection or below it, whichever is closer; failing that,
+  // just above it (or below, or at the top of the canvas) even if it covers something.
+  const above = r.top - v.top - (sel.kind === "caption" ? 12 : 50);
+  const below = r.bottom - v.top + 50;
+  const scan = (from, step) => {
+    for (let b = from; b - 40 >= 8 && b <= v.height - 70; b += step) if (clear(b)) return b;
+    return null;
+  };
+  const up = scan(above, -6);
+  const down = scan(below, 6);
+  const top = up !== null && (down === null || above - up <= down - below) ? up : (down ?? [above, below, 50].find(fits) ?? 50);
   const stop = (e) => e.stopPropagation();
   const text = sel.kind === "caption" || sel.kind === "text";
-  return html`<div class="ctx-bar" style=${{ left: left + "px", top: top + "px" }} onPointerDown=${stop}>
-    <button class="btn" onClick=${() => openAI(sel.id)}><${Icon} n="spark" s=${14} style=${{ color: "var(--pink)" }} /><span class="ai-mini">Ask AI</span></button>
+  const sh = sel.shape;
+  // The everyday edits sit in the bar itself: words, colours, the screenshot. The rest is one
+  // click away, under ⋯ or in Settings.
+  const shapeUpd = (fn, key) => edit((d) => {
+    const x = d.shapes?.[sel.index];
+    if (x) fn(x);
+  }, key && `s${sel.index}.${key}`);
+  const textColor = (v) =>
+    sel.id === "caption"
+      ? edit((d) => (d.textStyle = { ...(d.textStyle ?? {}), color: v }), "cap.color")
+      : edit((d) => {
+          const t = d.texts?.[sel.index];
+          if (t) t.color = v;
+        }, `t${sel.index}.color`);
+  const more = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const z = sel.id !== "caption";
+    openMenu(r.left, r.bottom + 6, [
+      sel.kind === "shape" && { label: sh?.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => shapeUpd((x) => (x.sketch = sh?.sketch ? undefined : true)) },
+      z && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(sel.id) },
+      z && { label: "Bring forward", icon: "front", run: () => moveZ(sel.id, 1) },
+      z && { label: "Send backward", icon: "back", run: () => moveZ(sel.id, -1) },
+      "-",
+      { label: "All settings", icon: "sliders", kbd: "⌥⌘I", run: () => !S.rightOpen && togglePanel("right") },
+    ]);
+  };
+  // Colours to change from the bar: a fill dot, a stroke ring, or the text's colour.
+  const colours = text
+    ? [{ key: "text", label: "Text colour", value: sel.color, onChange: textColor }]
+    : sel.kind === "shape" && sh
+      ? [
+          !isLine(sh.type) && { key: "fill", label: "Fill", value: sh.fill, none: true, onChange: (v) => shapeUpd((x) => (x.fill = v ?? "none"), "fill") },
+          {
+            key: "stroke",
+            label: sh.type === "badge" ? "Ring" : isLine(sh.type) ? "Colour" : "Stroke",
+            value: sh.strokeWidth > 0 ? sh.stroke : undefined,
+            ring: !isLine(sh.type),
+            none: !isLine(sh.type),
+            onChange: (v) => shapeUpd((x) => {
+              x.stroke = v ?? "none";
+              if (v && !(sh.strokeWidth > 0)) x.strokeWidth = 0.005;
+            }, "stroke"),
+          },
+        ].filter(Boolean)
+      : [];
+  const picking = pick && colours.find((c) => c.key === pick.key);
+  const off = (v) => !v || v === "none";
+  return html`<div class="ctx-bar" ref=${barRef} style=${{ left: left + "px", top: top + "px" }} onPointerDown=${(e) => {
+    stop(e);
+    if (!e.target.closest(".qc")) setPick(null);
+  }}>
+    <button class="btn" title="Describe a change and let AI make it (⌘K)" onClick=${() => openAI(sel.id)}><${Icon} n="spark" s=${14} style=${{ color: "var(--pink)" }} /><span class="ai-mini">Ask AI</span></button>
     <span class="sep"></span>
-    ${text
-      ? html`<button class="icon-btn" title="Edit text (double-click)" onClick=${() => canvasApi.editText(sel.id)}><${Icon} n="text" s=${15} /></button>`
-      : sel.kind === "device"
-        ? html`<button class="icon-btn" title="Replace screenshot" onClick=${() => replaceMode(sel.id)}><${Icon} n="replace" s=${15} /></button>`
-        : html`<button class="icon-btn ${sel.shape?.sketch ? "on" : ""}" title="Hand-drawn" onClick=${() => edit((d) => {
-            const sh = d.shapes?.[sel.index];
-            if (sh) sh.sketch = !sel.shape?.sketch || undefined;
-          })}><${Icon} n="pen" s=${15} /></button>`}
-    ${sel.id !== "caption" && html`<button class="icon-btn" title="Duplicate (⌘D)" onClick=${() => duplicateEntity(sel.id)}><${Icon} n="duplicate" s=${15} /></button>`}
-    ${sel.id !== "caption" && html`<button class="icon-btn" title="Bring forward" onClick=${() => moveZ(sel.id, 1)}><${Icon} n="front" s=${15} /></button>`}
-    ${sel.id !== "caption" && html`<button class="icon-btn" title="Send backward" onClick=${() => moveZ(sel.id, -1)}><${Icon} n="back" s=${15} /></button>`}
-    <button class="icon-btn" title="Delete (⌫)" onClick=${() => deleteEntity(sel.id)}><${Icon} n="trash" s=${15} /></button>
-  </div>`;
+    ${text && html`<button class="btn" title="Change the words (double-click, or ↩)" onClick=${() => canvasApi.editText(sel.id)}><${Icon} n="text" s=${14} />Edit</button>`}
+    ${sel.kind === "device" && html`<button class="btn" title="Use a different screenshot in this device" onClick=${() => replaceMode(sel.id)}><${Icon} n="replace" s=${14} />Replace</button>`}
+    ${colours.map(
+      (c) => html`<button key=${c.key} class="qc ${c.ring ? "ring" : ""} ${off(c.value) ? "off" : ""} ${pick?.key === c.key ? "on" : ""}" title=${c.label} data-colour=${c.key}
+        onClick=${() => setPick(pick?.key === c.key ? null : { key: c.key })}>
+        <span style=${off(c.value) ? null : c.ring ? { borderColor: c.value } : { background: c.value }}></span>
+      </button>`,
+    )}
+    <button class="btn ${S.rightOpen ? "on" : ""}" title="Every setting for this, in the panel on the right (⌥⌘I)" onClick=${() => togglePanel("right")}><${Icon} n="sliders" s=${14} />Settings</button>
+    <button class="icon-btn" title="More" onClick=${more}><${Icon} n="dots" s=${15} /></button>
+    <button class="icon-btn" title=${sel.id === "caption" ? "Remove the headline (⌫)" : "Delete (⌫)"} onClick=${() => deleteEntity(sel.id)}><${Icon} n="trash" s=${15} /></button>
+  </div>
+  ${picking &&
+  html`<${Popover} anchor=${barRef.current} avoid=${box} onClose=${() => setPick(null)} width=${244} align="center">
+    <div class="qc-head"><b>${picking.label}</b>${picking.none && html`<button class="btn sm ${off(picking.value) ? "on" : "ghost"}" onClick=${() => picking.onChange(undefined)}>None</button>`}</div>
+    <${ColorPicker} value=${off(picking.value) ? "#ffffff" : picking.value} onChange=${(v) => v && picking.onChange(v)} />
+  <//>`}`;
 }
 
 export { commit as commitEntity, entityLabel };

@@ -24,32 +24,43 @@ export const recipeInput = (scene = S.scene) => ({
 });
 
 /** Apply a recipe to the current screens: one undo step. */
-export async function applyRecipe(id, { quiet = false } = {}) {
+// The latest template asked for wins: an earlier, slower answer never lands on top of it.
+let recipeAsk = 0;
+export async function applyRecipe(id, { quiet = false, silent = false } = {}) {
   const body = recipeInput();
-  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Recipes use your own screens." });
+  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Templates are made from your own screenshot." });
+  const ask = ++recipeAsk;
   try {
     const { scene } = await api("/api/recipe", { id, ...body });
+    if (ask !== recipeAsk) return;
+    // A template with no headline of its own keeps the one already written.
+    if (body.headline && !scene.headline) Object.assign(scene, { headline: body.headline, subheadline: body.subheadline });
     setScene(scene);
     touch("backdrop");
     set({ view: "canvas", selected: null });
     const name = S.recipes?.find((r) => r.id === id)?.name ?? "the design";
-    toast({ kind: "ok", title: quiet ? `Started you off with ${name}` : `Applied ${name}`, text: quiet ? "Undo (⌘Z) for a plain layout, or pick another in Designs." : "Undo (⌘Z) goes back.", timeout: 3200 });
+    // While the person is trying templates one after another, the canvas is the feedback.
+    if (!silent) toast({ kind: "ok", title: quiet ? `Started you off with ${name}` : `Applied ${name}`, text: quiet ? "Undo (⌘Z) for a plain layout, or pick another in Templates." : "Undo (⌘Z) goes back.", timeout: 3200 });
   } catch (e) {
-    fail(e, "Couldn't apply that design");
+    fail(e, "Couldn't apply that template");
   }
 }
 
 /** Ask Claude for three directions, each rendered, to pick from. */
+let directionsStop = null;
+export const stopDesignForMe = () => directionsStop?.abort();
 export async function designForMe() {
   if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
   if (S.directions?.busy) return;
   const started = Date.now();
-  set({ directions: { busy: true, step: "look", started, items: [], error: null } });
+  const stop = (directionsStop = new AbortController());
+  set({ directions: { busy: true, step: "look", stepAt: started, started, items: [], error: null } });
   try {
     const res = await fetch("/api/ai-directions", {
       method: "POST",
       headers: { "x-screenshotter": "studio", "Content-Type": "application/json" },
       body: JSON.stringify({ request: S.scene, model: S.ai.model || undefined, preview: S.ai.preview !== false }),
+      signal: stop.signal,
     });
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
     const reader = res.body.getReader();
@@ -65,7 +76,10 @@ export async function designForMe() {
         buf = buf.slice(nl + 1);
         if (!line) continue;
         const ev = JSON.parse(line);
-        if (ev.type === "progress") set({ directions: { ...S.directions, step: ev.step === "check" ? "render" : ev.step } });
+        if (ev.type === "progress" && !(ev.step === "look" && ev.image)) {
+          const step = ev.step === "check" ? "render" : ev.step;
+          if (step !== S.directions.step) set({ directions: { ...S.directions, step, stepAt: Date.now(), provider: ev.provider ?? S.directions.provider } });
+        }
         else if (ev.type === "error") throw new Error(ev.error);
         else if (ev.type === "result") {
           set({ directions: { busy: false, items: ev.directions, took: Math.round((Date.now() - started) / 1000), base: S.scene } });
@@ -75,7 +89,9 @@ export async function designForMe() {
     }
     throw new Error("It stopped before it finished. Try again.");
   } catch (e) {
-    set({ directions: { busy: false, items: [], error: e.message } });
+    set({ directions: { busy: false, items: [], error: stop.signal.aborted ? null : e.message } });
+  } finally {
+    if (directionsStop === stop) directionsStop = null;
   }
 }
 
@@ -105,7 +121,22 @@ export function addDevice(path, at = {}) {
   const pristine = !S.scene.devices?.length && !S.scene.headline && !S.scene.layout && !S.scene.effects && S.scene.background === DEFAULT_SCENE.background && at.x === undefined && !at.frame;
   setScene(next);
   set({ selected: `device-${next.devices.length}`, view: "canvas", replacing: null });
-  if (pristine) return applyRecipe("bold-hero", { quiet: true });
+  if (pristine) {
+    // A new design starts from a finished one, and offers a few others to choose from.
+    set({ guide: "design", guidePick: "bold-hero", selected: null, designing: true });
+    return applyRecipe("bold-hero", { silent: true }).finally(() => set({ designing: false }));
+  }
+}
+
+/** Bring in the sample screenshot (a made-up recipe app), for trying the app with nothing to hand. */
+export async function trySample() {
+  try {
+    const { path } = await api("/api/sample", {});
+    await refreshFiles();
+    return addDevice(path);
+  } catch (e) {
+    fail(e, "Couldn't load the sample");
+  }
 }
 
 /** Put a capture on the selected device, or start the scene with it. */
@@ -652,6 +683,17 @@ function chatHistory() {
   return turns.slice(-12);
 }
 
+/** The edit in progress: Stop aborts it; "Use it now" takes its draft and stops the rest. */
+let aiRun = null;
+export function stopAI() {
+  aiRun?.stop.abort();
+}
+export function useAIDraft() {
+  if (!aiRun || !S.ai.work?.draft) return;
+  aiRun.takeDraft = true;
+  aiRun.stop.abort();
+}
+
 export async function aiEdit(text) {
   const instruction = text.trim();
   if (!instruction || S.ai.busy) return;
@@ -661,25 +703,28 @@ export async function aiEdit(text) {
   const user = msg({ role: "user", text: instruction, about: selection ? entityLabel(selection) : undefined });
   set({ ai: { ...S.ai, open: true, busy: true, text: "", error: null, history: recall, thread: [...S.ai.thread, user] } });
   if (!S.scene.devices.length) {
-    set({ ai: { ...S.ai, busy: false, thread: [...S.ai.thread, msg({ role: "error", text: "Add a screenshot to the scene first, then describe the change." })] } });
+    set({ ai: { ...S.ai, busy: false, thread: [...S.ai.thread, msg({ role: "error", text: "Add a screenshot first, then describe the change." })] } });
     return;
   }
   const snapshot = S.scene;
   const started = Date.now();
-  set({ ai: { ...S.ai, work: { started, step: "look", image: null, items: [], retry: null } } });
+  const run = (aiRun = { stop: new AbortController(), takeDraft: false });
+  set({ ai: { ...S.ai, work: { started, steps: [{ key: "look", at: started }], items: [], retry: null, draft: null } } });
   const work = (patch) => set({ ai: { ...S.ai, work: { ...S.ai.work, ...patch } } });
-  try {
-    const r = await streamEdit({ request: snapshot, instruction, selection, history, model: S.ai.model || undefined, preview: S.ai.preview !== false }, (p) => {
-      if (p.step === "look") work({ step: "look", ...(p.image ? { image: `data:image/jpeg;base64,${p.image}` } : {}) });
-      else if (p.step === "read") work({ step: "read", items: p.items });
-      else if (p.step === "think") work({ step: "think" });
-      else if (p.step === "retry") work({ step: "think", retry: p.reason });
-      else if (p.step === "check") work({ step: "check", checkImage: `data:image/jpeg;base64,${p.image}` });
-    });
+  // Each step the engine reports closes the one before it, so every step has its own time.
+  const step = (key, extra = {}) => {
+    const now = Date.now();
+    const steps = (S.ai.work?.steps ?? []).map((x) => (x.end ? x : { ...x, end: now }));
+    work({ steps: [...steps, { key, at: now, ...extra }] });
+  };
+  const doneSteps = () => (S.ai.work?.steps ?? []).map((x) => ({ key: x.key, ms: (x.end ?? Date.now()) - x.at, provider: x.provider, cut: x.cut }));
+
+  /** Put a finished (or drafted) edit on the canvas and into the chat. */
+  const finish = (r, { skippedCheck = false } = {}) => {
     if (S.scene !== snapshot) throw new Error("The design changed while Claude was working. Ask again.");
     const via = r.provider === "api" ? r.model ?? "Claude" : "Claude Code";
     const took = Math.max(1, Math.round((Date.now() - started) / 1000));
-    const steps = { items: S.ai.work?.items ?? [], retried: Boolean(S.ai.work?.retry), checked: r.checked, remembered: r.remembered };
+    const steps = { list: doneSteps(), items: S.ai.work?.items ?? [], retried: Boolean(S.ai.work?.retry), checked: r.checked, skippedCheck, remembered: r.remembered };
     if (!r.operations?.length) {
       const answer = msg({ role: "assistant", text: r.summary || "I didn't change anything.", via, took, steps, remembered: r.remembered, fresh: true });
       set({ ai: { ...S.ai, busy: false, work: null, thread: [...S.ai.thread, answer] } });
@@ -698,10 +743,57 @@ export async function aiEdit(text) {
     setTimeout(() => set({ pulse: [] }), 1700);
     settle(reply.id);
     persist();
+  };
+
+  try {
+    const r = await streamEdit(
+      { request: snapshot, instruction, selection, history, model: S.ai.model || undefined, preview: S.ai.preview !== false },
+      (p) => {
+        if (p.step === "look") {
+          if (!p.image) return;
+          // The design as Claude sees it: rendering (and any backdrop it waited for) is done.
+          const now = Date.now();
+          work({ image: `data:image/jpeg;base64,${p.image}`, steps: S.ai.work.steps.map((x) => (x.end ? x : { ...x, end: now })) });
+        } else if (p.step === "read") step("read"), work({ items: p.items });
+        else if (p.step === "think") step("think");
+        else if (p.step === "retry") step("retry", { reason: p.reason }), work({ retry: p.reason });
+        else if (p.step === "draft") work({ draft: p.result });
+        else if (p.step === "generate") step("generate", { provider: p.provider, prompt: p.prompt, reason: p.reason });
+        else if (p.step === "render") step("render");
+        else if (p.step === "check") step("check"), work({ checkImage: `data:image/jpeg;base64,${p.image}` });
+      },
+      run.stop.signal,
+    );
+    finish(r);
   } catch (e) {
-    set({ ai: { ...S.ai, busy: false, work: null, thread: [...S.ai.thread, msg({ role: "error", text: e.message, retry: instruction })] } });
+    if (run.stop.signal.aborted && run.takeDraft && S.ai.work?.draft) {
+      // The step it was on when you took the change is cut short, and says so.
+      const now = Date.now();
+      work({ steps: S.ai.work.steps.map((x) => (x.end ? x : { ...x, end: now, cut: true })) });
+      try {
+        return finish(S.ai.work.draft, { skippedCheck: true });
+      } catch (err) {
+        e = err;
+      }
+    }
+    const current = S.ai.work?.steps?.at(-1)?.key;
+    const text = run.stop.signal.aborted && !run.takeDraft ? `Stopped${STOPPED_AT[current] ? ` ${STOPPED_AT[current]}` : ""}. Nothing changed.` : e.message;
+    set({ ai: { ...S.ai, busy: false, work: null, thread: [...S.ai.thread, msg({ role: "error", stopped: run.stop.signal.aborted, text, retry: instruction })] } });
+  } finally {
+    if (aiRun === run) aiRun = null;
   }
 }
+
+/** Where an edit was when it was stopped, for the chat. */
+const STOPPED_AT = {
+  look: "while rendering your design",
+  read: "while reading the design",
+  think: "while Claude was designing",
+  retry: "while Claude was fixing its first try",
+  generate: "while the backdrop image was being made",
+  render: "while rendering the result",
+  check: "while Claude was checking its work",
+};
 
 /** A new reply animates in once; after that it's just text (also when the chat is reopened). */
 function settle(id) {
@@ -709,11 +801,12 @@ function settle(id) {
 }
 
 /** POST an edit and read the engine's progress lines as they arrive; resolves with the result. */
-async function streamEdit(body, onProgress) {
+async function streamEdit(body, onProgress, signal) {
   let res;
   try {
-    res = await fetch("/api/ai-edit?stream=1", { method: "POST", headers: { "x-screenshotter": "studio", "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  } catch {
+    res = await fetch("/api/ai-edit?stream=1", { method: "POST", headers: { "x-screenshotter": "studio", "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
+  } catch (e) {
+    if (signal?.aborted) throw e;
     throw new Error("Lost connection to the Screenshotter engine.");
   }
   if (!res.ok || !res.body) {
@@ -838,7 +931,8 @@ export async function newScene() {
     scene: { devices: [], background: DEFAULT_SCENE.background },
     sceneId: null,
     sceneStamp: null,
-    sceneName: "Untitled scene",
+    guide: null,
+    sceneName: "Untitled design",
     past: [],
     future: [],
     selected: null,
@@ -857,11 +951,11 @@ export async function openScene(id) {
   await saveSceneNow();
   try {
     const saved = await api(`/api/scene?id=${encodeURIComponent(id)}`);
-    set({ scene: saved.scene, sceneId: saved.id, sceneStamp: saved.updatedAt, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
-    fail(e, "Couldn't open the scene");
+    fail(e, "Couldn't open the design");
     refreshScenes();
   }
 }
@@ -888,7 +982,7 @@ export async function pickUpAgentChanges(scenes, known) {
       if (differs) {
         setScene(saved.scene);
         set({ sceneName: saved.name, selected: null, render: null, renderStale: false });
-        toast({ kind: "ok", icon: "spark", title: "An agent updated this scene", text: "Its version is on the canvas.", timeout: 9000, actions: [{ label: "Undo", run: () => undo() }] });
+        toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: "Its version is on the canvas.", timeout: 9000, actions: [{ label: "Undo", run: () => undo() }] });
       }
     } catch {
       // The scene went away in the meantime: the next save recreates it.
@@ -898,13 +992,13 @@ export async function pickUpAgentChanges(scenes, known) {
   }
   if (!known) return;
   const added = scenes.filter((x) => x.by === "agent" && !known.has(x.id));
-  if (added.length === 1) toast({ kind: "ok", icon: "spark", title: "An agent saved a scene", text: added[0].name, timeout: 9000, actions: [{ label: "Open", run: () => openScene(added[0].id) }] });
-  else if (added.length > 1) toast({ kind: "ok", icon: "spark", title: `An agent saved ${added.length} scenes`, text: added.map((x) => x.name).join(", "), timeout: 9000, actions: [{ label: "See them", run: () => set({ scenesPage: true }) }] });
+  if (added.length === 1) toast({ kind: "ok", icon: "spark", title: "An agent saved a design", text: added[0].name, timeout: 9000, actions: [{ label: "Open", run: () => openScene(added[0].id) }] });
+  else if (added.length > 1) toast({ kind: "ok", icon: "spark", title: `An agent saved ${added.length} designs`, text: added.map((x) => x.name).join(", "), timeout: 9000, actions: [{ label: "See them", run: () => set({ scenesPage: true }) }] });
 }
 
 export async function renameSavedScene(id, to) {
   const current = S.scenes.find((x) => x.id === id);
-  const name = to ?? (await promptDialog({ title: "Rename scene", value: current?.name ?? S.sceneName, confirm: "Rename" }));
+  const name = to ?? (await promptDialog({ title: "Rename design", value: current?.name ?? S.sceneName, confirm: "Rename" }));
   if (!name?.trim() || name.trim() === current?.name) return;
   set({ scenes: S.scenes.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)) });
   if (id === S.sceneId) {
@@ -936,7 +1030,7 @@ export async function duplicateSavedScene(id) {
 
 export async function deleteSavedScene(id) {
   const target = S.scenes.find((x) => x.id === id);
-  const ok = await confirmDialog({ title: `Delete “${target?.name ?? "this scene"}”?`, text: "The scene is removed from your scenes. Captures and exports stay in the output folder.", confirm: "Delete", danger: true });
+  const ok = await confirmDialog({ title: `Delete “${target?.name ?? "this design"}”?`, text: "It's removed from My designs. Your screenshots and exports stay in the output folder.", confirm: "Delete", danger: true });
   if (!ok) return;
   try {
     await api("/api/scenes/delete", { id });

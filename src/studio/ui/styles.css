@@ -39,7 +39,7 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --spring: cubic-bezier(0.34, 1.4, 0.5, 1);
   --topbar: 52px;
-  --rail: 64px;
+  --rail: 76px;
   --left-d: 304px;
   --right-d: 300px;
   --check: repeating-conic-gradient(#1c1c20 0 25%, #141417 0 50%) 0 0 / 16px 16px;
@@ -142,8 +142,8 @@ svg { display: block; flex: none; }
 /* ---------------------------------------------------------------- rail */
 
 .rail { grid-row: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0 12px; }
-.rail-btn { width: 52px; height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 12px; border: 0; background: none; color: var(--text-3); position: relative; transition: color 0.15s, background 0.15s; }
-.rail-btn .rl { font-size: 10px; font-weight: 600; letter-spacing: 0.01em; }
+.rail-btn { width: 66px; min-height: 54px; padding: 6px 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 12px; border: 0; background: none; color: var(--text-3); position: relative; transition: color 0.15s, background 0.15s; }
+.rail-btn .rl { font-size: 10px; font-weight: 600; letter-spacing: 0.01em; line-height: 1.15; text-align: center; text-wrap: balance; }
 .rail-btn:hover { color: var(--text); background: var(--panel); }
 .rail-btn.on { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
 .rail-btn.on::before { content: ""; position: absolute; left: -4px; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--lime); }
@@ -156,9 +156,9 @@ svg { display: block; flex: none; }
 
 .panel { background: var(--panel); border-radius: var(--r-panel); box-shadow: 0 0 0 1px var(--line), inset 0 1px 0 rgba(255, 255, 255, 0.03); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .left { grid-row: 2; width: var(--left); margin: 0 8px 8px 0; transition: width 0.3s var(--ease), margin 0.3s var(--ease), opacity 0.2s; }
-.app.left-closed .left { margin-right: 0; opacity: 0; pointer-events: none; }
+.app.left-closed .left { margin-right: 0; opacity: 0; pointer-events: none; visibility: hidden; transition: width 0.3s var(--ease), margin 0.3s var(--ease), opacity 0.2s, visibility 0s 0.3s; }
 .right { grid-row: 2; grid-column: 4; width: var(--right); margin: 0 8px 8px 8px; transition: width 0.3s var(--ease), margin 0.3s var(--ease), opacity 0.2s; }
-.app.right-closed .right { margin-left: 0; opacity: 0; pointer-events: none; }
+.app.right-closed .right { margin-left: 0; opacity: 0; pointer-events: none; visibility: hidden; transition: width 0.3s var(--ease), margin 0.3s var(--ease), opacity 0.2s, visibility 0s 0.3s; }
 .app.resizing .left, .app.resizing .right { transition: none; }
 .app.resizing, .app.resizing * { cursor: col-resize !important; user-select: none; -webkit-user-select: none; }
 /* The gap beside each panel is its resize handle. */
@@ -340,6 +340,8 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 
 .artboard-label { position: absolute; left: 0; display: flex; gap: 8px; align-items: center; white-space: nowrap; font-size: 11.5px; color: var(--text-3); font-weight: 530; pointer-events: none; }
 .artboard-label b { color: var(--text-2); font-weight: 600; }
+.size-btn { pointer-events: auto; display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 8px; margin-left: -8px; border: 0; border-radius: 7px; background: none; color: var(--text-3); font: inherit; transition: background-color 140ms ease, color 140ms ease; }
+.size-btn:hover { background: var(--panel-2); color: var(--text); }
 .artboard { position: absolute; left: 0; top: 0; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.07); background: #222; transition: box-shadow 0.2s; }
 .artboard .bg { position: absolute; inset: 0; overflow: hidden; }
 .artboard .bg img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -382,6 +384,71 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .scenes-more-link { border: 0; background: none; color: var(--text-3); font-size: 12px; padding: 2px; align-self: center; }
 .scenes-more-link:hover { color: var(--text); }
 .rail-sep { width: 28px; height: 1px; background: var(--line-2); margin: 2px 0 4px; flex: none; }
+
+/* Welcome: one job on an empty design, bringing in a screenshot. */
+.welcome { gap: 18px; }
+.drop-target { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 34px 20px; margin-top: 4px; border: 1.5px dashed var(--line-3); border-radius: 18px; background: rgba(255, 255, 255, 0.015); color: var(--text-3); font-size: 13px; transition: border-color 150ms ease, background-color 150ms ease, transform 160ms ease-out; }
+.drop-target:hover { border-color: var(--lime); background: var(--lime-soft); color: var(--text-2); }
+.drop-target:active { transform: scale(0.99); }
+.drop-target .ico { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; background: var(--panel-2); color: var(--lime); box-shadow: inset 0 0 0 1px var(--line-2); margin-bottom: 4px; }
+.drop-target b { color: var(--text); font-size: 17px; font-weight: 620; letter-spacing: -0.01em; }
+/* The other ways in: equal buttons, as wide as the drop zone together. */
+.welcome-alt { width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+.welcome-alt .alt { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 12px; border: 0; border-radius: 11px; white-space: nowrap; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); font-weight: 550; font-size: 12.5px; transition: background-color 140ms ease, color 140ms ease; }
+.welcome-alt .alt:hover { background: var(--panel-3); color: var(--text); }
+.welcome-alt .alt svg { color: var(--text-3); }
+.welcome-more { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 6px; }
+
+/* A short window: the welcome tightens so everything is on screen without scrolling. */
+@media (max-height: 760px) {
+  .hero:has(.welcome) { padding: 20px 40px; }
+  .welcome { gap: 14px; }
+  .welcome h1 { font-size: 36px; }
+  .drop-target { padding: 20px; }
+  .drop-target .ico { width: 44px; height: 44px; border-radius: 13px; }
+  .welcome .recent-strip button { width: 52px; height: 88px; }
+}
+
+/* A new design's first steps: the four-step strip across the top, the step in hand at the bottom. */
+.guide-strip { position: absolute; left: 0; right: 0; top: 12px; margin-inline: auto; width: max-content; max-width: calc(100% - 120px); z-index: 46; display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 6px 0 8px; border-radius: 999px; background: rgba(22, 22, 26, 0.92); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow-pop); white-space: nowrap; animation: pop-in 0.25s var(--ease); }
+.gs { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px 0 5px; border: 0; border-radius: 999px; background: none; color: var(--text-3); font-size: 12.5px; font-weight: 580; transition: color 140ms ease, background-color 140ms ease; }
+.gs:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.gs .n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; background: var(--panel-4); color: var(--text-2); }
+.gs.on { color: var(--text); }
+.gs.on .n { background: var(--lime); color: var(--lime-ink); }
+.gs.done .n { background: var(--lime-soft); color: var(--lime); }
+.gs-line { width: 14px; height: 1.5px; border-radius: 1px; background: var(--line-2); }
+.gs-line.on { background: rgba(210, 255, 77, 0.5); }
+.gs-sep { width: 1px; height: 16px; margin: 0 2px 0 4px; background: var(--line-2); }
+.gs-skip { height: 28px; padding: 0 11px; border: 0; border-radius: 999px; background: none; color: var(--text-3); font-size: 12.5px; font-weight: 560; transition: color 140ms ease, background-color 140ms ease; }
+.gs-skip:hover { color: var(--text); background: var(--panel-3); }
+.guide-card { position: absolute; left: 0; right: 0; bottom: 14px; margin-inline: auto; z-index: 61; width: min(560px, calc(100% - 28px)); display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 18px; background: rgba(22, 22, 26, 0.95); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: var(--shadow-pop); animation: pop-in 0.22s var(--ease); }
+.gc-head { display: flex; align-items: center; gap: 8px; }
+.gc-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.gc-title b { font-size: 14px; font-weight: 620; letter-spacing: -0.005em; }
+.gc-title span { color: var(--text-3); font-size: 12px; }
+.gc-foot { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.design-tray { width: min(780px, calc(100% - 28px)); }
+.dt-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
+.dt-row::-webkit-scrollbar { display: none; }
+.dt-card { flex: 1 0 96px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 5px 5px 7px; border: 0; border-radius: 12px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-size: 11.5px; font-weight: 560; transition: background-color 140ms ease, box-shadow 140ms ease, transform 160ms ease-out; }
+.dt-card:hover { background: var(--panel-3); color: var(--text); }
+.dt-card:active { transform: scale(0.97); }
+.dt-card.on { box-shadow: inset 0 0 0 2px var(--lime); color: var(--text); }
+.dt-img { display: block; height: 132px; border-radius: 8px; overflow: hidden; background: linear-gradient(110deg, var(--panel-3) 30%, var(--panel-4) 50%, var(--panel-3) 70%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; }
+.dt-img img { width: 100%; height: 100%; object-fit: contain; display: block; background: var(--panel-2); }
+.dt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The zoom control would sit under a first-steps card: it comes back when the card goes. */
+.stage.guiding .zoom-ctl { display: none; }
+@media (max-height: 780px) { .dt-img { height: 100px; } }
+.headline-step .textarea { min-height: 58px; font-size: 15px; font-weight: 560; }
+
+/* The right panel: everyday settings first, the rest behind this. */
+.more-options { display: flex; align-items: center; gap: 6px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-weight: 580; font-size: 12.5px; transition: background-color 140ms ease, color 140ms ease; }
+.more-options:hover { background: var(--panel-3); color: var(--text); }
+.more-options svg { color: var(--text-3); }
+.layers { display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; }
+.ctx-bar .btn.on { background: var(--panel-3); color: var(--text); }
 
 /* Shapes panel: a colour for new shapes, then each shape drawn as it will look. */
 .tints { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -435,6 +502,12 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .sp-start .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .sp-start .txt b { font-size: 13.5px; font-weight: 600; }
 .sp-start .txt span { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-shelves { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 4px; border-radius: 11px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.sp-shelves button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 13px; border: 0; border-radius: 8px; background: none; color: var(--text-3); font-weight: 580; font-size: 13px; }
+.sp-shelves button:hover { color: var(--text); }
+.sp-shelves button.on { background: var(--panel-4); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+.sp-shelves .n { font: 500 10.5px var(--mono); color: var(--text-4); }
+.shots.exports-grid { grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 16px; margin-top: 18px; }
 .sp-toolbar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 12px 0 14px; margin-bottom: 6px; background: linear-gradient(var(--stage) 78%, transparent); }
 .sp-chips { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .sp-chips .chip .n { font: 500 10.5px var(--mono); color: var(--text-4); margin-left: 1px; }
@@ -581,6 +654,13 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .ctx-bar .btn { height: 30px; box-shadow: none; background: none; padding: 0 9px; }
 .ctx-bar .btn:hover { background: var(--panel-3); }
 .ctx-bar .sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 3px; }
+.ctx-bar .qc { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; background: none; }
+.ctx-bar .qc:hover, .ctx-bar .qc.on { background: var(--panel-3); }
+.ctx-bar .qc span { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28); }
+.ctx-bar .qc.ring span { box-sizing: border-box; border: 4px solid; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22); }
+/* No colour: a struck-through dot. */
+.ctx-bar .qc.off span { background: linear-gradient(135deg, transparent 45%, var(--danger) 45% 55%, transparent 55%); border-color: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }
+.qc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 8px; font-size: 12.5px; }
 .ctx-bar .ai-mini { background: var(--ai); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 650; }
 
 .float { position: absolute; z-index: 40; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow-pop); }
@@ -650,6 +730,10 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .send { width: 32px; height: 32px; border-radius: 10px; border: 0; display: grid; place-items: center; background: var(--text); color: #000; transition: transform 0.15s var(--spring), opacity 0.15s; }
 .send:hover { transform: scale(1.06); }
 .send:disabled { opacity: 0.25; transform: none; }
+/* While Claude works, Send becomes Stop. */
+.send.stop { background: var(--panel-4); box-shadow: inset 0 0 0 1px var(--line-3); }
+.stop-sq { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
+.send.stop .stop-sq { width: 11px; height: 11px; background: var(--text); }
 .suggestions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; animation: pop-up 0.3s var(--spring); }
 .suggestions .chip { background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 .ai-status { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 7px; }
@@ -692,6 +776,7 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .msg.error { align-self: flex-start; }
 .msg.error p { color: #ff8a8a; background: rgba(255, 90, 90, 0.08); padding: 8px 11px; border-radius: 12px; }
 .msg.error .btn { align-self: flex-start; }
+.msg.error.stopped p { color: var(--text-2); background: rgba(255, 255, 255, 0.05); }
 .msg.busy { flex-direction: row; align-items: center; gap: 8px; font-size: 12.5px; }
 .typing { display: inline-flex; gap: 3px; }
 .typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); animation: typing 1s ease-in-out infinite; }
@@ -729,6 +814,16 @@ li.done .work-shot .scan { display: none; }
 .work-items span { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--panel-3); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line); animation: step-in 240ms cubic-bezier(0.23, 1, 0.32, 1) both; animation-delay: calc(var(--i) * 70ms); }
 .work-items.static span { animation: none; }
 .work-time { font: 500 11px var(--mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* Each step: what it is on the left, its own time on the right. */
+.step-head { display: flex; align-items: baseline; gap: 8px; }
+.step-head b { flex: 1; min-width: 0; }
+.step-note { font-size: 11.5px; line-height: 1.45; color: var(--text-3); overflow-wrap: anywhere; }
+.step-body .step-note b.why { font-weight: 600; color: var(--text-2); }
+/* Under the steps: the time in all, Use it now (once there's a change) and Stop. */
+.work-actions { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.work-actions .btn { height: 28px; }
+.work-actions .btn.stop { gap: 7px; color: var(--text-2); }
+.work-actions .btn.stop:hover { color: var(--text); }
 /* A finished reply: what changed drops in line by line, then the words fade in. */
 .worked-toggle { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 0; color: var(--text-3); font: 500 11.5px var(--sans); cursor: pointer; }
 .worked-toggle:hover { color: var(--text-2); }
@@ -1009,7 +1104,7 @@ li.done .work-shot .scan { display: none; }
 .colour-groups { gap: 10px; }
 .colour-group { display: flex; flex-direction: column; gap: 6px; }
 .colour-head { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
-.colour-get { font-size: 12px; text-align: left; padding: 0; }
+.colour-get { font-size: 12px; text-align: left; padding: 0; border: 0; background: none; color: var(--text-2); }
 
 .whats-new .sheet-body { gap: 22px; }
 .release { display: flex; flex-direction: column; gap: 12px; animation: step-in 320ms cubic-bezier(0.23, 1, 0.32, 1) both; animation-delay: calc(var(--i) * 60ms); }
@@ -1029,7 +1124,9 @@ li.done .work-shot .scan { display: none; }
 .dfm-head b { font-size: 13px; }
 .dfm-head span { font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .dfm-head .btn { flex: none; }
-.dfm-progress { display: flex; justify-content: space-between; font-size: 12px; }
+.dfm-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.dfm-progress .shimmer-text { flex: 1; min-width: 0; }
+.dfm-progress .faint { font: 500 11px var(--mono); font-variant-numeric: tabular-nums; }
 .dfm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .dfm-card { display: flex; flex-direction: column; gap: 3px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; font: inherit; cursor: pointer; animation: step-in 320ms cubic-bezier(0.23, 1, 0.32, 1) both; animation-delay: calc(var(--i) * 70ms); }
 .dfm-card img, .dfm-blank { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; object-position: top; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); transition: box-shadow 160ms ease, transform 160ms cubic-bezier(0.23, 1, 0.32, 1); background: var(--panel-3); }

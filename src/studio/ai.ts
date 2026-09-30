@@ -23,6 +23,7 @@ import { cacheDir } from "../util/files.js";
 import { imageSize } from "../util/image.js";
 import { DESIGN_GUIDE } from "../design/guide.js";
 import { screenshotPalette } from "../render/analyze.js";
+import { pendingBackdrop } from "../render/background.js";
 import { availableImageProvider } from "../render/photos.js";
 import { listBezels } from "../render/bezels.js";
 import { recognizeText } from "../native/ocr.js";
@@ -65,6 +66,12 @@ export const EditReplySchema = z.object({
     .array(z.string())
     .optional()
     .describe("Lasting preferences the person just stated (\"I prefer…\", \"always…\", \"never…\", \"I love this font\"), each as one short note for the house style. Empty otherwise."),
+  imageReason: z
+    .string()
+    .optional()
+    .describe(
+      "Only when you add or change background.generate (a new AI image): why it's needed, in one short sentence, e.g. \"You asked for an AI-generated backdrop\" or \"No look or photo shows a rainy neon street at night\". Leave it out otherwise.",
+    ),
 });
 export type EditReply = z.infer<typeof EditReplySchema>;
 export type Operation = z.infer<typeof OperationSchema>;
@@ -232,7 +239,7 @@ How scenes work:
 - If "selected" is given, "this", "it" and "the selection" mean that entity (device-N → /devices/N-1, text-N → /texts/N-1, shape-N → /shapes/N-1, caption → headline/subheadline/textStyle).
 - An image usually comes with the request: a quick render of the design as it is now. Look at it before deciding anything. The JSON is the source of truth for exact values.
 - "screens" describes each device's screenshot: its palette (dominant colours with their share, the accent colour, dark or light UI) and the text visible on it, top to bottom, with where it sits (fractions of the screenshot). Build colour decisions on the palette, and aim callouts at text copied exactly from this list.
-- "available" says what can be used right now: "aiImages" names the image generator, or is null (then don't use background.generate; use looks, Unsplash or colours). "appleArt" lists the devices that have Apple's product art installed.
+- "available" says what can be used right now: "aiImages" names the image generator, or is null (then never use background.generate). "appleArt" lists the devices that have Apple's product art installed.
 - "houseStyle" is what this person likes, remembered from before. Follow it unless they ask otherwise.
 
 How to respond:
@@ -243,6 +250,7 @@ How to respond:
 - If the request can't be expressed in the scene, return no operations and say why.
 - summary is your chat reply: after an edit, one or two plain sentences on what you changed and the idea behind it ("Made the phone huge and let it rise from the bottom over a deep green that matches the app, and lifted the Today card so the headline has something to point at."). For a question, a short direct answer and no operations.
 - check: true when you changed the look or composition, so you see the render before the person does and can fix what's off. false for small exact edits and answers.
+- New AI images: add or change background.generate only when the person asks for a generated or AI image, or when nothing built in can meet the request (no look, painting, Unsplash photo, gradient or colour fits it). Then say why in imageReason. A new image takes half a minute or more and costs money; built-in backdrops are instant, so "better", "premium" or "a new backdrop" means a built-in one. Keep an existing generated backdrop exactly as it is unless the person asks to change it: any change to its prompt or seed makes a new image.
 - remember: when the person states a lasting preference ("I prefer…", "always…", "never…", "love this font"), add one short note for each; they're saved to the house style. Otherwise leave it empty.
 - This is a chat. "history" lists earlier turns; the scene already includes every edit made so far. Use it for follow-ups like "bigger", "the other one", "go back to the blue" or "try again".
 
@@ -308,7 +316,7 @@ async function reviewMessage(input: AIEditInput, edited: MockupInput, restored: 
     review: true,
     instruction: input.instruction,
     note:
-      "The image is how your edit renders. Check it against 'Check your work' in the guide. If something is off (text touching the device, weak contrast, a device too small, empty space, a callout on the wrong thing, clashing colours), return operations that fix it; they apply on top of this scene. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished design.",
+      "The image is how your edit renders. Check it against 'Check your work' in the guide. If something is off (text touching the device, weak contrast, a device too small, empty space, a callout on the wrong thing, clashing colours), return operations that fix it; they apply on top of this scene. Don't add or change a generated image here. If it's right, return no operations. Your summary replaces your earlier reply, so describe the finished design.",
     yourEarlierReply: first.summary,
     scene: edited,
     canvas: layout.canvas,
@@ -359,8 +367,60 @@ export type AIProgress =
   | { step: "look"; image?: string }
   | { step: "read"; items: string[] }
   | { step: "think" }
-  | { step: "check"; image: string }
-  | { step: "retry"; reason: string };
+  | { step: "retry"; reason: string }
+  /** The edit as it stands before Claude checks it: the Studio can apply it right away. */
+  | { step: "draft"; result: EditResult }
+  /** A render is waiting for an AI image generator to make a new backdrop. */
+  | { step: "generate"; provider: string; prompt: string; reason?: string }
+  /** Rendering the edit, for Claude to check. */
+  | { step: "render" }
+  | { step: "check"; image: string };
+
+/** The person pressed Stop. */
+export class StoppedError extends Error {
+  constructor() {
+    super("Stopped");
+    this.name = "StoppedError";
+  }
+}
+
+/** Settle with `p`, or reject with StoppedError as soon as the signal fires. */
+function until<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(new StoppedError());
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(new StoppedError());
+    signal.addEventListener("abort", stop, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
+}
+
+/** A generated backdrop's identity (prompt, seed, model), if the scene has one. */
+function generatedBackdrop(scene: MockupInput): string | undefined {
+  const bg = scene.background;
+  if (!bg || typeof bg !== "object" || !bg.generate) return undefined;
+  const g = typeof bg.generate === "string" ? { prompt: bg.generate } : bg.generate;
+  return JSON.stringify([g.prompt, bg.seed ?? 0, "model" in g ? (g.model ?? "") : "", "provider" in g ? (g.provider ?? "") : ""]);
+}
+/** Whether `after` asks for an AI image that `before` didn't have: a new generation. */
+const makesNewImage = (before: MockupInput, after: MockupInput) => {
+  const a = generatedBackdrop(after);
+  return a !== undefined && a !== generatedBackdrop(before);
+};
+const NO_IMAGE_REASON =
+  "background.generate makes a new AI image, which takes half a minute or more. Make one only when the person asked for a generated image, or when no look, painting, Unsplash photo, gradient or colour can meet the request, and then say why in imageReason. Otherwise use a built-in backdrop and leave imageReason out.";
+
+/**
+ * Render the scene for Claude. Says first when that means waiting for an AI image generator to
+ * make a new backdrop (`generate`), or with `announce`, that it's rendering.
+ */
+async function renderFor(request: MockupInput, onProgress: (p: AIProgress) => void, signal?: AbortSignal, announce = false, reason?: string): Promise<string | undefined> {
+  const canvas = (await layoutScene(request).catch(() => undefined))?.canvas;
+  const pending = canvas && pendingBackdrop(request.background, canvas.width, canvas.height);
+  if (pending) onProgress({ step: "generate", ...pending, reason: reason?.trim() || undefined });
+  else if (announce) onProgress({ step: "render" });
+  return until(previewImage(request), signal);
+}
 
 async function previewImage(request: MockupInput): Promise<string | undefined> {
   const file = path.join(cacheDir("ai"), `preview-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`);
@@ -384,6 +444,7 @@ async function viaApi<T = EditReply>(
   image: string | undefined,
   retry?: { previous: string; error: string },
   schema: z.ZodType<T> = EditReplySchema as unknown as z.ZodType<T>,
+  signal?: AbortSignal,
 ): Promise<{ reply: T; model: string }> {
   const client = new Anthropic({ timeout: 120_000, maxRetries: 2 });
   const model = input.model || process.env.SCREENSHOTTER_EDIT_MODEL || DEFAULT_EDIT_MODEL;
@@ -413,12 +474,13 @@ async function viaApi<T = EditReply>(
       // Route a declined request to a fallback model instead of failing the edit.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-    });
+    }, { signal });
     if (response.stop_reason === "refusal") throw new Error("Claude declined this edit. Try describing it differently.");
     if (response.stop_reason === "max_tokens") throw new Error("The edit was too large to finish. Try a smaller change.");
     if (!response.parsed_output) throw new Error("Claude's reply couldn't be read. Try again.");
     return { reply: response.parsed_output as T, model: response.model };
   } catch (e) {
+    if (signal?.aborted || e instanceof Anthropic.APIUserAbortError) throw new StoppedError();
     if (e instanceof Anthropic.AuthenticationError) throw new Error("Your Anthropic API key was rejected. Update it in Settings, or remove it to use Claude Code instead.");
     if (e instanceof Anthropic.PermissionDeniedError) throw new Error(`This API key can't use ${model}. Choose another model in Settings.`);
     if (e instanceof Anthropic.NotFoundError) throw new Error(`Model ${model} wasn't found. Choose another model in Settings.`);
@@ -442,6 +504,7 @@ async function viaClaudeCode<T = EditReply>(
   cli: string,
   retry?: { previous: string; error: string },
   schema: z.ZodType<T> = EditReplySchema as unknown as z.ZodType<T>,
+  signal?: AbortSignal,
 ): Promise<{ reply: T; model?: string }> {
   const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-ai-"));
   try {
@@ -482,8 +545,10 @@ async function viaClaudeCode<T = EditReply>(
     const content = [...(image ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } }] : []), { type: "text", text }];
     const line = JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n";
     const stdout = await new Promise<string>((resolve, reject) => {
-      const child = execFile(cli, args, { cwd: dir, env, timeout: 180_000, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" }, (error, out, err) => {
+      // Stop ends Claude Code at once (the signal kills the process).
+      const child = execFile(cli, args, { cwd: dir, env, timeout: 180_000, maxBuffer: 8 * 1024 * 1024, encoding: "utf8", signal }, (error, out, err) => {
         if (!error) return resolve(out);
+        if (signal?.aborted) return reject(new StoppedError());
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT") return reject(new Error("Claude Code wasn't found. Install it, or add an Anthropic API key in Settings."));
         if (error.killed) return reject(new Error("Claude Code took too long to answer. Try again."));
@@ -525,18 +590,21 @@ function resultLine(out: string): { is_error?: boolean; structured_output?: unkn
 
 // ---------------------------------------------------------------------------------------------
 
-export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined): Promise<EditResult> {
+export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined, signal?: AbortSignal): Promise<EditResult> {
   const input = AIEditSchema.parse(raw);
   const { safe, assets } = sceneAssets(input.request);
   const cli = hasApiCredentials() ? undefined : findClaudeCli();
   if (!hasApiCredentials() && !cli) {
     throw new Error("AI Edit needs Claude. Sign in to Claude Code (run `claude` once in Terminal) or add an Anthropic API key in Settings.");
   }
-  // Let Claude see the design, not just its settings.
+  // Let Claude see the design, not just its settings. Reading each screenshot's colours and words
+  // (on-device) runs alongside the render.
   onProgress({ step: "look" });
-  const image = input.preview === false ? undefined : await previewImage(input.request);
+  const reading = userMessage(input, safe);
+  reading.catch(() => undefined);
+  const image = input.preview === false ? undefined : await renderFor(input.request, onProgress, signal);
   if (image) onProgress({ step: "look", image });
-  const prompt = await userMessage(input, safe);
+  // Reading: what's in the scene, and what's on each screen.
   const layout = await layoutScene(input.request).catch(() => undefined);
   onProgress({
     step: "read",
@@ -545,9 +613,10 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
       "Backdrop",
     ],
   });
+  const prompt = await until(reading, signal);
   onProgress({ step: "think" });
   const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) =>
-    cli ? viaClaudeCode(input, text, img, cli, retry) : viaApi(input, text, img, retry);
+    cli ? viaClaudeCode(input, text, img, cli, retry, undefined, signal) : viaApi(input, text, img, retry, undefined, signal);
   const ask = (retry?: { previous: string; error: string }) => askWith(prompt, image, retry);
 
   // Operations on a scene (in token space), checked the way a render would check them.
@@ -569,51 +638,76 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
     ({ reply, model } = await ask({ previous: JSON.stringify(reply), error }));
     result = await apply(safe, reply.operations);
   }
+  // A new AI image only when the person asked for one or nothing built in will do, and Claude
+  // says which. Without a reason it's asked again, and usually picks a built-in backdrop. (If it
+  // still makes one, or its second try doesn't apply, the first answer stands.)
+  if (makesNewImage(input.request, result.restored) && !reply.imageReason?.trim()) {
+    onProgress({ step: "retry", reason: "Checking a new AI image is really needed" });
+    try {
+      const again = await ask({ previous: JSON.stringify(reply), error: NO_IMAGE_REASON });
+      const applied = await apply(safe, again.reply.operations);
+      ({ reply, model } = again);
+      result = applied;
+    } catch (e) {
+      if (e instanceof StoppedError) throw e;
+    }
+  }
   let scene = result.restored;
   let summary = reply.summary;
   let operations = reply.operations;
   let checked: EditResult["checked"];
 
+  // Preferences the person stated go to the house style, whatever happens next.
+  const remembered = (reply.remember ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 5);
+  if (remembered.length) updateHouseStyle({ add: remembered });
+
+  // What the Studio gets back: the edited scene with the delivery settings the edit never sees.
+  const finish = (): EditResult => {
+    const out = structuredClone(scene) as Record<string, unknown>;
+    for (const key of ["output", "preview", "quality", "format", "jpegQuality", "deliveryWidth"] as const) {
+      if (input.request[key] !== undefined) out[key] = input.request[key];
+      else delete out[key];
+    }
+    const request = out as MockupInput;
+    return {
+      request,
+      summary,
+      operations,
+      changed: changedEntities(input.request, request),
+      provider: cli ? "claude-code" : "api",
+      model,
+      checked,
+      remembered: remembered.length ? remembered : undefined,
+    };
+  };
+
   // Look at the result before the person does, and fix what's off. A review that fails to apply
-  // is dropped: the first edit stands.
+  // is dropped: the first edit stands. The draft goes out first, so the person can take it as it
+  // is rather than wait for the check.
   if (reply.check && reply.operations.length && input.preview !== false) {
-    const shot = await previewImage(scene);
+    onProgress({ step: "draft", result: finish() });
+    const shot = await renderFor(scene, onProgress, signal, true, reply.imageReason);
     if (shot) {
       onProgress({ step: "check", image: shot });
       try {
         const review = await askWith(await reviewMessage(input, result.edited, scene, reply), shot);
         if (review.reply.operations.length) {
           const fixed = await apply(result.edited, review.reply.operations);
-          scene = fixed.restored;
-          operations = [...operations, ...review.reply.operations];
+          // Fixes never start a new AI image; a review that would is dropped.
+          if (!makesNewImage(scene, fixed.restored)) {
+            scene = fixed.restored;
+            operations = [...operations, ...review.reply.operations];
+          }
         }
         if (review.reply.summary.trim()) summary = review.reply.summary;
         checked = { fixes: review.reply.operations.length };
-      } catch {
+      } catch (e) {
+        if (e instanceof StoppedError) throw e;
         checked = { fixes: 0 };
       }
     }
   }
-
-  // Preferences the person stated go to the house style.
-  const remembered = (reply.remember ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 5);
-  if (remembered.length) updateHouseStyle({ add: remembered });
-
-  // Keep delivery settings the edit never sees.
-  for (const key of ["output", "preview", "quality", "format", "jpegQuality", "deliveryWidth"] as const) {
-    if (input.request[key] !== undefined) (scene as Record<string, unknown>)[key] = input.request[key];
-    else delete (scene as Record<string, unknown>)[key];
-  }
-  return {
-    request: scene,
-    summary,
-    operations,
-    changed: changedEntities(input.request, scene),
-    provider: cli ? "claude-code" : "api",
-    model,
-    checked,
-    remembered: remembered.length ? remembered : undefined,
-  };
+  return finish();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -639,7 +733,7 @@ export interface Direction {
   image?: string;
 }
 
-export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined): Promise<{ directions: Direction[]; provider: "api" | "claude-code"; model?: string }> {
+export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined, signal?: AbortSignal): Promise<{ directions: Direction[]; provider: "api" | "claude-code"; model?: string }> {
   const input = AIEditSchema.parse(raw);
   const { safe, assets } = sceneAssets(input.request);
   const cli = hasApiCredentials() ? undefined : findClaudeCli();
@@ -647,20 +741,22 @@ export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgr
     throw new Error("Design it for me needs Claude. Sign in to Claude Code (run `claude` once in Terminal) or add an Anthropic API key in Settings.");
   }
   onProgress({ step: "look" });
-  const image = input.preview === false ? undefined : await previewImage(input.request);
-  if (image) onProgress({ step: "look", image });
-  const prompt = await userMessage(
+  const reading = userMessage(
     {
       ...input,
       instruction:
-        "Design it for me. Propose three distinct directions for this design, each a complete redesign following the guide: different backdrop worlds (for example a tonal colour glow, a painting or photograph, a warm or dark studio), different compositions and different type. Keep the screenshots and any words the person wrote. Each direction is its own set of operations on the current scene.",
+        "Design it for me. Propose three distinct directions for this design, each a complete redesign following the guide: different backdrop worlds (for example a tonal colour glow, a painting or photograph from the looks or Unsplash, a warm or dark studio), different compositions and different type. Use built-in backdrops only: don't use background.generate, and keep an existing generated backdrop only as it is. Keep the screenshots and any words the person wrote. Each direction is its own set of operations on the current scene.",
     },
     safe,
   );
+  reading.catch(() => undefined);
+  const image = input.preview === false ? undefined : await renderFor(input.request, onProgress, signal);
+  if (image) onProgress({ step: "look", image });
   const layout = await layoutScene(input.request).catch(() => undefined);
   onProgress({ step: "read", items: [...(layout?.entities ?? []).map((e) => (e.kind === "device" ? (e.device ?? "Device") : e.kind === "caption" ? "Headline" : "Text")), "Backdrop"] });
+  const prompt = await until(reading, signal);
   onProgress({ step: "think" });
-  const { reply, model } = cli ? await viaClaudeCode(input, prompt, image, cli, undefined, DirectionsSchema) : await viaApi(input, prompt, image, undefined, DirectionsSchema);
+  const { reply, model } = cli ? await viaClaudeCode(input, prompt, image, cli, undefined, DirectionsSchema, signal) : await viaApi(input, prompt, image, undefined, DirectionsSchema, signal);
   const directions: Direction[] = [];
   for (const d of reply.directions.slice(0, 3)) {
     try {
@@ -668,14 +764,20 @@ export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgr
       const restored = restoreAssets(edited, assets);
       await layoutScene(restored);
       for (const key of ["output", "preview", "quality", "format", "jpegQuality", "deliveryWidth"] as const) delete (restored as Record<string, unknown>)[key];
+      // Nobody asked for AI images here: a direction that would make one is left out.
+      if (makesNewImage(input.request, restored)) continue;
       directions.push({ name: d.name, summary: d.summary, request: restored });
     } catch {
       // A direction that doesn't make a valid scene is left out.
     }
   }
   if (!directions.length) throw new Error("None of the directions came out right. Try again.");
-  // Render each so they can be compared side by side.
-  const shots = await Promise.all(directions.map((d) => previewImage(d.request)));
+  // Render each so they can be compared side by side (AI backdrops are made first).
+  const pending = directions.map((d) => ({ d, canvas: undefined as { width: number; height: number } | undefined }));
+  for (const p of pending) p.canvas = (await layoutScene(p.d.request).catch(() => undefined))?.canvas;
+  const painting = pending.map((p) => p.canvas && pendingBackdrop(p.d.request.background, p.canvas.width, p.canvas.height)).find(Boolean);
+  onProgress(painting ? { step: "generate", ...painting } : { step: "render" });
+  const shots = await until(Promise.all(directions.map((d) => previewImage(d.request))), signal);
   directions.forEach((d, i) => (d.image = shots[i]));
   if (shots[0]) onProgress({ step: "check", image: shots[0] });
   return { directions, provider: cli ? "claude-code" : "api", model };

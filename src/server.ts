@@ -28,7 +28,7 @@ import { recordSimulator } from "./simulator/record.js";
 import { createVideo, VideoInputShape } from "./render/video.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 

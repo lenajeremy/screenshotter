@@ -16,7 +16,7 @@ import type { MockupInput } from "../src/render/schema.js";
 import { encodePng } from "../src/util/png.js";
 
 const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-studio-test-"));
-const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE", "SCREENSHOTTER_STUDIO_FILE"].map((k) => [k, process.env[k]]));
+const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE", "SCREENSHOTTER_STUDIO_FILE", "OPENAI_API_KEY", "SCREENSHOTTER_CACHE_DIR"].map((k) => [k, process.env[k]]));
 let server: http.Server | undefined;
 let checks = 0;
 const check = async (name: string, fn: () => unknown | Promise<unknown>) => {
@@ -42,7 +42,9 @@ process.stdin.on("end", () => {
   if (/2020-12/.test(a[a.indexOf("--json-schema") + 1])) { console.error("--json-schema is not a valid JSON Schema"); process.exit(4); }
   if (a[a.indexOf("--input-format") + 1] !== "stream-json") process.exit(5);
   const blocks = JSON.parse(input.trim().split("\\n")[0]).message.content;
-  const prompt = JSON.parse(blocks.find((b) => b.type === "text").text.split("\\n\\nYour previous operations")[0]);
+  const [main, retry] = blocks.find((b) => b.type === "text").text.split("\\n\\nYour previous operations");
+  const prompt = JSON.parse(main);
+  prompt.__retry = retry ?? "";
   prompt.__image = blocks.some((b) => b.type === "image" && b.source.data.length > 100);
   const reply = (${body})(prompt);
   console.log(JSON.stringify({ type: "system", subtype: "init" }));
@@ -169,6 +171,77 @@ try {
     assert.equal(r.summary, "Checked it: the title needed more room.");
     assert.deepEqual(r.checked, { fixes: 1 });
     assert.equal(r.operations.length, 2);
+  });
+
+  // New AI images are slow and cost money: only with a reason, otherwise Claude is asked again.
+  await fakeClaude((p: any) =>
+    /imageReason/.test(p.__retry)
+      ? { summary: "Used the ember glow look.", operations: [{ op: "set", path: "/background", value: '"ember-glow"' }] }
+      : { summary: "Generated a backdrop.", operations: [{ op: "set", path: "/background", value: '{"generate":"a rainy neon street"}' }] },
+  );
+  await check("a new AI image without a reason is sent back, and Claude uses a built-in backdrop", async () => {
+    const r = await editScene({ request, instruction: "A nicer backdrop", preview: false });
+    assert.equal(r.request.background, "ember-glow");
+    assert.equal(r.summary, "Used the ember glow look.");
+  });
+  await fakeClaude((p: any) =>
+    p.__retry
+      ? { summary: "Asked twice.", operations: [] }
+      : { summary: "Made a rainy street.", imageReason: "You asked for an AI image", operations: [{ op: "set", path: "/background", value: '{"generate":"a rainy neon street"}' }] },
+  );
+  await check("a new AI image with a reason goes ahead", async () => {
+    const r = await editScene({ request, instruction: "Generate an AI image of a rainy street", preview: false });
+    assert.equal(r.summary, "Made a rainy street.");
+    assert.deepEqual(r.request.background, { generate: "a rainy neon street" });
+  });
+
+  await check("Stop ends Claude Code at once and leaves the design as it was", async () => {
+    const file = path.join(dir, "slow-claude.mjs");
+    await writeFile(file, `#!${process.execPath}\nprocess.stdin.resume();\nsetTimeout(() => {}, 60000);\n`);
+    await chmod(file, 0o755);
+    process.env.SCREENSHOTTER_CLAUDE_PATH = file;
+    const stop = new AbortController();
+    const started = Date.now();
+    const steps: string[] = [];
+    const run = editScene({ request, instruction: "Anything", preview: false }, (p) => {
+      steps.push(p.step);
+      if (p.step === "think") setTimeout(() => stop.abort(), 300);
+    }, stop.signal);
+    await assert.rejects(run, (e: Error) => e.name === "StoppedError");
+    assert.ok(Date.now() - started < 5000, "it stopped promptly");
+    assert.deepEqual(steps, ["look", "read", "think"]);
+  });
+
+  await check("AI backdrops: Fast asks OpenAI for medium quality, one image per prompt at a time, and images you have are reused", async () => {
+    const { generateImage, pendingImage, setImageQuality } = await import("../src/render/photos.js");
+    process.env.SCREENSHOTTER_CACHE_DIR = path.join(dir, "cache");
+    process.env.OPENAI_API_KEY = "test-key";
+    const png = encodePng({ width: 4, height: 6, rgba: Buffer.alloc(4 * 6 * 4, 200) });
+    const asked: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      if (!String(url).includes("api.openai.com")) return realFetch(url, init);
+      asked.push(JSON.parse(String(init.body)).quality);
+      await new Promise((r) => setTimeout(r, 150));
+      return new Response(JSON.stringify({ data: [{ b64_json: png.toString("base64") }] }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      setImageQuality("best");
+      const best = await generateImage({ prompt: "a quiet harbour" }, 1320, 2868);
+      assert.deepEqual(asked, ["high"]);
+      // Switching to Fast keeps the image already made for this prompt.
+      setImageQuality("fast");
+      assert.equal(pendingImage({ prompt: "a quiet harbour" }, 1320, 2868), undefined);
+      assert.equal((await generateImage({ prompt: "a quiet harbour" }, 1320, 2868)).path, best.path);
+      // A new prompt at Fast: medium quality, and two renders at once share one generation.
+      assert.deepEqual(pendingImage({ prompt: "a busy market" }, 1320, 2868), { provider: "openai" });
+      const [a, b] = await Promise.all([generateImage({ prompt: "a busy market" }, 1320, 2868), generateImage({ prompt: "a busy market" }, 1320, 2868)]);
+      assert.equal(a.path, b.path);
+      assert.deepEqual(asked, ["high", "medium"]);
+    } finally {
+      globalThis.fetch = realFetch;
+      setImageQuality("fast");
+    }
   });
 
   // Stated preferences go to the house style.

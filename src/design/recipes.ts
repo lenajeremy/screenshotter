@@ -99,6 +99,20 @@ const words = (ctx: RecipeContext, fallback: string) => ({ headline: ctx.headlin
 /** Accent colour for text: the app's accent, lightened on dark grounds and deepened on light ones. */
 const textAccent = (ctx: RecipeContext, dark: boolean) => (ctx.palette?.accent ? tone(ctx.palette.accent, dark ? 0.68 : 0.42, 0.75) : dark ? "#d2ff4d" : "#e0662a");
 
+/** A phone over a painting: huge when it has the image to itself, a little lower when there's a headline. */
+const overPainting = (ctx: RecipeContext): Partial<DeviceInput> =>
+  ctx.headline ? { x: 0.5, y: 0.74, anchor: "center", height: 0.9 } : { x: 0.5, y: 0.66, anchor: "center", height: 0.98 };
+
+/** The person's words over a painting: a serif in white, with a soft shadow to hold on any picture. */
+function paintingWords(ctx: RecipeContext, phone: boolean): Partial<MockupInput> {
+  if (!ctx.headline) return {};
+  return {
+    headline: ctx.headline,
+    ...(ctx.subheadline ? { subheadline: ctx.subheadline } : {}),
+    textStyle: { font: "Fraunces", headlineWeight: 600, headlineSize: phone ? 0.058 : 0.075, color: "#ffffff", accentItalic: true, shadow: true, ...(phone ? { y: 0.06, anchor: "top" as const } : {}) },
+  };
+}
+
 /** A line worth pointing at: a real phrase in the middle of the screen. */
 function focusLine(ctx: RecipeContext, offset = 0): string | undefined {
   const good = ctx.lines.filter((l) => l.y > 0.18 && l.y < 0.82 && l.text.trim().length >= 6 && /[a-z]/.test(l.text) && !/^\d/.test(l.text.trim()));
@@ -179,10 +193,11 @@ export const RECIPES: Recipe[] = [
       const phone = s.kind === "phone";
       return {
         canvas: phone ? "1080x1350" : CANVAS[s.kind],
-        layout: phone ? "custom" : "floating",
+        layout: phone ? "custom" : ctx.headline ? "hero" : "floating",
         background: paintingFor(ctx.palette?.accent),
         effects: { edgeBlur: phone },
-        devices: [device(s, phone ? { x: 0.5, y: 0.66, anchor: "center", height: 0.98 } : {})],
+        devices: [device(s, phone ? overPainting(ctx) : {})],
+        ...paintingWords(ctx, phone),
       };
     },
   },
@@ -197,9 +212,10 @@ export const RECIPES: Recipe[] = [
       const ink = ctx.palette?.accent ? tone(ctx.palette.accent, 0.58, 0.85) : "#ff4a9e";
       return {
         canvas: phone ? "1080x1350" : CANVAS[s.kind],
-        layout: phone ? "custom" : "floating",
+        layout: phone ? "custom" : ctx.headline ? "hero" : "floating",
         background: { look: paintingFor(ctx.palette?.accent), finish: { style: "risograph", colors: [ink, "#1f2a5c"] } },
-        devices: [device(s, phone ? { x: 0.5, y: 0.66, anchor: "center", height: 0.98 } : {})],
+        devices: [device(s, phone ? overPainting(ctx) : {})],
+        ...paintingWords(ctx, phone),
       };
     },
   },
@@ -374,8 +390,10 @@ export async function recipeContext(devices: Array<{ screenshot: string; video?:
   if (!shots.length) throw new Error("A recipe needs at least one screenshot.");
   const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))]);
   const [palette, boxes] = await Promise.all([
-    withTimeout(screenshotPalette(shots[0].path).catch(() => undefined), 6000),
-    withTimeout(recognizeText(shots[0].path).catch(() => undefined), 8000),
+    // Quick once the browser and the text helper are running; the limits cover a cold start, since a
+    // design without the app's own colours is a poor first impression.
+    withTimeout(screenshotPalette(shots[0].path).catch(() => undefined), 20000),
+    withTimeout(recognizeText(shots[0].path).catch(() => undefined), 12000),
   ]);
   const lines = (boxes ?? []).sort((a, b) => a.y - b.y).map((t) => ({ text: t.text, x: t.x / shots[0].width, y: t.y / shots[0].height }));
   return { shots, palette, lines, headline: words.headline || undefined, subheadline: words.subheadline || undefined };
