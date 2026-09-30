@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824">
+<!-- Screenshotter mark (the app icon, cropped to its rounded square, for favicons and the toolbar). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#222227"/><stop offset="1" stop-color="#0d0d10"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".5" stop-color="#fff" stop-opacity=".03"/><stop offset="1" stop-color="#fff" stop-opacity=".06"/></linearGradient>
+    <linearGradient id="marks" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#c9c9d1"/></linearGradient>
+    <linearGradient id="lime" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2ff85"/><stop offset="1" stop-color="#b6ec26"/></linearGradient>
+    <filter id="lift" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity=".55"/></filter>
+    <clipPath id="clip"><path d="M285 100H739A185 185 0 0 1 924 285V739A185 185 0 0 1 739 924H285A185 185 0 0 1 100 739V285A185 185 0 0 1 285 100Z"/></clipPath>
+  </defs>
+  <path d="M285 100H739A185 185 0 0 1 924 285V739A185 185 0 0 1 739 924H285A185 185 0 0 1 100 739V285A185 185 0 0 1 285 100Z" fill="url(#bg)"/>
+  <g clip-path="url(#clip)">
+    <path d="M282 400V330Q282 282 330 282H400M624 282H694Q742 282 742 330V400M742 624V694Q742 742 694 742H624M400 742H330Q282 742 282 694V624" fill="none" stroke="url(#marks)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="rotate(-9 512 514)" filter="url(#lift)">
+      <rect x="414" y="330" width="196" height="368" rx="49" fill="url(#lime)"/>
+      <rect x="415.5" y="331.5" width="193" height="365" rx="47.5" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="3"/>
+      <rect x="476.7" y="349.6" width="70.6" height="19.6" rx="9.8" fill="#0d1100" opacity=".88"/>
+    </g>
+  </g>
+  <path d="M285 100H739A185 185 0 0 1 924 285V739A185 185 0 0 1 739 924H285A185 185 0 0 1 100 739V285A185 185 0 0 1 285 100Z" fill="none" stroke="url(#rim)" stroke-width="4"/>
+</svg>

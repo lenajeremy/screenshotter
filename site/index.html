@@ -1,0 +1,985 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Screenshotter</title>
+<meta name="description" content="Capture real screens from the iOS Simulator, the web or your Mac, frame them in beautiful devices, and export App Store images and videos. By hand, by asking AI, or from your coding agent over MCP.">
+<meta name="theme-color" content="#070708">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..500;1,6..72,300..500&display=swap">
+<style>
+/* Layout concept: a dark studio stage where finished screenshots float in their own light;
+   each section is a scene the reader scrolls through. Tokens are the app's own. */
+:root {
+  --bg: #070708;
+  --stage: #050506;
+  --panel: #0f0f12;
+  --panel-2: #151518;
+  --panel-3: #1c1c21;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.11);
+  --line-3: rgba(255, 255, 255, 0.18);
+  --text: #f4f4f5;
+  --text-2: #b4b4bc;
+  --text-3: #80808a;
+  --text-4: #56565f;
+  --lime: #d2ff4d;
+  --lime-2: #e3ff8a;
+  --lime-ink: #0d1100;
+  --iris: #8b7bff;
+  --lilac: #c9c1ff;
+  --ai: linear-gradient(95deg, #d9d3ff 0%, #9d90ff 50%, #7b8cff 100%);
+  --display: "Newsreader", "New York", ui-serif, Georgia, serif;
+  --sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --max: 1200px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: clip; }
+img, video { max-width: 100%; height: auto; display: block; }
+a { color: inherit; text-decoration: none; }
+::selection { background: rgba(139, 123, 255, 0.45); }
+:focus-visible { outline: 2px solid var(--iris); outline-offset: 3px; border-radius: 6px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 400; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); }
+.wrap { width: min(var(--max), 100% - 40px); margin-inline: auto; }
+.grain { position: fixed; inset: 0; z-index: 100; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.ital { font-family: var(--display); font-style: italic; font-weight: 300; }
+.grad { background: var(--ai); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-3); }
+.eyebrow i { width: 6px; height: 6px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 12px var(--lime); }
+.h2 { font: 300 clamp(40px, 6vw, 76px)/1 var(--display); letter-spacing: -0.02em; }
+.lede { font-size: clamp(17px, 1.6vw, 19px); color: var(--text-2); max-width: 36em; }
+
+/* Nav */
+.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50; transition: background 0.3s, box-shadow 0.3s, backdrop-filter 0.3s; }
+.nav.scrolled { background: rgba(7, 7, 8, 0.74); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: 0 1px 0 var(--line); }
+.nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 650 16px var(--sans); letter-spacing: -0.01em; }
+.brand img { width: 30px; height: 30px; border-radius: 8px; }
+.nav .links { display: flex; gap: 26px; margin-left: auto; font-size: 14px; color: var(--text-2); }
+.nav .links a:hover { color: var(--text); }
+
+/* Buttons */
+.btn { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 10px; height: 48px; padding: 0 22px; border-radius: 14px; border: 0; font: 600 15px var(--sans); cursor: pointer; transition: transform 160ms var(--ease), background-color 150ms ease, box-shadow 200ms ease; white-space: nowrap; overflow: hidden; isolation: isolate; }
+.btn:active { transform: scale(0.97); }
+.btn svg { flex: none; }
+.btn.primary { background: var(--lime); color: var(--lime-ink); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 14px 34px -14px rgba(210, 255, 77, 0.7); }
+.btn.ghost { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+.btn.ghost::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: var(--ai); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; opacity: 0.75; }
+@media (hover: hover) and (pointer: fine) {
+  .btn.primary:hover { background: var(--lime-2); }
+  .btn.ghost:hover { background: rgba(255, 255, 255, 0.08); }
+}
+.btn.sm { height: 36px; padding: 0 14px; border-radius: 10px; font-size: 13.5px; }
+.btn.lg { height: 58px; padding: 0 28px; border-radius: 16px; font-size: 16.5px; }
+
+/* ------------------------------------------------------------------ hero */
+.hero { position: relative; padding-block: clamp(40px, 7vw, 90px) 40px; overflow-x: clip; }
+.hero .wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 20px; align-items: center; }
+.hero-copy { display: flex; flex-direction: column; gap: 26px; position: relative; z-index: 2; min-width: 0; }
+.pill { align-self: flex-start; display: inline-flex; align-items: center; gap: 9px; height: 34px; padding: 0 14px 0 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13.5px; color: var(--text-2); }
+.pill b { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; background: var(--ai); color: #fff; font-weight: 650; font-size: 12px; }
+h1 { font: 300 clamp(52px, 8.6vw, 116px)/0.92 var(--display); letter-spacing: -0.035em; }
+h1 .w { display: inline-block; }
+h1 .line2 { display: block; font-style: italic; }
+h1 .line2 .grad { padding-right: 0.08em; }
+.hero .lede { max-width: 31em; }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--text-3); }
+.meta span { display: inline-flex; align-items: center; gap: 7px; }
+.meta span::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--text-4); }
+.meta span:first-child::before { display: none; }
+
+.hero-art { position: relative; height: clamp(460px, 52vw, 680px); perspective: 1400px; min-width: 0; }
+.orb { position: absolute; left: 52%; top: 52%; width: 100%; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; background: conic-gradient(from 20deg, #6f60ff, #3140c4, #1f7a62, #4a3bd0, #6f60ff); filter: blur(96px); opacity: 0.4; }
+.phones { position: absolute; inset: 0; }
+.phone { position: absolute; width: auto; will-change: transform; }
+.phone.back { height: 80%; left: -13%; top: 10%; transform: translateY(calc(var(--hp, 0) * -24px)); }
+.phone.front { height: 96%; right: -9%; top: 1%; transform: translateY(calc(var(--hp, 0) * -60px)); }
+.chip { position: absolute; z-index: 3; display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 12px; background: rgba(22, 22, 26, 0.72); -webkit-backdrop-filter: blur(16px) saturate(1.5); backdrop-filter: blur(16px) saturate(1.5); box-shadow: inset 0 0 0 1px var(--line-2), 0 18px 40px -16px rgba(0, 0, 0, 0.8); font-size: 13.5px; white-space: nowrap; }
+.chip .sw { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+.chip .ok { color: var(--lime); }
+.chip.c1 { left: -2%; top: 8%; }
+.chip.c2 { right: -6%; top: 25%; }
+.chip.c3 { left: -4%; bottom: 14%; font-family: var(--mono); font-size: 12.5px; }
+.chip.c4 { right: 10%; bottom: 4%; }
+.chip.c1 .spark { color: var(--lilac); }
+
+/* Entrance, played once on load (content is visible without it). Words first, then the
+   phones settle, then the chips land one by one and stay still. */
+@media (prefers-reduced-motion: no-preference) {
+  .js h1 .w { animation: rise 800ms var(--ease) both; animation-delay: calc(var(--i) * 45ms + 60ms); }
+  .js .hero .pill, .js .hero .lede, .js .hero .ctas, .js .hero .meta { animation: rise 700ms var(--ease) both; }
+  .js .hero .lede { animation-delay: 300ms; }
+  .js .hero .ctas { animation-delay: 360ms; }
+  .js .hero .meta { animation-delay: 420ms; }
+  .js .phone.front { animation: fly 1000ms var(--ease) 150ms both; }
+  .js .phone.back { animation: fly 1000ms var(--ease) 250ms both; }
+  .js .chip { animation: land 400ms var(--ease) both; }
+  .js .chip.c1 { animation-delay: 700ms; }
+  .js .chip.c2 { animation-delay: 780ms; }
+  .js .chip.c3 { animation-delay: 860ms; }
+  .js .chip.c4 { animation-delay: 940ms; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes fly { from { opacity: 0; translate: 0 32px; } }
+@keyframes land { from { opacity: 0; translate: 0 6px; scale: 0.97; } }
+
+/* ------------------------------------------------------------------ agents */
+.agents { padding-block: 34px 10px; }
+.agents .label { text-align: center; font-size: 13.5px; color: var(--text-3); margin-bottom: 20px; }
+.agent-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.agent { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 20px 0 14px; border-radius: 14px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); font-weight: 560; color: var(--text-2); white-space: nowrap; }
+.agent svg { color: var(--text-3); }
+.agent.hot { color: var(--text); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.35); }
+.agent.hot svg { color: var(--lime); }
+
+/* ------------------------------------------------------------------ section frame */
+section { position: relative; }
+.sec-head { display: flex; flex-direction: column; gap: 18px; align-items: flex-start; }
+.sec-head.center { align-items: center; text-align: center; }
+.sec-head.center .lede { margin-inline: auto; }
+.pad { padding-block: clamp(90px, 12vw, 160px); }
+
+/* Reveal once, as each block comes into view (the script adds .in). Blocks that arrive
+   together are staggered through --d. */
+@media (prefers-reduced-motion: no-preference) {
+  .js .reveal, .js .reveal-scale { opacity: 0; transform: translateY(16px); transition: opacity 600ms ease, transform 800ms var(--ease); transition-delay: var(--d, 0ms); }
+  .js .reveal-scale { transform: translateY(20px) scale(0.985); }
+  .js .reveal.in, .js .reveal-scale.in { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------------------ story (pinned) */
+.story { height: 560vh; }
+.story .pin { position: sticky; top: 0; height: 100vh; height: 100svh; display: flex; align-items: center; }
+.story .grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: clamp(30px, 6vw, 90px); align-items: center; width: min(var(--max), 100% - 40px); margin-inline: auto; }
+.story .story-copy { display: flex; flex-direction: column; gap: 30px; min-width: 0; }
+.steps { position: relative; display: flex; flex-direction: column; gap: 4px; padding-left: 22px; list-style: none; margin: 0; }
+.steps::before, .steps::after { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--line-2); }
+.steps::after { background: var(--lime); transform-origin: 0 0; transform: scaleY(var(--sp, 1)); }
+.step { padding: 12px 16px; border-radius: 14px; transition: background-color 250ms ease, opacity 250ms ease; opacity: 0.45; }
+.step .t { display: flex; align-items: baseline; gap: 12px; font: 600 18px var(--sans); letter-spacing: -0.01em; }
+.step .n { font: 500 12px var(--mono); color: var(--text-3); }
+.step p { color: var(--text-2); font-size: 15px; max-height: 0; overflow: hidden; opacity: 0; transition: max-height 350ms var(--ease), opacity 250ms ease, margin 350ms var(--ease); }
+.step.on { opacity: 1; background: rgba(255, 255, 255, 0.035); box-shadow: inset 0 0 0 1px var(--line); }
+.step.on .n { color: var(--lime); }
+.step.on p { max-height: 80px; opacity: 1; margin-top: 6px; }
+.step.done { opacity: 0.75; }
+.stage { position: relative; aspect-ratio: 4 / 5; width: 100%; max-width: 560px; justify-self: center; border-radius: 22px; overflow: hidden; background: var(--stage); box-shadow: 0 0 0 1px var(--line-2), 0 50px 120px -30px rgba(0, 0, 0, 0.9); perspective: 1200px; }
+.stage .dots { position: absolute; inset: 0; background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1.2px); background-size: 20px 20px; }
+.stage .layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; will-change: transform, opacity; }
+.stage .toast { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%, 8px); opacity: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 0 0 1px var(--line-2); font-size: 13px; white-space: nowrap; transition: opacity 300ms ease, transform 400ms var(--ease); }
+.stage .toast.on { opacity: 1; transform: translate(-50%, 0); }
+.stage .toast i { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; background: rgba(74, 222, 128, 0.15); color: #4ade80; font-style: normal; font-size: 12px; }
+.stage-cap { position: absolute; left: 14px; top: 14px; font: 500 11px var(--mono); color: var(--text-3); letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 9px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); }
+
+/* ------------------------------------------------------------------ Ask AI */
+.ai .grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: clamp(30px, 6vw, 80px); align-items: center; }
+.checks { display: grid; gap: 14px; margin: 8px 0 0; padding: 0; list-style: none; }
+.checks li { display: flex; gap: 12px; color: var(--text-2); }
+.checks li b { color: var(--text); font-weight: 600; }
+.checks svg { flex: none; margin-top: 3px; color: var(--lime); }
+.ai-demo { position: relative; border-radius: 26px; padding: 18px; background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)); box-shadow: inset 0 0 0 1px var(--line), 0 50px 120px -40px rgba(0, 0, 0, 0.9); min-width: 0; }
+.ai-view { position: relative; aspect-ratio: 4 / 5; border-radius: 16px; overflow: hidden; background: var(--stage); }
+.ai-view img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: opacity 700ms var(--ease-in-out), filter 700ms var(--ease-in-out); }
+.ai-view .after { opacity: 1; }
+.ai-view .before { opacity: 0; }
+.ai-demo.play .before { opacity: 1; }
+.ai-demo.play .after { opacity: 0; filter: blur(4px); }
+.ai-demo.play.applied .after { opacity: 1; filter: none; }
+.ai-demo.play.applied .before { opacity: 0; }
+.prompt { position: absolute; left: 30px; right: 30px; bottom: 30px; border-radius: 18px; padding: 1.5px; background: var(--ai); box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.9); }
+/* While Claude works, the send button turns into a spinner; nothing else moves. */
+.prompt.busy .send svg { opacity: 0; }
+.prompt.busy .send::after { content: ""; position: absolute; width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box; border: 2px solid rgba(0, 0, 0, 0.2); border-top-color: #000; animation: rot 0.6s linear infinite; }
+.prompt .in { border-radius: 16.5px; background: rgba(18, 18, 22, 0.96); padding: 12px 12px 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.prompt .txt { min-height: 24px; font-size: 15px; color: var(--text); }
+.prompt .txt .caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 1px; vertical-align: -3px; background: var(--lilac); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.prompt .foot { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
+.prompt .ctx { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 7px; background: rgba(139, 123, 255, 0.16); color: #c9c1ff; font-weight: 560; }
+.prompt .send { position: relative; margin-left: auto; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--text); color: #000; }
+.ops { position: absolute; left: -22px; top: 34%; width: min(300px, 72%); display: flex; flex-direction: column; gap: 6px; }
+.op { font: 12px/1.3 var(--mono); padding: 8px 10px; border-radius: 10px; background: rgba(22, 22, 26, 0.92); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 0 0 1px var(--line-2), 0 14px 30px -12px rgba(0, 0, 0, 0.8); color: var(--text-2); display: flex; gap: 8px; transition: opacity 300ms ease, transform 400ms var(--ease); }
+.op b { color: var(--lime); font-weight: 500; }
+.op span { color: var(--lilac); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-demo.play .op { opacity: 0; transform: translateX(-8px); }
+.ai-demo.play .op.on { opacity: 1; transform: none; }
+.ai-toast { position: absolute; right: 16px; bottom: 132px; transform: none; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 13px; background: rgba(28, 28, 33, 0.94); box-shadow: 0 0 0 1px var(--line-2), 0 18px 40px -14px rgba(0, 0, 0, 0.9); font-size: 13px; white-space: nowrap; transition: opacity 300ms ease, transform 400ms var(--ease); }
+.ai-toast i { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--ai); color: #fff; font-style: normal; }
+.ai-toast u { text-decoration: none; margin-left: 6px; padding: 3px 8px; border-radius: 7px; background: rgba(255, 255, 255, 0.08); font-weight: 600; font-size: 12px; }
+.ai-demo.play .ai-toast { opacity: 0; transform: translateY(6px); }
+.ai-demo.play .ai-toast.on { opacity: 1; transform: none; }
+
+/* ------------------------------------------------------------------ MCP */
+.mcp-panel { position: relative; border-radius: 34px; padding: 1px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05) 40%, rgba(210, 255, 77, 0.16)); }
+.mcp-panel::before { content: ""; position: absolute; inset: 60px; z-index: -1; border-radius: 34px; background: conic-gradient(#4b3fc4, #1d2a5a, #25402f, #4b3fc4); filter: blur(90px); opacity: 0.22; }
+.mcp-in { border-radius: 33px; background: radial-gradient(90% 60% at 80% 0%, rgba(139, 123, 255, 0.06), transparent 60%), #0b0b0e; padding: clamp(28px, 5vw, 64px); display: flex; flex-direction: column; gap: 44px; overflow: hidden; position: relative; }
+.mcp-in .dots { position: absolute; inset: 0; background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.2px); background-size: 22px 22px; mask-image: linear-gradient(#000, transparent 70%); -webkit-mask-image: linear-gradient(#000, transparent 70%); pointer-events: none; }
+.mcp-top { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: end; position: relative; }
+.mcp-top h2 { font: 300 clamp(44px, 6.4vw, 88px)/0.95 var(--display); letter-spacing: -0.025em; }
+.badge-mcp { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 999px; background: rgba(210, 255, 77, 0.1); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.35); color: var(--lime); font: 600 12px var(--mono); letter-spacing: 0.06em; }
+.mcp-grid { display: grid; grid-template-columns: 1fr 1.15fr; gap: 20px; position: relative; }
+.card { border-radius: 20px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.install { padding: 8px; display: flex; flex-direction: column; }
+.tabs { display: flex; gap: 4px; padding: 4px; border-radius: 13px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); position: relative; }
+.tabs button { flex: 1; position: relative; z-index: 1; height: 36px; border: 0; background: none; color: var(--text-3); font: 600 13.5px var(--sans); border-radius: 10px; cursor: pointer; transition: color 0.2s; }
+.tabs button[aria-selected="true"] { color: var(--text); }
+.tabs .knob { position: absolute; top: 4px; bottom: 4px; border-radius: 10px; background: var(--panel-3); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06); transition: left 250ms var(--ease), width 250ms var(--ease); }
+.snippet { position: relative; padding: 18px 18px 8px; }
+.snippet pre { margin: 0; font: 13px/1.65 var(--mono); color: #d9d9e0; white-space: pre-wrap; word-break: break-word; }
+.snippet pre .c { color: var(--text-4); }
+.snippet pre .k { color: var(--lime); }
+.snippet pre .s { color: var(--lilac); }
+.snippet .note { font-size: 13px; color: var(--text-3); margin-top: 12px; }
+.copy { position: absolute; top: 12px; right: 12px; height: 30px; padding: 0 10px; border-radius: 8px; border: 0; background: var(--panel-3); color: var(--text-2); font: 600 12px var(--sans); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.copy:hover { color: var(--text); }
+.term { overflow: hidden; display: flex; flex-direction: column; }
+.term .bar { display: flex; align-items: center; gap: 7px; padding: 12px 14px; border-bottom: 1px solid var(--line); font: 12px var(--mono); color: var(--text-3); }
+.term .bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--panel-3); }
+.term .bar span { margin-left: 8px; }
+.term .body { padding: 16px 18px 18px; font: 13px/1.7 var(--mono); color: var(--text-2); min-height: 300px; display: flex; flex-direction: column; gap: 3px; }
+.term .you { color: var(--text); }
+.term .you b { color: var(--lime); font-weight: 500; }
+.term .line { transition: opacity 250ms ease, transform 300ms var(--ease); }
+.term .call { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: baseline; }
+.term .call .st { color: var(--text-4); }
+.term .call.ok .st { color: var(--lime); }
+.term .call .nm b { color: #c9c1ff; font-weight: 500; }
+.term .call .tm { color: var(--text-4); font-size: 12px; }
+.term .done { color: var(--lime); margin-top: 6px; }
+.term.play .line { opacity: 0; transform: translateY(4px); }
+.term.play .line.on { opacity: 1; transform: none; }
+.spin-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.2); border-top-color: var(--lime); animation: rot 0.7s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.term .thumbs { display: flex; gap: 8px; margin-top: 12px; }
+.term .thumbs img { width: 19%; border-radius: 7px; box-shadow: 0 0 0 1px var(--line-2); transition: opacity 400ms ease, transform 500ms var(--ease); }
+.term.play .thumbs img { opacity: 0; transform: translateY(8px) scale(0.98); }
+.term.play .thumbs.on img { opacity: 1; transform: none; }
+.term.play .thumbs.on img:nth-child(2) { transition-delay: 60ms; }
+.term.play .thumbs.on img:nth-child(3) { transition-delay: 120ms; }
+.term.play .thumbs.on img:nth-child(4) { transition-delay: 180ms; }
+.term.play .thumbs.on img:nth-child(5) { transition-delay: 240ms; }
+.tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; position: relative; }
+.tool { padding: 14px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.025); box-shadow: inset 0 0 0 1px var(--line); transition: background-color 150ms ease, box-shadow 150ms ease; min-width: 0; }
+@media (hover: hover) and (pointer: fine) { .tool:hover { background: rgba(255, 255, 255, 0.045); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.3); } }
+.tool code { font-size: 13px; color: var(--lime); }
+.tool p { font-size: 13.5px; color: var(--text-3); margin-top: 4px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; position: relative; }
+.stat { padding: 18px; border-radius: 16px; background: rgba(255, 255, 255, 0.025); box-shadow: inset 0 0 0 1px var(--line); }
+.stat b { display: block; font: 300 46px/1 var(--display); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13.5px; color: var(--text-3); }
+
+/* ------------------------------------------------------------------ looks carousel (pinned) */
+.looks { height: 320vh; }
+.looks .pin { position: sticky; top: 0; height: 100vh; height: 100svh; display: flex; flex-direction: column; justify-content: center; gap: clamp(24px, 4vh, 44px); padding-top: 64px; overflow: hidden; }
+.looks .rail { display: flex; gap: 26px; padding-inline: max(20px, (100vw - var(--max)) / 2); will-change: transform; }
+.look { flex: none; margin: 0; width: clamp(200px, min(24vw, (100svh - 300px) * 0.8), 320px); display: flex; flex-direction: column; gap: 12px; }
+.look img { width: 100%; border-radius: 18px; aspect-ratio: 4 / 5; object-fit: cover; box-shadow: 0 0 0 1px var(--line), 0 40px 80px -30px rgba(0, 0, 0, 0.9); }
+.look span { font-size: 14px; color: var(--text-2); display: flex; justify-content: space-between; }
+.look span em { font-style: normal; color: var(--text-4); font-family: var(--mono); font-size: 12px; }
+
+/* ------------------------------------------------------------------ bento */
+.bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-top: 56px; }
+.tile { position: relative; overflow: hidden; border-radius: 24px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); padding: 26px; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 320px; isolation: isolate; }
+.tile h3 { font: 600 20px var(--sans); letter-spacing: -0.015em; }
+.tile p { color: var(--text-3); font-size: 14.5px; max-width: 34em; }
+.span-4 { grid-column: span 4; }
+.span-3 { grid-column: span 3; }
+.span-2 { grid-column: span 2; }
+.devices { position: relative; flex: 1; min-height: 420px; margin-top: 10px; }
+.devices img { position: absolute; will-change: transform; filter: drop-shadow(0 30px 40px rgba(0, 0, 0, 0.5)); }
+.devices .d-mac { width: 78%; left: 11%; top: 2%; }
+.devices .d-ipad { width: 29%; left: 0; top: 30%; }
+.devices .d-iphone { width: 16%; right: 3%; top: 30%; }
+.devices .d-watch { width: 9%; right: 21%; top: 34%; }
+.cycle { position: relative; flex: 1; margin: 14px -26px -26px; min-height: 280px; overflow: hidden; }
+.cycle img, .cycle video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; transition: opacity 500ms var(--ease-in-out); }
+.cycle img { opacity: 0; }
+.cycle img.on { opacity: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chips span { font-size: 12px; padding: 4px 9px; border-radius: 999px; background: rgba(255, 255, 255, 0.05); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line); transition: background-color 200ms ease, color 200ms ease, box-shadow 200ms ease; }
+.chips span.on { background: rgba(210, 255, 77, 0.1); color: var(--lime); box-shadow: inset 0 0 0 1px rgba(210, 255, 77, 0.3); }
+.fan { position: relative; flex: 1; min-height: 300px; margin-top: 12px; }
+.fan img { position: absolute; bottom: -60px; left: 50%; width: 33%; border-radius: 12px; box-shadow: 0 0 0 1px var(--line-2), 0 20px 40px -12px rgba(0, 0, 0, 0.9); transform-origin: 50% 120%; transition: transform 700ms var(--ease); transform: translateX(-50%) rotate(calc(var(--k) * 4deg)); }
+.fan.open img { transition-delay: 250ms; transform: translateX(calc(-50% + var(--k) * 58%)) rotate(calc(var(--k) * 9deg)) translateY(calc(var(--a) * 12px)); }
+.status-demo { flex: 1; display: grid; place-items: center; margin-top: 10px; }
+.sb-mock { width: min(380px, 100%); padding: 20px 24px; border-radius: 22px; background: #000; box-shadow: 0 0 0 1px var(--line-2); display: flex; align-items: center; justify-content: space-between; font: 600 30px -apple-system, "SF Pro Text", var(--sans); letter-spacing: -0.02em; }
+.sb-mock svg { height: 20px; width: auto; }
+.facts { display: grid; gap: 8px; margin-top: 14px; }
+.facts span { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--text-2); }
+.facts span::before { content: ""; width: 16px; height: 16px; border-radius: 50%; flex: none; background: var(--lime) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d1100' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / 11px no-repeat; }
+.shot-crop { flex: 1; margin: 14px -26px -26px 0; border-radius: 16px 0 0 0; overflow: hidden; box-shadow: 0 0 0 1px var(--line-2); min-height: 260px; background: url(assets/ui-editor.webp) 38% 30% / 180% auto no-repeat; }
+
+/* ------------------------------------------------------------------ the app window */
+.app-sec .window-wrap { margin-top: 60px; }
+.window { position: relative; border-radius: 16px; overflow: hidden; background: #0b0b0e; box-shadow: 0 0 0 1px var(--line-2), 0 80px 160px -40px rgba(0, 0, 0, 0.95), 0 0 120px -30px rgba(139, 123, 255, 0.12); }
+.window .lights { position: absolute; left: 20px; top: 19px; z-index: 2; display: flex; gap: 8px; }
+.window .lights i { width: 12px; height: 12px; border-radius: 50%; }
+.window .view { position: relative; aspect-ratio: 16 / 10; }
+.window .view img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; transition: opacity 500ms var(--ease-in-out); opacity: 0; }
+.window .view img.on { opacity: 1; }
+.app-tabs { display: flex; justify-content: center; gap: 10px; margin-top: 26px; flex-wrap: wrap; }
+.app-tabs button { position: relative; overflow: hidden; height: 40px; padding: 0 16px; border-radius: 12px; border: 0; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font: 600 14px var(--sans); cursor: pointer; }
+.app-tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-3); }
+.app-tabs button i { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--lime); }
+.app-tabs button[aria-selected="true"] i { animation: tabbar 5s linear forwards; }
+@keyframes tabbar { to { width: 100%; } }
+.pin-note { position: absolute; z-index: 3; display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 7px 11px 7px 8px; border-radius: 10px; background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 0 0 1px var(--line-2); white-space: nowrap; transition: opacity 300ms ease, transform 400ms var(--ease); }
+.pin-note b { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--lime); color: var(--lime-ink); font-size: 11px; }
+.window:not(.shown) .pin-note { opacity: 0; transform: translateY(6px); }
+.pin-note.p1 { left: 23%; top: 10%; transition-delay: 200ms; }
+.pin-note.p2 { left: 49%; top: 46%; transition-delay: 280ms; }
+.pin-note.p3 { right: 3%; top: 36%; transition-delay: 360ms; }
+.pin-note.p4 { left: 26.5%; bottom: 11%; transition-delay: 440ms; }
+
+/* ------------------------------------------------------------------ download */
+.download { text-align: center; overflow: hidden; }
+.download .glow { position: absolute; left: 50%; top: 40%; width: min(900px, 120vw); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; background: conic-gradient(#4b3fc4, #1d2a5a, #25402f, #4b3fc4); filter: blur(130px); opacity: 0.2; pointer-events: none; }
+.download h2 { font: 300 clamp(48px, 8vw, 110px)/0.95 var(--display); letter-spacing: -0.03em; position: relative; }
+.download .ctas { justify-content: center; margin-top: 36px; position: relative; }
+.dl-meta { margin-top: 16px; font-size: 13.5px; color: var(--text-3); position: relative; }
+.how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 70px; text-align: left; position: relative; }
+.how li { list-style: none; padding: 22px; border-radius: 20px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.how ol { padding: 0; margin: 0; display: contents; }
+.how .n { font: 500 12px var(--mono); color: var(--lime); }
+.how b { font-weight: 600; font-size: 16.5px; }
+.how p { font-size: 14.5px; color: var(--text-3); }
+.how code { font-size: 12.5px; color: var(--text-2); background: var(--panel-3); padding: 2px 6px; border-radius: 5px; }
+.src { margin-top: 14px; padding: 18px 20px; border-radius: 18px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); text-align: left; position: relative; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.src pre { margin: 0; font: 13px/1.6 var(--mono); color: #d9d9e0; white-space: pre-wrap; flex: 1; min-width: 0; }
+.src .copy { position: static; }
+
+footer { padding-block: 60px 50px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 20px 40px; align-items: center; justify-content: space-between; }
+footer .links { display: flex; gap: 22px; flex-wrap: wrap; }
+footer a:hover { color: var(--text); }
+
+/* ------------------------------------------------------------------ responsive */
+@media (max-width: 980px) {
+  .hero .wrap, .ai .grid, .mcp-top, .mcp-grid { grid-template-columns: 1fr; }
+  .hero-art { height: 520px; }
+  .story { height: 520vh; }
+  .story .grid { grid-template-columns: 1fr; gap: 20px; }
+  .story .story-copy { gap: 14px; }
+  .story .story-copy .sec-head .lede { display: none; }
+  .steps { flex-direction: row; overflow: hidden; padding-left: 0; gap: 6px; }
+  .steps::before, .steps::after { display: none; }
+  .step { flex: 1; padding: 8px 10px; }
+  .step:not(.on) .t span:not(.n) { display: none; }
+  .step p { display: none; }
+  .stage { max-width: min(430px, 100%, calc(100svh - 300px) * 0.8); }
+  .span-4, .span-3, .span-2 { grid-column: span 6; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .how { grid-template-columns: 1fr; }
+  .nav .links { display: none; }
+  .ops { left: 10px; top: 30%; width: 78%; }
+  /* The art sits under the copy here, so drift it less or it rides up over the text. */
+  .phone.back { transform: translateY(calc(var(--hp, 0) * -12px)); }
+  .phone.front { transform: translateY(calc(var(--hp, 0) * -24px)); }
+  .pin-note { display: none; }
+}
+@media (max-width: 560px) {
+  .chip.c2, .chip.c4 { display: none; }
+  .chip.c3 { bottom: 2%; }
+  .hero-art { height: 440px; }
+  .prompt { left: 14px; right: 14px; bottom: 14px; }
+  .ops { display: none; }
+  .tile { min-height: 0; }
+  .devices { min-height: 240px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  html { scroll-behavior: auto; }
+}
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="nav" id="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon.svg" alt="">Screenshotter</a>
+    <nav class="links" aria-label="Sections">
+      <a href="#story">How it works</a>
+      <a href="#ai">Ask AI</a>
+      <a href="#mcp">For agents</a>
+      <a href="#features">Features</a>
+    </nav>
+    <a class="btn primary sm" href="#download" data-download>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>Download
+    </a>
+  </div>
+</header>
+
+<main>
+<!-- ============================================================ hero -->
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-copy">
+      <span class="pill"><b>✦ New</b>Ask AI edits your design in plain English</span>
+      <h1 aria-label="Make your app look incredible.">
+        <span class="w" style="--i:0">Make</span> <span class="w" style="--i:1">your</span> <span class="w" style="--i:2">app</span> <span class="w" style="--i:3">look</span>
+        <span class="line2"><span class="w grad" style="--i:4">incredible.</span></span>
+      </h1>
+      <p class="lede">Capture real screens from the iOS Simulator, the web or your Mac. Drop them into beautiful device frames, and export App Store images and videos. Design by hand, by asking AI, or let your coding agent do it over MCP.</p>
+      <div class="ctas">
+        <a class="btn primary lg" href="#download" data-download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
+          Download for Mac
+        </a>
+        <a class="btn ghost lg" href="#mcp">Add it to your agent
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+      <div class="meta"><span>macOS 14 or later</span><span>Apple silicon</span><span>Works with Claude Code, Codex and OpenCode</span></div>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <div class="orb"></div>
+      <div class="phones">
+        <img class="phone back" src="assets/hero-back.webp" alt="" width="760" height="967">
+        <img class="phone front" src="assets/hero-front.webp" alt="" width="900" height="1145">
+      </div>
+      <div class="chip c1"><span class="spark">✦</span>Tilt the phone 12°</div>
+      <div class="chip c2"><span class="sw" style="background:url(assets/bg-table.webp) 4% 50% / 900% auto"></span>Backdrop · Dinner table</div>
+      <div class="chip c3"><span class="ok">✓</span>capture_screenshot · 3.1s</div>
+      <div class="chip c4"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d2ff4d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>Exported 1320 × 2868 PNG</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ agents -->
+<section class="agents" aria-label="Works with">
+  <p class="label">Use it by hand, or from the agents you already use</p>
+  <div class="wrap agent-row">
+    <span class="agent hot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg>Claude Code</span>
+    <span class="agent hot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg>Codex</span>
+    <span class="agent hot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg>OpenCode</span>
+    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="3"/><path d="M8 21h8"/></svg>Claude Desktop</span>
+    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7L3 12l5 5M16 7l5 5-5 5"/></svg>Cursor</span>
+    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Any MCP client</span>
+    <span class="agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/></svg>The Studio app</span>
+  </div>
+</section>
+
+<!-- ============================================================ story -->
+<section class="story" id="story" data-pin>
+  <div class="pin">
+    <div class="grid">
+      <div class="story-copy">
+        <div class="sec-head">
+          <span class="eyebrow"><i></i>How it works</span>
+          <h2 class="h2">From capture to <span class="ital grad">App Store</span> in five moves.</h2>
+          <p class="lede">Scroll to watch one screen become a store-ready image. Every frame here was rendered by Screenshotter.</p>
+        </div>
+        <ol class="steps">
+          <li class="step"><div class="t"><span class="n">01</span><span>Capture</span></div><p>Grab a real screen from the iOS Simulator, with a clean 9:41 status bar and no permission pop-ups.</p></li>
+          <li class="step"><div class="t"><span class="n">02</span><span>Frame</span></div><p>It drops into the matching device: iPhone, iPad, Apple Watch or Mac, in any finish.</p></li>
+          <li class="step"><div class="t"><span class="n">03</span><span>Backdrop</span></div><p>Pick one of 26 looks, your own colours, an Unsplash photo, or an AI image.</p></li>
+          <li class="step"><div class="t"><span class="n">04</span><span>Headline</span></div><p>Add the words that sell it. Star a word to paint it in your accent colour.</p></li>
+          <li class="step on"><div class="t"><span class="n">05</span><span>Tilt &amp; export</span></div><p>Angle it in 3D, lift out a row, and export at App Store size.</p></li>
+        </ol>
+      </div>
+      <div class="stage" aria-label="A screenshot becoming a finished App Store image">
+        <div class="dots"></div>
+        <img class="layer" data-l="backdrop" src="assets/story-3-backdrop.webp" alt="" width="900" height="1125" loading="lazy">
+        <img class="layer" data-l="raw" src="assets/story-1-raw.webp" alt="" width="900" height="1125" loading="lazy" style="opacity:0">
+        <img class="layer" data-l="device" src="assets/story-2-device.webp" alt="" width="900" height="1125" loading="lazy">
+        <img class="layer" data-l="headline" src="assets/story-4-headline.webp" alt="" width="900" height="1125" loading="lazy">
+        <img class="layer" data-l="final" src="assets/story-5-final.webp" alt="The finished image: a tilted iPhone over a blurred dinner table, with the headline Dinner, sorted." width="900" height="1125" loading="lazy">
+        <div class="toast on"><i>✓</i>Exported · 1200 × 1500 PNG</div>
+        <span class="stage-cap">Step 5 of 5</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Ask AI -->
+<section class="ai pad" id="ai">
+  <div class="wrap grid">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><i></i>Ask AI</span>
+      <h2 class="h2">Say it. <span class="ital grad">See it.</span></h2>
+      <p class="lede">Describe the change the way you'd brief a designer. Claude edits the scene, you see it on the canvas, and every edit is one undo away.</p>
+      <ul class="checks">
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Aims at what you select.</b> Pick the phone, then say “make it bigger”.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>No setup.</b> Uses your Claude Code sign-in, or an API key if you prefer.</span></li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Your screens stay on your Mac.</b> Claude sees the design settings, never your screenshots.</span></li>
+      </ul>
+    </div>
+    <div class="ai-demo reveal-scale" data-ai>
+      <div class="ai-view">
+        <img class="before" src="assets/ai-before.webp" alt="" width="720" height="900" loading="lazy">
+        <img class="after" src="assets/ai-after.webp" alt="The same design after the request: a tilted phone over a dinner table, with both hands in green" width="720" height="900" loading="lazy">
+        <div class="ai-toast on"><i>✦</i>Tilted the phone and set the table.<u>Undo</u></div>
+        <div class="prompt">
+          <div class="in">
+            <div class="txt" data-type="Tilt the phone, put it on a dinner table and make “both hands” green">Tilt the phone, put it on a dinner table and make “both hands” green</div>
+            <div class="foot"><span class="ctx">iPhone 17 Pro</span><span>Claude Code</span><span class="send"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="ops" aria-hidden="true">
+        <div class="op on"><b>set</b>/devices/0/rotateY <span>-14</span></div>
+        <div class="op on"><b>set</b>/background <span>{ "photo": "table.jpg", "dim": 0.5 }</span></div>
+        <div class="op on"><b>set</b>/headline <span>"Cook with **both hands** free"</span></div>
+        <div class="op on"><b>set</b>/textStyle/accentColor <span>"#7ccf9d"</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ MCP -->
+<section class="pad" id="mcp" style="padding-top:0">
+  <div class="wrap">
+    <div class="mcp-panel reveal-scale">
+      <div class="mcp-in">
+        <div class="dots"></div>
+        <div class="mcp-top">
+          <div class="sec-head">
+            <span class="badge-mcp">MCP SERVER</span>
+            <h2>Built for your <span class="ital grad">agents.</span></h2>
+          </div>
+          <p class="lede">Screenshotter is also an MCP server. Add it to Claude Code, Codex or OpenCode, and your agent can build your app, capture it, and hand you finished store images. It checks each result with a preview before it moves on.</p>
+        </div>
+
+        <div class="mcp-grid">
+          <div class="card install">
+            <div class="tabs" role="tablist" aria-label="Choose your agent">
+              <span class="knob" aria-hidden="true"></span>
+              <button role="tab" aria-selected="true" aria-controls="p-claude" id="t-claude">Claude Code</button>
+              <button role="tab" aria-selected="false" aria-controls="p-codex" id="t-codex">Codex</button>
+              <button role="tab" aria-selected="false" aria-controls="p-opencode" id="t-opencode">OpenCode</button>
+            </div>
+            <div class="snippet" role="tabpanel" id="p-claude" aria-labelledby="t-claude">
+              <button class="copy" data-copy="claude mcp add screenshotter --scope user -- node /path/to/screenshotter/dist/index.js">Copy</button>
+<pre><span class="c"># one line, available in every project</span>
+<span class="k">claude</span> mcp add screenshotter --scope user \
+  -- node /path/to/screenshotter/dist/index.js</pre>
+              <p class="note">Then type <code>/mcp</code> in Claude Code. It shows <span style="color:var(--lime)">screenshotter ✔ connected</span>.</p>
+            </div>
+            <div class="snippet" role="tabpanel" id="p-codex" aria-labelledby="t-codex" hidden>
+              <button class="copy" data-copy="codex mcp add screenshotter -- node /path/to/screenshotter/dist/index.js">Copy</button>
+<pre><span class="k">codex</span> mcp add screenshotter \
+  -- node /path/to/screenshotter/dist/index.js
+
+<span class="c"># ~/.codex/config.toml: give videos room to render</span>
+[mcp_servers.screenshotter]
+tool_timeout_sec = <span class="s">600</span></pre>
+              <p class="note">Check it with <code>codex mcp list</code>.</p>
+            </div>
+            <div class="snippet" role="tabpanel" id="p-opencode" aria-labelledby="t-opencode" hidden>
+              <button class="copy" data-copy='"screenshotter": { "type": "local", "command": ["node", "/path/to/screenshotter/dist/index.js"], "enabled": true }'>Copy</button>
+<pre><span class="c">// ~/.config/opencode/opencode.json, inside "mcp"</span>
+<span class="s">"screenshotter"</span>: {
+  <span class="s">"type"</span>: <span class="s">"local"</span>,
+  <span class="s">"command"</span>: [<span class="s">"node"</span>, <span class="s">"/path/to/screenshotter/dist/index.js"</span>],
+  <span class="s">"enabled"</span>: true
+}</pre>
+              <p class="note">Check it with <code>opencode mcp list</code>.</p>
+            </div>
+          </div>
+
+          <div class="card term" data-term>
+            <div class="bar"><i></i><i></i><i></i><span>claude · ~/code/mise</span></div>
+            <div class="body">
+              <div class="line you"><b>›</b> Make App Store screenshots of Mise in dark mode, with our green</div>
+              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>list_simulators</b></span><span class="tm">0.4s</span></div>
+              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>capture_screenshot</b> ×4</span><span class="tm">12.6s</span></div>
+              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>find_text</b> “Fresh ramen noodles”</span><span class="tm">0.2s</span></div>
+              <div class="line call ok"><span class="st">✓</span><span class="nm">screenshotter · <b>create_mockup_set</b></span><span class="tm">11.8s</span></div>
+              <div class="line done">✓ Five screenshots, 1320 × 2868, in screenshots/sets/mise-app-store</div>
+              <div class="line thumbs on">
+                <img src="assets/set-1.webp" alt="" width="460" height="1000" loading="lazy">
+                <img src="assets/set-2.webp" alt="" width="460" height="1000" loading="lazy">
+                <img src="assets/set-3.webp" alt="" width="460" height="1000" loading="lazy">
+                <img src="assets/set-4.webp" alt="" width="460" height="1000" loading="lazy">
+                <img src="assets/set-5.webp" alt="" width="460" height="1000" loading="lazy">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat"><b>13</b><span>MCP tools</span></div>
+          <div class="stat"><b>26</b><span>device frames</span></div>
+          <div class="stat"><b>26</b><span>built-in looks</span></div>
+          <div class="stat"><b>7</b><span>export formats</span></div>
+        </div>
+
+        <div class="tools">
+          <div class="tool"><code>capture_screenshot</code><p>Simulator screen with a clean status bar, taken once animations settle.</p></div>
+          <div class="tool"><code>record_simulator</code><p>Screen recordings, with deep links played on a timeline.</p></div>
+          <div class="tool"><code>capture_web</code><p>Any URL, in real Mobile Safari or desktop Chrome.</p></div>
+          <div class="tool"><code>capture_mac</code><p>A Mac app window by name, or the whole screen.</p></div>
+          <div class="tool"><code>create_mockup</code><p>One finished image: frames, backdrop, effects, call-outs, headline.</p></div>
+          <div class="tool"><code>create_mockup_set</code><p>A matching series, like a full App Store set.</p></div>
+          <div class="tool"><code>create_video</code><p>The same scene in motion: MP4, MOV, WebM or GIF.</p></div>
+          <div class="tool"><code>layout_mockup</code><p>Where everything lands, without rendering, so agents can plan.</p></div>
+          <div class="tool"><code>find_text</code><p>On-device text recognition, to aim call-outs at words.</p></div>
+          <div class="tool"><code>simulator_control</code><p>Boot, launch, open links, set appearance and permissions.</p></div>
+          <div class="tool"><code>list_simulators</code> · <code>list_apps</code><p>What's installed and running.</p></div>
+          <div class="tool"><code>list_mockup_options</code><p>Every device, finish, look, canvas and layout.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ looks -->
+<section class="looks" id="looks" data-pin>
+  <div class="pin">
+    <div class="wrap sec-head">
+      <span class="eyebrow"><i></i>Backdrops</span>
+      <h2 class="h2">Any backdrop. <span class="ital grad">Tuned to your app.</span></h2>
+    </div>
+    <div class="rail">
+      <figure class="look"><img src="assets/bg-table.webp" alt="Mise on a dinner table backdrop" width="520" height="650" loading="lazy"><span>Dinner table <em>your photo</em></span></figure>
+      <figure class="look"><img src="assets/bg-warm.webp" alt="Mise on a warm spot backdrop" width="520" height="650" loading="lazy"><span>Warm spot <em>radial</em></span></figure>
+      <figure class="look"><img src="assets/bg-green.webp" alt="Mise on a brand green backdrop" width="520" height="650" loading="lazy"><span>Brand green <em>radial</em></span></figure>
+      <figure class="look"><img src="assets/bg-graphite.webp" alt="Mise on a graphite backdrop" width="520" height="650" loading="lazy"><span>Graphite <em>look</em></span></figure>
+      <figure class="look"><img src="assets/bg-bokeh.webp" alt="Mise on a city bokeh backdrop" width="520" height="650" loading="lazy"><span>City bokeh <em>photo look</em></span></figure>
+      <figure class="look"><img src="assets/bg-mesh.webp" alt="Mise on a forest mesh backdrop" width="520" height="650" loading="lazy"><span>Forest mesh <em>mesh</em></span></figure>
+      <figure class="look"><img src="assets/bg-aurora.webp" alt="Mise on a aurora night backdrop" width="520" height="650" loading="lazy"><span>Aurora night <em>photo look</em></span></figure>
+      <figure class="look"><img src="assets/bg-ink.webp" alt="Mise on a ink backdrop" width="520" height="650" loading="lazy"><span>Ink <em>look</em></span></figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ features -->
+<section class="pad" id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><i></i>Everything a launch needs</span>
+      <h2 class="h2">Every device. Every size. <span class="ital grad">Every format.</span></h2>
+    </div>
+    <div class="bento">
+      <article class="tile span-4 reveal">
+        <h3>Every Apple device, in 3D</h3>
+        <p>iPhone, iPad, Apple Watch and MacBook in their real finishes. Tilt, turn and stack them in one scene.</p>
+        <div class="devices" data-parallax>
+          <img class="d-mac" data-speed="0.3" src="assets/dev-mac.webp" alt="MacBook Pro showing Mise's website" width="1300" height="880" loading="lazy">
+          <img class="d-ipad" data-speed="0.7" src="assets/dev-ipad.webp" alt="iPad Pro showing Mise's recipes" width="760" height="874" loading="lazy">
+          <img class="d-iphone" data-speed="1" src="assets/dev-iphone.webp" alt="iPhone showing a Mise recipe" width="480" height="823" loading="lazy">
+          <img class="d-watch" data-speed="1.3" src="assets/dev-watch.webp" alt="Apple Watch running a Mise cooking timer" width="360" height="900" loading="lazy">
+        </div>
+      </article>
+      <article class="tile span-2 reveal">
+        <h3>Call out what matters</h3>
+        <p>Name the words on screen and Screenshotter finds them: lift a row, magnify it, or spotlight it.</p>
+        <div class="chips" data-cycle-labels><span class="on">Lift</span><span>Loupe</span><span>Spotlight</span></div>
+        <div class="cycle" data-cycle>
+          <img class="on" src="assets/callout-lift.webp" alt="A grocery row lifted out of the screen" width="620" height="775" loading="lazy">
+          <img src="assets/callout-loupe.webp" alt="A loupe magnifying a recipe step" width="620" height="775" loading="lazy">
+          <img src="assets/callout-spotlight.webp" alt="A spotlight on a cooking timer" width="620" height="775" loading="lazy">
+        </div>
+      </article>
+      <article class="tile span-2 reveal">
+        <h3>Motion, not just stills</h3>
+        <p>Drift, float or push in. Play a real screen recording inside the frame.</p>
+        <div class="chips"><span>MP4</span><span>MOV</span><span>WebM</span><span>GIF</span></div>
+        <div class="cycle"><video src="assets/video-drift.mp4" poster="assets/video-drift.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A phone drifting gently over a dinner table"></video></div>
+      </article>
+      <article class="tile span-2 reveal">
+        <h3>Websites and Mac apps</h3>
+        <p>Capture any URL in real Mobile Safari or desktop Chrome, or a Mac window by name.</p>
+        <div class="cycle" style="display:grid;place-items:center"><img class="on" style="object-fit:contain;padding:10px 18px 30px" src="assets/dev-browser.webp" alt="Mise's website in a browser frame" width="1100" height="744" loading="lazy"></div>
+      </article>
+      <article class="tile span-2 reveal">
+        <h3>A whole App Store set</h3>
+        <p>Five matching screens in one go, at every required size.</p>
+        <div class="fan" data-fan>
+          <img style="--k:-2;--a:2" src="assets/set-1.webp" alt="" width="460" height="1000" loading="lazy">
+          <img style="--k:-1;--a:0.5" src="assets/set-2.webp" alt="" width="460" height="1000" loading="lazy">
+          <img style="--k:2;--a:2" src="assets/set-5.webp" alt="" width="460" height="1000" loading="lazy">
+          <img style="--k:1;--a:0.5" src="assets/set-4.webp" alt="" width="460" height="1000" loading="lazy">
+          <img style="--k:0;--a:0" src="assets/set-3.webp" alt="App Store screenshot: Cook with both hands free" width="460" height="1000" loading="lazy">
+        </div>
+      </article>
+      <article class="tile span-3 reveal">
+        <h3>Real captures, ready to ship</h3>
+        <p>Straight from the iOS Simulator, with none of the usual clean-up.</p>
+        <div class="status-demo">
+          <div class="sb-mock"><span>9:41</span><svg viewBox="0 0 70 14" fill="#fff"><rect x="0" y="9" width="3.4" height="5" rx="1"/><rect x="5.6" y="6" width="3.4" height="8" rx="1"/><rect x="11.2" y="3" width="3.4" height="11" rx="1"/><rect x="16.8" y="0" width="3.4" height="14" rx="1"/><path d="M32 3a9 9 0 0 1 6.4 2.6l1-1A10.4 10.4 0 0 0 32 1.6a10.4 10.4 0 0 0-7.4 3l1 1A9 9 0 0 1 32 3Zm0 3.4c1.6 0 3 .6 4.1 1.7l1-1a7.2 7.2 0 0 0-10.2 0l1 1c1.2-1.1 2.6-1.7 4.1-1.7Zm0 3.4c.7 0 1.4.3 1.9.8L32 12.5l-1.9-1.9c.5-.5 1.2-.8 1.9-.8Z"/><rect x="46" y="1" width="21" height="12" rx="3.5" fill="none" stroke="#fff" stroke-opacity=".45"/><rect x="47.6" y="2.6" width="17.8" height="8.8" rx="2"/></svg></div>
+          <div class="facts"><span>9:41, full battery, full signal</span><span>Permission prompts granted up front</span><span>Waits for animations to finish</span><span>Light or dark mode, any locale</span></div>
+        </div>
+      </article>
+      <article class="tile span-3 reveal">
+        <h3>A canvas that stays out of your way</h3>
+        <p>Drag, resize and rotate with snapping guides. Double-click any text to retype it.</p>
+        <div class="shot-crop" role="img" aria-label="The Studio canvas with a selected iPhone"></div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ the app -->
+<section class="app-sec pad" id="app" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="eyebrow"><i></i>The Studio</span>
+      <h2 class="h2">A studio you'll <span class="ital grad">enjoy using.</span></h2>
+      <p class="lede">A small Mac app, with its own look. Screens on the left, your design in the middle, every setting on the right.</p>
+    </div>
+    <div class="window-wrap reveal-scale" data-window>
+      <div class="window">
+        <div class="lights" aria-hidden="true"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+        <div class="view">
+          <img class="on" data-view="edit" src="assets/ui-editor.webp" alt="The Studio: your screens on the left, the canvas in the middle, device settings on the right" width="2880" height="1800" loading="lazy">
+          <img data-view="ai" src="assets/ui-ai.webp" alt="The Studio with the Ask AI box open" width="2880" height="1800" loading="lazy">
+          <img data-view="preview" src="assets/ui-preview.webp" alt="The Studio showing a rendered preview" width="2880" height="1800" loading="lazy">
+        </div>
+        <span class="pin-note p1"><b>1</b>Capture from Simulator, web or Mac</span>
+        <span class="pin-note p2"><b>2</b>Drag, resize, rotate</span>
+        <span class="pin-note p3"><b>3</b>Every setting, in plain words</span>
+        <span class="pin-note p4"><b>4</b>Ask AI, ⌘K</span>
+      </div>
+      <div class="app-tabs" role="tablist" aria-label="Studio views">
+        <button role="tab" aria-selected="true" data-show="edit">Edit<i></i></button>
+        <button role="tab" aria-selected="false" data-show="ai">Ask AI<i></i></button>
+        <button role="tab" aria-selected="false" data-show="preview">Preview<i></i></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ download -->
+<section class="download pad" id="download">
+  <div class="glow" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="reveal">
+      <h2>Ship screenshots<br>you're <span class="ital grad">proud of.</span></h2>
+      <div class="ctas">
+        <a class="btn primary lg" href="downloads/Screenshotter.dmg" data-download-file>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
+          Download for Mac
+        </a>
+        <a class="btn ghost lg" href="#mcp">Set up the MCP</a>
+      </div>
+      <p class="dl-meta">Version 0.1.0 · 25 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
+    </div>
+    <div class="how">
+      <ol>
+        <li class="reveal"><span class="n">01</span><b>Install</b><p>Open the download and drag Screenshotter into Applications.</p></li>
+        <li class="reveal"><span class="n">02</span><b>First launch</b><p>If macOS says it can't check the app, open System Settings › Privacy &amp; Security and choose <b>Open Anyway</b>.</p></li>
+        <li class="reveal"><span class="n">03</span><b>Node.js</b><p>The app uses the Node.js on your Mac. If you don't have it: <code>brew install node</code>.</p></li>
+      </ol>
+    </div>
+    <div class="src reveal">
+      <pre><span style="color:var(--text-4)"># or build it yourself, from the repository</span>
+npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app</pre>
+      <button class="copy" data-copy="npm install && npm run app:build && open build/Screenshotter.app">Copy</button>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon.svg" alt="">Screenshotter</a>
+    <p>Every image on this page was made with Screenshotter. Mise is a made-up app; its food photos are from <a href="https://unsplash.com" style="text-decoration:underline;text-underline-offset:3px">Unsplash</a>.</p>
+    <nav class="links" aria-label="Footer"><a href="#story">How it works</a><a href="#ai">Ask AI</a><a href="#mcp">MCP</a><a href="#download">Download</a></nav>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  root.classList.add("js");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+
+  // ------------------------------------------------------------ copy buttons
+  $$("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    const text = b.dataset.copy;
+    try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
+    catch { const r = document.createRange(); const pre = b.parentElement.querySelector("pre"); if (pre) { r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } b.textContent = "Selected"; }
+    setTimeout(() => (b.textContent = "Copy"), 1600);
+  }));
+
+  // ------------------------------------------------------------ MCP tabs with a sliding knob
+  const tabs = $(".tabs");
+  const knob = $(".tabs .knob");
+  const placeKnob = () => { const on = $('.tabs [aria-selected="true"]'); if (on) { knob.style.left = on.offsetLeft + "px"; knob.style.width = on.offsetWidth + "px"; } };
+  $$(".tabs [role=tab]").forEach((t) => t.addEventListener("click", () => {
+    $$(".tabs [role=tab]").forEach((x) => { x.setAttribute("aria-selected", String(x === t)); $("#" + x.getAttribute("aria-controls")).hidden = x !== t; });
+    placeKnob();
+  }));
+  placeKnob();
+  addEventListener("resize", placeKnob);
+
+  // ------------------------------------------------------------ reveal each block once, as it arrives
+  const revealEls = $$(".reveal, .reveal-scale");
+  if (reduced || !("IntersectionObserver" in window)) revealEls.forEach((el) => el.classList.add("in"));
+  else {
+    const io = new IntersectionObserver((entries) => {
+      entries.filter((e) => e.isIntersecting).forEach((e, i) => {
+        e.target.style.setProperty("--d", i * 70 + "ms");
+        e.target.classList.add("in");
+        io.unobserve(e.target);
+      });
+    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.12 });
+    revealEls.forEach((el) => io.observe(el));
+  }
+
+  // ------------------------------------------------------------ scroll-driven scenes
+  const nav = $(".nav");
+  const heroArt = $(".hero-art");
+  const story = $("#story");
+  const layers = Object.fromEntries($$("#story [data-l]").map((el) => [el.dataset.l, el]));
+  const steps = $$("#story .step");
+  const stepsEl = $("#story .steps");
+  const toast = $("#story .toast");
+  const cap = $("#story .stage-cap");
+  const looks = $("#looks");
+  const rail = $("#looks .rail");
+  const devices = $("[data-parallax]");
+  const win = $("[data-window] .window");
+  const winWrap = $("[data-window]");
+  const pinned = (el) => { const r = el.getBoundingClientRect(); return clamp(-r.top / (r.height - innerHeight)); };
+  const through = (el) => { const r = el.getBoundingClientRect(); return clamp((innerHeight - r.top) / (innerHeight + r.height)); };
+
+  function storyFrame(p) {
+    const s = p * 5.2;
+    const fin = smooth(4.25, 4.6, s);
+    const tilt = smooth(3.7, 4.3, s);
+    layers.raw.style.opacity = 1 - smooth(0.7, 1.15, s);
+    layers.raw.style.transform = `scale(${1.05 - 0.05 * smooth(0, 0.8, s)})`;
+    const dev = smooth(0.75, 1.2, s);
+    layers.device.style.opacity = dev * (1 - fin);
+    layers.device.style.transform = `scale(${1.05 - 0.05 * dev}) rotateY(${-16 * tilt}deg) rotateX(${6 * tilt}deg)`;
+    const bd = smooth(1.75, 2.5, s);
+    layers.backdrop.style.opacity = bd * (1 - fin);
+    layers.backdrop.style.transform = `scale(${1.04 - 0.04 * bd})`;
+    const h = smooth(2.75, 3.3, s);
+    layers.headline.style.opacity = h * (1 - fin);
+    layers.headline.style.transform = `translateY(${(1 - h) * 12}px)`;
+    layers.final.style.opacity = fin;
+    toast.classList.toggle("on", s > 4.65);
+    const step = Math.min(4, Math.floor(clamp(s - 0.25, 0, 4.99)));
+    steps.forEach((el, i) => { el.classList.toggle("on", i === step); el.classList.toggle("done", i < step); });
+    stepsEl.style.setProperty("--sp", clamp(s / 4.7));
+    cap.textContent = `Step ${step + 1} of 5`;
+  }
+
+  function looksFrame(p) {
+    const max = rail.scrollWidth - innerWidth;
+    rail.style.transform = `translateX(${-max * smooth(0.02, 0.98, p)}px)`;
+  }
+
+  let ticking = false;
+  function frame() {
+    ticking = false;
+    nav.classList.toggle("scrolled", scrollY > 12);
+    if (reduced) return;
+    heroArt.style.setProperty("--hp", clamp(scrollY / innerHeight));
+    storyFrame(pinned(story));
+    looksFrame(pinned(looks));
+    if (devices) {
+      const p = through(devices) - 0.5;
+      $$("img", devices).forEach((img) => (img.style.transform = `translateY(${p * -50 * Number(img.dataset.speed)}px)`));
+    }
+  }
+  const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(frame); } };
+  addEventListener("scroll", onScroll, { passive: true });
+  addEventListener("resize", onScroll);
+  frame();
+  // The Studio's numbered notes land once the window is mostly in view.
+  if (reduced || !("IntersectionObserver" in window)) win.classList.add("shown");
+  else new IntersectionObserver(([e], o) => { if (e.isIntersecting) { win.classList.add("shown"); o.disconnect(); } }, { threshold: 0.5 }).observe(win);
+
+  // ------------------------------------------------------------ play-once-in-view sequences
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const onView = (el, fn, threshold = 0.45) => {
+    if (reduced || !el) return;
+    let running = false;
+    new IntersectionObserver(([e]) => { if (e.isIntersecting && !running) { running = true; fn().finally(() => (running = false)); } }, { threshold }).observe(el);
+  };
+
+  // Ask AI: type the request, think, apply, show what changed.
+  const ai = $("[data-ai]");
+  onView(ai, async () => {
+    const txt = $(".txt", ai), prompt = $(".prompt", ai), ops = $$(".op", ai), toastEl = $(".ai-toast", ai);
+    const full = txt.dataset.type;
+    for (let round = 0; round < 3 && isVisible(ai); round++) {
+      ai.classList.add("play"); ai.classList.remove("applied"); ops.forEach((o) => o.classList.remove("on")); toastEl.classList.remove("on");
+      txt.innerHTML = '<span class="caret"></span>';
+      await wait(700);
+      for (let i = 1; i <= full.length; i++) { txt.innerHTML = full.slice(0, i) + '<span class="caret"></span>'; await wait(26 + Math.random() * 30); }
+      await wait(350);
+      prompt.classList.add("busy");
+      await wait(1500);
+      prompt.classList.remove("busy");
+      txt.textContent = "";
+      ai.classList.add("applied");
+      for (const o of ops) { o.classList.add("on"); await wait(90); }
+      toastEl.classList.add("on");
+      await wait(4200);
+      txt.textContent = full;
+    }
+    ai.classList.remove("play");
+  });
+
+  // The agent terminal: tool calls land one by one, then the set fans in.
+  const term = $("[data-term]");
+  onView(term, async () => {
+    const lines = $$(".line", term);
+    const calls = $$(".call", term);
+    term.classList.add("play");
+    lines.forEach((l) => l.classList.remove("on"));
+    calls.forEach((c) => { c.classList.remove("ok"); c.dataset.st = c.querySelector(".st").textContent; c.querySelector(".st").innerHTML = '<span class="spin-dot"></span>'; c.dataset.tm = c.querySelector(".tm").textContent; c.querySelector(".tm").textContent = ""; });
+    await wait(500);
+    lines[0].classList.add("on");
+    await wait(900);
+    for (const c of calls) {
+      c.classList.add("on");
+      await wait(700 + Math.random() * 600);
+      c.classList.add("ok"); c.querySelector(".st").textContent = "✓"; c.querySelector(".tm").textContent = c.dataset.tm;
+      await wait(180);
+    }
+    for (const l of lines.slice(calls.length + 1)) { l.classList.add("on"); await wait(250); }
+    await wait(200);
+  }, 0.35);
+
+  function isVisible(el) { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; }
+
+  // Call-outs cycle through lift → loupe → spotlight.
+  const cyc = $("[data-cycle]");
+  const labels = $$("[data-cycle-labels] span");
+  if (cyc && !reduced) {
+    const imgs = $$("img", cyc);
+    let k = 0;
+    setInterval(() => { if (!isVisible(cyc)) return; k = (k + 1) % imgs.length; imgs.forEach((im, i) => im.classList.toggle("on", i === k)); labels.forEach((l, i) => l.classList.toggle("on", i === k)); }, 2600);
+  }
+
+  // The App Store set fans out once, when it comes into view.
+  const fan = $("[data-fan]");
+  if (fan) {
+    if (reduced || !("IntersectionObserver" in window)) fan.classList.add("open");
+    else new IntersectionObserver(([e], o) => { if (e.isIntersecting) { fan.classList.add("open"); o.disconnect(); } }, { threshold: 0.6 }).observe(fan);
+  }
+
+  // Studio views: tabs, cycling on their own until someone picks one.
+  const views = $$("[data-view]");
+  const vtabs = $$(".app-tabs [data-show]");
+  let manual = false, vi = 0;
+  const showView = (name) => { views.forEach((v) => v.classList.toggle("on", v.dataset.view === name)); vtabs.forEach((t) => { t.setAttribute("aria-selected", String(t.dataset.show === name)); const bar = t.querySelector("i"); bar.style.animation = "none"; bar.offsetWidth; bar.style.animation = ""; }); };
+  vtabs.forEach((t, i) => t.addEventListener("click", () => { manual = true; vi = i; showView(t.dataset.show); }));
+  if (!reduced) setInterval(() => { if (manual || !isVisible(winWrap)) return; vi = (vi + 1) % vtabs.length; showView(vtabs[vi].dataset.show); }, 5000);
+})();
+</script>
+</body>
+</html>

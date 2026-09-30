@@ -1,0 +1,11 @@
+node_modules/
+dist/
+screenshots/
+*.tmp.*
+.DS_Store
+app/.build/
+app/.swiftpm/
+build/
+site/downloads/
+site/demo/shots/
+.vercel

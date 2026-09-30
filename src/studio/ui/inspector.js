@@ -1,0 +1,466 @@
+// Right panel: properties of the selection, or of the scene when nothing is selected.
+import { useRef, useState } from "preact/hooks";
+import { AccentText, ColorButton, ColorPicker, Dropdown, Num, Popover, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
+import { Icon, LayoutIcon } from "./icons.js";
+import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
+import { deleteEntity, duplicateEntity, replaceMode, uploadFiles } from "./actions.js";
+import { bgObj } from "./panels.js";
+
+const FONTS = [
+  { value: "", label: "SF Pro", font: "-apple-system" },
+  { value: "sf-rounded", label: "SF Pro Rounded", font: "ui-rounded" },
+  { value: "new-york", label: "New York", font: "ui-serif" },
+  { value: "sf-mono", label: "SF Mono", font: "ui-monospace" },
+  { value: "Inter", label: "Inter", hint: "Google", font: "Inter" },
+  { value: "Instrument Serif", label: "Instrument Serif", hint: "Google", font: "Instrument Serif" },
+  { value: "Manrope", label: "Manrope", hint: "Google", font: "Manrope" },
+  { value: "DM Serif Display", label: "DM Serif Display", hint: "Google", font: "DM Serif Display" },
+  { value: "Space Grotesk", label: "Space Grotesk", hint: "Google", font: "Space Grotesk" },
+  { value: "Fraunces", label: "Fraunces", hint: "Google", font: "Fraunces" },
+  { value: "Outfit", label: "Outfit", hint: "Google", font: "Outfit" },
+  { value: "Plus Jakarta Sans", label: "Plus Jakarta Sans", hint: "Google", font: "Plus Jakarta Sans" },
+];
+const WEIGHTS = [
+  { value: 400, label: "Regular" },
+  { value: 500, label: "Medium" },
+  { value: 600, label: "Semibold" },
+  { value: 700, label: "Bold" },
+  { value: 800, label: "Heavy" },
+  { value: 900, label: "Black" },
+];
+
+const pct = { scale: 100, unit: "%", digits: 1, step: 0.5 };
+/** Presets use in-between weights like 650; show the closest named one. */
+const nearestWeight = (w) => WEIGHTS.reduce((a, b) => (Math.abs(b.value - w) < Math.abs(a.value - w) ? b : a)).value;
+
+// =============================================================================================
+
+export function Inspector() {
+  const s = useStore();
+  const id = s.selected;
+  let body;
+  if (!id) body = html`<${SceneInspector} />`;
+  else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
+  else if (id === "caption") body = html`<${CaptionInspector} />`;
+  else body = html`<${TextInspector} id=${id} />`;
+  return html`<aside class="panel right">${body}</aside>`;
+}
+
+function Head({ title, sub, id }) {
+  return html`<div class="panel-head">
+    <h2>${title}${sub && html` <span class="sub">${sub}</span>`}</h2>
+    ${id && id !== "caption" && html`<button class="icon-btn sm" title="Duplicate (⌘D)" onClick=${() => duplicateEntity(id)}><${Icon} n="duplicate" s=${14} /></button>`}
+    ${id && html`<button class="icon-btn sm" title="Delete" onClick=${() => deleteEntity(id)}><${Icon} n="trash" s=${14} /></button>`}
+    ${id && html`<button class="icon-btn sm" title="Deselect (Esc)" onClick=${() => set({ selected: null })}><${Icon} n="x" s=${14} /></button>`}
+  </div>`;
+}
+
+// =============================================================================================
+// Device
+
+const FRAMES = [
+  { value: "device", label: "Device", icon: "phone" },
+  { value: "browser", label: "Browser", icon: "browser" },
+  { value: "window", label: "Window", icon: "window" },
+  { value: "card", label: "Card", icon: "card" },
+  { value: "none", label: "None", icon: "noframe" },
+];
+const SHADOWS = ["none", "soft", "medium", "strong", "studio"];
+const HL_STYLES = [
+  { value: "lift", label: "Lift" },
+  { value: "loupe", label: "Loupe" },
+  { value: "outline", label: "Outline" },
+  { value: "spotlight", label: "Spotlight" },
+  { value: "blur-rest", label: "Blur rest" },
+];
+
+function DeviceInspector({ id }) {
+  const s = useStore();
+  const i = Number(id.split("-")[1]) - 1;
+  const d = s.scene.devices[i];
+  const e = s.layout?.entities.find((x) => x.id === id);
+  if (!d) return null;
+  const upd = (fn, key) => edit((sc) => fn(sc.devices[i]), key && `d${i}.${key}`);
+  const frame = d.frame ?? "device";
+  const models = s.opts?.devices ?? [];
+  const modelName = d.device ?? e?.device;
+  const model = models.find((m) => m.name === modelName);
+  const colors = [...(model?.colors ?? []), ...(s.opts?.genericColors ?? []).filter((g) => !model?.colors.some((c) => c.name === g.name))];
+  const family = (m) => (m.family === "iphone" ? "iPhone" : m.family === "ipad" ? "iPad" : m.family === "watch" ? "Watch" : m.family === "mac" ? "Mac" : m.family);
+  const modelOpts = [
+    { value: "", label: "Match the capture", hint: e?.device ?? "" },
+    ...models.map((m) => ({ value: m.name, label: m.name, group: family(m) })),
+    ...(s.opts?.extraDevices ?? []).map((n) => ({ value: n, label: n, group: "From Xcode" })),
+  ];
+  // Transform: prefer the scene's value, fall back to where the layout put it.
+  const X = d.x ?? e?.x;
+  const Y = d.y ?? e?.y;
+  const Hh = d.height ?? e?.height;
+  const place = (patch, key) =>
+    upd((dev) => {
+      if (patch.x !== undefined || patch.y !== undefined) {
+        dev.x ??= r4(e?.x ?? 0.5);
+        dev.y ??= r4(e?.y ?? 0.5);
+        dev.anchor = "center";
+      }
+      Object.assign(dev, patch);
+      if (patch.height !== undefined) delete dev.width;
+    }, key);
+  const custom = d.x !== undefined || d.y !== undefined || d.height !== undefined || d.rotate;
+  return html`
+    <${Head} title=${entityLabel(id)} sub=${s.scene.devices.length > 1 ? `${i + 1} of ${s.scene.devices.length}` : ""} id=${id} />
+    <div class="panel-body">
+      <div class="insp-hero">
+        <div class="pic"><img src=${thumbUrl(d.screenshot, 120)} /></div>
+        <div class="meta"><b>${base(d.screenshot)}</b><span>${d.video ? html`<${Icon} n="video" s=${11} style=${{ display: "inline", verticalAlign: "-1px" }} /> Recording attached` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} on canvas` : ""}</span></div>
+        <button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>
+      </div>
+
+      <${Section} title="Frame style">
+        <div class="frames">${FRAMES.map((f) => html`<button class="frame-opt ${frame === f.value ? "on" : ""}" onClick=${() => upd((dev) => (dev.frame = f.value === "device" ? undefined : f.value))}><${Icon} n=${f.icon} s=${17} />${f.label}</button>`)}</div>
+        ${frame === "device" &&
+        html`<div class="row"><label>Device</label><${Dropdown} value=${d.device ?? ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
+          dev.device = v || undefined;
+          delete dev.color;
+        })} /></div>
+          <div class="row top"><label>Colour</label><div class="vstack" style=${{ gap: "7px" }}><div class="swatches">
+            ${colors.map((c) => html`<button class="swatch ${(d.color ?? (model?.colors[0]?.name ?? "Black")) === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${c.name} onClick=${() => upd((dev) => (dev.color = c.name))}></button>`)}
+            <${ColorPickSwatch} value=${/^#/.test(d.color ?? "") ? d.color : undefined} onChange=${(v) => upd((dev) => (dev.color = v), "color")} />
+          </div><span class="swatch-name">${d.color ?? model?.colors[0]?.name ?? "Black"}</span></div></div>`}
+        ${frame === "browser" && html`<div class="row"><label>Address</label><${TextField} value=${d.url} placeholder="Page URL by default" onChange=${(v) => upd((dev) => (dev.url = v || undefined), "url")} /></div>`}
+        ${frame === "window" && html`<div class="row"><label>Title</label><${TextField} value=${d.title} placeholder="Window title" onChange=${(v) => upd((dev) => (dev.title = v || undefined), "title")} /></div>`}
+        ${(frame === "browser" || frame === "window") && html`<div class="row"><label>Chrome</label><${Seg} value=${d.chrome ?? "light"} options=${["light", "dark"]} onChange=${(v) => upd((dev) => (dev.chrome = v === "light" ? undefined : v))} /></div>`}
+        ${frame === "device" &&
+        html`<div class="hstack wrap" style=${{ gap: "14px" }}>
+          <${Switch} checked=${d.buttons !== false} onChange=${(v) => upd((dev) => (dev.buttons = v ? undefined : false))} label="Buttons" />
+          <${Switch} checked=${Boolean(d.glare)} onChange=${(v) => upd((dev) => (dev.glare = v || undefined))} label="Glass glare" />
+        </div>`}
+      <//>
+
+      <${Section} title="Size & position" right=${custom ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((dev) => {
+        for (const k of ["x", "y", "anchor", "height", "width", "rotate"]) delete dev[k];
+      })}><${Icon} n="refresh" s=${12} />Auto-place</button>` : null}>
+        <div class="row"><label>Size</label><${Slider} value=${Hh} min=${0.1} max=${1.6} step=${0.005} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => place({ height: v === undefined ? undefined : r4(v) }, "h")} /></div>
+        <div class="row"><label>Rotation</label><${Slider} value=${d.rotate ?? 0} min=${-45} max=${45} step=${0.5} centered reset=${0} format=${(v) => Math.round(v * 10) / 10 + "°"} onChange=${(v) => upd((dev) => (dev.rotate = v ? Math.round(v * 10) / 10 : undefined), "rot")} /></div>
+        <div class="row"><label>Position</label><div class="grid2">
+          <${Num} label="X" title="Horizontal: 0% left edge, 100% right edge" value=${X} ...${pct} onChange=${(v) => place({ x: v === undefined ? undefined : r4(v) }, "x")} />
+          <${Num} label="Y" title="Vertical: 0% top, 100% bottom" value=${Y} ...${pct} onChange=${(v) => place({ y: v === undefined ? undefined : r4(v) }, "y")} />
+        </div></div>
+        <div class="note">Tip: drag the device on the canvas. Hold ⌥ to turn snapping off.</div>
+      <//>
+
+      <${Section} title="3D angle" right=${d.rotateX || d.rotateY ? html`<button class="btn sm ghost" onClick=${() => upd((dev) => {
+        delete dev.rotateX;
+        delete dev.rotateY;
+      })}>Make flat</button>` : null}>
+        <${Pad3D} rx=${d.rotateX ?? 0} ry=${d.rotateY ?? 0} onChange=${(rx, ry) => upd((dev) => {
+          dev.rotateX = rx || undefined;
+          dev.rotateY = ry || undefined;
+        }, "3d")} />
+        <div class="grid2">
+          <${Num} label="↕" title="Tilt: top leans away" value=${d.rotateX ?? 0} unit="°" digits=${1} min=${-60} max=${60} onChange=${(v) => upd((dev) => (dev.rotateX = v || undefined), "rx")} />
+          <${Num} label="↔" title="Turn: right edge turns away" value=${d.rotateY ?? 0} unit="°" digits=${1} min=${-70} max=${70} onChange=${(v) => upd((dev) => (dev.rotateY = v || undefined), "ry")} />
+        </div>
+      <//>
+
+      <${Section} title="Shadow">
+        <div class="chips">${SHADOWS.map((sh) => html`<button class="chip sm ${(typeof d.shadow === "string" ? d.shadow : d.shadow ? "custom" : "medium") === sh ? "on" : ""}" onClick=${() => upd((dev) => (dev.shadow = sh === "medium" ? undefined : sh))}>${sh}</button>`)}</div>
+      <//>
+
+      <${Highlights} i=${i} d=${d} />
+
+      <${Recording} id=${id} d=${d} upd=${upd} />
+    </div>`;
+}
+
+/** A screen recording that plays inside this device (canvas and exported videos). */
+function Recording({ id, d, upd }) {
+  const input = useRef();
+  const s = useStore();
+  const clips = s.files.filter((f) => isVideo(f.path) && ["recordings", "uploads"].includes(f.kind));
+  const pick = html`<input type="file" ref=${input} hidden accept="video/mp4,video/quicktime,.mp4,.mov" onChange=${(e) => {
+    const files = e.target.files;
+    if (files?.length) uploadFiles([files[0]], { device: id });
+    e.target.value = "";
+  }} />`;
+  if (d.video) {
+    return html`<${Section} title="Recording">
+      <div class="hstack"><${Icon} n="video" s=${14} /><span class="grow mono" style=${{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title=${d.video}>${base(d.video)}</span>
+      <button class="btn sm ghost" onClick=${() => input.current.click()}>Change…</button>
+      <button class="btn sm ghost" onClick=${() => upd((dev) => delete dev.video)}>Remove</button></div>
+      <div class="note">Plays inside the screen on the canvas and in exported videos. Stills use the screenshot.</div>
+      ${pick}
+    <//>`;
+  }
+  return html`<${Section} title="Recording" collapsible open=${false} id="rec">
+    <div class="note">Play a screen recording inside this ${d.frame && d.frame !== "device" ? "frame" : "device"} when you export a video.</div>
+    <div class="hstack wrap">
+      <button class="btn sm" onClick=${() => input.current.click()}><${Icon} n="video" s=${13} />Attach a recording…</button>
+      ${clips.length > 0 && html`<${Dropdown} value="" placeholder="Or pick one you imported" options=${clips.slice(0, 20).map((f) => ({ value: f.path, label: base(f.path) }))} onChange=${(v) => v && upd((dev) => (dev.video = v))} />`}
+    </div>
+    ${pick}
+  <//>`;
+}
+
+function ColorPickSwatch({ value, onChange }) {
+  const ref = useRef();
+  const [open, setOpen] = useState(false);
+  return html`<button class="swatch ${value ? "on" : "add"}" ref=${ref} title="Custom colour" style=${value ? { background: value } : null} onClick=${() => setOpen(!open)}></button>
+    ${open && html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${244}><${ColorPicker} value=${value ?? "#8b7bff"} onChange=${(v) => v && onChange(v)} /><//>`}`;
+}
+
+/** Drag the puck to tilt (vertical) and turn (horizontal). */
+function Pad3D({ rx, ry, onChange }) {
+  const ref = useRef();
+  const RX = 40;
+  const RY = 50;
+  const down = (ev) => {
+    ev.preventDefault();
+    const r = ref.current.getBoundingClientRect();
+    const go = (e) => {
+      let y = Math.round(clamp(((e.clientX - r.left) / r.width) * 2 - 1, -1, 1) * RY);
+      let x = Math.round(clamp(-(((e.clientY - r.top) / r.height) * 2 - 1), -1, 1) * RX);
+      if (Math.abs(x) < 2) x = 0;
+      if (Math.abs(y) < 2) y = 0;
+      onChange(x, y);
+    };
+    go(ev);
+    const up = () => {
+      window.removeEventListener("pointermove", go);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", go);
+    window.addEventListener("pointerup", up);
+  };
+  return html`<div class="pad3d" ref=${ref} onPointerDown=${down} onDblClick=${() => onChange(0, 0)} title="Drag to tilt · double-click to flatten">
+    <div class="phone" style=${{ transform: `rotateX(${rx}deg) rotateY(${ry}deg)` }}></div>
+    <div class="puck" style=${{ left: 50 + (ry / RY) * 50 + "%", top: 50 - (rx / RX) * 50 + "%" }}></div>
+    <span class="lbl-y">tilt ${Math.round(rx)}°</span><span class="lbl-x">turn ${Math.round(ry)}°</span>
+  </div>`;
+}
+
+function Highlights({ i, d }) {
+  const hs = d.highlights ?? [];
+  const [ocr, setOcr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const upd = (fn, key) => edit((sc) => fn(sc.devices[i]), key && `d${i}.hl.${key}`);
+  const find = async () => {
+    setBusy(true);
+    try {
+      const boxes = await api(`/api/text?path=${encodeURIComponent(d.screenshot)}`);
+      setOcr(boxes.filter((b) => b.text.trim().length > 1));
+    } catch (e) {
+      fail(e, "Couldn't read the screenshot");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<${Section} title="Call-outs" count=${hs.length || undefined} collapsible id="hl"
+      right=${html`<button class="btn sm ghost" onClick=${find} disabled=${busy}>${busy ? html`<span class="spinner"></span>` : html`<${Icon} n="search" s=${12} />`}Find text</button>`}>
+    ${hs.map(
+      (hl, j) => html`<div class="hl-item">
+        <div class="vstack" style=${{ gap: "6px" }}>
+          <${Dropdown} value=${hl.style} options=${HL_STYLES} onChange=${(v) => upd((dev) => (dev.highlights[j].style = v))} />
+          <${TextField} value=${hl.text} placeholder="Text on screen, e.g. Add task" onChange=${(v) => upd((dev) => (dev.highlights[j].text = v || undefined), `t${j}`)} />
+        </div>
+        <button class="icon-btn sm" title="Remove" onClick=${() => upd((dev) => {
+          dev.highlights.splice(j, 1);
+          if (!dev.highlights.length) delete dev.highlights;
+        })}><${Icon} n="x" s=${13} /></button>
+      </div>`,
+    )}
+    ${ocr &&
+    html`<div class="note">Click text to highlight it:</div><div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => upd((dev) => {
+      dev.highlights = [...(dev.highlights ?? []), { style: "lift", text: b.text }];
+    })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`}
+    ${!hs.length && !ocr && html`<div class="note">Draw attention to one part of the screen: lift it out, magnify it, or dim everything else. Press <b>Find text</b> and click the words you want to call out. Call-outs show in Preview.</div>`}
+    ${hs.length > 0 && html`<button class="btn sm" onClick=${() => upd((dev) => (dev.highlights = [...(dev.highlights ?? []), { style: "lift" }]))}><${Icon} n="plus" s=${12} />Add another</button>`}
+  <//>`;
+}
+
+// =============================================================================================
+// Text styling shared by the caption and text items
+
+function TypeControls({ font, weight, color, onFont, onWeight, onColor, align, onAlign, uppercase, onUpper, spacing, onSpacing, colorAuto = "Auto" }) {
+  return html`
+    <div class="row"><label>Font</label><${Dropdown} value=${font ?? ""} options=${FONTS} search onChange=${onFont} render=${(o) => html`<span style=${{ fontFamily: o.font }}>${o.label}</span>`} /></div>
+    <div class="row"><label>Weight</label><${Dropdown} value=${nearestWeight(weight ?? 700)} options=${WEIGHTS} onChange=${onWeight} /></div>
+    ${onAlign && html`<div class="row"><label>Align</label><${Seg} class="icons" value=${align ?? "center"} options=${[{ value: "left", label: "", icon: "alignL", title: "Left" }, { value: "center", label: "", icon: "alignC", title: "Centre" }, { value: "right", label: "", icon: "alignR", title: "Right" }]} onChange=${onAlign} /></div>`}
+    <div class="row"><label>Colour</label><${ColorButton} value=${color} auto=${colorAuto} onChange=${onColor} /></div>
+    <div class="row"><label>Tracking</label><${Slider} value=${spacing} min=${-0.1} max=${0.3} step=${0.005} fallback=${-0.02} centered format=${(v) => v.toFixed(3)} onChange=${onSpacing} /></div>
+    <${Switch} checked=${Boolean(uppercase)} onChange=${onUpper} label="Uppercase" />
+  `;
+}
+
+function CaptionInspector() {
+  const s = useStore();
+  const sc = s.scene;
+  const st = sc.textStyle ?? {};
+  const e = s.layout?.entities.find((x) => x.id === "caption");
+  const upd = (fn, key) => edit((d) => {
+    d.textStyle = { ...(d.textStyle ?? {}) };
+    fn(d.textStyle, d);
+  }, key && `cap.${key}`);
+  const placed = st.x !== undefined || st.y !== undefined;
+  return html`
+    <${Head} title="Caption" id="caption" />
+    <div class="panel-body">
+      <${Section} title="Words">
+        <${AccentText} rows=${2} value=${sc.headline} placeholder="Headline" onChange=${(v) => edit((d) => (d.headline = v || undefined), "headline")} />
+        <${TextField} value=${sc.subheadline} placeholder="Subheadline (optional)" onChange=${(v) => edit((d) => (d.subheadline = v || undefined), "subheadline")} />
+        <div class="row"><label>Star colour</label><${ColorButton} value=${st.accentColor} auto="Bold only" onChange=${(v) => upd((t) => (t.accentColor = v), "accent")} /></div>
+        <div class="note">Words in **stars** take this colour, in the headline and in extra text that doesn't pick its own.</div>
+      <//>
+      <${Section} title="Size & position" right=${placed ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((t) => {
+        for (const k of ["x", "y", "anchor", "width"]) delete t[k];
+      })}><${Icon} n="refresh" s=${12} />Auto-place</button>` : null}>
+        <div class="row"><label>Size</label><${Slider} value=${st.headlineSize ?? e?.size} min=${0.015} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((t) => (t.headlineSize = v && r4(v)), "hs")} /></div>
+        <div class="row"><label>Place</label><${Seg} value=${placed ? "" : st.position ?? "top"} options=${["top", "bottom", "left", "right"]} onChange=${(v) => upd((t) => {
+          for (const k of ["x", "y", "anchor"]) delete t[k];
+          t.position = v === "top" ? undefined : v;
+        })} /></div>
+        <div class="grid2">
+          <${Num} label="X" value=${st.x ?? e?.x} ...${pct} onChange=${(v) => upd((t) => {
+            t.x = v === undefined ? undefined : r4(v);
+            t.y ??= e?.y;
+            t.anchor ??= e?.anchor;
+          }, "x")} />
+          <${Num} label="Y" value=${st.y ?? e?.y} ...${pct} onChange=${(v) => upd((t) => {
+            t.y = v === undefined ? undefined : r4(v);
+            t.x ??= e?.x;
+            t.anchor ??= e?.anchor;
+          }, "y")} />
+          <${Num} label="W" title="Width of the text block, % of the image" value=${st.width ?? e?.width} ...${pct} min=${0.1} max=${1.2} onChange=${(v) => upd((t) => (t.width = v && r4(v)), "w")} />
+        </div>
+      <//>
+      <${Section} title="Style">
+        <${TypeControls} font=${st.font} weight=${st.headlineWeight} color=${st.color}
+          onFont=${(v) => upd((t) => (t.font = v || undefined))}
+          onWeight=${(v) => upd((t) => (t.headlineWeight = v === 700 ? undefined : v))}
+          onColor=${(v) => upd((t) => (t.color = v), "color")}
+          align=${st.align ?? e?.align} onAlign=${(v) => upd((t) => (t.align = v))}
+          uppercase=${st.uppercase} onUpper=${(v) => upd((t) => (t.uppercase = v || undefined))}
+          spacing=${st.letterSpacing} onSpacing=${(v) => upd((t) => (t.letterSpacing = v), "ls")} />
+        <${Switch} checked=${Boolean(st.shadow)} onChange=${(v) => upd((t) => (t.shadow = v || undefined))} label="Soft text shadow" />
+      <//>
+    </div>`;
+}
+
+function TextInspector({ id }) {
+  const s = useStore();
+  const i = Number(id.split("-")[1]) - 1;
+  const t = s.scene.texts?.[i];
+  const e = s.layout?.entities.find((x) => x.id === id);
+  if (!t) return null;
+  const upd = (fn, key) => edit((d) => fn(d.texts[i]), key && `t${i}.${key}`);
+  const headAccent = s.scene.textStyle?.accentColor;
+  return html`
+    <${Head} title="Text" id=${id} />
+    <div class="panel-body">
+      <${Section} title="Words">
+        <${AccentText} rows=${2} value=${t.text} onChange=${(v) => upd((x) => (x.text = v), "text")} />
+        <div class="row"><label>Star colour</label><${ColorButton} value=${t.accentColor} auto=${headAccent ? "Same as headline" : "Bold only"} autoColor=${headAccent}
+          onChange=${(v) => upd((x) => (x.accentColor = v), "accent")} /></div>
+        <div class="note">Words in **stars** take the star colour${headAccent ? " (the headline's until you pick one)" : ""}.</div>
+      <//>
+      <${Section} title="Size & position">
+        <div class="grid2">
+          <${Num} label="X" value=${t.x ?? e?.x} ...${pct} onChange=${(v) => upd((x) => (x.x = v === undefined ? undefined : r4(v)), "x")} />
+          <${Num} label="Y" value=${t.y ?? e?.y} ...${pct} onChange=${(v) => upd((x) => (x.y = v === undefined ? undefined : r4(v)), "y")} />
+        </div>
+        <div class="row"><label>Size</label><${Slider} value=${t.size ?? e?.size} min=${0.008} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((x) => (x.size = v && r4(v)), "size")} /></div>
+        <div class="row"><label>Rotation</label><${Slider} value=${t.rotate ?? 0} min=${-45} max=${45} step=${0.5} centered reset=${0} format=${(v) => v + "°"} onChange=${(v) => upd((x) => (x.rotate = v || undefined), "rot")} /></div>
+      <//>
+      <${Section} title="Style">
+        <${TypeControls} font=${t.font} weight=${t.weight} color=${t.color}
+          onFont=${(v) => upd((x) => (x.font = v || undefined))}
+          onWeight=${(v) => upd((x) => (x.weight = v))}
+          onColor=${(v) => upd((x) => (x.color = v), "color")}
+          align=${t.align ?? "center"} onAlign=${(v) => upd((x) => (x.align = v))}
+          uppercase=${t.uppercase} onUpper=${(v) => upd((x) => (x.uppercase = v || undefined))}
+          spacing=${t.letterSpacing} onSpacing=${(v) => upd((x) => (x.letterSpacing = v), "ls")} />
+        <div class="row"><label>Opacity</label><${Slider} value=${t.opacity} min=${0.1} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
+      <//>
+      <${Section} title="Badge">
+        <div class="row"><label>Pill colour</label><${ColorButton} value=${t.background} auto="None" onChange=${(v) => upd((x) => (x.background = v), "bg")} /></div>
+        <${Switch} checked=${Boolean(t.shadow)} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft text shadow" />
+      <//>
+    </div>`;
+}
+
+// =============================================================================================
+// Scene
+
+const CANVASES = [
+  { value: "", label: "Auto", w: 9, h: 19.5, hint: "The App Store size for your device" },
+  { value: "iphone-6.9", label: "iPhone 6.9″", w: 1320, h: 2868, hint: "App Store: required iPhone size" },
+  { value: "iphone-6.5", label: "iPhone 6.5″", w: 1284, h: 2778, hint: "App Store: older iPhone size" },
+  { value: "ipad-13", label: "iPad 13″", w: 2064, h: 2752, hint: "App Store: iPad size" },
+  { value: "9:16", label: "Story", w: 9, h: 16, hint: "9:16 for Stories, Reels and TikTok" },
+  { value: "4:5", label: "Post", w: 4, h: 5, hint: "4:5 for Instagram posts" },
+  { value: "1:1", label: "Square", w: 1, h: 1, hint: "1:1" },
+  { value: "16:9", label: "Wide", w: 16, h: 9, hint: "16:9 for websites, X and YouTube" },
+];
+const LAYOUT_NAMES = { hero: "Title on top", "hero-bleed": "Big device", "text-bottom": "Title below", tilted: "Tilted", floating: "No title", duo: "Two devices", trio: "Three devices", split: "Title beside", stack: "Stacked" };
+const LAYOUT_TIPS = {
+  hero: "Headline at the top, device underneath",
+  "hero-bleed": "A large device that runs off the bottom edge",
+  "text-bottom": "Device on top, headline underneath",
+  tilted: "Device angled in 3D",
+  floating: "Just the device, no headline space",
+  duo: "Two devices side by side",
+  trio: "Three devices in a row",
+  split: "Headline on one side, device on the other",
+  stack: "Devices overlapping, e.g. a Mac and an iPhone",
+};
+
+function SceneInspector() {
+  const s = useStore();
+  const sc = s.scene;
+  const presets = s.opts?.canvases ?? {};
+  const canvases = CANVASES.filter((c) => !c.value || presets[c.value]);
+  const cur = typeof sc.canvas === "string" ? sc.canvas : sc.canvas ? `${sc.canvas.width}x${sc.canvas.height}` : "";
+  const custom = cur && !canvases.some((c) => c.value === cur);
+  const [cw, ch] = (/^(\d+)x(\d+)$/.exec(cur) ?? []).slice(1).map(Number);
+  const layouts = (s.opts?.layouts ?? []).filter((l) => l !== "custom");
+  const o = bgObj(sc.background);
+  const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
+  const bgStill = sc.background && !o.generate && o.type !== "transparent" ? `/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(sc.background))}&w=120&h=120` : null;
+  return html`
+    <div class="panel-head"><h2>Whole image</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
+    <div class="panel-body">
+      <div class="intro">Nothing is selected, so these settings apply to the whole image. Click something in the design to edit it.</div>
+      <${Section} title="Image size">
+        <div class="canvas-presets">${canvases.map((c) => {
+          const r = c.w / c.h;
+          const box = r >= 1 ? { width: "26px", height: 26 / r + "px" } : { width: 30 * r + "px", height: "30px" };
+          return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => edit((d) => (d.canvas = c.value || undefined))}><i style=${box}></i>${c.label}</button>`;
+        })}</div>
+        <div class="grid2">
+          <${Num} label="W" value=${custom ? cw : undefined} placeholder=${s.layout?.canvas.width ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${Math.round(v)}x${ch || s.layout?.canvas.height || Math.round(v)}`))} />
+          <${Num} label="H" value=${custom ? ch : undefined} placeholder=${s.layout?.canvas.height ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${cw || s.layout?.canvas.width || Math.round(v)}x${Math.round(v)}`))} />
+        </div>
+        <${Switch} checked=${Boolean(sc.landscape)} onChange=${(v) => edit((d) => (d.landscape = v || undefined))} label="Landscape" />
+      <//>
+      <${Section} title="Arrangement">
+        <div class="layouts">
+          <button class="layout-opt ${!sc.layout ? "on" : ""}" title="Picks an arrangement for the number of devices" onClick=${() => edit((d) => delete d.layout)}><${LayoutIcon} n="custom" />Automatic</button>
+          ${layouts.map((l) => html`<button class="layout-opt ${sc.layout === l ? "on" : ""}" title=${LAYOUT_TIPS[l] ?? ""} onClick=${() => edit((d) => (d.layout = l))}><${LayoutIcon} n=${l} />${LAYOUT_NAMES[l] ?? l}</button>`)}
+        </div>
+        ${sc.devices.some((d) => d.x !== undefined || d.y !== undefined) &&
+        html`<button class="btn sm" onClick=${() => edit((d) => d.devices.forEach((dev) => ["x", "y", "anchor", "height", "width", "rotate"].forEach((k) => delete dev[k])))}>
+          <${Icon} n="refresh" s=${12} />Undo hand placement on all devices</button>`}
+        <div class="note">Devices you drag by hand keep their spot. Everything else follows the arrangement.</div>
+      <//>
+      <${Section} title="Backdrop">
+        <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
+          <span class="sw" style=${{ background: "var(--check)" }}>${bgStill && html`<img src=${bgStill} />`}</span>
+          <span class="grow"><b style=${{ display: "block", textTransform: "capitalize" }}>${String(bgName).replace(/-/g, " ")}</b><span class="note">Change the look, colours or photo</span></span>
+          <${Icon} n="right" s=${14} />
+        </button>
+      <//>
+      ${s.layout?.warnings?.length ? html`<${Section} title="Notes">${s.layout.warnings.map((w) => html`<div class="note warn">${w}</div>`)}<//>` : null}
+      ${s.layoutError && html`<${Section} title="Problem"><div class="note err">${s.layoutError}</div><//>`}
+
+    </div>`;
+}

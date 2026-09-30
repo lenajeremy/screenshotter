@@ -1,0 +1,63 @@
+{
+  "name": "screenshotter-mcp",
+  "version": "0.1.0",
+  "description": "MCP server and studio that capture iOS Simulator, web and Mac screens and turn them into polished device mockups, App Store sets and videos.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "screenshotter-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-ui.mjs && chmod +x dist/index.js",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "studio": "node dist/index.js studio",
+    "studio:dev": "tsx src/index.ts studio",
+    "smoke": "tsx scripts/smoke.ts",
+    "test:edge": "tsx scripts/edge.ts",
+    "app:build": "node scripts/build-app.mjs",
+    "app:start": "open build/Screenshotter.app",
+    "app:test": "swift test --package-path app",
+    "test:studio": "tsx scripts/studio-test.ts",
+    "app:check": "node scripts/app-check.mjs",
+    "app:dmg": "node scripts/build-dmg.mjs",
+    "site:assets": "tsx scripts/site-assets.ts",
+    "site": "cd site && python3 -m http.server 4700 --bind 127.0.0.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "marked": "^18.0.14",
+    "puppeteer-core": "^25.12.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "htm": "^3.1.1",
+    "preact": "^10.29.8",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "screenshots",
+    "mockups",
+    "ios-simulator",
+    "app-store",
+    "claude-code",
+    "codex"
+  ]
+}
