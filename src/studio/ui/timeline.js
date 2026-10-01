@@ -889,7 +889,7 @@ function ShotStrip() {
   const addBtn = html`<button class="shot-add" title="Add a shot after this one: a copy of it, or one of your designs" onClick=${addMenu}><${Icon} n="plus" s=${14} w=${2.2} /><span>${many ? "" : "Add a shot"}</span></button>`;
   if (!many) {
     return html`<div class="tl-shots">
-      <button class="shot on" title="Shot 1, on the canvas"><${ShotThumb} scene=${s.scene} /><span class="shot-n">1</span><span class="shot-len">${videoLength().toFixed(1)}s</span></button>
+      <button class="tl-shot on" title="Shot 1, on the canvas"><${ShotThumb} scene=${s.scene} /><span class="shot-n">1</span><span class="shot-len">${videoLength().toFixed(1)}s</span></button>
       ${addBtn}
     </div>`;
   }
@@ -924,7 +924,7 @@ function ShotStrip() {
       ${plan.shots.map((x, i) => {
         const left = plan.starts[i] * pps;
         const right = (i < n - 1 ? plan.starts[i + 1] : plan.total) * pps;
-        return html`<button class="shot ${i === s.shot ? "on" : ""} ${s.shotPulse?.includes(i) ? "pulse" : ""}" key=${`s${i}`} style=${{ left: left + "px", width: Math.max(18, right - left - 3) + "px" }}
+        return html`<button class="tl-shot ${i === s.shot ? "on" : ""} ${s.shotPulse?.includes(i) ? "pulse" : ""}" key=${`s${i}`} style=${{ left: left + "px", width: Math.max(18, right - left - 3) + "px" }}
             title=${i === s.shot ? `Shot ${i + 1}, on the canvas. Right-click to move or remove it.` : `Shot ${i + 1}: click to edit it`} onClick=${() => goToShot(i)} onContextMenu=${(e) => shotMenu(e, i)}>
           <${ShotThumb} scene=${i === s.shot ? s.scene : x.scene} film />
           <span class="shot-n">${i + 1}</span>
