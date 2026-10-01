@@ -5,10 +5,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { type Family, findModel } from "../devices/catalog.js";
 import { readSidecar } from "../devices/resolve.js";
 import { CANVAS_PRESETS, defaultCanvasFor } from "../render/layouts.js";
-import { createMockup, resolveCanvas } from "../render/mockup.js";
+import { createMockup, renderHtml, resolveCanvas } from "../render/mockup.js";
 import type { MockupInput } from "../render/schema.js";
 import { cacheDir, ensureDir, outputRoot, resolveUserPath, slug } from "../util/files.js";
 
@@ -348,13 +349,32 @@ async function renderThumb(id: string) {
     return;
   }
   const tmp = path.join(dir(), `${id}.tmp.jpg`);
+  // A set shows its first screens side by side, so it reads as a set in My designs.
+  const screens = firstScreens(s).slice(0, 4);
+  const parts = screens.map((_, i) => path.join(dir(), `${id}.tmp-${i}.jpg`));
   try {
-    await createMockup({ ...(structuredClone(s.scene) as MockupInput), quality: "preview", format: "jpeg", jpegQuality: 78, deliveryWidth: THUMB_WIDTH, preview: false, output: tmp });
+    if (screens.length < 2) {
+      await createMockup({ ...(structuredClone(s.scene) as MockupInput), quality: "preview", format: "jpeg", jpegQuality: 78, deliveryWidth: THUMB_WIDTH, preview: false, output: tmp });
+    } else {
+      const shots = await Promise.all(
+        screens.map((x, i) => createMockup({ ...(structuredClone(x.scene) as MockupInput), quality: "preview", format: "jpeg", jpegQuality: 80, deliveryWidth: Math.round(THUMB_WIDTH / 2), preview: false, output: parts[i] })),
+      );
+      // Laid out on the card's own colour, a little apart, each with its own corners.
+      const h = 400;
+      const gap = 14;
+      const widths = shots.map((r) => Math.round((r.width / r.height) * h));
+      const W = widths.reduce((a, b) => a + b, 0) + gap * (shots.length + 1);
+      const H = h + gap * 2;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#131316}#c{display:flex;gap:${gap}px;padding:${gap}px;width:${W}px;height:${H}px;box-sizing:border-box}img{height:${h}px;border-radius:6px}</style></head><body><div id="c">${shots.map((r, i) => `<img src="${pathToFileURL(r.path).href}" style="width:${widths[i]}px">`).join("")}</div></body></html>`;
+      await renderHtml(html, tmp, W, H, { scale: Math.min(2, (THUMB_WIDTH * 1.5) / W), format: "jpeg", quality: 82, transparent: false });
+    }
     renameSync(tmp, out);
   } catch {
     // A scene that can't render (a missing screenshot) just keeps its old thumbnail.
   } finally {
-    rmSync(tmp, { force: true });
-    rmSync(`${tmp}.mockup.json`, { force: true });
+    for (const f of [tmp, ...parts]) {
+      rmSync(f, { force: true });
+      rmSync(`${f}.mockup.json`, { force: true });
+    }
   }
 }

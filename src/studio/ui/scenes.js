@@ -86,7 +86,7 @@ export function ScenesPopover({ anchor }) {
           (x) => html`<div class="scene-card ${x.id === s.sceneId ? "on" : ""}" role="button" tabindex="0" data-scene=${x.id} title=${x.name}
               onClick=${() => openScene(x.id)} onKeyDown=${(e) => e.key === "Enter" && openScene(x.id)}>
             <${SceneThumb} x=${x} />
-            <div class="scene-meta"><b>${x.name}</b><span>${x.id === s.sceneId ? "Open now" : cap(when(x.updatedAt))}</span></div>
+            <div class="scene-meta"><b>${x.name}</b><span>${[x.id === s.sceneId ? "Open now" : cap(when(x.updatedAt)), setLabel(x)].filter(Boolean).join(" · ")}</span></div>
             <button class="scene-more" title="More" onClick=${(e) => {
               e.stopPropagation();
               const r = e.currentTarget.getBoundingClientRect();
@@ -144,6 +144,9 @@ function groupsOf(list, sort) {
   }
   return out;
 }
+
+/** A set's screens and sizes, "4 screens · 2 sizes"; nothing for a single design. */
+const setLabel = (x) => [x.shots > 1 && `${x.shots} screens`, x.sizes > 1 && `${x.sizes} sizes`].filter(Boolean).join(" · ");
 
 /** "iPhone 18 Pro ×2, MacBook Pro 14-inch". */
 function devicesLabel(x) {
@@ -231,6 +234,7 @@ function Card({ x, sort, on, fresh, renaming }) {
     <div class="sp-thumb">
       <${Thumb} x=${x} />
       ${on && html`<span class="sp-badge"><i></i>Open now</span>`}
+      ${setLabel(x) && html`<span class="sp-set" title="A set: its screens are App Store screenshots, and play in order as its video">${setLabel(x)}</span>`}
     </div>
     <div class="sp-info">
       <div class="sp-text">
@@ -257,7 +261,7 @@ function ListView({ list, sort, s }) {
           ${s.renaming === x.id ? html`<${NameEdit} x=${x} />` : html`<b title=${x.name}>${x.name}</b>`}
           ${on && html`<span class="sp-badge inline"><i></i>Open</span>`}
         </span>
-        <span class="sp-dim sp-devs"><${Kinds} x=${x} /><span>${devicesLabel(x)}</span></span>
+        <span class="sp-dim sp-devs"><${Kinds} x=${x} /><span>${devicesLabel(x)}${setLabel(x) ? ` · ${setLabel(x)}` : ""}</span></span>
         <span class="sp-dim mono">${x.size ? `${x.size.width} × ${x.size.height}` : "—"}</span>
         <span class="sp-dim">${cap(when(x.updatedAt))}</span>
         <span class="sp-dim">${cap(when(x.createdAt))}</span>
