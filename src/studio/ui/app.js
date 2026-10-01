@@ -53,7 +53,7 @@ import {
   screenName,
   sizeLabel,
 } from "./actions.js";
-import { CanvasView, canvasApi, commitEntity, withShape } from "./canvas.js";
+import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
 import { BackgroundsPanel, CapturesPanel, DesignsPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
@@ -1784,8 +1784,15 @@ window.addEventListener("drop", (e) => {
   set({ dropping: false });
   const files = [...e.dataTransfer.files];
   // On the Scenes page, a drop starts a new scene with the files.
-  if (S.scenesPage) newScene().then(() => (closeScenesPage(), uploadFiles(files)));
-  else uploadFiles(files);
+  if (S.scenesPage) return newScene().then(() => (closeScenesPage(), uploadFiles(files)));
+  // On another screen of the set: open it, and the files go there (onto the device dropped on).
+  const ghost = e.target.closest?.(".ghost-wrap.set");
+  if (ghost) {
+    const device = deviceAtPoint(ghost, e.clientX, e.clientY);
+    goToShot(Number(ghost.dataset.shot));
+    return uploadFiles(files, { device });
+  }
+  uploadFiles(files);
 });
 
 // Report the draggable title-bar area to the desktop shell.

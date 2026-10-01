@@ -731,6 +731,9 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .cs-where .lbl { flex: none; font-size: 12px; color: var(--text-3); }
 .cs-where .seg { flex: 1; }
 
+/* A screenshot dragged over another screen of the set: that screen is where it goes. */
+.ghost-wrap.set.drop-over { opacity: 1; }
+.ghost-wrap.set.drop-over::after { content: ""; position: absolute; inset: -3px; border-radius: 4px; box-shadow: 0 0 0 2px var(--lime), 0 0 0 7px color-mix(in oklab, var(--lime) 22%, transparent); pointer-events: none; }
 /* Dragging a screen to another place: it dims, and a lime bar marks the gap it goes into. */
 .ghost-wrap.set.dragging, .set-label.dragging { opacity: 0.45; }
 .set-drop { position: absolute; top: 0; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--lime); box-shadow: 0 0 0 4px color-mix(in oklab, var(--lime) 25%, transparent); z-index: 97; pointer-events: none; }

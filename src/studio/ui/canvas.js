@@ -369,13 +369,13 @@ function useShotLayouts(on) {
 }
 
 /** Another shot, as it looks (fitted into the frame): click it to edit it. */
-function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging = false, onGrab }) {
+function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging = false, dropping = false, onGrab }) {
   const gW0 = layout.canvas.width;
   const gH0 = layout.canvas.height;
   const k = Math.min(W / gW0, H / gH0);
   const gw = gW0 * k;
   const gh = gH0 * k;
-  return html`<div class="ghost-wrap ${inSet ? "set" : ""} ${dragging ? "dragging" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it, drag to move it` : `Shot ${index + 1}: click to edit it`}
+  return html`<div class="ghost-wrap ${inSet ? "set" : ""} ${dragging ? "dragging" : ""} ${dropping ? "drop-over" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it, drag to move it` : `Shot ${index + 1}: click to edit it`}
       onPointerDown=${(ev) => {
         if (ev.button !== 0) return;
         ev.stopPropagation();
@@ -858,10 +858,14 @@ export function CanvasView() {
   // ------------------------------------------------------------------ drop captures from the library
 
   const onDragOver = (ev) => {
-    if (!ev.dataTransfer.types.includes("application/x-screenshot")) return;
+    const files = ev.dataTransfer.types.includes("Files");
+    if (!ev.dataTransfer.types.includes("application/x-screenshot") && !files) return;
+    // Over another screen of the set, that screen lights up: the drop goes there.
+    const ghost = ev.target.closest?.(".ghost-wrap.set");
+    if (files) return setDropOver(ghost ? Number(ghost.dataset.shot) : false);
     ev.preventDefault();
     ev.dataTransfer.dropEffect = "copy";
-    setDropOver(true);
+    setDropOver(ghost ? Number(ghost.dataset.shot) : true);
   };
   const onDrop = (ev) => {
     const p = ev.dataTransfer.getData("application/x-screenshot");
@@ -869,9 +873,20 @@ export function CanvasView() {
     if (!p) return;
     ev.preventDefault();
     ev.stopPropagation();
+    // On another screen of the set: open it, then place it there as on the one being edited.
+    const ghost = ev.target.closest?.(".ghost-wrap.set");
+    if (ghost) {
+      const board = ghost.querySelector(".artboard").getBoundingClientRect();
+      const on = deviceAtPoint(ghost, ev.clientX, ev.clientY);
+      goToShot(Number(ghost.dataset.shot));
+      return placeShot(p, on, { x: r4((ev.clientX - board.left) / board.width), y: r4((ev.clientY - board.top) / board.height) });
+    }
     const a = art.current?.getBoundingClientRect();
-    const target = ev.target.closest?.(".ent-device")?.dataset.id;
-    if (target) {
+    placeShot(p, ev.target.closest?.(".ent-device")?.dataset.id, a && { x: r4((ev.clientX - a.left) / a.width), y: r4((ev.clientY - a.top) / a.height) });
+  };
+  /** A screenshot dropped on the screen being edited: onto the device it was dropped on, else a new device where it landed. */
+  const placeShot = (p, target, at) => {
+    if (target && S.scene.devices[Number(target.split("-")[1]) - 1]) {
       const i = Number(target.split("-")[1]) - 1;
       const rec = recordingFor(p);
       edit((d) => {
@@ -882,7 +897,7 @@ export function CanvasView() {
       set({ selected: target });
       return;
     }
-    if (a && S.scene.devices.length) addDevice(p, { x: r4((ev.clientX - a.left) / a.width), y: r4((ev.clientY - a.top) / a.height) });
+    if (at && S.scene.devices.length) addDevice(p, at);
     else addDevice(p);
   };
 
@@ -925,7 +940,7 @@ export function CanvasView() {
     html`<div class="world" ref=${world} style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
       ${multi && html`<div class="join-matte" style=${{ width: W + "px", height: H + "px" }}></div>`}
       ${multi && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`g${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} />`)}
-      ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} dragging=${reorder?.from === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
+      ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} dragging=${reorder?.from === i} dropping=${dropOver === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
       ${setMode && s.shots.map((x, i) => html`<${SetLabel} key=${`l${i}`} i=${i} x=${(i - s.shot) * (W + G)} w=${W} on=${i === s.shot} dragging=${reorder?.from === i} renaming=${renaming === i} onDone=${() => setRenaming(null)} onGrab=${(ev) => dragScreen(ev, i)} />`)}
       ${setMode && reorder && html`<div class="set-drop" style=${{ left: (reorder.to - s.shot) * (W + G) - G / 2 + "px", height: H + "px" }}></div>`}
       ${setMode && html`<button class="set-add" style=${{ left: (s.shots.length - s.shot) * (W + G) + "px", width: W * SET_ADD + "px", height: H + "px" }} title="Add a screen at the end: a copy of the last one"
@@ -935,7 +950,7 @@ export function CanvasView() {
         set({ selected: null, rightOpen: true });
         persistPrefs();
       }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><${Icon} n="down" s=${11} /></button><span class="faint">${s.shots?.length > 1 ? html`· <b class="shot-of">Screen ${s.shot + 1} of ${s.shots.length}</b> ` : ""}${!s.timelineOpen && !(s.shots?.length > 1) ? html`· <button class="link-btn" onPointerDown=${(e) => e.stopPropagation()} onClick=${() => addShot("copy")} title="Make this a set: add another screen beside it">Add a screen</button> ` : ""}· Edit view shows placement. Preview shows the finished look.</span></div>
-      <div class="artboard ${setMode ? "in-set" : ""} ${dropOver ? "drop-over" : ""} ${s.ai.busy || s.designing ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px", "--set-gap": G + "px" }}>
+      <div class="artboard ${setMode ? "in-set" : ""} ${dropOver === true ? "drop-over" : ""} ${s.ai.busy || s.designing ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px", "--set-gap": G + "px" }}>
         <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} />
         ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
         ${entities.map(
@@ -1013,6 +1028,18 @@ function SizeSwitch() {
 /** The gap between screens of a set, and the Add screen tile's width, as fractions of a screen's width. */
 const SET_GAP = 0.1;
 const SET_ADD = 0.42;
+
+/**
+ * The device under a point in a screen of the set, by where each is drawn (another screen doesn't take
+ * the pointer itself): the topmost one, as an entity id ("device-2").
+ */
+export function deviceAtPoint(root, x, y) {
+  const hit = [...root.querySelectorAll(".ent-device")].reverse().find((el) => {
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  });
+  return hit?.dataset.id;
+}
 
 /** A screen's name above it in the set: "01 · Introduction". Double-click to rename. */
 function SetLabel({ i, x, w, on, renaming, onDone, onGrab, dragging = false }) {
