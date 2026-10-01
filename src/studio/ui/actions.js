@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, aiEngine, aiName, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -61,7 +61,7 @@ export async function designForMe() {
     const res = await fetch("/api/ai-directions", {
       method: "POST",
       headers: { "x-screenshotter": "studio", "Content-Type": "application/json" },
-      body: JSON.stringify({ request: S.scene, model: S.ai.model || undefined, preview: S.ai.preview !== false }),
+      body: JSON.stringify({ request: S.scene, ...aiChoice(), preview: S.ai.preview !== false }),
       signal: stop.signal,
     });
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
@@ -896,8 +896,8 @@ export async function aiEdit(text) {
 
   /** Put a finished (or drafted) edit on the canvas and into the chat. */
   const finish = (r, { skippedCheck = false } = {}) => {
-    if (S.scene !== snapshot || S.shots !== shotsSnapshot || S.shot !== shotSnapshot) throw new Error("The design changed while Claude was working. Ask again.");
-    const via = r.provider === "api" ? r.model ?? "Claude" : "Claude Code";
+    if (S.scene !== snapshot || S.shots !== shotsSnapshot || S.shot !== shotSnapshot) throw new Error(`The design changed while ${aiName()} was working. Ask again.`);
+    const via = r.provider === "api" ? r.model ?? "Claude" : r.provider === "codex" ? "Codex" : "Claude Code";
     const took = Math.max(1, Math.round((Date.now() - started) / 1000));
     const answered = !r.operations?.length;
     const steps = { list: doneSteps(answered), items: S.ai.work?.items ?? [], retried: Boolean(S.ai.work?.retry), checked: r.checked, skippedCheck, remembered: r.remembered };
@@ -934,7 +934,7 @@ export async function aiEdit(text) {
 
   try {
     const r = await streamEdit(
-      { request: snapshot, instruction, selection, history, model: S.ai.model || undefined, preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
+      { request: snapshot, instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
       (p) => {
         if (p.step === "look") {
           if (!p.image) return step("look");
@@ -967,7 +967,7 @@ export async function aiEdit(text) {
       }
     }
     const current = S.ai.work?.steps?.at(-1)?.key;
-    const text = run.stop.signal.aborted && !run.takeDraft ? `Stopped${STOPPED_AT[current] ? ` ${STOPPED_AT[current]}` : ""}. Nothing changed.` : e.message;
+    const text = run.stop.signal.aborted && !run.takeDraft ? `Stopped${stoppedAt(current) ? ` ${stoppedAt(current)}` : ""}. Nothing changed.` : e.message;
     set({ ai: { ...S.ai, busy: false, work: null, thread: [...S.ai.thread, msg({ role: "error", stopped: run.stop.signal.aborted, text, retry: instruction })] } });
   } finally {
     if (aiRun === run) aiRun = null;
@@ -975,16 +975,20 @@ export async function aiEdit(text) {
 }
 
 /** Where an edit was when it was stopped, for the chat. */
-const STOPPED_AT = {
-  look: "while rendering your design",
-  read: "while reading the design",
-  think: "while Claude was designing",
-  retry: "while Claude was fixing its first try",
-  frames: "while Claude was looking at moments of the video",
-  generate: "while the backdrop image was being made",
-  render: "while rendering the result",
-  check: "while Claude was checking its work",
-};
+const stoppedAt = (step) =>
+  ({
+    look: "while rendering your design",
+    read: "while reading the design",
+    think: `while ${aiName()} was designing`,
+    retry: `while ${aiName()} was fixing its first try`,
+    frames: `while ${aiName()} was looking at moments of the video`,
+    generate: "while the backdrop image was being made",
+    render: "while rendering the result",
+    check: `while ${aiName()} was checking its work`,
+  })[step];
+
+/** The AI the person chose and, for Claude, its model (Codex uses the model set in Codex). */
+const aiChoice = () => ({ engine: aiEngine(), model: aiEngine() === "claude" ? S.ai.model || undefined : undefined });
 
 /** A new reply animates in once; after that it's just text (also when the chat is reopened). */
 function settle(id) {

@@ -19,7 +19,7 @@ Agents such as Claude Code or Codex drive it through MCP tools. You can drive th
 | --- | --- |
 | MCP server and Studio | macOS, Node.js 20 or later |
 | Desktop app | macOS 14+, and Xcode or its command line tools to build it |
-| Ask AI (optional) | Claude Code signed in (run `claude` once), or an Anthropic API key |
+| Ask AI (optional) | Claude Code signed in (run `claude` once), an Anthropic API key, or Codex signed in (run `codex` once) |
 | Simulator captures | Xcode with at least one iOS simulator runtime |
 | Rendering | Google Chrome, or another Chromium browser (set `SCREENSHOTTER_CHROME_PATH`) |
 | Videos | `ffmpeg` (`brew install ffmpeg`) |
@@ -194,7 +194,9 @@ Screenshotter doesn't include or redistribute Apple's bezels: Apple's license do
 
 Ask AI uses Claude. With nothing to configure, it uses your signed-in **Claude Code** (run `claude` once in Terminal). It runs in an isolated session with no tools, no MCP servers and no project files. Or add an **Anthropic API key** in **Settings** (the app keeps it in your Keychain), or set `ANTHROPIC_API_KEY`. With a key it calls the Claude API directly, defaulting to `claude-opus-5-5`; pick another model in Settings or with `SCREENSHOTTER_EDIT_MODEL`.
 
-Claude receives your instruction, the design settings, the current positions and, when the request is about how the design looks (or Claude asks to see it), a small preview render of the design (about 1400 px on the long side), so it can see spacing, contrast and what's on screen. Turn the preview off in **Settings › AI Edit** if you'd rather it only saw the settings. It never receives your files: screenshot, recording and font paths are replaced with placeholders, and it can only refer back to those placeholders. It replies with a short list of edits, which are checked against the design schema before they're applied, so anything you didn't ask about stays exactly as it was.
+To use **Codex** instead, choose it under **Settings › AI Edit › Use** (it's also used when it's the only one installed). It runs `codex exec` with your signed-in Codex and the model set in Codex, in a read-only sandbox in an empty folder, with no MCP servers and nothing saved; set `SCREENSHOTTER_CODEX_MODEL` or `SCREENSHOTTER_CODEX_EFFORT` (default `medium`) to override, and `SCREENSHOTTER_CODEX_PATH` if it isn't on your `PATH`. Design it for me uses the same choice.
+
+The AI receives your instruction, the design settings, the current positions and, when the request is about how the design looks (or it asks to see it), a small preview render of the design (about 1400 px on the long side), so it can see spacing, contrast and what's on screen. Turn the preview off in **Settings › AI Edit** if you'd rather it only saw the settings. It never receives your files: screenshot, recording and font paths are replaced with placeholders, and it can only refer back to those placeholders. It replies with a short list of edits, which are checked against the design schema before they're applied, so anything you didn't ask about stays exactly as it was.
 
 ## How agents use it
 

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, api, base, edit, entityLabel, fail, isVideo, persistPrefs, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, isVideo, persistPrefs, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import {
   SHAPE_KINDS,
@@ -815,7 +815,7 @@ export function ExportsGrid() {
 // =============================================================================================
 // Designs
 
-const DIRECTION_STEPS = { look: "Rendering your design", read: "Reading your screens", think: "Claude is designing three directions", render: "Rendering them", generate: "Making their AI backdrops" };
+const DIRECTION_STEPS = { look: "Rendering your design", read: "Reading your screens", get think() { return `${aiName()} is designing three directions`; }, render: "Rendering them", generate: "Making their AI backdrops" };
 
 /** Claude proposes three directions, rendered side by side; pick one. */
 function DesignForMe() {
@@ -830,14 +830,14 @@ function DesignForMe() {
   }, [d?.busy]);
   return html`<div class="dfm">
     <div class="dfm-head">
-      <div><b>Design it for me</b><span>Claude looks at your screens and proposes three directions. Pick the one you like.</span></div>
+      <div><b>Design it for me</b><span>${aiName()} looks at your screens and proposes three directions. Pick the one you like.</span></div>
       <button class="btn primary sm" disabled=${d?.busy || !s.scene.devices.length || (ai && !ai.available)} onClick=${designForMe}>
         ${d?.busy ? html`<span class="spinner"></span>Designing…` : html`<${Icon} n="spark" s=${13} />${d?.items?.length ? "Three more" : "Design it"}`}
       </button>
     </div>
     ${d?.busy &&
     html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint" title="This step · in all">${Math.max(0, Math.round((now - (d.stepAt ?? d.started)) / 1000))}s · ${Math.max(0, Math.round((now - d.started) / 1000))}s</span>
-      <button class="btn sm ghost" title="Stop Claude. Your design stays as it is." onClick=${stopDesignForMe}>Stop</button></div>
+      <button class="btn sm ghost" title=${`Stop ${aiName()}. Your design stays as it is.`} onClick=${stopDesignForMe}>Stop</button></div>
       ${d.step === "generate" && html`<div class="note">${IMAGE_PROVIDERS[d.provider] ?? "The image generator"} is making a new backdrop image. This can take a minute.</div>`}`}
     ${d?.error && html`<div class="note warn">${d.error}</div>`}
     ${d?.items?.length > 0 &&
@@ -847,7 +847,7 @@ function DesignForMe() {
         <b>${x.name}</b><span>${x.summary}</span>
       </button>`,
     )}</div>`}
-    ${ai && !ai.available && html`<div class="note">Needs Claude Code or an API key (Settings › AI Edit).</div>`}
+    ${ai && !ai.available && html`<div class="note">Needs Claude Code, Codex or an API key (Settings › AI Edit).</div>`}
   </div>`;
 }
 

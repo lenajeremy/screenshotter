@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, fileUrl, persistPrefs, refreshScenes, saveSceneNow, set, thumbUrl, useStore } from "./store.js";
+import { S, aiName, fileUrl, persistPrefs, refreshScenes, saveSceneNow, set, thumbUrl, useStore } from "./store.js";
 import { addDevice, deleteSavedScene, designForMe, duplicateSavedScene, newScene, openScene, renameSavedScene } from "./actions.js";
 import { openMenu } from "./menu.js";
 import { ExportsGrid } from "./panels.js";
@@ -397,7 +397,7 @@ export function ScenesPage() {
           </button>
           <button class="sp-start ai" disabled=${!latest} onClick=${() => start("ai")}>
             <span class="ico"><${Icon} n="spark" s=${18} /></span>
-            <span class="txt"><b>Design it for me</b><span>${latest ? "Claude makes three designs from your latest screenshot" : "Needs a screenshot to design around"}</span></span>
+            <span class="txt"><b>Design it for me</b><span>${latest ? `${aiName()} makes three designs from your latest screenshot` : "Needs a screenshot to design around"}</span></span>
           </button>
         </div>
         <div class="sp-shelves" role="tablist">

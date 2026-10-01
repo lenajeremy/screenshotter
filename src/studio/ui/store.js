@@ -111,7 +111,7 @@ export const S = {
   animRows: [],
   playing: false,
   /** docked: Ask AI fills the right-hand panel instead of floating over the canvas. */
-  ai: { open: false, docked: false, busy: false, text: "", error: null, history: [], thread: [], model: "", preview: true, context: true, last: null, imageQuality: "fast" },
+  ai: { open: false, docked: false, busy: false, text: "", error: null, history: [], thread: [], model: "", engine: "", preview: true, context: true, last: null, imageQuality: "fast" },
   pulse: [],
   toasts: [],
   modal: null,
@@ -253,7 +253,7 @@ const snapshot = () => ({
   sceneId: S.sceneId,
   shots: S.shots,
   shot: S.shot,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 2 },
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 2 },
 });
 export function persist() {
   persistPrefs();
@@ -383,7 +383,7 @@ export async function restore() {
   if (Number.isFinite(ui.tlH)) patch.tlH = ui.tlH;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
-  patch.ai = { ...S.ai, model: ui.aiModel ?? "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", docked: ui.aiDocked === true, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
+  patch.ai = { ...S.ai, model: ui.aiModel ?? "", engine: ui.aiEngine === "codex" || ui.aiEngine === "claude" ? ui.aiEngine : "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", docked: ui.aiDocked === true, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;
   // Someone who used the app before this layout has done the first steps already.
   if (saved.ui && ui.layoutV !== 2) patch.guideDone = true;
@@ -455,6 +455,23 @@ export const isVideo = (p) => /\.(mp4|mov|webm)$/i.test(p ?? "");
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /** Image generators by the names people know them by. */
+/**
+ * Which AI Ask AI uses: what the person chose in Settings, else Claude when it's set up (an API key
+ * or Claude Code), else Codex.
+ */
+export function aiEngine() {
+  if (S.ai.engine === "codex" || S.ai.engine === "claude") return S.ai.engine;
+  const st = S.opts?.ai;
+  return st && !st.provider && st.codex ? "codex" : "claude";
+}
+/** The AI's name in the interface: "Claude" or "Codex". */
+export const aiName = () => (aiEngine() === "codex" ? "Codex" : "Claude");
+/** Where it runs, for the chat's head and the thinking step: "Claude Code", a Claude model, or "Codex". */
+export function aiVia() {
+  const st = S.opts?.ai;
+  if (aiEngine() === "codex") return st?.codexModel ? `Codex · ${st.codexModel}` : "Codex";
+  return st?.provider === "api" ? S.ai.model || st.model : st?.provider === "claude-code" ? "Claude Code" : "";
+}
 export const IMAGE_PROVIDERS = { openai: "OpenAI", gemini: "Gemini", replicate: "Replicate", fal: "fal" };
 
 export function entityLabel(id, scene = S.scene, layout = S.layout) {

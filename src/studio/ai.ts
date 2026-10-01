@@ -8,8 +8,8 @@
  * operation can only point at a token it was given.
  */
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -41,6 +41,8 @@ export const AIEditSchema = z.object({
   /** Entity the user has selected on the canvas ("device-1", "caption", "text-2"), for "make this bigger". */
   selection: z.string().max(40).optional(),
   model: z.string().max(100).optional(),
+  /** Which AI does the work: Claude (an API key, else Claude Code) or Codex. Default Claude. */
+  engine: z.enum(["claude", "codex"]).optional(),
   /** Show Claude a quick render of the current design along with its settings. Default true. */
   preview: z.boolean().optional(),
   /** Earlier turns of this chat: what the user said and what Claude replied. */
@@ -116,7 +118,7 @@ export interface EditResult {
   operations: Operation[];
   /** Entity ids whose placement or look changed, for highlighting on the canvas. */
   changed: string[];
-  provider: "api" | "claude-code";
+  provider: Engine["kind"];
   model?: string;
   /** Whether Claude looked at its own render and how many fixes it made then. */
   checked?: { fixes: number };
@@ -250,7 +252,8 @@ export function applyOperations(scene: unknown, operations: Operation[]): unknow
       try {
         parsed = JSON.parse(value);
       } catch {
-        // A bare string the model forgot to quote.
+        // A bare string the model forgot to quote is fine; broken JSON goes back to be fixed.
+        if (/^\s*["[{]/.test(value)) throw new Error(`The value for ${pointer} isn't valid JSON: ${value.slice(0, 60)}`);
         parsed = value;
       }
     }
@@ -430,15 +433,62 @@ export function findClaudeCli(): string | undefined {
   return claudeCandidates().find((p) => existsSync(p));
 }
 
+function codexCandidates(): string[] {
+  if (process.env.SCREENSHOTTER_CODEX_PATH) return [process.env.SCREENSHOTTER_CODEX_PATH];
+  const home = homedir();
+  const fromPath = (process.env.PATH ?? "").split(":").filter(Boolean).map((d) => path.join(d, "codex"));
+  return [...fromPath, "/opt/homebrew/bin/codex", "/usr/local/bin/codex", path.join(home, ".local/bin/codex"), path.join(home, ".npm-global/bin/codex")];
+}
+export function findCodexCli(): string | undefined {
+  return codexCandidates().find((p) => existsSync(p));
+}
+/** The model Codex uses: SCREENSHOTTER_CODEX_MODEL, else the one in its own config.toml. */
+export function codexModel(): string | undefined {
+  if (process.env.SCREENSHOTTER_CODEX_MODEL) return process.env.SCREENSHOTTER_CODEX_MODEL;
+  try {
+    const home = process.env.CODEX_HOME || path.join(homedir(), ".codex");
+    const toml = readFileSync(path.join(home, "config.toml"), "utf8");
+    // Only a top-level `model = "…"`, before the first [table].
+    const top = toml.split(/^\s*\[/m)[0];
+    return /^\s*model\s*=\s*"([^"]+)"/m.exec(top)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/** What does the work: the Anthropic API, Claude Code, or Codex, each a command-line program but the first. */
+export type Engine = { kind: "api" } | { kind: "claude-code"; cli: string } | { kind: "codex"; cli: string };
+
+/**
+ * The engine for a request: Codex when the person chose it, else Claude (an API key if one is set,
+ * else Claude Code), else Codex if that's all there is. Throws with what to do when none is ready.
+ */
+export function pickEngine(choice: "claude" | "codex" | undefined, what = "Ask AI"): Engine {
+  const codex = findCodexCli();
+  if (choice === "codex") {
+    if (codex) return { kind: "codex", cli: codex };
+    throw new Error(`${what} is set to use Codex, but Codex wasn't found. Install it (\`brew install codex\`) and run \`codex\` once to sign in, or switch to Claude in Settings.`);
+  }
+  if (hasApiCredentials()) return { kind: "api" };
+  const claude = findClaudeCli();
+  if (claude) return { kind: "claude-code", cli: claude };
+  if (codex) return { kind: "codex", cli: codex };
+  throw new Error(`${what} needs Claude or Codex. Sign in to Claude Code (run \`claude\` once in Terminal), add an Anthropic API key in Settings, or install Codex and run \`codex\` once.`);
+}
+
 export function aiStatus() {
   const cli = findClaudeCli();
   const api = hasApiCredentials();
+  const codex = Boolean(findCodexCli());
   return {
-    available: api || Boolean(cli),
+    available: api || Boolean(cli) || codex,
+    /** Claude's route when Claude is chosen (or null when there's no Claude). */
     provider: api ? ("api" as const) : cli ? ("claude-code" as const) : null,
     model: process.env.SCREENSHOTTER_EDIT_MODEL || DEFAULT_EDIT_MODEL,
     claudeCode: Boolean(cli),
     apiKey: api,
+    codex,
+    codexModel: codex ? codexModel() : undefined,
   };
 }
 
@@ -775,17 +825,205 @@ function resultLine(out: string): { is_error?: boolean; structured_output?: unkn
   return last;
 }
 
+/**
+ * OpenAI's strict structured output: every property listed as required, no others allowed. An
+ * optional field becomes "this, or null" (`dropNulls` turns the nulls back into absences).
+ */
+export function strictSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(strictSchema);
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === "default" || k === "$schema") continue;
+    out[k] = k === "properties" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([p, s]) => [p, strictSchema(s)])) : strictSchema(v);
+  }
+  if (out.type === "object" && out.properties) {
+    const props = out.properties as Record<string, Record<string, unknown>>;
+    const required = new Set((out.required as string[] | undefined) ?? []);
+    for (const key of Object.keys(props)) if (!required.has(key)) props[key] = orNull(props[key]);
+    out.required = Object.keys(props);
+    out.additionalProperties = false;
+  }
+  return out;
+}
+function orNull(s: Record<string, unknown>): Record<string, unknown> {
+  if (typeof s.type === "string" && !s.enum) return { ...s, type: [s.type, "null"] };
+  const { description, ...rest } = s;
+  return { ...(description ? { description } : {}), anyOf: [rest, { type: "null" }] };
+}
+export function dropNulls(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(dropNulls);
+  if (!v || typeof v !== "object") return v;
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== null).map(([k, x]) => [k, dropNulls(x)]));
+}
+
+/**
+ * Codex trips over JSON written inside a string, so its operations take a value as it is: a number,
+ * true or false, text, or (for an object or a list) JSON. `fromCodexValues` puts the usual form back.
+ */
+const CODEX_VALUE = {
+  description: 'The new value as it is: a number (0.42), true or false, text without extra quotes (Dinner, **solved.** or #ff5500), or an object or list written as JSON ({"look":"dusk"}). null for remove, copy and move.',
+  anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "null" }],
+};
+function codexValues(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(codexValues);
+  if (!node || typeof node !== "object") return node;
+  const out = Object.fromEntries(Object.entries(node).map(([k, v]) => [k, codexValues(v)]));
+  const props = out.properties as Record<string, unknown> | undefined;
+  if (props && "op" in props && "path" in props && "value" in props) out.properties = { ...props, value: CODEX_VALUE };
+  return out;
+}
+function fromCodexValues(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(fromCodexValues);
+  if (!v || typeof v !== "object") return v;
+  const out = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fromCodexValues(x)]));
+  if ("op" in out && "path" in out && "value" in out) {
+    const x = out.value;
+    if (typeof x !== "string") out.value = JSON.stringify(x ?? null);
+    else if (/^\s*[[{]/.test(x)) out.value = x; // an object or a list, as JSON
+    else {
+      // Text as it is; or, out of habit, text already written as JSON.
+      let quoted: unknown;
+      try {
+        quoted = /^\s*"/.test(x) ? JSON.parse(x) : undefined;
+      } catch {
+        quoted = undefined;
+      }
+      out.value = typeof quoted === "string" ? x : JSON.stringify(x);
+    }
+  }
+  return out;
+}
+
+/** Codex works like an agent in a folder; here it only reads the message and answers. */
+const CODEX_PREAMBLE =
+  "You are answering inside Screenshotter's Ask AI, not working in a code repository. Don't run commands or read files: everything you need is in the message and any attached image. Reply only with the JSON the output schema describes.\n\n";
+
+async function viaCodex<T = EditReply>(
+  input: AIEditInput,
+  prompt: string,
+  image: string | undefined,
+  cli: string,
+  retry?: { previous: string; error: string },
+  schema: z.ZodType<T> = EditReplySchema as unknown as z.ZodType<T>,
+  signal?: AbortSignal,
+): Promise<{ reply: T; model?: string }> {
+  const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-codex-"));
+  try {
+    const schemaFile = path.join(dir, "schema.json");
+    const replyFile = path.join(dir, "reply.json");
+    await writeFile(schemaFile, JSON.stringify(codexValues(strictSchema(cliSchema(schema)))));
+    const args = [
+      "exec",
+      "--skip-git-repo-check",
+      "--ephemeral",
+      "--ignore-rules",
+      "--sandbox",
+      "read-only",
+      "--color",
+      "never",
+      "--json",
+      // Its own MCP servers would only slow it down; the system prompt goes in as developer
+      // instructions (a JSON string is a valid TOML string).
+      "-c",
+      "mcp_servers={}",
+      "-c",
+      `developer_instructions=${JSON.stringify(CODEX_PREAMBLE + system())}`,
+      "-c",
+      `model_reasoning_effort="${process.env.SCREENSHOTTER_CODEX_EFFORT || "medium"}"`,
+      "--output-schema",
+      schemaFile,
+      "-o",
+      replyFile,
+    ];
+    const model = process.env.SCREENSHOTTER_CODEX_MODEL;
+    if (model) args.push("-m", model);
+    if (image) {
+      const file = path.join(dir, "design.jpg");
+      await writeFile(file, Buffer.from(image, "base64"));
+      args.push(`--image=${file}`);
+    }
+    const text = retry ? `${prompt}\n\nYour previous operations were:\n${retry.previous}\nThey didn't produce a valid scene: ${retry.error}\nReturn corrected operations.` : prompt;
+    await new Promise<void>((resolve, reject) => {
+      // Stop ends Codex at once (the signal kills the process). The message goes in on stdin.
+      const child = execFile(cli, args, { cwd: dir, env: process.env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024, encoding: "utf8", signal }, (error, out, err) => {
+        if (!error) return resolve();
+        if (signal?.aborted) return reject(new StoppedError());
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return reject(new Error("Codex wasn't found. Install it (`brew install codex`), or switch Ask AI to Claude in Settings."));
+        if (error.killed) return reject(new Error("Codex took too long to answer. Try again."));
+        const detail = codexError(out) ?? `${err}`.trim();
+        if (/not logged in|log ?in|unauthori[sz]ed|401|authenticat|credential/i.test(detail)) return reject(new Error("Codex isn't signed in. Run `codex` in Terminal once to sign in, or switch Ask AI to Claude in Settings."));
+        if (/rate limit|quota|usage limit|429/i.test(detail)) return reject(new Error("Codex usage limit reached. Try again later, or switch Ask AI to Claude in Settings."));
+        const last = detail.split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0]?.slice(0, 240);
+        reject(new Error(`Codex couldn't complete the edit${last ? `: ${last}` : ""}. Run \`codex\` in Terminal to check it works, then retry.`));
+      });
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(text);
+    });
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await readFile(replyFile, "utf8"));
+    } catch {
+      throw new Error("Codex's reply couldn't be read. Update it with `brew upgrade codex` and retry.");
+    }
+    // Values first: a remove's value is null, and dropping nulls before would lose it altogether.
+    const parsed = schema.safeParse(dropNulls(fromCodexValues(raw)));
+    if (!parsed.success) {
+      const what = [...new Set(parsed.error.issues.map((i) => i.path.filter((p) => typeof p === "string").join(".") || "reply"))].slice(0, 3).join(", ");
+      throw new Error(`Codex's reply was missing something Ask AI needs (${what}). Try again.`);
+    }
+    return { reply: parsed.data, model: model ?? codexModel() };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** The message of the last error event in Codex's JSONL output. */
+function codexError(out: string): string | undefined {
+  let last: string | undefined;
+  for (const l of out.split("\n")) {
+    if (!l.trim().startsWith("{")) continue;
+    try {
+      const m = JSON.parse(l);
+      const msg = m.type === "error" ? m.message : m.type === "turn.failed" ? m.error?.message : undefined;
+      if (typeof msg !== "string") continue;
+      // The message is often an API error as JSON; its inner message says what went wrong.
+      try {
+        last = JSON.parse(msg)?.error?.message ?? msg;
+      } catch {
+        last = msg;
+      }
+    } catch {
+      // Partial or non-JSON line.
+    }
+  }
+  return last;
+}
+
+/** Ask the chosen engine: the same message, image and reply schema whichever it is. */
+function viaEngine<T = EditReply>(
+  engine: Engine,
+  input: AIEditInput,
+  prompt: string,
+  image: string | undefined,
+  retry?: { previous: string; error: string },
+  schema?: z.ZodType<T>,
+  signal?: AbortSignal,
+): Promise<{ reply: T; model?: string }> {
+  if (engine.kind === "codex") return viaCodex(input, prompt, image, engine.cli, retry, schema, signal);
+  if (engine.kind === "claude-code") return viaClaudeCode(input, prompt, image, engine.cli, retry, schema, signal);
+  return viaApi(input, prompt, image, retry, schema, signal);
+}
+
 // ---------------------------------------------------------------------------------------------
 
 export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined, signal?: AbortSignal): Promise<EditResult> {
   const input = AIEditSchema.parse(raw);
   const { safe, assets } = sceneAssets(input.request);
-  const cli = hasApiCredentials() ? undefined : findClaudeCli();
-  if (!hasApiCredentials() && !cli) {
-    throw new Error("AI Edit needs Claude. Sign in to Claude Code (run `claude` once in Terminal) or add an Anthropic API key in Settings.");
-  }
+  const engine = pickEngine(input.engine);
   // A video of several shots: Claude sees and edits all of them.
-  if (input.shots && input.shots.length > 1) return editVideo(input, cli, onProgress, signal);
+  if (input.shots && input.shots.length > 1) return editVideo(input, engine, onProgress, signal);
   // Claude sees the design up front only when the request is about how it looks; questions and
   // exact edits go straight from the settings (it can still ask to see it). Reading each
   // screenshot's colours and words (on-device) runs alongside any render.
@@ -811,8 +1049,7 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
   }
   const prompt = await until(reading, signal);
   onProgress({ step: "think" });
-  const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) =>
-    cli ? viaClaudeCode(input, text, img, cli, retry, undefined, signal) : viaApi(input, text, img, retry, undefined, signal);
+  const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) => viaEngine(engine, input, text, img, retry, undefined, signal);
   const ask = (retry?: { previous: string; error: string }) => askWith(prompt, image, retry);
 
   // Operations on a scene (in token space), checked the way a render would check them.
@@ -872,7 +1109,7 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
       summary,
       operations,
       changed: changedEntities(input.request, request),
-      provider: cli ? "claude-code" : "api",
+      provider: engine.kind,
       model,
       checked,
       remembered: remembered.length ? remembered : undefined,
@@ -996,7 +1233,7 @@ async function videoMessage(input: AIEditInput, shots: Shot[], safeShots: unknow
   });
 }
 
-async function editVideo(input: AIEditInput, cli: string | undefined, onProgress: (p: AIProgress) => void, signal?: AbortSignal): Promise<EditResult> {
+async function editVideo(input: AIEditInput, engine: Engine, onProgress: (p: AIProgress) => void, signal?: AbortSignal): Promise<EditResult> {
   const onCanvas = Math.min(input.shots!.length - 1, input.shot ?? 0);
   // Every shot as it is now (the one on the canvas as the person has it), without delivery settings.
   const before: Shot[] = input.shots!.map((s, i) => ({ ...s, scene: designOf(i === onCanvas ? input.request : s.scene) }));
@@ -1016,8 +1253,7 @@ async function editVideo(input: AIEditInput, cli: string | undefined, onProgress
   if (!quick) onProgress({ step: "read", items: before.map((s, i) => `Shot ${i + 1}${s.scene.headline ? ` · “${s.scene.headline.replace(/\*\*/g, "").slice(0, 16)}”` : ""}`) });
   const prompt = await until(reading, signal);
   onProgress({ step: "think" });
-  const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) =>
-    cli ? viaClaudeCode(input, text, img, cli, retry, undefined, signal) : viaApi(input, text, img, retry, undefined, signal);
+  const askWith = (text: string, img: string | undefined, retry?: { previous: string; error: string }) => viaEngine(engine, input, text, img, retry, undefined, signal);
   const ask = (retry?: { previous: string; error: string }) => askWith(prompt, image, retry);
 
   // Operations on the whole video (in token space), each shot checked the way a render would be.
@@ -1086,7 +1322,7 @@ async function editVideo(input: AIEditInput, cli: string | undefined, onProgress
       summary,
       operations,
       changed: !structural && before[show] ? changedEntities(before[show].scene, shots[show].scene) : [],
-      provider: cli ? "claude-code" : "api",
+      provider: engine.kind,
       model,
       checked,
       remembered: remembered.length ? remembered : undefined,
@@ -1153,13 +1389,10 @@ export interface Direction {
   image?: string;
 }
 
-export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined, signal?: AbortSignal): Promise<{ directions: Direction[]; provider: "api" | "claude-code"; model?: string }> {
+export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgress) => void = () => undefined, signal?: AbortSignal): Promise<{ directions: Direction[]; provider: Engine["kind"]; model?: string }> {
   const input = AIEditSchema.parse(raw);
   const { safe, assets } = sceneAssets(input.request);
-  const cli = hasApiCredentials() ? undefined : findClaudeCli();
-  if (!hasApiCredentials() && !cli) {
-    throw new Error("Design it for me needs Claude. Sign in to Claude Code (run `claude` once in Terminal) or add an Anthropic API key in Settings.");
-  }
+  const engine = pickEngine(input.engine, "Design it for me");
   onProgress({ step: "look" });
   const reading = userMessage(
     {
@@ -1178,7 +1411,7 @@ export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgr
   onProgress({ step: "read", items: [...(layout?.entities ?? []).map((e) => (e.kind === "device" ? (e.device ?? "Device") : e.kind === "caption" ? "Headline" : "Text")), "Backdrop"] });
   const prompt = await until(reading, signal);
   onProgress({ step: "think" });
-  const { reply, model } = cli ? await viaClaudeCode(input, prompt, image, cli, undefined, DirectionsSchema, signal) : await viaApi(input, prompt, image, undefined, DirectionsSchema, signal);
+  const { reply, model } = await viaEngine(engine, input, prompt, image, undefined, DirectionsSchema, signal);
   const directions: Direction[] = [];
   for (const d of reply.directions.slice(0, 3)) {
     try {
@@ -1202,5 +1435,5 @@ export async function designDirections(raw: AIEditInput, onProgress: (p: AIProgr
   const shots = await until(Promise.all(directions.map((d) => previewImage(d.request, { frames: false }))), signal);
   directions.forEach((d, i) => (d.image = shots[i]?.image));
   if (shots[0]) onProgress({ step: "check", image: shots[0].image });
-  return { directions, provider: cli ? "claude-code" : "api", model };
+  return { directions, provider: engine.kind, model };
 }

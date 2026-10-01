@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
   applyRecipe,
@@ -550,12 +550,12 @@ const provider = (x) => IMAGE_PROVIDERS[x?.provider] ?? "The image generator";
 const AI_STEPS = {
   look: { now: "Rendering your design", done: (x) => (x.moments ? `Looked at ${x.moments} moments of your video` : "Looked at your design") },
   read: { now: "Reading the screenshots", done: "Read the design" },
-  think: { now: "Claude is thinking", done: (x) => (x.answer ? "Answered" : "Designed the change") },
+  think: { now: () => `${aiName()} is thinking`, done: (x) => (x.answer ? "Answered" : "Designed the change") },
   retry: { now: "Fixing a mistake in its first try", done: "Fixed a mistake in its first try" },
   generate: { now: (x) => `${provider(x)} is making the new backdrop image`, done: (x) => `${provider(x)} made the backdrop image`, cut: (x) => `You used it while ${provider(x)} was still making the backdrop image` },
-  render: { now: "Rendering the result", done: "Rendered the result", cut: "You used it before Claude checked it" },
-  frames: { now: (x) => `Claude asked to see ${moments(x.times)}`, done: (x) => `Looked closer at ${moments(x.times)}` },
-  check: { now: (x) => (x.moments ? `Claude is checking ${x.moments} moments of the video` : "Claude is checking the render"), done: (x) => (x.moments ? `Checked ${x.moments} moments of the video` : "Checked the render"), cut: "You used it before Claude finished checking it" },
+  render: { now: "Rendering the result", done: "Rendered the result", cut: () => `You used it before ${aiName()} checked it` },
+  frames: { now: (x) => `${aiName()} asked to see ${moments(x.times)}`, done: (x) => `Looked closer at ${moments(x.times)}` },
+  check: { now: (x) => (x.moments ? `${aiName()} is checking ${x.moments} moments of the video` : `${aiName()} is checking the render`), done: (x) => (x.moments ? `Checked ${x.moments} moments of the video` : "Checked the render"), cut: "You used it before Claude finished checking it" },
 };
 const moments = (times = []) => (times.length > 3 ? `${times.length} moments` : times.map((t) => `${t} s`).join(", "));
 const stepText = (x, active) => {
@@ -583,10 +583,10 @@ function AIWork() {
     const b = e.target.closest(".ai-chat-body");
     b?.scrollTo({ top: b.scrollHeight, behavior: "smooth" });
   };
-  const via = s.opts?.ai?.provider === "api" ? s.opts.ai.model : "Claude Code";
+  const via = aiVia() || "Claude Code";
   return html`<div class="msg assistant work">
     <ol class="work-steps">
-      ${!steps.length && html`<li class="active"><${StepIcon} state="active" /><div class="step-body"><div class="step-head"><b class="shimmer-text">Sending to Claude</b></div></div></li>`}
+      ${!steps.length && html`<li class="active"><${StepIcon} state="active" /><div class="step-body"><div class="step-head"><b class="shimmer-text">Sending to ${aiName()}</b></div></div></li>`}
       ${steps.map((x, i) => {
         const active = !x.end;
         const st = active ? "active" : "done";
@@ -605,8 +605,8 @@ function AIWork() {
     </ol>
     <div class="work-actions">
       <span class="work-time">${secs(now - w.started)} in all</span><span class="grow"></span>
-      ${w.draft && html`<button class="btn sm" title="Put Claude's change on the canvas now, without waiting for it to check its work" onClick=${useAIDraft}>Use it now</button>`}
-      <button class="btn sm ghost stop" title="Stop Claude. The design stays as it was." onClick=${stopAI}><span class="stop-sq"></span>Stop</button>
+      ${w.draft && html`<button class="btn sm" title=${`Put ${aiName()}'s change on the canvas now, without waiting for it to check its work`} onClick=${useAIDraft}>Use it now</button>`}
+      <button class="btn sm ghost stop" title=${`Stop ${aiName()}. The design stays as it was.`} onClick=${stopAI}><span class="stop-sq"></span>Stop</button>
     </div>
   </div>`;
 }
@@ -705,7 +705,7 @@ function AIChat({ docked }) {
     addEventListener("pointermove", move);
     addEventListener("pointerup", up);
   };
-  const via = status?.provider === "api" ? status.model : status?.provider === "claude-code" ? "Claude Code" : "";
+  const via = aiVia();
   return html`<section class="ai-chat ${docked ? "docked" : ""} ${ai.busy ? "busy" : ""}" ref=${panel} style=${docked ? null : { right: pos.right + "px", bottom: pos.bottom + "px" }} onPointerDown=${(e) => e.stopPropagation()}>
     <header class="ai-chat-head" onPointerDown=${drag} title=${docked ? null : "Drag to move"}>
       <span class="ai-chat-mark"><${Icon} n="spark" s=${14} /></span>
@@ -723,7 +723,7 @@ function AIChat({ docked }) {
         <b>What should change?</b>
         <span>Describe it like you'd brief a designer. I can see the design, change anything in it, and answer questions about it.</span>
         <div class="suggestions">${suggestionsFor(ai.context ? s.selected : null).map((t) => html`<button class="chip" onClick=${() => aiEdit(t)}>${t}</button>`)}</div>
-        ${status && !status.available && html`<span class="note warn">Ask AI needs Claude Code or an API key. <a href="#" onClick=${(e) => {
+        ${status && !status.available && html`<span class="note warn">Ask AI needs Claude Code, Codex or an API key. <a href="#" onClick=${(e) => {
           e.preventDefault();
           set({ modal: { kind: "settings" } });
         }}>Open Settings</a></span>`}
@@ -789,7 +789,7 @@ function AIChat({ docked }) {
             }
           }}></textarea>
         ${ai.busy
-          ? html`<button class="send stop" onClick=${stopAI} title="Stop Claude. The design stays as it was."><span class="stop-sq"></span></button>`
+          ? html`<button class="send stop" onClick=${stopAI} title=${`Stop ${aiName()}. The design stays as it was.`}><span class="stop-sq"></span></button>`
           : html`<button class="send" disabled=${!ai.text.trim()} onClick=${send} title="Send (Enter)"><${Icon} n="up" s=${16} w=${2.4} /></button>`}
       </div>
     </div>
@@ -870,6 +870,7 @@ function Settings() {
     { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest" },
     { value: "claude-fable-5-1", label: "Claude Fable 5.1", hint: "most capable" },
   ];
+  const engine = aiEngine();
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && set({ modal: null })}>
     <div class="sheet">
       <div class="sheet-head"><h2>Settings</h2><button class="icon-btn" onClick=${() => set({ modal: null })}><${Icon} n="x" s=${16} /></button></div>
@@ -877,24 +878,39 @@ function Settings() {
         <div class="card">
           <h4><${Icon} n="spark" s=${15} style=${{ color: "var(--pink)" }} />AI Edit
             <span class="grow"></span>
-            ${ai?.provider === "api" ? html`<span class="pill ok"><span class="status-dot ok"></span>Anthropic API</span>` : ai?.provider === "claude-code" ? html`<span class="pill ok"><span class="status-dot ok"></span>Claude Code</span>` : html`<span class="pill"><span class="status-dot warn"></span>Not set up</span>`}
+            ${engine === "codex"
+              ? ai?.codex
+                ? html`<span class="pill ok"><span class="status-dot ok"></span>Codex</span>`
+                : html`<span class="pill"><span class="status-dot warn"></span>Codex not found</span>`
+              : ai?.provider === "api"
+                ? html`<span class="pill ok"><span class="status-dot ok"></span>Anthropic API</span>`
+                : ai?.provider === "claude-code"
+                  ? html`<span class="pill ok"><span class="status-dot ok"></span>Claude Code</span>`
+                  : html`<span class="pill"><span class="status-dot warn"></span>Not set up</span>`}
           </h4>
-          <div class="note">Describe a change and Claude edits the design. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design when a request is about how it looks (questions and exact edits go without, so they're quicker). Your original files stay on your Mac.</div>
+          <div class="row"><label>Use</label><${Seg} value=${engine} options=${[{ value: "claude", label: "Claude" }, { value: "codex", label: "Codex" }]} onChange=${(v) => {
+            set({ ai: { ...S.ai, engine: v } });
+            persist();
+          }} /></div>
+          ${engine === "codex"
+            ? html`<div class="note">Describe a change and Codex edits the design, using your signed-in <b>Codex</b> (${ai?.codex ? "found" : html`not found; install it with <code>brew install codex</code> and run <code>codex</code> once`}). It uses the model set in Codex${ai?.codexModel ? html` (<b>${ai.codexModel}</b>)` : ""}. Codex sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design when a request is about how it looks. Your original files stay on your Mac.</div>`
+            : html`<div class="note">Describe a change and Claude edits the design. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design when a request is about how it looks (questions and exact edits go without, so they're quicker). Your original files stay on your Mac.</div>`}
           <${Switch} checked=${s.ai.preview !== false} onChange=${(v) => {
             set({ ai: { ...S.ai, preview: v } });
             persist();
-          }} label="Let Claude see a preview of the design" />
-          ${native
-            ? html`<div class="row"><label>API key</label><div class="hstack">
-                <input class="input grow mono" type="password" placeholder=${info?.hasApiKey ? "•••••••••• saved in Keychain" : "sk-ant-… (optional)"} value=${key} onInput=${(e) => setKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
-                <button class="btn" disabled=${!key.trim() || saving} onClick=${() => saveKey(key.trim())}>Save</button>
-                ${info?.hasApiKey && html`<button class="btn ghost" disabled=${saving} onClick=${() => saveKey("")}>Remove</button>`}
-              </div></div>`
-            : html`<div class="note">To use an API key, start the Studio with <code>ANTHROPIC_API_KEY</code> set.</div>`}
-          <div class="row"><label>Model</label><${Dropdown} value=${s.ai.model} options=${models} onChange=${(v) => {
-            set({ ai: { ...S.ai, model: v } });
-            persist();
-          }} /></div>
+          }} label=${`Let ${engine === "codex" ? "Codex" : "Claude"} see a preview of the design`} />
+          ${engine === "claude" &&
+          html`${native
+              ? html`<div class="row"><label>API key</label><div class="hstack">
+                  <input class="input grow mono" type="password" placeholder=${info?.hasApiKey ? "•••••••••• saved in Keychain" : "sk-ant-… (optional)"} value=${key} onInput=${(e) => setKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
+                  <button class="btn" disabled=${!key.trim() || saving} onClick=${() => saveKey(key.trim())}>Save</button>
+                  ${info?.hasApiKey && html`<button class="btn ghost" disabled=${saving} onClick=${() => saveKey("")}>Remove</button>`}
+                </div></div>`
+              : html`<div class="note">To use an API key, start the Studio with <code>ANTHROPIC_API_KEY</code> set.</div>`}
+            <div class="row"><label>Model</label><${Dropdown} value=${s.ai.model} options=${models} onChange=${(v) => {
+              set({ ai: { ...S.ai, model: v } });
+              persist();
+            }} /></div>`}
         </div>
         <div class="card">
           <h4><${Icon} n="folder" s=${15} />Output folder</h4>
@@ -1111,7 +1127,7 @@ function Help() {
   const close = () => set({ modal: null });
   const steps = [
     ["sim", "1 · Add a screenshot", "Drop in an image, or capture your app from the iOS Simulator, a website or a Mac window. They collect under Screenshots."],
-    ["wand", "2 · Pick a design", "You get finished designs made from your screenshot. Pick one, or open Templates for more. Claude can make three for you there too."],
+    ["wand", "2 · Pick a design", `You get finished designs made from your screenshot. Pick one, or open Templates for more. ${aiName()} can make three for you there too.`],
     ["text", "3 · Write your headline", "Double-click the headline to retype it. Put **stars** around words to colour them."],
     ["canvas", "Make it yours", "Click anything to select it, then drag to move, pull a corner to resize and use the round handle to rotate. The bar above a selection has the everyday edits (words, colours, Replace); Settings opens the rest. Backdrop, Text and Shapes are in the rail."],
     ["animate", "Animate it for a video", "Animate (⌘3) opens a timeline: choose an item, set when it arrives and how (fade, zoom, slide…), and press Play. Things can change part way through too, and several can move together. Export video renders it."],

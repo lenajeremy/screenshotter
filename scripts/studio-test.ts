@@ -16,7 +16,7 @@ import type { MockupInput } from "../src/render/schema.js";
 import { encodePng } from "../src/util/png.js";
 
 const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-studio-test-"));
-const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE", "SCREENSHOTTER_STUDIO_FILE", "OPENAI_API_KEY", "SCREENSHOTTER_CACHE_DIR"].map((k) => [k, process.env[k]]));
+const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_CODEX_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE", "SCREENSHOTTER_STUDIO_FILE", "OPENAI_API_KEY", "SCREENSHOTTER_CACHE_DIR"].map((k) => [k, process.env[k]]));
 let server: http.Server | undefined;
 let checks = 0;
 const check = async (name: string, fn: () => unknown | Promise<unknown>) => {
@@ -53,6 +53,39 @@ process.stdin.on("end", () => {
   );
   await chmod(file, 0o755);
   process.env.SCREENSHOTTER_CLAUDE_PATH = file;
+}
+
+/**
+ * A stand-in for `codex exec`: checks it runs isolated with a strict reply schema, then writes
+ * `reply` (given the prompt from stdin) to the -o file, the way Codex does.
+ */
+async function fakeCodex(reply: object | ((prompt: any) => object)) {
+  const file = path.join(dir, `fake-codex-${checks}.mjs`);
+  const body = typeof reply === "function" ? reply.toString() : `() => (${JSON.stringify(reply)})`;
+  await writeFile(
+    file,
+    `#!${process.execPath}
+import { readFileSync, writeFileSync } from "node:fs";
+let input = "";
+process.stdin.on("data", (d) => (input += d));
+process.stdin.on("end", () => {
+  const a = process.argv.slice(2);
+  const val = (f) => a[a.indexOf(f) + 1];
+  if (a[0] !== "exec" || val("--sandbox") !== "read-only" || !a.includes("--ephemeral") || !a.includes("--skip-git-repo-check") || !a.includes("mcp_servers={}")) process.exit(3);
+  if (!a.some((x) => x.startsWith("developer_instructions="))) process.exit(4);
+  // OpenAI's strict schemas: every property required, nothing else allowed.
+  const strict = (n) => !n || typeof n !== "object" || (Array.isArray(n) ? n.every(strict) : (n.type !== "object" || !n.properties || (n.additionalProperties === false && Object.keys(n.properties).every((k) => n.required?.includes(k)))) && Object.values(n).every(strict));
+  if (!strict(JSON.parse(readFileSync(val("--output-schema"), "utf8")))) { console.log(JSON.stringify({ type: "error", message: "invalid_json_schema" })); process.exit(5); }
+  const [main, retry] = input.split("\\n\\nYour previous operations");
+  const prompt = JSON.parse(main);
+  prompt.__retry = retry ?? "";
+  prompt.__image = a.some((x) => x.startsWith("--image="));
+  writeFileSync(val("-o"), JSON.stringify((${body})(prompt)));
+  console.log(JSON.stringify({ type: "turn.completed" }));
+});`,
+  );
+  await chmod(file, 0o755);
+  process.env.SCREENSHOTTER_CODEX_PATH = file;
 }
 
 try {
@@ -139,6 +172,42 @@ try {
     const r = await editScene({ request, instruction: "Make it smell nice" });
     assert.deepEqual(r.request, request);
     assert.deepEqual(r.operations, []);
+  });
+
+  // Codex gives values as they are: a number, plain text, or text it quoted out of habit.
+  await fakeCodex((p: any) => ({
+    summary: p.__image ? "Moved it, having seen it." : "Moved it.",
+    operations: [
+      { op: "set", path: "/devices/0/x", value: 0.25, from: null },
+      { op: "set", path: "/headline", value: "Dinner, **solved.**", from: null },
+      { op: "set", path: "/textStyle/accentColor", value: '"#ff5500"', from: null },
+      // A remove's value is null, as Codex's schema allows.
+      { op: "remove", path: "/effects", value: null, from: null },
+    ],
+    check: null, remember: null, see: null, look: null, imageReason: null,
+  }));
+  await check("Codex does the edit when chosen: isolated, with a strict schema, its nulls dropped", async () => {
+    const r = await editScene({ request, instruction: "Move it left", engine: "codex" });
+    assert.equal(r.provider, "codex");
+    assert.equal(r.request.devices[0].x, 0.25);
+    assert.equal(r.request.headline, "Dinner, **solved.**");
+    assert.equal(r.request.textStyle?.accentColor, "#ff5500");
+    assert.equal(r.request.effects, undefined, "the remove applied");
+    assert.equal(r.request.devices[0].screenshot, shot);
+    assert.equal(r.remembered, undefined);
+    const looked = await editScene({ request, instruction: "Does it look balanced? Fix it", engine: "codex" });
+    assert.equal(looked.summary, "Moved it, having seen it.", "the preview went to Codex as an image");
+  });
+
+  await check("choosing Codex when it isn't installed says what to do", async () => {
+    process.env.SCREENSHOTTER_CODEX_PATH = path.join(dir, "no-codex-here");
+    await assert.rejects(() => editScene({ request, instruction: "Move it", engine: "codex" }), /Codex wasn't found/);
+  });
+
+  await fakeClaude((p: any) => ({ summary: "Renamed.", operations: [{ op: "set", path: "/headline", value: p.__retry ? '"Dinner, solved."' : '"Dinner, solved."},{' }] }));
+  await check("broken JSON in a value goes back to be fixed instead of landing in the design", async () => {
+    const r = await editScene({ request, instruction: "Rename the headline" });
+    assert.equal(r.request.headline, "Dinner, solved.");
   });
 
   await fakeClaude((p: any) => ({ summary: p.__image ? "Saw the design." : "Blind.", operations: [] }));
