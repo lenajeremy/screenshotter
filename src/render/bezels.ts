@@ -85,11 +85,12 @@ function pngIsWide(file: string): boolean {
  * Which model and colour a bezel file shows, from its path (file and folder names). Words are
  * matched, not a run of text, so Apple's "MacBook Pro M5 16-inch" is the 16-inch.
  */
-export function classify(file: string, root = bezelsDir()): BezelEntry | undefined {
+export function classify(file: string, root = bezelsDir(), only?: string): BezelEntry | undefined {
   const rel = path.relative(root, file);
   const key = norm(rel.replace(/\.png$/i, ""));
   const have = new Set(words(rel.replace(/\.png$/i, "")));
-  const model = NEEDLES.find((n) => n.words.every((w) => have.has(w)))?.model;
+  // `only`: the one model a set from Apple holds, for art whose name doesn't say which it is.
+  const model = NEEDLES.find((n) => n.words.every((w) => have.has(w)))?.model ?? (only ? DEVICE_MODELS.find((m) => m.id === only) : undefined);
   if (!model) return undefined;
   const colors = [...model.colors].sort((a, b) => b.name.length - a.name.length);
   const color = colors.find((c) => key.includes(norm(c.name))) ?? colors.find((c) => MATERIAL.test(c.name) && key.includes(norm(c.name.replace(MATERIAL, ""))));
@@ -273,19 +274,21 @@ export async function findBezel(model: DeviceModel, color: ColorOption | undefin
  * Copy bezel PNGs (files, or folders searched recursively, such as a mounted bezel disk image)
  * into the bezel folder. Only images named after a known model and colour are kept.
  */
-export function importBezels(paths: string[]): { added: number; skipped: number } {
+export function importBezels(paths: string[], o: { only?: string } = {}): { added: number; skipped: number; unknown: string[] } {
   const root = bezelsDir();
   mkdirSync(root, { recursive: true });
   let added = 0;
   let skipped = 0;
+  const unknown: string[] = [];
   for (const p of paths) {
     if (!existsSync(p)) continue;
     const base = statSync(p).isDirectory() ? p : path.dirname(p);
     const files = statSync(p).isDirectory() ? walk(p) : [p];
     for (const f of files) {
-      const hit = classify(f, base);
+      const hit = classify(f, base, o.only);
       if (!hit) {
         skipped++;
+        if (unknown.length < 200) unknown.push(path.relative(base, f));
         continue;
       }
       const dest = path.join(root, path.relative(base, f));
@@ -295,7 +298,7 @@ export function importBezels(paths: string[]): { added: number; skipped: number 
     }
   }
   indexCache = undefined;
-  return { added, skipped };
+  return { added, skipped, unknown };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -382,6 +385,8 @@ export async function getAppleBezels(sets: string[], again = false): Promise<voi
   job = { running: true, step: "Starting…", imported: 0 };
   const { run } = await import("../util/exec.js");
   const installed = new Set(bezelSets().filter((s) => s.installed).map((s) => s.id));
+  // Sets whose images couldn't be placed: said at the end, the others still added.
+  const failed: string[] = [];
   try {
     for (const id of sets) {
       const set = BEZEL_SETS.find((s) => s.id === id);
@@ -402,16 +407,26 @@ export async function getAppleBezels(sets: string[], again = false): Promise<voi
       job = { ...job, step: `Adding ${set.label}…` };
       const mount = path.join("/Volumes", volume);
       await new Promise((r) => setTimeout(r, 800));
-      const { added } = importBezels([mount]);
+      const { added, unknown } = importBezels([mount], { only: set.models.length === 1 ? set.models[0] : undefined });
       job = { ...job, imported: job.imported + added };
       await run("hdiutil", ["detach", "-quiet", mount]).catch(() => undefined);
       if (added) {
         writeFileSync(recordFile(), JSON.stringify({ ...installedRecord(), [set.id]: { at: new Date().toISOString(), images: added } }, null, 2));
         // The images are in the bezel folder now; the disk image can go.
         rmSync(dmg, { force: true });
+      } else {
+        // Keep the download (trying again won't fetch it twice), and say which files weren't placed.
+        console.error(`Bezels: none of ${unknown.length} images in ${set.label} were recognised:\n  ${unknown.join("\n  ")}`);
+        failed.push(`${set.label}: none of its ${unknown.length} images were recognised${unknown.length ? ` (such as “${path.basename(unknown[0])}”)` : ""}`);
       }
     }
-    job = { ...job, running: false, step: job.imported ? `Added ${job.imported} bezel images.` : "No bezel images were found.", progress: undefined };
+    job = {
+      ...job,
+      running: false,
+      step: job.imported ? `Added ${job.imported} bezel images.` : failed.length ? "" : "No bezel images were found.",
+      progress: undefined,
+      error: failed.length ? `${failed.join(". ")}. The file names are in the engine log; please send them over so it can be fixed.` : undefined,
+    };
   } catch (e) {
     job = { ...job, running: false, step: "", progress: undefined, error: (e as Error).message };
   }

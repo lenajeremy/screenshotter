@@ -400,6 +400,17 @@ await check("Apple's art files are told apart by model, colour and orientation",
   is("PNG/iPhone 17 Pro/iPhone 17 Pro - Deep Blue - Portrait.png", "iphone-17-pro", "Deep Blue");
   is("PNG/iPhone 17/iPhone 17 - Mist Blue - Portrait.png", "iphone-17", "Mist Blue");
   is("PNG/iPhone 18 Pro/iPhone 18 Pro - Burgundy - Portrait.png", "iphone-18-pro", "Burgundy");
+  // Apple writes iPad sizes as 13" (no "-inch"): never the plain iPad.
+  is('PNG/iPad Pro (M5) 13" - Silver - Portrait.png', "ipad-pro-13", "Silver");
+  is('PNG/iPad Pro (M5) 11" - Silver - Landscape.png', "ipad-pro-11", "Silver", true);
+  is('PNG/iPad Air 13" (M4) - Blue - Portrait.png', "ipad-air-13", "Blue");
+  is("PNG/Sport Band/Apple Watch S11 - 42mm - Aluminum Jet Black + Sport Band Black.png", "apple-watch-42mm", "Jet Black");
+  // The Ultra comes in one size: its art may leave out "49mm", or shorten the name to "U3".
+  is("PNG/Apple Watch Ultra 3 - Black Titanium - Alpine Loop.png", "apple-watch-ultra", "Black Titanium");
+  is("PNG/Apple Watch U3 - 49mm - Titanium Natural + Trail Loop Blue.png", "apple-watch-ultra", "Natural Titanium");
+  // A set from Apple names its one model when the file doesn't.
+  assert(!classify("/art/Ocean Band/Natural Titanium.png", "/art"), "a file naming no model is skipped");
+  assert(classify("/art/Ocean Band/Natural Titanium.png", "/art", "apple-watch-ultra")?.model === "apple-watch-ultra", "a set's one model is used when the file doesn't name it");
 });
 
 await check("a device with only a recording shows the recording's first frame", async () => {

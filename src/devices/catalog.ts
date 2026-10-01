@@ -468,7 +468,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     id: "ipad-pro-13",
     name: "iPad Pro 13-inch",
     family: "ipad",
-    aliases: ["iPad Pro 13-inch (M5)", "iPad Pro 13-inch (M4)"],
+    // Apple's art writes the size as 13", without "-inch".
+    aliases: ["iPad Pro 13-inch (M5)", "iPad Pro 13-inch (M4)", "iPad Pro 13"],
     screen: screen(2064, 2752, 2, 30),
     cutout: "none",
     bezel: 39,
@@ -483,7 +484,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     id: "ipad-pro-11",
     name: "iPad Pro 11-inch",
     family: "ipad",
-    aliases: ["iPad Pro 11-inch (M5)", "iPad Pro 11-inch (M4)"],
+    // Apple's art writes the size as 11", without "-inch".
+    aliases: ["iPad Pro 11-inch (M5)", "iPad Pro 11-inch (M4)", "iPad Pro 11"],
     screen: screen(1668, 2420, 2, 30),
     cutout: "none",
     bezel: 39,
@@ -498,7 +500,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     id: "ipad-air-13",
     name: "iPad Air 13-inch",
     family: "ipad",
-    aliases: ["iPad Air 13-inch (M4)", "iPad Air 13-inch (M3)", "iPad Air 13-inch (M2)"],
+    // Apple's art writes the size as 13", without "-inch".
+    aliases: ["iPad Air 13-inch (M4)", "iPad Air 13-inch (M3)", "iPad Air 13-inch (M2)", "iPad Air 13"],
     screen: screen(2048, 2732, 2, 18),
     cutout: "none",
     bezel: 41,
@@ -513,7 +516,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     id: "ipad-air-11",
     name: "iPad Air 11-inch",
     family: "ipad",
-    aliases: ["iPad Air 11-inch (M4)", "iPad Air 11-inch (M3)", "iPad Air 11-inch (M2)"],
+    // Apple's art writes the size as 11", without "-inch".
+    aliases: ["iPad Air 11-inch (M4)", "iPad Air 11-inch (M3)", "iPad Air 11-inch (M2)", "iPad Air 11"],
     screen: screen(1640, 2360, 2, 18),
     cutout: "none",
     bezel: 41,
@@ -587,7 +591,8 @@ export const DEVICE_MODELS: DeviceModel[] = [
     id: "apple-watch-ultra",
     name: "Apple Watch Ultra 49mm",
     family: "watch",
-    aliases: ["Apple Watch Ultra 3 (49mm)", "Apple Watch Ultra 2 (49mm)"],
+    // The Ultra comes in one size, so Apple's art may leave out "49mm" or shorten it to "U3".
+    aliases: ["Apple Watch Ultra 3 (49mm)", "Apple Watch Ultra 2 (49mm)", "Apple Watch Ultra", "Apple Watch U3", "Apple Watch U2"],
     screen: screen(422, 514, 2, 57),
     cutout: "none",
     bezel: 12,
