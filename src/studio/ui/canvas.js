@@ -538,6 +538,8 @@ export function CanvasView() {
     };
     const wheel = (ev) => {
       if (!cam.current.ready) return;
+      // A menu or list over the canvas (the + size menu, a right-click menu) scrolls itself.
+      if (ev.target.closest?.(".pop, .ctx-menu, .size-switch")) return;
       ev.preventDefault();
       if (ev.ctrlKey || ev.metaKey) {
         if (pinch === null) zoomAt(cam.current.scale * Math.exp(-ev.deltaY * 0.012), ...at(ev));
