@@ -1052,13 +1052,17 @@ export function deleteShot(i) {
 }
 
 /** Move a shot one place earlier (-1) or later (1). */
-export function moveShot(i, by) {
+export const moveShot = (i, by) => moveShotTo(i, i + by);
+
+/** Put screen `i` at place `j` in the set, the others closing up around it; the one on the canvas stays on it. */
+export function moveShotTo(i, j) {
   const shots = allShots();
-  const j = i + by;
-  if (!shots || j < 0 || j >= shots.length) return;
+  if (!shots || i === j || !shots[i] || j < 0 || j >= shots.length) return;
   checkpoint();
-  [shots[i], shots[j]] = [shots[j], shots[i]];
-  set({ shots, shot: S.shot === i ? j : S.shot === j ? i : S.shot });
+  const [moved] = shots.splice(i, 1);
+  shots.splice(j, 0, moved);
+  const on = S.shot === i ? j : i < S.shot && S.shot <= j ? S.shot - 1 : j <= S.shot && S.shot < i ? S.shot + 1 : S.shot;
+  set({ shots, shot: on });
   persist();
 }
 

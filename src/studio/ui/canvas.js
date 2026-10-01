@@ -7,7 +7,7 @@ import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
 import { S, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, addShot, addSize, closeStills, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -369,17 +369,18 @@ function useShotLayouts(on) {
 }
 
 /** Another shot, as it looks (fitted into the frame): click it to edit it. */
-function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false }) {
+function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging = false, onGrab }) {
   const gW0 = layout.canvas.width;
   const gH0 = layout.canvas.height;
   const k = Math.min(W / gW0, H / gH0);
   const gw = gW0 * k;
   const gh = gH0 * k;
-  return html`<div class="ghost-wrap ${inSet ? "set" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it` : `Shot ${index + 1}: click to edit it`}
+  return html`<div class="ghost-wrap ${inSet ? "set" : ""} ${dragging ? "dragging" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it, drag to move it` : `Shot ${index + 1}: click to edit it`}
       onPointerDown=${(ev) => {
         if (ev.button !== 0) return;
         ev.stopPropagation();
-        goToShot(index);
+        if (onGrab) onGrab(ev);
+        else goToShot(index);
       }}
       onDblClick=${(ev) => {
         ev.stopPropagation();
@@ -456,6 +457,8 @@ export function CanvasView() {
   const [view, setView] = useState({ zoom: null, x: 0, y: 0 }); // zoom null = fit
   const [fit, setFit] = useState("set"); // in a set: fit the whole row, or the screen being edited
   const [renaming, setRenaming] = useState(null);
+  // A screen being dragged to another place in the set: which, and the gap it would go into.
+  const [reorder, setReorder] = useState(null);
   const [live, setLive] = useState(null); // entity being dragged: {id, e}
   const [guides, setGuides] = useState([]);
   const [editing, setEditing] = useState(null); // {id, part}
@@ -529,6 +532,34 @@ export function CanvasView() {
   canvasApi.fitSet = () => (setFit("set"), setView({ zoom: null, x: 0, y: 0 }));
   canvasApi.fitScreen = () => (setFit("screen"), setView({ zoom: null, x: 0, y: 0 }));
   canvasApi.rename = (i) => setRenaming(i);
+  /**
+   * Press on a screen of the set (its label, or the screen itself if it isn't the one being edited):
+   * a click opens it; a drag moves it, into the gap nearest the pointer.
+   */
+  const dragScreen = (ev, i) => {
+    if (ev.button !== 0) return;
+    ev.stopPropagation();
+    const [x0, y0] = [ev.clientX, ev.clientY];
+    const step = W + G;
+    let to = null;
+    const move = (m) => {
+      if (to === null && Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
+      // The gaps are at k × (screen + gap) from screen 1's left, less half a gap.
+      const fromFirst = m.clientX - world.current.getBoundingClientRect().left + S.shot * step;
+      to = Math.max(0, Math.min(S.shots.length, Math.round((fromFirst + G / 2) / step)));
+      setReorder({ from: i, to });
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      setReorder(null);
+      if (to === null) return goToShot(i);
+      const dest = to > i ? to - 1 : to;
+      if (dest !== i) moveShotTo(i, dest);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
   canvasApi.zoomBy = (f) => zoomAt(cam.current.scale * f);
   canvasApi.zoomTo = (z) => zoomAt(z);
   canvasApi.editText = (id, part) => setEditing({ id, part: part ?? (id === "caption" ? "headline" : "text") });
@@ -894,8 +925,9 @@ export function CanvasView() {
     html`<div class="world" ref=${world} style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
       ${multi && html`<div class="join-matte" style=${{ width: W + "px", height: H + "px" }}></div>`}
       ${multi && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`g${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} />`)}
-      ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} />`)}
-      ${setMode && s.shots.map((x, i) => html`<${SetLabel} key=${`l${i}`} i=${i} x=${(i - s.shot) * (W + G)} w=${W} on=${i === s.shot} renaming=${renaming === i} onDone=${() => setRenaming(null)} />`)}
+      ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} dragging=${reorder?.from === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
+      ${setMode && s.shots.map((x, i) => html`<${SetLabel} key=${`l${i}`} i=${i} x=${(i - s.shot) * (W + G)} w=${W} on=${i === s.shot} dragging=${reorder?.from === i} renaming=${renaming === i} onDone=${() => setRenaming(null)} onGrab=${(ev) => dragScreen(ev, i)} />`)}
+      ${setMode && reorder && html`<div class="set-drop" style=${{ left: (reorder.to - s.shot) * (W + G) - G / 2 + "px", height: H + "px" }}></div>`}
       ${setMode && html`<button class="set-add" style=${{ left: (s.shots.length - s.shot) * (W + G) + "px", width: W * SET_ADD + "px", height: H + "px" }} title="Add a screen at the end: a copy of the last one"
         onPointerDown=${(e) => e.stopPropagation()} onClick=${() => addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 })}><${Icon} n="plus" s=${Math.max(16, Math.min(28, W / 8))} /><span>Add screen</span></button>`}
       ${multi && html`<div class="frame-clip" style=${{ width: W + "px", height: H + "px" }}></div>`}
@@ -983,17 +1015,17 @@ const SET_GAP = 0.1;
 const SET_ADD = 0.42;
 
 /** A screen's name above it in the set: "01 · Introduction". Double-click to rename. */
-function SetLabel({ i, x, w, on, renaming, onDone }) {
+function SetLabel({ i, x, w, on, renaming, onDone, onGrab, dragging = false }) {
   const name = screenName(i);
   const done = (v) => {
     onDone();
     if (v === undefined) return;
     updateShot(i, { name: v.trim() || undefined });
   };
-  return html`<div class="set-label ${on ? "on" : ""}" style=${{ left: x + "px", width: w + "px" }}
+  return html`<div class="set-label ${on ? "on" : ""} ${dragging ? "dragging" : ""}" style=${{ left: x + "px", width: w + "px" }} title="Click to edit this screen, drag to move it, double-click to rename it"
       onPointerDown=${(e) => {
         e.stopPropagation();
-        if (!renaming && e.button === 0) goToShot(i);
+        if (!renaming && e.button === 0) onGrab(e);
       }}
       onDblClick=${(e) => (e.stopPropagation(), canvasApi.rename(i))}
       onContextMenu=${(e) => screenMenu(e, i)}>

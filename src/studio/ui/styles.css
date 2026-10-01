@@ -731,6 +731,9 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .cs-where .lbl { flex: none; font-size: 12px; color: var(--text-3); }
 .cs-where .seg { flex: 1; }
 
+/* Dragging a screen to another place: it dims, and a lime bar marks the gap it goes into. */
+.ghost-wrap.set.dragging, .set-label.dragging { opacity: 0.45; }
+.set-drop { position: absolute; top: 0; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--lime); box-shadow: 0 0 0 4px color-mix(in oklab, var(--lime) 25%, transparent); z-index: 97; pointer-events: none; }
 .set-label .off { flex: none; padding: 1px 6px; border-radius: 5px; background: var(--panel-3); color: var(--text-3); font-size: 10.5px; font-weight: 560; }
 /* Animate: screens of the set left out of the video, after the strip. */
 .tl-left-out { flex: none; display: flex; align-items: center; gap: 5px; padding: 0 8px; height: 100%; border-left: 1px solid var(--line); }
@@ -1405,7 +1408,7 @@ li.done .work-shot .scan { display: none; }
 /* In a set, what hangs off the screen being edited is hidden in the gaps only, not over its neighbours. */
 .artboard.in-set > .clip { box-shadow: 0 0 0 2px var(--lime), 0 0 0 var(--set-gap, 40px) var(--stage); }
 .ghost-wrap.set .artboard.ghost { overflow: hidden; }
-.set-label { position: absolute; top: -32px; height: 24px; display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; font-weight: 530; color: var(--text-3); white-space: nowrap; cursor: pointer; z-index: 96; }
+.set-label { position: absolute; top: -32px; height: 24px; display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; font-weight: 530; color: var(--text-3); white-space: nowrap; cursor: grab; z-index: 96; }
 .set-label .n { flex: none; font: 600 10.5px var(--mono); color: var(--text-4); }
 .set-label .nm { overflow: hidden; text-overflow: ellipsis; }
 .set-label:hover { color: var(--text-2); }
