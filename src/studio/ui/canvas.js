@@ -4,10 +4,10 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import { ColorPicker, Dropdown, Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
-import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
+import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
 import { S, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, addShot, addSize, closeStills, openCopyStyle, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, closeStills, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -863,7 +863,7 @@ export function CanvasView() {
   useEffect(() => onPlayhead((t) => applyPreview(art.current, S.timelineOpen, t)), []);
   // Playing through a video of several shots: show what's on screen at the video's time.
   useLayoutEffect(() => {
-    if (multi) composite(world.current, art.current, video.T, videoPlan(), ghostsRef.current);
+    if (multi && !offVideo()) composite(world.current, art.current, video.T, videoPlan(), ghostsRef.current);
     else if (art.current) {
       for (const k of JOIN_PROPS) art.current.style[k] = "";
       const own = art.current.querySelector(":scope > .clip");
@@ -997,6 +997,7 @@ function SetLabel({ i, x, w, on, renaming, onDone }) {
           }}
           onBlur=${(e) => done(e.target.value)} />`
       : html`<span class="nm" title="Double-click to rename">${name}</span>`}
+    ${S.shots?.[i]?.video === false && html`<span class="off" title="Left out of the video: still one of the set's screenshots">No video</span>`}
   </div>`;
 }
 
@@ -1008,6 +1009,7 @@ function screenMenu(ev, i) {
     { label: "Rename", icon: "text", run: () => canvasApi.rename(i) },
     { label: "Duplicate", icon: "duplicate", run: () => addShot("copy", { at: i + 1, copyOf: i }) },
     { label: "Copy style to the others…", icon: "copy", run: () => (goToShot(i), openCopyStyle()) },
+    S.shots?.[i]?.video === false ? { label: "Put back in the video", icon: "video", run: () => setInVideo(i, true) } : { label: "Leave out of the video", icon: "video", run: () => setInVideo(i, false) },
     { label: "Move left", icon: "left", disabled: i === 0, run: () => moveShot(i, -1) },
     { label: "Move right", icon: "right", disabled: i === n - 1, run: () => moveShot(i, 1) },
     "-",

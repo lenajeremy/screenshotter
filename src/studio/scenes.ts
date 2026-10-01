@@ -22,7 +22,8 @@ export interface SavedScene {
    * A video of several shots: each one's length and how it comes in, and (after the first, which is
    * `scene`) its scene. Absent for a single design.
    */
-  shots?: Array<{ scene?: unknown; name?: string; length?: number; transition?: { type: string; duration?: number } }>;
+  /** A set's screens: each an App Store screenshot, and (unless `video: false`) a shot of its video. */
+  shots?: Array<{ scene?: unknown; name?: string; video?: boolean; length?: number; transition?: { type: string; duration?: number } }>;
   /**
    * A design made at several sizes (iPhone, iPad, Apple Watch…): each size's screens, every one with
    * its scene. The first is the same as `scene` and `shots`. Absent for a design at one size.
@@ -36,7 +37,7 @@ export interface SavedScene {
 
 export interface SavedGroup {
   name?: string;
-  shots: Array<{ scene: unknown; name?: string; length?: number; transition?: { type: string; duration?: number } }>;
+  shots: Array<{ scene: unknown; name?: string; video?: boolean; length?: number; transition?: { type: string; duration?: number } }>;
 }
 
 /** What a scene shows, for filtering: a device family, or a website in a browser frame. */

@@ -703,9 +703,17 @@ function shotVideo(scene, length) {
   return tidy({ duration: d, motion: v.motion, zoom: v.zoom ? { start: d * 0.35, end: d * 0.85 } : undefined });
 }
 
+/** The shots the video plays: the set's screens not left out of it (all of them, if every one is); null for a single design. */
+function videoShots() {
+  const shots = allShots();
+  if (!shots) return null;
+  const playing = shots.filter((x) => x.video !== false);
+  return playing.length ? playing : shots;
+}
+
 /** Every shot as the engine renders them: its scene, video options, length and way in. */
 function sequenceShots() {
-  const shots = allShots() ?? [{ scene: S.scene }];
+  const shots = videoShots() ?? [{ scene: S.scene }];
   return shots.map((x, i) => {
     const length = x.length ?? (shots.length === 1 ? shotVideo(x.scene).duration : undefined);
     return tidy({ ...clone(x.scene), video: shotVideo(x.scene, length), length, transition: i ? (x.transition ?? { type: "fade", duration: 0.5 }) : undefined });
@@ -717,7 +725,7 @@ function sequenceShots() {
  * versions), each fitted, filled or laid out again for its shape.
  */
 export async function exportVideo() {
-  const shots = allShots();
+  const shots = videoShots();
   if (!(shots ? shots[0].scene : S.scene).devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
   if (S.rendering) return;
   const o = S.exportOpts.video;
@@ -726,7 +734,7 @@ export async function exportVideo() {
   const [main, ...rest] = sizes;
   const versions = rest.map((size) => (fit ? { size, fit } : size));
   const started = performance.now();
-  const what = shots ? `${shots.length} shots` : "video";
+  const what = shots ? `${shots.length} shot${shots.length === 1 ? "" : "s"}` : "video";
   set({ rendering: { label: `Rendering the ${what}${sizes.length > 1 ? ` at ${sizes.length} sizes` : ""}… this takes a little while` }, view: "render", exportOpen: false });
   try {
     let r;
@@ -1045,6 +1053,15 @@ export function moveShot(i, by) {
   persist();
 }
 
+/** Leave a screen of the set out of the video, or put it back. It stays one of the set's screenshots. */
+export function setInVideo(i, on) {
+  const shots = allShots();
+  if (!shots?.[i]) return;
+  if (!on && shots.filter((x, n) => n !== i && x.video !== false).length === 0) return toast({ kind: "warn", title: "The video needs a screen", text: "Put another one back in first." });
+  updateShot(i, { video: on ? undefined : false });
+  toast({ kind: "ok", icon: "video", title: on ? `Screen ${i + 1} is back in the video` : `Screen ${i + 1} left out of the video`, text: on ? undefined : "Still one of the set's screenshots. Its menu puts it back.", timeout: 3600 });
+}
+
 /** Change a shot's length or how it comes in. */
 export function updateShot(i, patch) {
   const shots = allShots();
@@ -1195,7 +1212,7 @@ export async function aiEdit(text) {
 
   try {
     const r = await streamEdit(
-      { request: snapshot, instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, name: x.name, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
+      { request: snapshot, instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, name: x.name, video: x.video, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
       (p) => {
         if (p.step === "look") {
           if (!p.image) return step("look");

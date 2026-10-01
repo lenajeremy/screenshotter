@@ -513,6 +513,7 @@ export function createServer(): McpServer {
   const ScreenShape = z.object({
     scene: z.object(MockupInputShape),
     name: z.string().max(80).optional().describe("What the screen is called in the Studio and in exported file names, e.g. \"Introduction\"."),
+    video: z.boolean().optional().describe("false leaves the screen out of the video: still one of the set's screenshots, it takes no time in the video."),
     length: z.number().min(0.5).max(60).optional(),
     transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
   });
@@ -555,7 +556,7 @@ export function createServer(): McpServer {
         const shots = s.shots && s.shots.length > 1 ? firstScreens(s) : undefined;
         const sizes = s.groups && s.groups.length > 1 ? sceneSizes(s).map((z) => ({ size: z.label, screens: z.screens })) : undefined;
         const note = [
-          shots && `A set of ${shots.length} screens, in store order: each is an App Store screenshot, and together they play as a video (render it with create_sequence). Save changes with save_scene's shots.`,
+          shots && `A set of ${shots.length} screens, in store order: each is an App Store screenshot, and together they play as a video (render it with create_sequence, leaving out any screen with video: false). Save changes with save_scene's shots.`,
           sizes && `Made at ${sizes.length} sizes (${sizes.map((z) => z.size).join(", ")}); \`request\` and \`shots\` are the first. Change other sizes with save_scene's sizes, or leave them out to keep them.`,
         ].filter(Boolean).join(" ");
         const content: Content = [text({ id: s.id, name: s.name, editedAt: s.updatedAt, request: s.scene, shots, sizes, note: note || undefined })];
@@ -613,14 +614,14 @@ export function createServer(): McpServer {
         const shots = a.shots
           ? await Promise.all(
               a.shots.map(async (x, i) => {
-                if (i === 0) return { name: x.name, length: x.length, transition: x.transition };
-                return { ...(await checked(x.scene)), name: x.name, length: x.length, transition: x.transition };
+                if (i === 0) return { name: x.name, video: x.video, length: x.length, transition: x.transition };
+                return { ...(await checked(x.scene)), name: x.name, video: x.video, length: x.length, transition: x.transition };
               }),
             )
           : undefined;
         // The other sizes, each screen checked and its files brought in.
         const otherSizes = a.sizes
-          ? await Promise.all(a.sizes.slice(1).map(async (z) => ({ shots: await Promise.all(z.screens.map(async (x) => ({ ...(await checked(x.scene)), name: x.name, length: x.length, transition: x.transition }))) })))
+          ? await Promise.all(a.sizes.slice(1).map(async (z) => ({ shots: await Promise.all(z.screens.map(async (x) => ({ ...(await checked(x.scene)), name: x.name, video: x.video, length: x.length, transition: x.transition }))) })))
           : undefined;
         async function checked(scene: typeof a.scene) {
           const { output: _o3, preview: _p3, quality: _q3, format: _f3, jpegQuality: _j3, deliveryWidth: _d3, ...rest } = scene;

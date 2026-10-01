@@ -289,7 +289,7 @@ async function renderSequence(input: SequenceInput, o: { output?: string; appSto
  * `every` so many seconds, across the whole video), labelled with the time and the shot. During a
  * transition it shows the shot that's mostly on screen.
  */
-export async function sequenceStoryboard(input: SequenceInput, o: { max?: number; output?: string; times?: number[]; every?: number } = {}): Promise<{ path: string; times: number[]; duration: number; shots: Array<{ start: number; length: number }>; warnings?: string[] }> {
+export async function sequenceStoryboard(input: SequenceInput, o: { max?: number; output?: string; times?: number[]; every?: number; numbers?: number[] } = {}): Promise<{ path: string; times: number[]; duration: number; shots: Array<{ start: number; length: number }>; warnings?: string[] }> {
   const size = await sizeOf(input);
   const fps = input.fps ?? 30;
   const tileH = size.width < size.height ? 640 : 380;
@@ -334,7 +334,7 @@ export async function sequenceStoryboard(input: SequenceInput, o: { max?: number
           await stage.page.screenshot({ path: f as `${string}.jpg`, type: "jpeg", quality: 88, clip: stage.clip, optimizeForSpeed: true });
           files.push(f);
           times.push(Math.round((at[i] + t) * 1000) / 1000);
-          labels.push(`${clock(at[i] + t)} · shot ${i + 1}`);
+          labels.push(`${clock(at[i] + t)} · shot ${o.numbers?.[i] ?? i + 1}`);
         }
       } finally {
         await stage.close();

@@ -9,7 +9,7 @@ import { Icon } from "./icons.js";
 import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, useStore } from "./store.js";
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
-import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, updateShot } from "./actions.js";
+import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
 
 // ---------------------------------------------------------------------------------------------
 // The playhead lives outside the store: it moves every frame while playing, and only the canvas
@@ -24,7 +24,8 @@ export function onPlayhead(fn) {
 /** Move the playhead within the shot on the canvas (in a video of several, the video's clock follows). */
 export function setPlayhead(t) {
   playhead.t = Math.max(0, t);
-  if (manyShots()) {
+  // A screen left out of the video keeps its own time: the video's clock stays where it was.
+  if (manyShots() && !offVideo()) {
     const plan = videoPlan();
     video.T = plan.starts[S.shot] + playhead.t;
     for (const fn of videoFollowers) fn(video.T, plan);
@@ -47,24 +48,39 @@ export const manyShots = () => S.shots?.length > 1;
 /** Where each shot starts and how long it runs, joined the way the export joins them. */
 export function videoPlan() {
   const shots = S.shots.map((x, i) => (i === S.shot ? { ...x, scene: S.scene } : x));
-  const lengths = shots.map((x, i) => (i === S.shot ? videoLength() : shotLength(x)));
+  // A screen left out of the video takes no time (unless every one is: then they all play).
+  const out = shots.map((x) => x.video === false);
+  if (out.every(Boolean)) out.fill(false);
+  const lengths = shots.map((x, i) => (out[i] ? 0 : i === S.shot ? videoLength() : shotLength(x)));
+  // Each shot comes in from the last one that plays before it.
+  let prev = -1;
   const joins = shots.map((x, i) => {
-    if (!i) return { type: null, duration: 0 };
+    if (out[i]) return { type: null, duration: 0 };
+    const from = prev;
+    prev = i;
+    if (from < 0) return { type: null, duration: 0 };
     const t = x.transition ?? { type: "fade", duration: 0.5 };
-    return { type: t.type, duration: t.type === "cut" ? 0 : Math.min(t.duration ?? 0.5, 0.45 * lengths[i - 1], 0.45 * lengths[i]) };
+    return { type: t.type, duration: t.type === "cut" ? 0 : Math.min(t.duration ?? 0.5, 0.45 * lengths[from], 0.45 * lengths[i]) };
   });
   const starts = [0];
   for (let i = 1; i < shots.length; i++) starts.push(starts[i - 1] + lengths[i - 1] - joins[i].duration);
-  return { shots, lengths, joins, starts, total: starts[shots.length - 1] + lengths[shots.length - 1] };
+  return { shots, lengths, joins, starts, out, total: starts[shots.length - 1] + lengths[shots.length - 1] };
 }
+
+/** Whether the shot on the canvas is left out of the video (it's edited on its own then). */
+export const offVideo = () => S.shots?.[S.shot]?.video === false && S.shots.some((x) => x.video !== false);
 
 /** What's on screen at T: one shot, or two part way (p) through the transition between them. */
 export function shotsAt(plan, T) {
   T = clamp(T, 0, plan.total);
-  let i = 0;
-  while (i < plan.shots.length - 1 && T >= plan.starts[i + 1]) i++;
-  if (i > 0 && plan.joins[i].duration > 0 && T < plan.starts[i - 1] + plan.lengths[i - 1]) {
-    return { out: i - 1, in: i, p: clamp((T - plan.starts[i]) / plan.joins[i].duration, 0, 1), type: plan.joins[i].type };
+  // Only the shots that play (screens left out of the video take no time).
+  const on = plan.shots.map((_, i) => i).filter((i) => !plan.out?.[i]);
+  let k = 0;
+  while (k < on.length - 1 && T >= plan.starts[on[k + 1]]) k++;
+  const i = on[k];
+  const before = on[k - 1];
+  if (k > 0 && plan.joins[i].duration > 0 && T < plan.starts[before] + plan.lengths[before]) {
+    return { out: before, in: i, p: clamp((T - plan.starts[i]) / plan.joins[i].duration, 0, 1), type: plan.joins[i].type };
   }
   return { only: i };
 }
@@ -143,7 +159,7 @@ export function pause() {
 export function play(until) {
   if (S.playing) return pause();
   // A video of several shots plays through all of them, transitions and all.
-  if (manyShots() && until === undefined) {
+  if (manyShots() && !offVideo() && until === undefined) {
     const total = videoPlan().total;
     if (video.T >= total - 0.02) setVideoTime(0);
     set({ playing: true });
@@ -724,7 +740,7 @@ export function TimelineDock() {
           set({ exportOpts: { ...S.exportOpts, video: { ...S.exportOpts.video, duration: v ?? 6 } } });
           persistPrefs();
         }} /></label>
-      <button class="btn sm" title="Render the video with these animations (⇧⌘E)" onClick=${exportVideo}><${Icon} n="export" s=${13} />${s.shots?.length > 1 ? `Export ${s.shots.length} shots` : "Export video"}</button>
+      <button class="btn sm" title="Render the video with these animations (⇧⌘E)" onClick=${exportVideo}><${Icon} n="export" s=${13} />${s.shots?.length > 1 ? `Export ${s.shots.filter((x) => x.video !== false).length || s.shots.length} shots` : "Export video"}</button>
       <button class="icon-btn sm" title="Close the timeline" onClick=${closeTimeline}><${Icon} n="x" s=${14} /></button>
     </header>
     <${ShotStrip} />
@@ -870,7 +886,7 @@ function ShotStrip() {
   }, [many, pps]);
   // Editing another shot: the clock moves into it (keeping its place if it's already there).
   useEffect(() => {
-    if (!many) return;
+    if (!many || offVideo()) return;
     const p = videoPlan();
     const a = p.starts[S.shot];
     const L = p.lengths[S.shot];
@@ -900,6 +916,7 @@ function ShotStrip() {
       { label: "Duplicate", icon: "duplicate", run: () => (goToShot(i), setTimeout(() => addShot("copy"))) },
       { label: "Move earlier", icon: "left", disabled: i === 0, run: () => moveShot(i, -1) },
       { label: "Move later", icon: "right", disabled: i === n - 1, run: () => moveShot(i, 1) },
+      plan.shots[i].video === false ? { label: "Put back in the video", icon: "video", run: () => setInVideo(i, true) } : { label: "Leave out of the video", icon: "video", disabled: plan.out.filter((o) => !o).length < 2, run: () => setInVideo(i, false) },
       "-",
       { label: "Remove this shot", icon: "trash", danger: true, run: () => deleteShot(i) },
     ]);
@@ -922,6 +939,7 @@ function ShotStrip() {
   return html`<div class="tl-shots video" style=${{ "--shot-aspect": c ? `${c.width} / ${c.height}` : undefined }}>
     <div class="vt" ref=${track} onPointerDown=${scrub}>
       ${plan.shots.map((x, i) => {
+        if (plan.out[i]) return null;
         const left = plan.starts[i] * pps;
         const right = (i < n - 1 ? plan.starts[i + 1] : plan.total) * pps;
         return html`<button class="tl-shot ${i === s.shot ? "on" : ""} ${s.shotPulse?.includes(i) ? "pulse" : ""}" key=${`s${i}`} style=${{ left: left + "px", width: Math.max(18, right - left - 3) + "px" }}
@@ -931,11 +949,18 @@ function ShotStrip() {
           ${right - left > 70 && html`<span class="shot-len">${plan.lengths[i].toFixed(1)}s</span>`}
         </button>`;
       })}
-      ${plan.shots.map((x, i) => i > 0 && html`<${TransitionChip} i=${i} t=${x.transition} key=${`t${i}`} at=${plan.starts[i] * pps + (plan.joins[i].duration * pps) / 2} />`)}
+      ${plan.shots.map((x, i) => plan.joins[i].type && html`<${TransitionChip} i=${i} t=${x.transition} key=${`t${i}`} at=${plan.starts[i] * pps + (plan.joins[i].duration * pps) / 2} />`)}
       <div class="vt-line" ref=${line}><i></i></div>
     </div>
+    ${plan.out.some(Boolean) &&
+    html`<div class="tl-left-out" title="Screens of the set left out of the video: still App Store screenshots. Right-click one to put it back.">
+      <span>Not in the video</span>
+      ${plan.shots.map((x, i) => plan.out[i] && html`<button class="tl-shot mini ${i === s.shot ? "on" : ""}" key=${`o${i}`} title=${`${i + 1} · ${screenName(i)}: left out of the video`} onClick=${() => goToShot(i)} onContextMenu=${(e) => shotMenu(e, i)}>
+        <${ShotThumb} scene=${i === s.shot ? s.scene : x.scene} /><span class="shot-n">${i + 1}</span>
+      </button>`)}
+    </div>`}
     ${addBtn}
-    <span class="tl-total">${n} shots · ${plan.total.toFixed(1)} s</span>
+    <span class="tl-total">${plan.out.filter((o) => !o).length} shots · ${plan.total.toFixed(1)} s</span>
     <button class="btn sm ghost" title="Every shot at its key moments on one sheet, without rendering the video" onClick=${previewShots}><${Icon} n="grid" s=${13} />All shots</button>
   </div>`;
 }

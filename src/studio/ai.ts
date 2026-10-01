@@ -54,7 +54,7 @@ export const AIEditSchema = z.object({
    * A video of several shots: every shot (each a scene, its length and how it comes in), and which
    * one is on the canvas (whose scene is `request`, as it is now). Claude sees and edits them all.
    */
-  shots: z.array(z.object({ scene: MockupInputSchema, length: z.number().min(0.5).max(60).optional(), transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(), name: z.string().max(80).optional() })).min(2).max(20).optional(),
+  shots: z.array(z.object({ scene: MockupInputSchema, length: z.number().min(0.5).max(60).optional(), transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(), name: z.string().max(80).optional(), video: z.boolean().optional() })).min(2).max(20).optional(),
   shot: z.number().int().min(0).max(19).optional(),
 });
 export type AIEditInput = z.infer<typeof AIEditSchema>;
@@ -316,7 +316,7 @@ How scenes work:
 - To mark something on a screen, add a shape with "around": { "device": N, "text": "…" } rather than working out coordinates. Add one with op "append" at "/shapes" (the list is created if it's missing).
 - If "selected" is given, "this", "it" and "the selection" mean that entity (device-N → /devices/N-1, text-N → /texts/N-1, shape-N → /shapes/N-1, caption → headline/subheadline/textStyle).
 - "image" in the request says whether a picture of the design came with it. When the request is about how the design looks, one does: a quick render of the design as it is now (for an animated design, a contact sheet of its video: frames at the moments labelled on them, in order, so you can judge timing and framing). Look at it before deciding anything. The JSON is the source of truth for exact values. Otherwise there's none, to keep things quick: answer questions and make exact edits from the settings, entities and screens. If you truly need to see the design to do the request well, set see: true and leave operations empty.
-- A video of several shots: when the request has "video", the design is several shots played one after another, and your operations go into that whole document, so every path starts with /shots/N (N counts from 0; the person counts from 1, so shot 1 is /shots/0 and "the last shot" is the highest). Each shot is a scene as described above, plus "length" (seconds on screen, its way in included; leave it out and it runs as long as its animations need, at least 6 s) and "transition" (how it comes in from the shot before: { type: cut, fade, fade-black, fade-white, push-left, push-right, push-up, push-down, wipe-left, wipe-right, iris, zoom, blur or dissolve, duration } in seconds; ignored on the first). "video.onCanvas" is the shot the person is looking at: "this", "it", "the headline" mean that shot unless they name another ("shot 2", "the first shot", "every shot", "all of them"). Change only the shots they mean. Add a shot with op "insert" at /shots/N and a whole shot as the value, or "copy" from /shots/K to /shots/N and then change the copy; remove one with "remove" at /shots/N; reorder with "move" from /shots/K to /shots/N; "copy" or "move" also carries an item from one shot to another (from /shots/0/devices/0 to /shots/2/devices/-). "shots" lists each at a glance: its number, when it starts, its length, how it comes in and its entities. "look" times are across the whole video. Your summary names the shots you changed ("Shot 2: …").
+- A video of several shots: when the request has "video", the design is several shots played one after another, and your operations go into that whole document, so every path starts with /shots/N (N counts from 0; the person counts from 1, so shot 1 is /shots/0 and "the last shot" is the highest). Each shot is a scene as described above, plus "length" (seconds on screen, its way in included; leave it out and it runs as long as its animations need, at least 6 s) and "transition" (how it comes in from the shot before: { type: cut, fade, fade-black, fade-white, push-left, push-right, push-up, push-down, wipe-left, wipe-right, iris, zoom, blur or dissolve, duration } in seconds; ignored on the first). "video.onCanvas" is the shot the person is looking at: "this", "it", "the headline" mean that shot unless they name another ("shot 2", "the first shot", "every shot", "all of them"). Change only the shots they mean. Add a shot with op "insert" at /shots/N and a whole shot as the value, or "copy" from /shots/K to /shots/N and then change the copy; remove one with "remove" at /shots/N; reorder with "move" from /shots/K to /shots/N; "copy" or "move" also carries an item from one shot to another (from /shots/0/devices/0 to /shots/2/devices/-). "shots" lists each at a glance: its number, its name, when it starts, its length, how it comes in and its entities. The shots are also the screens of an App Store set, in store order: "name" is what a screen is called ("Introduction"), and a shot with "video": false is a screen left out of the video (still one of the set's screenshots; it takes no time, so it has no "starts"). Leave a shot out or put it back only when asked: "leave shot 3 out of the video" sets "video": false, "put it back in" removes it. "look" times are across the whole video. Your summary names the shots you changed ("Shot 2: …").
 - "screens" describes each device's screenshot: its palette (dominant colours with their share, the accent colour, dark or light UI) and the text visible on it, top to bottom, with where it sits (fractions of the screenshot). Build colour decisions on the palette, and aim callouts at text copied exactly from this list.
 - "available" says what can be used right now: "aiImages" names the image generator, or is null (then never use background.generate). "appleArt" lists the devices that have Apple's product art installed.
 - "houseStyle" is what this person likes, remembered from before. Follow it unless they ask otherwise.
@@ -1154,8 +1154,17 @@ type Shot = NonNullable<AIEditInput["shots"]>[number];
 const ShotMetaSchema = z.object({
   /** The screen's name in the set ("Introduction"). */
   name: z.string().max(80).optional(),
+  /** false: a screen of the set left out of the video (still one of its screenshots). */
+  video: z.boolean().optional(),
   length: z.number().min(0.5).max(60).optional(),
   transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
+});
+/** A shot's own settings beside its scene, as Claude reads and writes them. */
+const meta = (s: z.infer<typeof ShotMetaSchema>) => ({
+  ...(s.name ? { name: s.name } : {}),
+  ...(s.video === false ? { video: false } : {}),
+  ...(s.length !== undefined ? { length: s.length } : {}),
+  ...(s.transition ? { transition: s.transition } : {}),
 });
 /** A scene without its destination and delivery settings (they aren't part of the design). */
 const designOf = (scene: MockupInput): MockupInput => {
@@ -1169,8 +1178,11 @@ const shotLength = (s: Shot) => s.length ?? Math.max(6, s.scene.animations?.leng
 async function videoSheet(shots: Shot[], times?: number[]): Promise<Seen | undefined> {
   const file = path.join(cacheDir("ai"), `video-${Date.now()}-${Math.round(Math.random() * 1e6)}.jpg`);
   try {
-    const input = { shots: shots.map((s) => ({ ...designOf(s.scene), ...(s.length ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) })) } as SequenceInput;
-    const board = await sequenceStoryboard(input, { output: file, times, max: 12 });
+    // The video plays the screens not left out of it (all of them, if every one is), numbered as in the set.
+    const numbers = shots.map((_, i) => i + 1).filter((n) => shots[n - 1].video !== false);
+    const playing = numbers.length ? numbers : shots.map((_, i) => i + 1);
+    const input = { shots: playing.map((n) => shots[n - 1]).map((s) => ({ ...designOf(s.scene), ...(s.length ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) })) } as SequenceInput;
+    const board = await sequenceStoryboard(input, { output: file, times, max: 12, numbers: playing });
     return { image: (await readFile(file)).toString("base64"), moments: board.times.length };
   } catch {
     return undefined;
@@ -1200,22 +1212,28 @@ async function videoMessage(input: AIEditInput, shots: Shot[], safeShots: unknow
     }),
   );
   let start = 0;
+  let first = true;
+  const left = shots.every((s) => s.video === false) ? new Set<number>() : new Set(shots.flatMap((s, i) => (s.video === false ? [i] : [])));
   const overview = shots.map((s, i) => {
-    const t = i === 0 ? undefined : (s.transition ?? { type: "fade" as const, duration: 0.5 });
-    if (i > 0) start -= t!.type === "cut" ? 0 : (t!.duration ?? 0.5);
+    const out = left.has(i);
+    const t = first || out ? undefined : (s.transition ?? { type: "fade" as const, duration: 0.5 });
+    if (t) start -= t.type === "cut" ? 0 : (t.duration ?? 0.5);
     const row = {
       shot: i + 1,
       path: `/shots/${i}`,
+      name: s.name,
       onCanvas: i === onCanvas || undefined,
       headline: s.scene.headline?.replace(/\*\*/g, ""),
-      starts: Math.round(Math.max(0, start) * 100) / 100,
-      length: Math.round(shotLength(s) * 100) / 100,
-      lengthSet: s.length !== undefined || undefined,
-      comesIn: t,
+      ...(out
+        ? { inVideo: false }
+        : { starts: Math.round(Math.max(0, start) * 100) / 100, length: Math.round(shotLength(s) * 100) / 100, lengthSet: s.length !== undefined || undefined, comesIn: t }),
       canvas: layouts[i]?.canvas,
       entities: layouts[i]?.entities.map(({ screenshot: _s, screen: _sc, ...e }) => e),
     };
-    start += shotLength(s);
+    if (!out) {
+      start += shotLength(s);
+      first = false;
+    }
     return row;
   });
   return JSON.stringify({
@@ -1240,7 +1258,7 @@ async function editVideo(input: AIEditInput, engine: Engine, onProgress: (p: AIP
   // Every shot as it is now (the one on the canvas as the person has it), without delivery settings.
   const before: Shot[] = input.shots!.map((s, i) => ({ ...s, scene: designOf(i === onCanvas ? input.request : s.scene) }));
   const shared = { assets: new Map<string, string>(), byPath: new Map<string, string>() };
-  const safeShots = before.map((s) => ({ ...sceneAssets(s.scene, shared).safe, ...(s.name ? { name: s.name } : {}), ...(s.length !== undefined ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) }));
+  const safeShots = before.map((s) => ({ ...sceneAssets(s.scene, shared).safe, ...meta(s) }));
   const assets = shared.assets;
   const view = (shots: Shot[]): View => ({ animated: true, frames: async (times) => (await videoSheet(shots, times))?.image, whole: () => videoSheet(shots) });
 
@@ -1265,13 +1283,13 @@ async function editVideo(input: AIEditInput, engine: Engine, onProgress: (p: AIP
     if (edited.shots.length > 20) throw new Error("A video can have 20 shots at most.");
     const shots = edited.shots.map((raw, i) => {
       if (!raw || typeof raw !== "object") throw new Error(`Shot ${i + 1} isn't a scene.`);
-      const { length, transition, name, ...scene } = raw as Record<string, unknown>;
-      return { scene: MockupInputSchema.parse(scene), ...ShotMetaSchema.parse({ length, transition, name }) };
+      const { length, transition, name, video, ...scene } = raw as Record<string, unknown>;
+      return { scene: MockupInputSchema.parse(scene), ...ShotMetaSchema.parse({ length, transition, name, video }) };
     });
     const restored: Shot[] = shots.map((sh) => ({ ...sh, scene: restoreAssets(structuredClone(sh.scene), assets) }));
     await Promise.all(restored.map((sh) => layoutScene(sh.scene)));
     // The document for a follow-up (the review): shots in token space, as Claude wrote them.
-    return { doc: { shots: shots.map((sh) => ({ ...sh.scene, ...(sh.name ? { name: sh.name } : {}), ...(sh.length !== undefined ? { length: sh.length } : {}), ...(sh.transition ? { transition: sh.transition } : {}) })) }, restored };
+    return { doc: { shots: shots.map((sh) => ({ ...sh.scene, ...meta(sh) })) }, restored };
   };
 
   let { reply, model } = await ask();
