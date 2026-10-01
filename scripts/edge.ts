@@ -387,6 +387,19 @@ await check("an installed product bezel frames the screenshot (edge from the art
   }
 });
 
+await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
+  process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
+  try {
+    const r = await createMockup({ devices: [{ screenshot: shot, device: "iPhone 17 Pro" }], canvas: "600x1000", layout: "floating", background: "#000000", preview: false, output: path.join(out, "no-art.png") } as never);
+    assert((r.warnings ?? []).some((w) => /no Apple art for an iPhone installed/.test(w)), `warnings: ${JSON.stringify(r.warnings)}`);
+    const { layoutScene } = await import("../src/render/mockup.js");
+    const layout = await layoutScene({ devices: [{ screenshot: shot, device: "iPhone 17 Pro" }], canvas: "600x1000", layout: "floating" } as never);
+    assert(layout.entities.find((e) => e.kind === "device")?.frame === "card", "the device should be laid out as its bare screen");
+  } finally {
+    delete process.env.SCREENSHOTTER_BEZELS_DIR;
+  }
+});
+
 await check("Apple's art files are told apart by model, colour and orientation", async () => {
   const { classify } = await import("../src/render/bezels.js");
   const root = "/art";
@@ -411,6 +424,10 @@ await check("Apple's art files are told apart by model, colour and orientation",
   // Apple's own Ultra 3 file names.
   is("PNG/Alpine Loop/AW Ultra 3 - Natural + Alpine Loop Terra Cotta.png", "apple-watch-ultra", "Natural Titanium");
   is("PNG/Ocean Band/AW Ultra 3 - Black + Ocean Band Anchor Blue.png", "apple-watch-ultra", "Black Titanium");
+  // A watch's band comes after the "+"; the finish is read before it, so a band's colour isn't taken for the case's.
+  const watch = classify("/art/PNG/Sport Band/Apple Watch S11 - 46mm - Titanium Slate + Sport Band Black.png", "/art");
+  assert(watch?.color === "Slate Titanium" && watch.band === "Sport Band Black", `S11 band → ${JSON.stringify(watch)}`);
+  assert(classify("/art/PNG/Milanese Loop/AW Ultra 3 - Natural + Milanese Loop.png", "/art")?.band === "Milanese Loop", "a band without a colour");
   // Designs saved before the watches were named by generation still find them.
   const { findModel } = await import("../src/devices/catalog.js");
   assert(findModel("Apple Watch Ultra 49mm")?.name === "Apple Watch Ultra 3", "the Ultra's old name");

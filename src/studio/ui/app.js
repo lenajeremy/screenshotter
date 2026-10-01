@@ -1095,10 +1095,15 @@ function DeviceArt() {
     }
   };
   const job = info?.job;
-  return html`<div class="card">
+  // Opened from the device panel's "Get Apple's device art…": bring this card into view.
+  const card = useRef();
+  useEffect(() => {
+    if (S.modal?.tab === "art") card.current?.scrollIntoView({ block: "center" });
+  }, []);
+  return html`<div class="card" ref=${card}>
     <h4><${Icon} n="phone" s=${15} />Device art<span class="grow"></span>
-      ${info?.count ? html`<span class="pill ok"><span class="status-dot ok"></span>Apple bezels</span>` : html`<span class="pill">Drawn frames</span>`}</h4>
-    <div class="note">Use Apple's own product renders for iPhone, iPad, Apple Watch and Mac frames. Screenshotter downloads them from <a href="https://developer.apple.com/design/resources/" target="_blank">Apple Design Resources</a>, and macOS asks you to accept Apple's license first. It covers mock-ups of apps for Apple platforms, so website captures keep the drawn frames.</div>
+      ${info?.count ? html`<span class="pill ok"><span class="status-dot ok"></span>Apple bezels</span>` : html`<span class="pill">No device art yet</span>`}</h4>
+    <div class="note">Devices are shown with Apple's own product renders: only the models you get here appear in the device list, in the finishes (and, for Apple Watch, the bands) Apple drew. Screenshotter downloads them from <a href="https://developer.apple.com/design/resources/" target="_blank">Apple Design Resources</a>, and macOS asks you to accept Apple's license first. It covers mock-ups of apps for Apple platforms, so website captures are shown without hardware.</div>
     ${info?.models?.length > 0 && html`<div class="bezel-list">${info.models.map((m) => html`<span><b>${m.name}</b> ${m.colors.join(", ")}</span>`)}</div>`}
     <div class="bezel-sets">${sets.map((x) =>
       x.installed
@@ -1635,14 +1640,13 @@ function entityMenu(id) {
   if (id.startsWith("device-")) {
     const d = S.scene.devices[i];
     if (!d) return [];
-    const iphone = /iphone/i.test(e?.device ?? d.device ?? "") && (d.frame ?? "device") === "device";
     const placed = d.x !== undefined || d.y !== undefined || d.height !== undefined || d.rotate;
     return [
       { label: `Ask AI about ${entityLabel(id)}…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
       "-",
       { label: "Replace screenshot…", icon: "replace", run: () => replaceMode(id) },
-      iphone && { label: d.side === "back" ? "Show the front" : "Show the back", icon: "phone", run: () => editScene((sc) => (sc.devices[i].side = d.side === "back" ? undefined : "back")) },
-      (e?.bezel || d.bezel === false) && { label: d.bezel === false ? "Use Apple's device art" : "Use the drawn frame", icon: "image", run: () => editScene((sc) => (sc.devices[i].bezel = d.bezel === false ? undefined : false)) },
+      // Devices are shown with Apple's art; a design that turned it off can turn it back on.
+      d.bezel === false && { label: "Use Apple's device art", icon: "image", run: () => editScene((sc) => delete sc.devices[i].bezel) },
       { label: "Put back in the layout", icon: "refresh", disabled: !placed, run: () => editScene((sc) => ["x", "y", "anchor", "height", "width", "rotate"].forEach((k) => delete sc.devices[i][k])) },
       "-",
       { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },

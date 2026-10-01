@@ -266,7 +266,11 @@ export const DeviceInputSchema = z.object({
   url: z.string().optional().describe("browser frame: address bar text."),
   title: z.string().optional().describe("window frame: title bar text."),
   chrome: z.enum(["light", "dark"]).optional().describe("browser/window chrome theme. Default light."),
-  bandColor: z.string().optional().describe("Apple Watch band colour, or \"none\"."),
+  band: z
+    .string()
+    .optional()
+    .describe("Apple Watch: the band, as Apple's art names it for the finish, e.g. \"Sport Band Black\", \"Sport Loop Forest\", \"Milanese Loop\", \"Alpine Loop Light Blue\" (list_mockup_options lists each finish's bands; part of a name, like \"Milanese\", is enough). Default: a Sport Band if the finish has one."),
+  bandColor: z.string().optional().describe("Apple Watch band colour, or \"none\" (drawn watches only, a development option)."),
 });
 
 // ---------------------------------------------------------------------------------------------

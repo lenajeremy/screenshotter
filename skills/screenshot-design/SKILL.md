@@ -137,7 +137,7 @@ Then decide, in this order: **the one idea → the hero → the words → the co
 - Tilt to add energy, and turn the device **toward** the headline or the centre: `rotateY` ±10–25, `rotateX` 4–10, optional `rotate` ±3–8.
 - Keep text-heavy screens readable: under 15° when the UI must be read.
 - Counter-rotated pairs (one −7°, one +6°) feel dynamic without chaos.
-- In 3D, MacBooks and Watches use drawn frames (with real depth); flat, they use Apple's own art when installed.
+- Devices are Apple's own product art, flat or tilted in 3D. Only the models list_mockup_options lists are installed; another is shown as an installed one of its family (or as its bare screen).
 
 ## 10. Callouts
 
@@ -165,7 +165,7 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 
 ## 11. Devices and special shots
 
-- Pick the newest hardware that matches the capture unless the person asks otherwise. `side: "back"` shows an iPhone's back, for hardware and colour shots.
+- Pick the newest installed hardware that matches the capture unless the person asks otherwise. For an Apple Watch, `band` picks the band from the finish's list (a Sport Band by default): match it to the app's palette.
 - Web pages: a browser frame (`frame: "browser"`, `chrome` light or dark) or a MacBook. Mac apps: a MacBook, whose screen draws the macOS menu bar with the app's name and menus, or a window frame.
 - Menu bar apps: scene `menuBar` { status, size } and the captured menu with `frame: "none"`; `size` 0.06–0.1 for a close, readable shot.
 - Close-ups: `camera` { zoom, x, y }, focused on a point taken from the entities' positions.

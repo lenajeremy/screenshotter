@@ -2,6 +2,7 @@ import type { DeviceModel } from "../devices/catalog.js";
 import type { ChromeButton } from "../devices/profile.js";
 import { BACK_CSS, backHtml, housingOutline } from "./back.js";
 import { luminance } from "./background.js";
+import { drawnFrames } from "./bezels.js";
 import { menuBarHtml, type MenuBarSpec } from "./menubar.js";
 import type { ResolvedHighlight } from "./highlights.js";
 
@@ -95,7 +96,7 @@ function bezelScale(o: FrameOptions): number {
  * deck) and so does an Apple Watch (its crown, buttons and band stubs have depth).
  */
 const usesBezel = (o: FrameOptions, depth = false) =>
-  o.kind === "device" && Boolean(o.bezel) && !o.back && !(depth && (o.model?.family === "mac" || o.model?.family === "watch"));
+  o.kind === "device" && Boolean(o.bezel) && !o.back && !(depth && drawnFrames() && (o.model?.family === "mac" || o.model?.family === "watch"));
 
 /** Size of the frame in points, before choosing a render scale. */
 export interface FrameMeasure {
@@ -761,7 +762,8 @@ function flat(o: FrameOptions, u: number, depth: boolean): FrameOutput {
   const bar = (o.kind === "window" ? WINDOW_BAR : o.kind === "browser" ? BROWSER_BAR : 0) * u;
   const W = cw;
   const H = ch + bar;
-  const R = o.radius ?? (o.kind === "none" ? 0 : o.kind === "card" ? Math.min(W, H) * 0.035 : 12 * u);
+  // A device shown without its hardware (no Apple art) keeps its screen's own rounded corners.
+  const R = o.radius ?? (o.kind === "card" && o.model ? o.model.screen.cornerRadius * u : o.kind === "none" ? 0 : o.kind === "card" ? Math.min(W, H) * 0.035 : 12 * u);
   const c = content(o, cw, ch, 0, u);
   const barBg = dark ? "#2a2a2c" : "#f3f3f5";
   const ink = dark ? "#e6e6e8" : "#3a3a3c";

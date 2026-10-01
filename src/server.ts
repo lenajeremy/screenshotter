@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { DEVICE_MODELS, GENERIC_COLORS, findModel } from "./devices/catalog.js";
 import { captureScreenshot } from "./simulator/capture.js";
 import * as sim from "./simulator/simctl.js";
 import { CANVAS_PRESETS } from "./render/layouts.js";
+import { bezelSummary } from "./render/bezels.js";
 import { createMockup, layoutScene } from "./render/mockup.js";
 import { LAYOUTS, MockupInputShape, type MockupInput } from "./render/schema.js";
 import { createMockupSet, exportSet, MockupSetShape } from "./render/set.js";
@@ -916,30 +916,27 @@ export function createServer(): McpServer {
     "list_mockup_options",
     {
       title: "List mockup options",
-      description: "Device frames and colours, canvas presets, layouts, background types and fonts available to create_mockup.",
+      description: "The devices available to create_mockup (those with Apple's product art installed, with their finishes and Apple Watch bands), canvas presets, layouts, background types and fonts.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
     () =>
       guard(async () => {
-        const catalog = DEVICE_MODELS.map((m) => `- ${m.name} [${m.family}]: ${m.colors.map((c) => `${c.name} ${c.hex}`).join(", ")}`);
-        let extra: string[] = [];
-        try {
-          extra = (await sim.listDeviceTypes())
-            .filter((t) => ["iPhone", "iPad", "Apple Watch"].includes(t.productFamily) && !findModel(t.name))
-            .map((t) => t.name);
-        } catch {
-          // Xcode not available
-        }
+        // Devices are shown with Apple's own art only: these are the ones installed, in the finishes
+        // (and, for Apple Watch, the bands) Apple drew.
+        const art = bezelSummary();
+        const catalog = art.models.map(
+          (m) => `- ${m.name} [${m.family}]: ${m.colors.join(", ")}${m.bands ? `\n    bands: ${Object.entries(m.bands).map(([c, b]) => `${c}: ${b.join(", ")}`).join("; ")}` : ""}`,
+        );
         const presets = Object.entries(CANVAS_PRESETS).map(([k, v]) => `- ${k}: ${v.width}×${v.height} — ${v.label}`);
         return [
           text(
             [
-              "DEVICE FRAMES (with catalog colours):",
+              catalog.length
+                ? "DEVICES (Apple's product art is installed for these; `color` picks a finish, `band` an Apple Watch band):"
+                : "DEVICES: none yet. Devices are shown with Apple's product art, which the person gets in the Studio (Settings › Device art); until then a device is shown as its bare screen.",
               ...catalog,
-              extra.length
-                ? `\nAlso drawable from Xcode's device profiles (exact geometry, generic colours ${GENERIC_COLORS.map((c) => c.name).join("/")} or any hex):\n${extra.join(", ")}`
-                : "",
+              catalog.length ? "Another model is shown as an installed one of its family whose screen fits the screenshot (or as its bare screen), with a warning." : "",
               "\nCANVAS PRESETS (or \"WIDTHxHEIGHT\" / {width,height}; landscape:true swaps):",
               ...presets,
               `\nLAYOUTS: ${LAYOUTS.join(", ")}`,

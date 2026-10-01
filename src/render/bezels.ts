@@ -33,7 +33,15 @@ export interface BezelEntry {
   model: string;
   color: string;
   landscape: boolean;
+  /** Apple Watch art: the band it's shown with ("Sport Band Black", "Alpine Loop Light Blue"). */
+  band?: string;
 }
+
+/**
+ * Devices are drawn with Apple's own art only; the drawn hardware is kept for development and tests
+ * (SCREENSHOTTER_DRAWN_FRAMES=1) until there are proper 3D models.
+ */
+export const drawnFrames = () => process.env.SCREENSHOTTER_DRAWN_FRAMES === "1";
 
 export function bezelsDir(): string {
   return process.env.SCREENSHOTTER_BEZELS_DIR || path.join(os.homedir(), "Library", "Application Support", "Screenshotter", "Bezels");
@@ -87,7 +95,12 @@ function pngIsWide(file: string): boolean {
  */
 export function classify(file: string, root = bezelsDir(), only?: string): BezelEntry | undefined {
   const rel = path.relative(root, file);
-  const key = norm(rel.replace(/\.png$/i, ""));
+  // Watch art names the case, then its band: "Apple Watch S11 - 42mm - Aluminum Silver + Sport Band
+  // Neon Yellow". The finish is read from the case part only, so a band's colour isn't taken for it.
+  const base = path.basename(rel).replace(/\.png$/i, "");
+  const plus = base.indexOf(" + ");
+  const band = plus >= 0 ? base.slice(plus + 3).trim() || undefined : undefined;
+  const key = norm(plus >= 0 ? path.join(path.dirname(rel), base.slice(0, plus)) : rel.replace(/\.png$/i, ""));
   const have = new Set(words(rel.replace(/\.png$/i, "")));
   // `only`: the one model a set from Apple holds, for art whose name doesn't say which it is.
   const model = NEEDLES.find((n) => n.words.every((w) => have.has(w)))?.model ?? (only ? DEVICE_MODELS.find((m) => m.id === only) : undefined);
@@ -97,7 +110,13 @@ export function classify(file: string, root = bezelsDir(), only?: string): Bezel
   if (!color) return undefined;
   // Orientation from the name, else (phones, tablets) from the picture: wider than tall is landscape.
   const landscape = /landscape/i.test(rel) || (!/portrait/i.test(rel) && model.family !== "mac" && pngIsWide(file));
-  return { file, model: model.id, color: color.name, landscape };
+  return { file, model: model.id, color: color.name, landscape, ...(band ? { band } : {}) };
+}
+
+/** The band a watch shows when none is chosen: a Sport Band if the finish has one, else the first by name. */
+function bandOrder(a?: string, b?: string): number {
+  const rank = (x?: string) => (x?.startsWith("Sport Band") ? 0 : 1);
+  return rank(a) - rank(b) || (a ?? "").localeCompare(b ?? "");
 }
 
 let indexCache: { at: number; root: string; entries: BezelEntry[] } | undefined;
@@ -113,15 +132,36 @@ export function listBezels(): BezelEntry[] {
   return entries;
 }
 
-/** Models and colours that have bezels installed. */
-export function bezelSummary(): { dir: string; count: number; models: Array<{ model: string; name: string; colors: string[] }> } {
+/**
+ * Models and colours that have bezels installed (in catalogue order), and for Apple Watches the
+ * bands each finish comes with, the one shown by default first.
+ */
+export function bezelSummary(): { dir: string; count: number; models: Array<{ model: string; name: string; family: string; colors: string[]; bands?: Record<string, string[]> }> } {
   const entries = listBezels().filter((e) => !e.landscape);
   const byModel = new Map<string, Set<string>>();
-  for (const e of entries) byModel.set(e.model, (byModel.get(e.model) ?? new Set()).add(e.color));
+  const bands = new Map<string, Map<string, Set<string>>>();
+  for (const e of entries) {
+    byModel.set(e.model, (byModel.get(e.model) ?? new Set()).add(e.color));
+    if (e.band) {
+      const m = bands.get(e.model) ?? new Map<string, Set<string>>();
+      m.set(e.color, (m.get(e.color) ?? new Set()).add(e.band));
+      bands.set(e.model, m);
+    }
+  }
   return {
     dir: bezelsDir(),
     count: entries.length,
-    models: [...byModel].map(([id, colors]) => ({ model: id, name: DEVICE_MODELS.find((m) => m.id === id)?.name ?? id, colors: [...colors] })),
+    models: DEVICE_MODELS.filter((m) => byModel.has(m.id)).map((m) => {
+      const own = bands.get(m.id);
+      return {
+        model: m.id,
+        name: m.name,
+        family: m.family,
+        // The model's own colour order, not the order the files were found in.
+        colors: m.colors.map((c) => c.name).filter((c) => byModel.get(m.id)!.has(c)),
+        ...(own ? { bands: Object.fromEntries([...own].map(([c, set]) => [c, [...set].sort(bandOrder)])) } : {}),
+      };
+    }),
   };
 }
 
@@ -252,12 +292,21 @@ async function analyze(file: string): Promise<BezelArt | undefined> {
  * fit the screen: the same shape for the model's own art (so a screenshot is never stretched), and
  * the same size in pixels for art filed under a sibling (a foldable's folded and open states).
  */
-export async function findBezel(model: DeviceModel, color: ColorOption | undefined, landscape = false): Promise<BezelArt | undefined> {
+export async function findBezel(model: DeviceModel, color: ColorOption | undefined, landscape = false, band?: string): Promise<BezelArt | undefined> {
   if (!color) return undefined;
   const models = [model.id, ...(model.shareArt ?? [])];
+  // A watch's band: the one asked for (by name, or the first whose name contains it), else the default.
+  const want = band ? norm(band) : undefined;
+  const bandRank = (e: BezelEntry) => (!want ? 0 : norm(e.band ?? "") === want ? 2 : norm(e.band ?? "").includes(want) ? 1 : 0);
   const entries = listBezels()
     .filter((e) => models.includes(e.model) && norm(e.color) === norm(color.name))
-    .sort((a, b) => Number(b.model === model.id) - Number(a.model === model.id) || Number(b.landscape === landscape) - Number(a.landscape === landscape));
+    .sort(
+      (a, b) =>
+        Number(b.model === model.id) - Number(a.model === model.id) ||
+        Number(b.landscape === landscape) - Number(a.landscape === landscape) ||
+        bandRank(b) - bandRank(a) ||
+        bandOrder(a.band, b.band),
+    );
   const [sw, sh] = [Math.min(model.screen.width, model.screen.height), Math.max(model.screen.width, model.screen.height)];
   for (const e of entries) {
     if (e.landscape !== landscape && (e.landscape || e.model !== model.id)) continue;

@@ -28,7 +28,7 @@ import { DESIGN_GUIDE } from "../design/guide.js";
 import { screenshotPalette } from "../render/analyze.js";
 import { pendingBackdrop } from "../render/background.js";
 import { availableImageProvider } from "../render/photos.js";
-import { listBezels } from "../render/bezels.js";
+import { bezelSummary } from "../render/bezels.js";
 import { recognizeText } from "../native/ocr.js";
 import { houseStyle, updateHouseStyle } from "../util/style.js";
 import { GRADES, LAYOUTS, MockupInputSchema, type MockupInput } from "../render/schema.js";
@@ -318,7 +318,7 @@ How scenes work:
 - "image" in the request says whether a picture of the design came with it. When the request is about how the design looks, one does: a quick render of the design as it is now (for an animated design, a contact sheet of its video: frames at the moments labelled on them, in order, so you can judge timing and framing). Look at it before deciding anything. The JSON is the source of truth for exact values. Otherwise there's none, to keep things quick: answer questions and make exact edits from the settings, entities and screens. If you truly need to see the design to do the request well, set see: true and leave operations empty.
 - A video of several shots: when the request has "video", the design is several shots played one after another, and your operations go into that whole document, so every path starts with /shots/N (N counts from 0; the person counts from 1, so shot 1 is /shots/0 and "the last shot" is the highest). Each shot is a scene as described above, plus "length" (seconds on screen, its way in included; leave it out and it runs as long as its animations need, at least 6 s) and "transition" (how it comes in from the shot before: { type: cut, fade, fade-black, fade-white, push-left, push-right, push-up, push-down, wipe-left, wipe-right, iris, zoom, blur or dissolve, duration } in seconds; ignored on the first). "video.onCanvas" is the shot the person is looking at: "this", "it", "the headline" mean that shot unless they name another ("shot 2", "the first shot", "every shot", "all of them"). Change only the shots they mean. Add a shot with op "insert" at /shots/N and a whole shot as the value, or "copy" from /shots/K to /shots/N and then change the copy; remove one with "remove" at /shots/N; reorder with "move" from /shots/K to /shots/N; "copy" or "move" also carries an item from one shot to another (from /shots/0/devices/0 to /shots/2/devices/-). "shots" lists each at a glance: its number, its name, when it starts, its length, how it comes in and its entities. The shots are also the screens of an App Store set, in store order: "name" is what a screen is called ("Introduction"), and a shot with "video": false is a screen left out of the video (still one of the set's screenshots; it takes no time, so it has no "starts"). Leave a shot out or put it back only when asked: "leave shot 3 out of the video" sets "video": false, "put it back in" removes it. "look" times are across the whole video. Your summary names the shots you changed ("Shot 2: …").
 - "screens" describes each device's screenshot: its palette (dominant colours with their share, the accent colour, dark or light UI) and the text visible on it, top to bottom, with where it sits (fractions of the screenshot). Build colour decisions on the palette, and aim callouts at text copied exactly from this list.
-- "available" says what can be used right now: "aiImages" names the image generator, or is null (then never use background.generate). "appleArt" lists the devices that have Apple's product art installed.
+- "available" says what can be used right now: "aiImages" names the image generator, or is null (then never use background.generate). "appleArt" lists the devices that have Apple's product art installed, each with its finishes and (Apple Watch) bands. Devices are shown with Apple's art only: use only those models, finishes ("color") and bands ("band", e.g. "Sport Loop Forest"); another is shown as an installed model of its family, or as its bare screen. When it's empty, leave "device" and "color" as they are.
 - "houseStyle" is what this person likes, remembered from before. Follow it unless they ask otherwise.
 
 How to respond:
@@ -374,7 +374,7 @@ async function screenFacts(request: MockupInput): Promise<unknown[]> {
 async function userMessage(input: AIEditInput, safe: MockupInput, shown: boolean): Promise<string> {
   const layout = await layoutScene(input.request);
   const entities = layout.entities.map(({ screenshot, screen, ...e }) => e);
-  const art = [...new Set(listBezels().map((b) => DEVICE_MODELS.find((m) => m.id === b.model)?.name).filter(Boolean))];
+  const art = appleArt();
   const style = houseStyle().map((n) => n.text);
   return JSON.stringify({
     history: input.history?.length ? input.history.slice(-12) : undefined,
@@ -1159,6 +1159,9 @@ const ShotMetaSchema = z.object({
   length: z.number().min(0.5).max(60).optional(),
   transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
 });
+/** The devices with Apple's art installed: each one's finishes, and an Apple Watch's bands for each. */
+const appleArt = () => Object.fromEntries(bezelSummary().models.map((m) => [m.name, m.bands ? { finishes: m.colors, bands: m.bands } : { finishes: m.colors }]));
+
 /** A shot's own settings beside its scene, as Claude reads and writes them. */
 const meta = (s: z.infer<typeof ShotMetaSchema>) => ({
   ...(s.name ? { name: s.name } : {}),
@@ -1194,7 +1197,7 @@ async function videoSheet(shots: Shot[], times?: number[]): Promise<Seen | undef
 /** What Claude is told about a video: the whole document, and each shot at a glance. */
 async function videoMessage(input: AIEditInput, shots: Shot[], safeShots: unknown[], onCanvas: number, shown: boolean): Promise<string> {
   const layouts = await Promise.all(shots.map((s) => layoutScene(s.scene).catch(() => undefined)));
-  const art = [...new Set(listBezels().map((b) => DEVICE_MODELS.find((m) => m.id === b.model)?.name).filter(Boolean))];
+  const art = appleArt();
   const style = houseStyle().map((n) => n.text);
   // What's on each screen, once per screenshot (the same one in several shots is said once).
   const facts = await Promise.all(shots.map((s) => screenFacts(s.scene)));

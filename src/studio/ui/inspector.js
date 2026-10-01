@@ -1,6 +1,6 @@
 // Right panel: properties of the selection, or of the scene when nothing is selected.
 import { useRef, useState } from "preact/hooks";
-import { AccentText, ColorButton, ColorPicker, Dropdown, Num, Popover, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
+import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
 import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
@@ -139,20 +139,21 @@ function DeviceInspector({ id }) {
   const modelName = d.device ?? e?.device;
   // A model saved under a name it had before (or an alias) is the same model.
   const model = models.find((m) => m.name === modelName) ?? models.find((m) => m.aliases?.includes(modelName));
-  const colors = [...(model?.colors ?? []), ...(s.opts?.genericColors ?? []).filter((g) => !model?.colors.some((c) => c.name === g.name))];
-  // Finishes with Apple's product art installed render photographically; everything else is drawn.
-  const artNames = s.opts?.bezels?.models?.find((b) => b.name === model?.name)?.colors ?? [];
-  const appleColors = (model?.colors ?? []).filter((c) => artNames.includes(c.name));
-  const drawnColors = colors.filter((c) => !artNames.includes(c.name));
-  const current = d.color ?? model?.colors[0]?.name ?? "Black";
-  const currentIsApple = artNames.includes(current);
-  // Art exists for this finish but isn't used: turned off, or a web page (Apple's licence covers app mock-ups).
-  const artUnused = currentIsApple && !e?.bezel;
-  const family = (m) => (m.family === "iphone" ? "iPhone" : m.family === "ipad" ? "iPad" : m.family === "watch" ? "Watch" : m.family === "mac" ? "Mac" : m.family);
+  // Devices are shown with Apple's own art only: the list holds the models it's installed for, and
+  // each model the finishes (and a watch's bands) it was drawn in.
+  const installed = s.opts?.bezels?.models ?? [];
+  const art = installed.find((b) => b.name === model?.name);
+  const appleColors = (model?.colors ?? []).filter((c) => art?.colors.includes(c.name));
+  const shown = e?.device ? models.find((m) => m.name === e.device) : undefined;
+  const current = d.color && art?.colors.includes(d.color) ? d.color : (appleColors.find((c) => /black|midnight|slate|space/i.test(c.name)) ?? appleColors[0])?.name;
+  const bands = art?.bands?.[current] ?? [];
+  const family = (f) => (f === "iphone" ? "iPhone" : f === "ipad" ? "iPad" : f === "watch" ? "Apple Watch" : f === "mac" ? "Mac" : f);
   const modelOpts = [
     { value: "", label: "Match the screenshot", hint: e?.device ?? "" },
-    ...models.map((m) => ({ value: m.name, label: m.name, group: family(m) })),
-    ...(s.opts?.extraDevices ?? []).map((n) => ({ value: n, label: n, group: "From Xcode" })),
+    // Grouped by what each is: the open iPhone Duo lays out like an iPad but is an iPhone.
+    ...installed.map((m) => ({ value: m.name, label: m.name, group: /^iPhone/.test(m.name) ? "iPhone" : family(m.family) })),
+    // A design made with a model whose art isn't installed keeps it, shown for what it is.
+    ...(d.device && !installed.some((m) => m.name === (model?.name ?? d.device)) ? [{ value: model?.name ?? d.device, label: model?.name ?? d.device, hint: "No Apple art", group: "Not installed" }] : []),
   ];
   // Transform: prefer the scene's value, fall back to where the layout put it.
   const X = d.x ?? e?.x;
@@ -175,15 +176,7 @@ function DeviceInspector({ id }) {
         ${frame === "browser" && html`<div class="row"><label>Address</label><${TextField} value=${d.url} placeholder="Page URL by default" onChange=${(v) => upd((dev) => (dev.url = v || undefined), "url")} /></div>`}
         ${frame === "window" && html`<div class="row"><label>Title</label><${TextField} value=${d.title} placeholder="Window title" onChange=${(v) => upd((dev) => (dev.title = v || undefined), "title")} /></div>`}
         ${(frame === "browser" || frame === "window") && html`<div class="row"><label>Chrome</label><${Seg} value=${d.chrome ?? "light"} options=${["light", "dark"]} onChange=${(v) => upd((dev) => (dev.chrome = v === "light" ? undefined : v))} /></div>`}
-        ${frame === "device" && (e?.bezel || d.bezel === false) &&
-        html`<div class="row"><label>Art</label><${Seg} value=${d.bezel === false ? "drawn" : "apple"} options=${[{ value: "apple", label: "Apple" }, { value: "drawn", label: "Drawn" }]} onChange=${(v) => upd((dev) => (dev.bezel = v === "drawn" ? false : undefined))} /></div>`}
-        ${frame === "device" && /iphone/i.test(modelName ?? "") &&
-        html`<div class="row"><label>Show</label><${Seg} value=${d.side ?? "front"} options=${[{ value: "front", label: "Front" }, { value: "back", label: "Back" }]} onChange=${(v) => upd((dev) => (dev.side = v === "front" ? undefined : v))} /></div>`}
-        ${frame === "device" &&
-        html`<div class="hstack wrap" style=${{ gap: "14px" }}>
-          <${Switch} checked=${d.buttons !== false} onChange=${(v) => upd((dev) => (dev.buttons = v ? undefined : false))} label="Buttons" />
-          <${Switch} checked=${Boolean(d.glare)} onChange=${(v) => upd((dev) => (dev.glare = v || undefined))} label="Glass glare" />
-        </div>`}
+        ${frame === "device" && html`<${Switch} checked=${Boolean(d.glare)} onChange=${(v) => upd((dev) => (dev.glare = v || undefined))} label="Glass glare" />`}
       <//>`;
   return html`
     <${Head} title=${entityLabel(id)} sub=${s.scene.devices.length > 1 ? `${i + 1} of ${s.scene.devices.length}` : ""} id=${id} />
@@ -202,31 +195,31 @@ function DeviceInspector({ id }) {
 
       ${frame === "device"
         ? html`<${Section} title="Device">
-        <div class="row"><label>Device</label><${Dropdown} value=${d.device ? (model?.name ?? d.device) : ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
-          dev.device = v || undefined;
-          delete dev.color;
-        })} /></div>
-          <div class="row top"><label>Colour</label><div class="vstack colour-groups">
-            ${appleColors.length > 0 &&
-            html`<div class="colour-group">
-              <span class="colour-head"><${Icon} n="image" s=${11} />Apple product art</span>
-              ${html`<div class="swatches">${appleColors.map(
-                    (c) => html`<button class="swatch art ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: Apple's photographic render`} onClick=${() => upd((dev) => {
-                      dev.color = c.name;
-                      if (dev.bezel === false) delete dev.bezel;
-                    })}></button>`,
-                  )}</div>`}
-            </div>`}
-            <div class="colour-group">
-              ${appleColors.length > 0 && html`<span class="colour-head"><${Icon} n="wand" s=${11} />Drawn</span>`}
-              <div class="swatches">
-                ${drawnColors.map((c) => html`<button class="swatch ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${`${c.name}: drawn`} onClick=${() => upd((dev) => (dev.color = c.name))}></button>`)}
-                <${ColorPickSwatch} value=${/^#/.test(d.color ?? "") ? d.color : undefined} onChange=${(v) => upd((dev) => (dev.color = v), "color")} />
-              </div>
-            </div>
-            <span class="swatch-name">${current}<span class="faint"> · ${currentIsApple && !artUnused ? "Apple product art" : "drawn"}</span></span>
-            ${artUnused && html`<span class="note">${d.bezel === false ? "Art is set to Drawn below." : "Web pages use drawn frames: Apple's licence covers mock-ups of apps."}</span>`}
-          </div></div>
+        ${installed.length
+          ? html`<div class="row"><label>Device</label><${Dropdown} value=${d.device ? (model?.name ?? d.device) : ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
+              dev.device = v || undefined;
+              delete dev.color;
+              delete dev.band;
+            })} /></div>`
+          : html`<div class="note">Devices are shown with Apple's own product art, which you get from Apple once (macOS asks you to accept Apple's licence). Until then, screens are shown without hardware.</div>
+            <button class="btn block" onClick=${() => set({ modal: { kind: "settings", tab: "art" } })}>Get Apple's device art…</button>`}
+        ${appleColors.length > 0 &&
+        html`<div class="row top"><label>Colour</label><div class="vstack colour-groups">
+            <div class="swatches">${appleColors.map(
+              (c) => html`<button class="swatch art ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${c.name} onClick=${() => upd((dev) => {
+                dev.color = c.name;
+                delete dev.bezel;
+                // Keep the band when the new finish comes with it.
+                if (dev.band && !(art?.bands?.[c.name] ?? []).includes(dev.band)) delete dev.band;
+              })}></button>`,
+            )}</div>
+            <span class="swatch-name">${current}</span>
+          </div></div>`}
+        ${bands.length > 1 &&
+        html`<div class="row"><label>Band</label><${Dropdown} value=${d.band && bands.includes(d.band) ? d.band : ""} options=${bandOptions(bands)} search=${bands.length > 8}
+          onChange=${(v) => upd((dev) => (dev.band = v || undefined))} /></div>`}
+        ${installed.length > 0 && model && !art && html`<div class="note">${model.name} has no Apple art installed${shown && shown.name !== model.name ? `, so it's shown as ${shown.name}` : ", so it's shown without hardware"}. Choose one from the list, or get more in Settings › Device art.</div>`}
+        ${e?.frame === "card" && art && html`<div class="note">${d.bezel === false ? "Shown without hardware." : "Websites are shown without hardware: Apple's device art is licensed for mock-ups of apps."}</div>`}
       <//>`
         : frameSection}
 
@@ -312,13 +305,6 @@ function Recording({ id, d, upd }) {
     </div>
     ${pick}
   <//>`;
-}
-
-function ColorPickSwatch({ value, onChange }) {
-  const ref = useRef();
-  const [open, setOpen] = useState(false);
-  return html`<button class="swatch ${value ? "on" : "add"}" ref=${ref} title="Custom colour" style=${value ? { background: value } : null} onClick=${() => setOpen(!open)}></button>
-    ${open && html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${244}><${ColorPicker} value=${value ?? "#8b7bff"} onChange=${(v) => v && onChange(v)} /><//>`}`;
 }
 
 /** Drag the puck to tilt (vertical) and turn (horizontal). */
@@ -660,6 +646,16 @@ const CANVASES = [
   { value: "16:9", label: "Wide", w: 16, h: 9, hint: "16:9 for websites, X and YouTube" },
 ];
 /** Every size, grouped the way the stores list them, for the All sizes menu. */
+/** The bands a watch finish comes with, grouped by kind ("Sport Band" › "Black"), the default first. */
+const BAND_KINDS = ["Sport Band", "Sport Loop", "Solo Loop", "Braided Solo Loop", "Milanese Loop", "Magnetic Link", "Link Bracelet", "Alpine Loop", "Trail Loop", "Ocean Band"];
+function bandOptions(bands) {
+  const split = (b) => {
+    const kind = BAND_KINDS.find((k) => b === k || b.startsWith(k + " "));
+    return kind ? { group: kind, label: b.slice(kind.length).trim() || kind } : { group: "Other", label: b };
+  };
+  return [{ value: "", label: "Default", hint: bands[0] }, ...bands.map((b) => ({ value: b, ...split(b) }))];
+}
+
 const SIZE_GROUPS = [
   ["App Store · iPhone", (p) => p.store === "app-store" && p.platform === "iphone"],
   ["App Store · iPad", (p) => p.store === "app-store" && p.platform === "ipad"],

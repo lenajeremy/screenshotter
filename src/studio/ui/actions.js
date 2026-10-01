@@ -779,6 +779,11 @@ export async function previewShots() {
 
 /** The device a size is made for, when one of its family is swapped in. */
 const SIZE_DEVICES = { iphone: "iPhone 17 Pro Max", ipad: "iPad Pro 13-inch", mac: "MacBook Pro 16-inch", watch: "Apple Watch Ultra 3" };
+/** The model a size swaps devices to: the default one if its Apple art is installed, else one of the family that is. */
+function sizeDevice(family) {
+  const installed = S.opts?.bezels?.models ?? [];
+  return (installed.find((m) => m.name === SIZE_DEVICES[family]) ?? installed.find((m) => m.family === family))?.name ?? SIZE_DEVICES[family];
+}
 
 /** The family of each device in a scene, by its model or (left to the app) by what its layout chose. */
 function familiesIn(scene, layout) {
@@ -803,7 +808,7 @@ function layoutFor(scene) {
 function resize(d, value, families) {
   const preset = S.opts?.canvases?.[value];
   const want = preset && SIZE_DEVICES[preset.platform] ? preset.platform : null;
-  const model = want && (S.opts?.devices ?? []).find((m) => m.name === SIZE_DEVICES[want]);
+  const model = want && (S.opts?.devices ?? []).find((m) => m.name === sizeDevice(want));
   d.canvas = value || undefined;
   if (preset?.platform === "watch") delete d.landscape;
   let n = 0;
@@ -821,7 +826,7 @@ function resize(d, value, families) {
 function swapNote(value, n) {
   const want = S.opts?.canvases?.[value]?.platform;
   const kind = { mac: "a Mac", watch: "an Apple Watch", ipad: "an iPad" }[want] ?? "an iPhone";
-  return n ? `${n === 1 ? `A device is now ${an(SIZE_DEVICES[want])}` : `${n} devices are now ${SIZE_DEVICES[want]}`}: drop ${kind} screenshot on ${n === 1 ? "it" : "each"}.` : "";
+  return n ? `${n === 1 ? `A device is now ${an(sizeDevice(want))}` : `${n} devices are now ${sizeDevice(want)}`}: drop ${kind} screenshot on ${n === 1 ? "it" : "each"}.` : "";
 }
 const an = (name) => `${/^(i|[AEIOU])/.test(name) ? "an" : "a"} ${name}`;
 
@@ -925,7 +930,7 @@ export const STYLE_PARTS = [
   { key: "device", label: "Device look", hint: "Frame, model, colour, shadow and glare", sameSize: true },
   { key: "placement", label: "Device placement", hint: "Where each device sits, its size and tilt", sameSize: true },
 ];
-const DEVICE_LOOK = ["frame", "device", "color", "buttons", "bezel", "side", "island", "shadow", "glare", "radius", "chrome", "bandColor"];
+const DEVICE_LOOK = ["frame", "device", "color", "band", "buttons", "bezel", "side", "island", "shadow", "glare", "radius", "chrome", "bandColor"];
 const DEVICE_PLACE = ["x", "y", "anchor", "height", "width", "rotate", "rotateX", "rotateY", "perspective", "z", "landscape"];
 
 /** A scene with the chosen parts of another's style. */

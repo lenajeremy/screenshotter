@@ -3,11 +3,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Family } from "../devices/catalog.js";
+import { DEVICE_MODELS, type DeviceModel, type Family } from "../devices/catalog.js";
 import { readSidecar, resolveColor, resolveDevice, type CaptureSidecar, type ResolvedDevice } from "../devices/resolve.js";
 import { formatFor, outputPathFor, resolveUserPath } from "../util/files.js";
 import { firstFrame } from "../util/frames.js";
-import { findBezel } from "./bezels.js";
+import { bezelSummary, drawnFrames, findBezel } from "./bezels.js";
 import { imageSize } from "../util/image.js";
 import { analyzeScreenshot, averageColor } from "./analyze.js";
 import { edgeBlurHtml, esc, gradeFor, grainHtml, luminance, px, quickTone, resolveBackground, vignetteHtml } from "./background.js";
@@ -221,9 +221,33 @@ async function macMenuBarFor(input: DeviceInput, file: string, sidecar: CaptureS
   return { app, menus: sidecar?.kind === "web" ? SAFARI_MENUS : undefined, ...given, style };
 }
 
-async function bezelRef(model: ResolvedDevice["model"], color: { name: string; hex: string } | undefined) {
-  const art = await findBezel(model, color ? { id: "", ...color } : undefined).catch(() => undefined);
+async function bezelRef(model: ResolvedDevice["model"], color: { name: string; hex: string } | undefined, band?: string) {
+  const art = await findBezel(model, color ? { id: "", ...color } : undefined, false, band).catch(() => undefined);
   return art ? { url: fileUrl(art.file), file: art.file, width: art.width, height: art.height, hole: art.hole, cutout: art.cutout, edge: art.edge } : undefined;
+}
+
+/**
+ * Devices are shown with Apple's own art only. With none for this model and finish, the same model
+ * in a finish that has art, else an installed model of the family whose screen has the screenshot's
+ * shape (any MacBook for a Mac capture). Undefined when the family has no art installed.
+ */
+async function standIn(model: DeviceModel, color: { name: string; hex: string }, size: { width: number; height: number }, band?: string) {
+  const installed = bezelSummary().models;
+  const shape = (w: number, h: number) => Math.min(w, h) / Math.max(w, h);
+  const want = shape(size.width, size.height);
+  const fits = (m: DeviceModel) => m.family === "mac" || Math.abs(shape(m.screen.width, m.screen.height) - want) < 0.03 * want;
+  const closeness = (m: DeviceModel) => Math.abs(m.screen.width * m.screen.height - model.screen.width * model.screen.height);
+  const others = DEVICE_MODELS.filter((m) => m.family === model.family && m.id !== model.id && fits(m)).sort((a, b) => closeness(a) - closeness(b));
+  for (const m of [model, ...others]) {
+    const art = installed.find((x) => x.model === m.id);
+    if (!art) continue;
+    // The same finish when it has art; else the model's darkest, which reads best on most backdrops.
+    const name = art.colors.includes(color.name) ? color.name : (art.colors.find((c) => /black|midnight|slate|space/i.test(c)) ?? art.colors[0]);
+    const finish = m.colors.find((c) => c.name === name);
+    const bezel = finish ? await bezelRef(m, finish, band) : undefined;
+    if (finish && bezel) return { model: m, color: finish, bezel };
+  }
+  return undefined;
 }
 
 interface Prepared {
@@ -235,6 +259,8 @@ interface Prepared {
   resolved?: ResolvedDevice;
   color?: { name: string; hex: string };
   options: FrameOptions;
+  /** What was shown instead of what was asked for (another model or finish, or no hardware). */
+  notes: string[];
 }
 
 /** Resolve one device input. `light` skips pixel analysis and OCR (layout-only requests). */
@@ -253,9 +279,34 @@ async function prepare(input: DeviceInput, light = false): Promise<Prepared> {
   let resolved: ResolvedDevice | undefined;
   let color: { name: string; hex: string } | undefined;
   let scale = sidecar?.scale ?? 2;
+  let bezel: Awaited<ReturnType<typeof bezelRef>>;
+  // Shown as the bare screen (rounded like the device's), when there's no Apple art to show it with.
+  let bare = false;
+  const notes: string[] = [];
   if (kind === "device") {
     resolved = await resolveDevice(input.device, { path: file, ...size });
     color = resolveColor(resolved.model, input.color);
+    // Apple's art is licensed for mock-ups of apps, so a website gets none unless asked.
+    const artAllowed = input.bezel ?? sidecar?.kind !== "web";
+    if (artAllowed) bezel = await bezelRef(resolved.model, color, input.band);
+    if (!bezel && !drawnFrames()) {
+      const alt = artAllowed ? await standIn(resolved.model, color, size, input.band) : undefined;
+      if (alt) {
+        if (alt.model.id !== resolved.model.id) notes.push(`there's no Apple art for ${resolved.model.name} installed, so it's shown as ${alt.model.name}.`);
+        else if (input.color) notes.push(`there's no Apple art for ${resolved.model.name} in ${color.name}, so it's shown in ${alt.color.name}.`);
+        resolved = { model: alt.model, source: resolved.source === "generic" ? "image-size" : resolved.source };
+        color = alt.color;
+        bezel = alt.bezel;
+      } else {
+        bare = true;
+        notes.push(
+          artAllowed
+            ? `there's no Apple art for ${resolved.model.family === "mac" ? "a Mac" : resolved.model.family === "watch" ? "an Apple Watch" : resolved.model.family === "ipad" ? "an iPad" : "an iPhone"} installed, so it's shown without hardware. Get Apple's device art in the Studio: Settings › Device art.`
+            : "a website is shown without hardware: Apple's device art is licensed for mock-ups of apps.",
+        );
+      }
+    }
+    if (input.side === "back" && !drawnFrames()) notes.push("Apple's art shows the front of the device, so that's what's shown.");
     scale = (resolved.model.screen.scale * Math.min(size.width, size.height)) / Math.min(resolved.model.screen.width, resolved.model.screen.height);
   } else if (sidecar?.deviceTypeIdentifier) {
     // A simulator capture shown without hardware: size chrome and highlights in its own points.
@@ -263,10 +314,10 @@ async function prepare(input: DeviceInput, light = false): Promise<Prepared> {
     if (r) scale = r.model.screen.scale;
   }
 
-  const facts = resolved && !light ? await analyzeScreenshot(file, resolved.model, size) : { hasIsland: false, topSide: "left" as const };
+  const facts = resolved && !light && !bare ? await analyzeScreenshot(file, resolved.model, size) : { hasIsland: false, topSide: "left" as const };
   const highlights = !light && input.highlights?.length ? await resolveHighlights(file, size, scale, input.highlights) : [];
   const options: FrameOptions = {
-    kind,
+    kind: bare ? "card" : kind,
     model: resolved?.model,
     color: color?.hex ?? "#1f1f21",
     image: { url: fileUrl(file), width: size.width, height: size.height, crop: input.crop, scale, video: input.video ? fileUrl(input.video) : undefined },
@@ -284,11 +335,11 @@ async function prepare(input: DeviceInput, light = false): Promise<Prepared> {
     radius: input.radius,
     // A full-screen Mac capture brings its own menu bar; anything else sits below a drawn one.
     menuBar: kind === "device" && resolved?.model.family === "mac" ? await macMenuBarFor(input, file, sidecar, light) : false,
-    back: input.side === "back",
-    bezel: kind === "device" && resolved && (input.bezel ?? sidecar?.kind !== "web") ? await bezelRef(resolved.model, color) : undefined,
+    back: input.side === "back" && drawnFrames(),
+    bezel: drawnFrames() && kind === "device" && resolved && (input.bezel ?? sidecar?.kind !== "web") && !bezel ? await bezelRef(resolved.model, color, input.band) : bezel,
   };
   const family: Family | "flat" = kind === "device" ? resolved!.model.family : "flat";
-  return { input, file, size, kind, family, resolved, color, options };
+  return { input, file, size, kind: bare ? "card" : kind, family, resolved, color, options, notes };
 }
 
 interface Placed {
@@ -465,9 +516,10 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
   const warnings: string[] = [];
   const prepared = await Promise.all(input.devices.map((d) => prepare(d, light)));
   for (const d of prepared) {
-    if (d.resolved?.source === "generic") {
+    if (d.resolved?.source === "generic" && d.kind === "device") {
       warnings.push(`${path.basename(d.file)}: couldn't identify the device from a ${d.size.width}×${d.size.height} image; drew a ${d.resolved.model.name}. Pass "device" to choose one.`);
     }
+    for (const n of d.notes) warnings.push(`${path.basename(d.file)}: ${n}`);
   }
   // Desktop windows or laptops alongside phones read best on a wide canvas.
   const mixedDesktop = prepared.length > 1 && prepared.some((d) => d.family === "mac" || d.family === "flat") && prepared.some((d) => d.family !== "mac" && d.family !== "flat");
