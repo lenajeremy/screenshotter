@@ -189,12 +189,77 @@ export function setScene(next, { key = null, keepRender = false } = {}) {
   lastKey = key;
   lastAt = now;
   set({
-    past: coalesce ? S.past : [...S.past.slice(-99), S.scene],
+    past: coalesce ? S.past : [...S.past.slice(-99), { screen: { ...where(), scene: S.scene } }],
     future: [],
     scene: next,
     renderStale: keepRender ? S.renderStale : Boolean(S.render),
   });
   scheduleLayout();
+  persist();
+}
+
+// ---------------------------------------------------------------------------------------------
+// History. One for the whole design: each step is one screen's design as it was (and which screen
+// and size it's on), or the whole design (every screen of every size) before a change across them.
+// Undoing a step made on another screen goes to that screen.
+
+/** The screen being edited: its size and its place in the size's screens. */
+const where = () => ({ group: S.groups ? S.group : 0, shot: S.shots ? S.shot : 0 });
+/** The whole design: every screen of every size, and which one is on the canvas. */
+const designNow = () => ({ shots: allShots(), shot: S.shot, groups: allGroups(), group: S.group, scene: S.scene });
+
+/**
+ * Remember the whole design before a change across its screens or sizes (copying a style, adding a
+ * size, moving a screen…), so ⌘Z puts it all back. Changes with the same `key` in quick succession
+ * (dragging a shot's length) are one step.
+ */
+export function checkpoint(key = null) {
+  const now = performance.now();
+  const coalesce = key && key === lastKey && now - lastAt < 900;
+  lastKey = key;
+  lastAt = now;
+  if (!coalesce) set({ past: [...S.past.slice(-99), { design: designNow() }], future: [] });
+}
+
+/** Put a remembered whole design back. */
+function restoreDesign(d) {
+  const groups = d.groups && d.groups.length > 1 ? d.groups : null;
+  const shots = d.shots && d.shots.length > 1 ? d.shots : null;
+  set({ groups, group: groups ? d.group : 0, shots, shot: shots ? Math.min(d.shot, shots.length - 1) : 0, scene: d.scene, selected: null, animSel: null, animRows: [], renderStale: Boolean(S.render) });
+}
+
+/** Put another screen on the canvas without touching the history (undo going to where a change was). */
+function showScreen(group, shot) {
+  if (S.groups && group !== S.group && S.groups[group]) {
+    const groups = allGroups();
+    const shots = groups[group].shots;
+    set({ groups, group, shots: shots.length > 1 ? shots : null, shot: 0, scene: shots[0].scene });
+  }
+  const shots = allShots();
+  if (shots && shot !== S.shot && shots[shot]) set({ shots, shot, scene: shots[shot].scene, selected: null, animSel: null, animRows: [] });
+}
+
+/** One step back or forward: `from` is the list taken from, `to` the one the present goes onto. */
+function step(back) {
+  const from = back ? S.past : S.future;
+  if (!from.length) return;
+  lastKey = null;
+  const e = back ? from[from.length - 1] : from[0];
+  const rest = back ? from.slice(0, -1) : from.slice(1);
+  let mirror;
+  if (e.design) {
+    mirror = { design: designNow() };
+    restoreDesign(e.design);
+  } else {
+    // A step from before history knew its screen is the one on the canvas.
+    const { group, shot, scene } = e.screen ?? { ...where(), scene: e };
+    showScreen(group, shot);
+    mirror = { screen: { ...where(), scene: S.scene } };
+    set({ scene, renderStale: Boolean(S.render) });
+  }
+  set(back ? { past: rest, future: [mirror, ...S.future] } : { future: rest, past: [...S.past, mirror] });
+  fixSelection();
+  scheduleLayout(0);
   persist();
 }
 
@@ -205,22 +270,8 @@ export function edit(fn, key) {
   setScene(draft, { key });
 }
 
-export function undo() {
-  if (!S.past.length) return;
-  lastKey = null;
-  set({ future: [S.scene, ...S.future], scene: S.past[S.past.length - 1], past: S.past.slice(0, -1), renderStale: Boolean(S.render) });
-  fixSelection();
-  scheduleLayout();
-  persist();
-}
-export function redo() {
-  if (!S.future.length) return;
-  lastKey = null;
-  set({ past: [...S.past, S.scene], scene: S.future[0], future: S.future.slice(1), renderStale: Boolean(S.render) });
-  fixSelection();
-  scheduleLayout();
-  persist();
-}
+export const undo = () => step(true);
+export const redo = () => step(false);
 function fixSelection() {
   const s = S.selected;
   if (!s) return;

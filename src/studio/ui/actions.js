@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -850,17 +850,17 @@ export async function setCanvasSize(value) {
   const layouts = new Map(await Promise.all(many.map(async (x) => [x.scene, await layoutFor(x.scene)])));
   const shots = allShots();
   if (!shots) return;
-  const before = { shots: clone(shots), shot: S.shot, scene: S.scene };
   let n = 0;
   const next = shots.map((x) => {
     const scene = clone(x.scene);
     n += resize(scene, value, familiesIn(scene, layouts.get(x.scene) ?? (x.scene === S.scene ? S.layout : null)));
     return { ...x, scene };
   });
-  set({ shots: next });
-  setScene(next[S.shot].scene);
+  checkpoint();
+  set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
+  scheduleLayout(0);
   persist();
-  toast({ kind: "ok", icon: "replace", title: `All ${next.length} screens are ${label}`, text: swapNote(value, n) || "The size is the set's: every screen has it.", timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
+  toast({ kind: "ok", icon: "replace", title: `All ${next.length} screens are ${label}`, text: `${swapNote(value, n) || "The size is the set's: every screen has it."} Undo (⌘Z) puts every screen back.`, timeout: 6000, actions: [{ label: "Undo", run: undo }] });
 }
 
 /** Landscape or portrait: in a set, every screen. */
@@ -868,8 +868,9 @@ export function setLandscape(on) {
   const shots = allShots();
   if (!shots) return edit((d) => (d.landscape = on || undefined));
   const next = shots.map((x) => ({ ...x, scene: { ...x.scene, landscape: on || undefined } }));
-  set({ shots: next });
-  setScene(next[S.shot].scene);
+  checkpoint();
+  set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
+  scheduleLayout(0);
   persist();
 }
 
@@ -892,7 +893,7 @@ export function goToSize(i) {
   const groups = allGroups();
   if (!groups || i === S.group || !groups[i]) return;
   const shots = groups[i].shots;
-  set({ groups, group: i, shots: shots.length > 1 ? shots : null, shot: 0, scene: shots[0].scene, past: [], future: [], selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  set({ groups, group: i, shots: shots.length > 1 ? shots : null, shot: 0, scene: shots[0].scene, selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
   scheduleLayout(0);
   persist();
 }
@@ -913,6 +914,7 @@ export async function addSize(value) {
     n += resize(scene, value, familiesIn(scene, layouts[i]));
     return { ...x, scene };
   });
+  checkpoint();
   set({ groups: [...(allGroups() ?? [{ shots: activeScreens() }]), { shots }], group: S.groups ? S.group : 0 });
   goToSize(S.groups.length - 1);
   const label = sizeLabel({ canvas: value });
@@ -962,42 +964,42 @@ export function openCopyStyle() {
 /** Copy the screen's style: `parts` ({ backdrop: true, … }), to this size's screens or (`everySize`) every size's. */
 export function copyStyle(parts, everySize = false) {
   const from = S.scene;
-  const before = { groups: S.groups, group: S.group, shots: S.shots, shot: S.shot, scene: S.scene };
   const here = S.shots ? S.shot : 0;
   let n = 0;
   const shots = activeScreens().map((x, i) => (i === here ? x : (n++, { ...x, scene: withStyle(x.scene, from, parts) })));
   const across = { ...parts, device: false, placement: false };
   const groups = everySize && allGroups() ? allGroups().map((g, gi) => (gi === S.group ? g : { ...g, shots: g.shots.map((x) => (n++, { ...x, scene: withStyle(x.scene, from, across) })) })) : S.groups;
+  checkpoint();
   set({ modal: null, shots: shots.length > 1 ? shots : null, groups });
   persist();
   const what = STYLE_PARTS.filter((p) => parts[p.key]).map((p) => p.label.toLowerCase());
   const list = what.length > 1 ? `${what.slice(0, -1).join(", ")} and ${what.at(-1)}` : what[0];
-  toast({ kind: "ok", icon: "check", title: `Copied to ${n} screen${n === 1 ? "" : "s"}`, text: `${list[0].toUpperCase()}${list.slice(1)}, from ${screenName(here)}.`, timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
+  toast({ kind: "ok", icon: "check", title: `Copied to ${n} screen${n === 1 ? "" : "s"}`, text: `${list[0].toUpperCase()}${list.slice(1)}, from ${screenName(here)}.`, timeout: 6000, actions: [{ label: "Undo", run: undo }] });
 }
 
 /** Take a size out (with a way back). The last one left is a design at one size again. */
 export function removeSize(i) {
   const groups = allGroups();
   if (!groups?.[i]) return;
-  const before = { groups, group: S.group, shots: S.shots, shot: S.shot, scene: S.scene };
   const label = sizeLabel(groups[i].shots[0].scene);
   const rest = groups.filter((_, n) => n !== i);
   const show = i === S.group ? Math.max(0, i - 1) : S.group > i ? S.group - 1 : S.group;
   const shots = rest[show].shots;
-  set({ groups: rest.length > 1 ? rest : null, group: rest.length > 1 ? show : 0, shots: shots.length > 1 ? shots : null, shot: i === S.group ? 0 : S.shot, scene: i === S.group ? shots[0].scene : S.scene, past: i === S.group ? [] : S.past, future: i === S.group ? [] : S.future, selected: i === S.group ? null : S.selected });
+  checkpoint();
+  set({ groups: rest.length > 1 ? rest : null, group: rest.length > 1 ? show : 0, shots: shots.length > 1 ? shots : null, shot: i === S.group ? 0 : S.shot, scene: i === S.group ? shots[0].scene : S.scene, selected: i === S.group ? null : S.selected });
   scheduleLayout(0);
   persist();
-  toast({ kind: "ok", title: `${label} removed`, timeout: 6000, actions: [{ label: "Undo", run: () => (set({ ...before, past: [], future: [] }), scheduleLayout(0), persist()) }] });
+  toast({ kind: "ok", title: `${label} removed`, timeout: 6000, actions: [{ label: "Undo", run: undo }] });
 }
 
 // ---------------------------------------------------------------------------------------------
 // Shots: a design can be a video of several, one after another. The one on the canvas is S.scene.
 
-/** Put another shot on the canvas (its own undo history). */
+/** Put another shot on the canvas. The design's history goes with it: ⌘Z can undo a change on another screen. */
 export function goToShot(i) {
   const shots = allShots();
   if (!shots || i === S.shot || !shots[i]) return;
-  set({ shots, shot: i, scene: shots[i].scene, past: [], future: [], selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  set({ shots, shot: i, scene: shots[i].scene, selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
   scheduleLayout(0);
   persist();
 }
@@ -1017,6 +1019,7 @@ export async function addShot(from = "copy", { at, copyOf } = {}) {
     }
   }
   at = Math.max(0, Math.min(shots.length, at ?? (S.shots ? S.shot : 0) + 1));
+  checkpoint();
   shots.splice(at, 0, { scene, transition: { type: "fade", duration: 0.5 } });
   set({ shots, shot: S.shots ? (S.shot >= at ? S.shot + 1 : S.shot) : at === 0 ? 1 : 0 });
   goToShot(at);
@@ -1039,13 +1042,13 @@ export function shotName(x, i) {
 export function deleteShot(i) {
   const shots = allShots();
   if (!shots) return;
-  const before = { shots, shot: S.shot, scene: S.scene };
   const rest = shots.filter((_, n) => n !== i);
   const next = Math.min(rest.length - 1, i === S.shot ? Math.max(0, i - 1) : S.shot > i ? S.shot - 1 : S.shot);
-  set({ shots: rest.length > 1 ? rest : null, shot: rest.length > 1 ? next : 0, scene: rest[next].scene, past: [], future: [], selected: null, animSel: null });
+  checkpoint();
+  set({ shots: rest.length > 1 ? rest : null, shot: rest.length > 1 ? next : 0, scene: rest[next].scene, selected: null, animSel: null });
   scheduleLayout(0);
   persist();
-  toast({ kind: "ok", title: `Screen ${i + 1} removed`, timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
+  toast({ kind: "ok", title: `Screen ${i + 1} removed`, timeout: 6000, actions: [{ label: "Undo", run: undo }] });
 }
 
 /** Move a shot one place earlier (-1) or later (1). */
@@ -1053,6 +1056,7 @@ export function moveShot(i, by) {
   const shots = allShots();
   const j = i + by;
   if (!shots || j < 0 || j >= shots.length) return;
+  checkpoint();
   [shots[i], shots[j]] = [shots[j], shots[i]];
   set({ shots, shot: S.shot === i ? j : S.shot === j ? i : S.shot });
   persist();
@@ -1071,6 +1075,8 @@ export function setInVideo(i, on) {
 export function updateShot(i, patch) {
   const shots = allShots();
   if (!shots?.[i]) return;
+  // A run of changes to one setting (dragging a shot's length) is one undo step.
+  checkpoint(`shot${i}:${Object.keys(patch).join()}`);
   shots[i] = { ...shots[i], ...patch };
   for (const [k, v] of Object.entries(patch)) if (v === undefined) delete shots[i][k];
   set({ shots });
@@ -1405,7 +1411,8 @@ function applyVideo(v) {
     setScene(v.shots[v.show].scene);
   } else {
     const many = v.shots.length > 1;
-    set({ shots: many ? v.shots : null, shot: many ? v.show : 0, scene: v.shots[v.show].scene, past: [], future: [], selected: null, animSel: null, animRows: [] });
+    checkpoint();
+    set({ shots: many ? v.shots : null, shot: many ? v.show : 0, scene: v.shots[v.show].scene, selected: null, animSel: null, animRows: [] });
     scheduleLayout(0);
   }
   set({ shotPulse: v.changed });
@@ -1425,7 +1432,8 @@ export function revertAI(id) {
     const whole = before.structural || now.length !== before.shots.length;
     const next = whole ? before.shots : now.map((x, i) => (before.changed.includes(i) ? before.shots[i] : x));
     const show = whole ? before.shot : (before.changed[0] ?? S.shot);
-    set({ shots: next.length > 1 ? next : null, shot: next.length > 1 ? show : 0, scene: next[show].scene, past: [], future: [], selected: null, animSel: null, animRows: [], shotPulse: whole ? [] : before.changed });
+    checkpoint();
+    set({ shots: next.length > 1 ? next : null, shot: next.length > 1 ? show : 0, scene: next[show].scene, selected: null, animSel: null, animRows: [], shotPulse: whole ? [] : before.changed });
     setTimeout(() => set({ shotPulse: [] }), 1800);
     scheduleLayout(0);
   } else if (!S.shots || S.shot === before.shot) {
@@ -1434,6 +1442,7 @@ export function revertAI(id) {
     // Made on another shot: put that one back, and show it.
     const shots = allShots();
     if (shots[before.shot]) {
+      checkpoint();
       shots[before.shot] = { ...shots[before.shot], scene: before.scene };
       set({ shots });
       goToShot(before.shot);
@@ -1545,9 +1554,10 @@ export async function pickUpAgentChanges(scenes, known) {
           const group = theirSizes ? Math.min(S.group, theirSizes.length - 1) : 0;
           const shots = theirSizes ? theirSizes[group].shots : saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : [{ scene: saved.scene }];
           const shot = Math.min(group === S.group ? S.shot : 0, shots.length - 1);
-          set({ sceneStamp: saved.updatedAt, groups: theirSizes, group, shots: shots.length > 1 ? shots : null, shot: shots.length > 1 ? shot : 0, scene: shots[shot].scene, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false });
+          checkpoint();
+          set({ sceneStamp: saved.updatedAt, groups: theirSizes, group, shots: shots.length > 1 ? shots : null, shot: shots.length > 1 ? shot : 0, scene: shots[shot].scene, sceneName: saved.name, selected: null, render: null, renderStale: false });
           scheduleLayout(0);
-          toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: theirSizes ? `${theirSizes.length} sizes.` : undefined, timeout: 9000 });
+          toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: theirSizes ? `${theirSizes.length} sizes.` : undefined, timeout: 9000, actions: [{ label: "Undo", run: undo }] });
         } else set({ sceneStamp: saved.updatedAt });
         return;
       }
@@ -1556,9 +1566,10 @@ export async function pickUpAgentChanges(scenes, known) {
       const ours = allShots();
       if ((theirs || ours) && JSON.stringify(theirs?.map((x) => [x.scene, x.length, x.transition])) !== JSON.stringify(ours?.map((x) => [x.scene, x.length, x.transition]))) {
         const shot = theirs ? Math.min(S.shot, theirs.length - 1) : 0;
-        set({ sceneStamp: saved.updatedAt, shots: theirs, shot, scene: theirs ? theirs[shot].scene : saved.scene, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false });
+        checkpoint();
+        set({ sceneStamp: saved.updatedAt, shots: theirs, shot, scene: theirs ? theirs[shot].scene : saved.scene, sceneName: saved.name, selected: null, render: null, renderStale: false });
         scheduleLayout(0);
-        toast({ kind: "ok", icon: "spark", title: theirs ? `An agent updated this video (${theirs.length} shots)` : "An agent updated this design", timeout: 9000 });
+        toast({ kind: "ok", icon: "spark", title: theirs ? `An agent updated this video (${theirs.length} shots)` : "An agent updated this design", timeout: 9000, actions: [{ label: "Undo", run: undo }] });
         return;
       }
       // An agent saves the design's first shot: on the canvas if that's the one showing.
