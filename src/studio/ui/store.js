@@ -108,7 +108,7 @@ export const S = {
   render: null,
   renderStale: false,
   exportOpen: false,
-  exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4" } },
+  exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4" }, set: { format: "png", folders: "size", sheets: true } },
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false },
   apps: { list: [], loading: false, for: "" },
   stillPick: null,
@@ -406,7 +406,7 @@ export async function restore() {
   if (Number.isFinite(ui.leftW)) patch.leftW = ui.leftW;
   if (Number.isFinite(ui.rightW)) patch.rightW = ui.rightW;
   if (Number.isFinite(ui.tlH)) patch.tlH = ui.tlH;
-  if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) } };
+  if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) }, set: { ...S.exportOpts.set, ...(ui.exportOpts.set ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
   patch.ai = { ...S.ai, model: ui.aiModel ?? "", engine: ui.aiEngine === "codex" || ui.aiEngine === "claude" ? ui.aiEngine : "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", docked: ui.aiDocked === true, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;

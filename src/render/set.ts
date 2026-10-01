@@ -94,6 +94,76 @@ export async function createMockupSet(input: MockupSetInput): Promise<MockupSetR
   return { directory: dir, files, contactSheet };
 }
 
+/** One size of a design for exportSet: what to call it, and its screens in store order. */
+export interface SetSize {
+  label: string;
+  screens: Array<{ scene: MockupInput; name?: string }>;
+}
+
+export interface ExportSetInput {
+  name: string;
+  sizes: SetSize[];
+  /** The App Store language folder. */
+  language?: string;
+  /** "size": <language>/<size>/01 Name.png. "fastlane": screenshots/<language>/<size> - 01 Name.png, ready for `fastlane deliver`. */
+  folders?: "size" | "fastlane";
+  format?: MockupInput["format"];
+  jpegQuality?: number;
+  contactSheets?: boolean;
+  output?: string;
+  /** Called after each image, for progress. */
+  onFile?: (done: number, total: number) => void;
+}
+
+export interface ExportSetResult {
+  directory: string;
+  /** Where the screenshots are: the folder to give `fastlane deliver` in the fastlane layout. */
+  screenshots: string;
+  sizes: Array<{ label: string; files: MockupResult[]; contactSheet?: string }>;
+}
+
+/** A name that's safe as a file or folder name on macOS and Windows, keeping it readable. */
+function fileName(s: string): string {
+  return s.replace(/″/g, "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Untitled";
+}
+
+/**
+ * Every screen of every size of a design, as delivery images in numbered files, store order kept,
+ * with a contact sheet per size.
+ */
+export async function exportSet(input: ExportSetInput): Promise<ExportSetResult> {
+  const dir = ensureDir(input.output ? resolveUserPath(input.output) : path.join(outputRoot(), "sets", `${slug(input.name)}-${timestamp()}`));
+  const lang = input.language ?? "en-US";
+  const fastlane = input.folders === "fastlane";
+  const ext = input.format === "jpeg" ? "jpg" : (input.format ?? "png");
+  const screenshots = fastlane ? path.join(dir, "screenshots") : dir;
+  const total = input.sizes.reduce((n, s) => n + s.screens.length, 0);
+  let done = 0;
+  const sizes: ExportSetResult["sizes"] = [];
+  const used = new Set<string>();
+  for (const size of input.sizes) {
+    // Two sizes with one name (two custom sizes, say) get their own folders.
+    let sizeName = fileName(size.label);
+    for (let k = 2; used.has(sizeName); k++) sizeName = `${fileName(size.label)} (${k})`;
+    used.add(sizeName);
+    const folder = ensureDir(fastlane ? path.join(screenshots, lang) : path.join(dir, lang, sizeName));
+    const files: MockupResult[] = [];
+    for (const [i, screen] of size.screens.entries()) {
+      const base = `${String(i + 1).padStart(2, "0")} ${fileName(screen.name ?? `Screen ${i + 1}`)}`;
+      const output = path.join(folder, `${fastlane ? `${sizeName} - ${base}` : base}.${ext}`);
+      files.push(await createMockup({ ...screen.scene, format: input.format, jpegQuality: input.jpegQuality, quality: undefined, preview: false, deliveryWidth: undefined, output }));
+      input.onFile?.(++done, total);
+    }
+    let contactSheet: string | undefined;
+    if (input.contactSheets !== false && files.length) {
+      contactSheet = path.join(ensureDir(path.join(dir, "Contact sheets")), `${sizeName}.png`);
+      await renderContactSheet(files, contactSheet);
+    }
+    sizes.push({ label: size.label, files, contactSheet });
+  }
+  return { directory: dir, screenshots, sizes };
+}
+
 /** All images of the set side by side, the way they appear on an App Store product page. */
 async function renderContactSheet(files: MockupResult[], out: string): Promise<void> {
   const tileH = 1100;

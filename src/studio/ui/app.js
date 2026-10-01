@@ -48,6 +48,8 @@ import {
   goToShot,
   STYLE_PARTS,
   copyStyle,
+  exportWholeSet,
+  setSizes,
   screenName,
   sizeLabel,
 } from "./actions.js";
@@ -159,6 +161,9 @@ function ExportPopover({ anchor }) {
   const outH = W ? Math.round((outW * H) / W) : 0;
   const hasRecording = s.scene.devices.some((d) => d.video);
   const many = s.shots?.length > 1;
+  // A design of several screens or sizes exports them all from the Set tab.
+  const isSet = many || s.groups?.length > 1;
+  const tab = o.tab === "set" && !isSet ? "image" : o.tab;
   // Sizes to make: the first is the main file, the rest are versions.
   const sizes = o.video.sizes?.length ? o.video.sizes : ["design"];
   const toggleSize = (v) => {
@@ -166,8 +171,10 @@ function ExportPopover({ anchor }) {
     upv({ sizes: VIDEO_SIZES.map((z) => z.value).filter((x) => on.includes(x)).slice(0, 9) });
   };
   return html`<${Popover} anchor=${anchor} align="end" class="export-pop" onClose=${() => set({ exportOpen: false })}>
-    <div class="tabs"><${Seg} value=${o.tab} onChange=${(v) => up({ tab: v })} options=${[{ value: "image", label: "Image", icon: "image" }, { value: "video", label: "Video", icon: "video" }]} /></div>
-    ${o.tab === "image"
+    <div class="tabs"><${Seg} value=${tab} onChange=${(v) => up({ tab: v })} options=${[{ value: "image", label: "Image", icon: "image" }, ...(isSet ? [{ value: "set", label: "Set", icon: "grid" }] : []), { value: "video", label: "Video", icon: "video" }]} /></div>
+    ${tab === "set"
+      ? html`<${SetExport} />`
+      : tab === "image"
       ? html`<div class="body">
           <div class="row"><label>Format</label><${Seg} value=${o.format} options=${[{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPEG" }, { value: "webp", label: "WebP" }]} onChange=${(v) => up({ format: v })} /></div>
           <div class="row"><label>Size</label><${Seg} value=${o.size} options=${[{ value: "full", label: "Full" }, { value: "half", label: "½" }, { value: "custom", label: "Width" }]} onChange=${(v) => up({ size: v })} /></div>
@@ -198,6 +205,31 @@ function ExportPopover({ anchor }) {
   <//>`;
 }
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
+
+/** The Set tab: every screen of every size in one go, in store order. */
+function SetExport() {
+  const s = useStore();
+  const o = s.exportOpts.set;
+  const up = (patch) => {
+    set({ exportOpts: { ...S.exportOpts, set: { ...S.exportOpts.set, ...patch } } });
+    persist();
+  };
+  const sizes = setSizes();
+  const n = sizes.reduce((k, z) => k + z.screens.length, 0);
+  const first = sizes[0];
+  const sample = first ? `${String(1).padStart(2, "0")} ${first.screens[0].name}` : "01 Screen";
+  const folder = first?.label.replace(/″/g, "") ?? "iPhone 6.9";
+  return html`<div class="body">
+    <div class="set-sum">${sizes.map((z) => html`<span><b>${z.label}</b> ${z.screens.length}</span>`)}</div>
+    <div class="row"><label>Format</label><${Seg} value=${o.format} options=${[{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPEG" }]} onChange=${(v) => up({ format: v })} /></div>
+    <div class="row"><label>Folders</label><${Seg} value=${o.folders} options=${[{ value: "size", label: "By size" }, { value: "fastlane", label: "fastlane" }]} onChange=${(v) => up({ folders: v })} /></div>
+    <div class="note mono-path">${o.folders === "fastlane" ? `screenshots/en-US/${folder} - ${sample}.${o.format === "jpeg" ? "jpg" : "png"}` : `en-US/${folder}/${sample}.${o.format === "jpeg" ? "jpg" : "png"}`}</div>
+    <div class="note">${o.folders === "fastlane" ? "One folder per language, ready for fastlane deliver to upload in this order." : "A folder for each size, numbered in store order."} Full size, as the stores want.</div>
+    <${Switch} checked=${o.sheets} onChange=${(v) => up({ sheets: v })} label="A contact sheet for each size" />
+    <button class="btn primary lg block" onClick=${exportWholeSet}><${Icon} n="export" s=${16} w=${2} />Export ${n} image${n === 1 ? "" : "s"}</button>
+    <button class="btn block" onClick=${() => set({ exportOpen: false, modal: { kind: "storePage" } })}><${Icon} n="eye" s=${14} />Preview the store page</button>
+  </div>`;
+}
 /** Sizes a video can be exported at, beside the design's own. */
 const VIDEO_SIZES = [
   { value: "design", label: "As designed" },
@@ -1247,6 +1279,87 @@ function CopyStyle() {
   </div>`;
 }
 
+/** Pictures of screens for the store page, by contents and width, kept while the app runs. */
+const storeThumbs = new Map();
+function useStoreThumbs(scenes, w) {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    for (const sc of scenes) {
+      const key = `${w}:${JSON.stringify(sc)}`;
+      if (storeThumbs.has(key)) continue;
+      storeThumbs.set(key, null);
+      api(`/api/shot-thumb?w=${w}`, sc)
+        .then((r) => {
+          storeThumbs.set(key, r.image ?? "");
+          if (alive) bump((n) => n + 1);
+        })
+        .catch(() => storeThumbs.delete(key));
+    }
+    return () => {
+      alive = false;
+    };
+  }, [scenes.map((x) => JSON.stringify(x)).join("|"), w]);
+  return scenes.map((sc) => storeThumbs.get(`${w}:${JSON.stringify(sc)}`));
+}
+
+/**
+ * The set on a store's product page: each size's screenshots in a row, in order, as people scroll
+ * them. A sketch of the page (no store's marks or made-up ratings), sized like the device's.
+ */
+function StorePage() {
+  const s = useStore();
+  const sizes = setSizes();
+  const [pick, setPick] = useState(Math.min(s.groups ? s.group : 0, sizes.length - 1));
+  const size = sizes[pick] ?? sizes[0];
+  const first = size.screens[0].scene;
+  const preset = typeof first.canvas === "string" ? s.opts?.canvases?.[first.canvas] : null;
+  const platform = preset?.platform ?? (pick === (s.groups ? s.group : 0) && s.layout?.canvas.width > s.layout?.canvas.height ? "mac" : "iphone");
+  let [cw, ch] = preset ? [preset.width, preset.height] : /^\d+x\d+$/.test(first.canvas ?? "") ? first.canvas.split("x").map(Number) : [s.layout?.canvas.width ?? 1320, s.layout?.canvas.height ?? 2868];
+  if (first.landscape && cw < ch) [cw, ch] = [ch, cw];
+  const wide = cw > ch;
+  const page = { ipad: 720, mac: 860, tv: 860, vision: 860 }[platform] ?? 390;
+  const tileH = platform === "watch" ? 210 : wide ? Math.round(((page - 56) * ch) / cw) : platform === "ipad" ? 380 : 430;
+  const tileW = Math.round((tileH * cw) / ch);
+  const thumbs = useStoreThumbs(size.screens.map((x) => x.scene), Math.min(900, Math.round(tileW * 2)));
+  const name = (s.sceneName || "Your app").replace(/\s*·\s*(App Store|Google Play).*$/i, "") || "Your app";
+  const close = () => set({ modal: null });
+  useEffect(() => {
+    const key = (e) => {
+      if (e.key === "Escape") close();
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") setPick((p) => Math.max(0, Math.min(sizes.length - 1, p + (e.key === "ArrowRight" ? 1 : -1))));
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [sizes.length]);
+  const play = preset?.store === "google-play";
+  const device = { ipad: "iPad", mac: "Mac", watch: "Apple Watch", tv: "Apple TV", vision: "Apple Vision Pro", android: "Android" }[platform] ?? (play ? "Phone" : "iPhone");
+  return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
+    <div class="sheet store-sheet">
+      <div class="sheet-head"><h2>Store page preview</h2>
+        ${sizes.length > 1 && html`<${Seg} value=${pick} onChange=${setPick} options=${sizes.map((z, i) => ({ value: i, label: z.label }))} />`}
+        <button class="icon-btn sm" title="Close (Esc)" onClick=${close}><${Icon} n="x" s=${15} /></button></div>
+      <div class="sheet-body store-body">
+        <div class="store-page ${platform}" style=${{ width: page + "px" }}>
+          <div class="sp-head">
+            <div class="sp-icon">${name.trim()[0]?.toUpperCase()}</div>
+            <div class="sp-meta"><b>${name}</b><span>${device} app</span><button class="sp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
+          </div>
+          <div class="sp-row" style=${{ "--tile-h": tileH + "px" }}>
+            ${size.screens.map((x, i) => html`<div class="sp-shot ${platform}" key=${i} title=${`${String(i + 1).padStart(2, "0")} · ${x.name}`} style=${{ width: tileW + "px", height: tileH + "px" }}>
+              ${thumbs[i] ? html`<img src=${thumbs[i]} alt=${x.name} />` : html`<span class="spin"></span>`}
+            </div>`)}
+          </div>
+          <div class="sp-device"><${Icon} n=${{ ipad: "tablet", mac: "laptop", watch: "watch" }[platform] ?? "phone"} s=${13} />${device}</div>
+          <div class="sp-lines"><i></i><i></i><i style=${{ width: "62%" }}></i></div>
+        </div>
+        <div class="note">${size.label}: ${size.screens.length} screenshot${size.screens.length === 1 ? "" : "s"} in store order. The first are the ones people see before they scroll.${sizes.length > 1 ? " ← and → switch sizes." : ""}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 /** Toasts show AI summaries verbatim; drop the **accent** markers. */
 const plain = (v) => (typeof v === "string" ? v.replace(/\*\*(.+?)\*\*/g, "$1") : v);
 
@@ -1328,6 +1441,7 @@ function App() {
     ${s.modal?.kind === "whatsNew" && html`<${WhatsNew} />`}
     ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
     ${s.modal?.kind === "copyStyle" && html`<${CopyStyle} />`}
+    ${s.modal?.kind === "storePage" && html`<${StorePage} />`}
     <${Toasts} />
     <${ContextMenu} />
     ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new design" : "Drop to add to the design"}</div></div>`}

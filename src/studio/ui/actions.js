@@ -661,6 +661,41 @@ export async function exportImage() {
   }
 }
 
+/** Every size of the design, each with its screens in store order: what a set export and the store page show. */
+export function setSizes() {
+  const groups = allGroups() ?? [{ shots: activeScreens() }];
+  return groups.map((g, gi) => ({ index: gi, label: sizeLabel(g.shots[0].scene), screens: g.shots.map((x, i) => ({ scene: x.scene, name: shotName(x, i) })) }));
+}
+
+/** Export every screen of every size at full size, into numbered files, with a contact sheet per size. */
+export async function exportWholeSet() {
+  if (S.rendering) return;
+  const o = S.exportOpts.set;
+  const sizes = setSizes();
+  const n = sizes.reduce((k, z) => k + z.screens.length, 0);
+  if (!sizes.some((z) => z.screens.some((x) => x.scene.devices.length))) return toast({ kind: "warn", title: "Add a screenshot first" });
+  const started = performance.now();
+  set({ rendering: { label: `Exporting ${n} images…` }, exportOpen: false });
+  try {
+    const r = await api(`/api/export-set${historyQuery()}`, { name: S.sceneName, sizes: sizes.map((z) => ({ label: z.label, screens: z.screens.map((x) => ({ scene: clone(x.scene), name: x.name })) })), folders: o.folders, format: o.format, jpegQuality: o.format === "jpeg" ? S.exportOpts.jpegQuality : undefined, contactSheets: o.sheets });
+    const sheet = r.sizes.find((z) => z.contactSheet)?.contactSheet;
+    if (sheet) renderResult({ path: sheet, width: 0, height: 0, sheet: true }, { preview: false, ms: performance.now() - started });
+    touch("exported");
+    refreshFiles();
+    toast({
+      kind: "ok",
+      title: `${n} images exported`,
+      text: `${sizes.map((z) => `${z.label} · ${z.screens.length}`).join(", ")}. In ${base(r.directory)}${o.folders === "fastlane" ? ": give fastlane deliver its screenshots folder" : ""}.`,
+      timeout: 9000,
+      actions: [{ label: "Show in Finder", run: () => reveal(o.folders === "fastlane" ? r.screenshots : r.directory) }],
+    });
+  } catch (e) {
+    fail(e, "Set export failed");
+  } finally {
+    set({ rendering: null });
+  }
+}
+
 /** A shot's video options: the camera motion chosen for export, and its own length when it has one. */
 function shotVideo(scene, length) {
   const v = S.exportOpts.video;
@@ -978,9 +1013,12 @@ export async function addShot(from = "copy", { at, copyOf } = {}) {
 /** A screen's name: the one it was given, else its headline, else its number. */
 export function screenName(i) {
   const x = S.shots?.[i];
+  return shotName({ name: x?.name, scene: !S.shots || i === S.shot ? S.scene : x?.scene }, i);
+}
+/** The name of the `i`th screen of any size: the one it was given, else its headline, else its number. */
+export function shotName(x, i) {
   if (x?.name) return x.name;
-  const scene = !S.shots || i === S.shot ? S.scene : x?.scene;
-  const head = (scene?.headline ?? "").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+  const head = (x?.scene?.headline ?? "").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
   return head ? (head.length > 40 ? head.slice(0, 38).trim() + "…" : head) : `Screen ${i + 1}`;
 }
 

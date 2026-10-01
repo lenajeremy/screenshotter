@@ -598,6 +598,24 @@ try {
     assert.equal(saveScene({ id: saved.id, scene: after.scene, groups: [{ shots: ipad }] }).sizes, undefined);
     await post("/api/scenes/delete", { id: saved.id });
   });
+  await check("a set exports every size into numbered files, by size or ready for fastlane, with contact sheets", async () => {
+    const sc = (canvas: string, headline: string) => ({ canvas, headline, layout: "custom", devices: [{ screenshot: shot, frame: "none", height: 0.5 }] });
+    const sizes = [
+      { label: "iPhone 6.9″", screens: [{ scene: sc("iphone-6.9", "One"), name: "Intro: the app" }, { scene: sc("iphone-6.9", "Two") }] },
+      { label: "Watch Ultra 3", screens: [{ scene: sc("watch-ultra-3", "One") }] },
+    ];
+    const bySize = await (await post("/api/export-set", { name: "Set test", sizes })).json();
+    const rel = (p: string) => path.relative(bySize.directory, p);
+    assert.deepEqual(bySize.sizes.flatMap((x: { files: Array<{ path: string }> }) => x.files.map((f) => rel(f.path))), ["en-US/iPhone 6.9/01 Intro the app.png", "en-US/iPhone 6.9/02 Screen 2.png", "en-US/Watch Ultra 3/01 Screen 1.png"]);
+    assert.equal(bySize.sizes[1].files[0].width, 422);
+    assert(existsSync(path.join(bySize.directory, "Contact sheets", "iPhone 6.9.png")));
+    const lane = await (await post("/api/export-set", { name: "Set test", sizes: sizes.slice(0, 1), folders: "fastlane", format: "jpeg", contactSheets: false })).json();
+    assert.equal(path.relative(lane.directory, lane.sizes[0].files[1].path), "screenshots/en-US/iPhone 6.9 - 02 Screen 2.jpg");
+    assert.equal(lane.screenshots, path.join(lane.directory, "screenshots"));
+    assert(!existsSync(path.join(lane.directory, "Contact sheets")));
+    assert.equal((await post("/api/export-set", { name: "Empty", sizes: [] })).status, 400);
+    for (const d of [bySize.directory, lane.directory]) await rm(d, { recursive: true, force: true });
+  });
   await check("thumbnails only for files in the output folder", async () => {
     const res = await fetch(`${base}/thumb?path=${encodeURIComponent(shot)}&w=100`);
     assert.equal(res.status, 200);

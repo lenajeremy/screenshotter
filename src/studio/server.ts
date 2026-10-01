@@ -14,6 +14,7 @@ import { getBrowser } from "../render/browser.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
 import { createMockup, layoutScene } from "../render/mockup.js";
+import { exportSet } from "../render/set.js";
 import { cacheDir } from "../util/files.js";
 import { GRADES, LAYOUTS, MockupInputSchema, type BackgroundInput } from "../render/schema.js";
 import { madeBackdrop } from "../render/background.js";
@@ -153,14 +154,14 @@ function exportScene(file: string): { id: string; name: string } | undefined {
 }
 
 const shotThumbs = new Map<string, Promise<string | undefined>>();
-async function shotThumb(scene: z.infer<typeof MockupInputSchema>): Promise<string | undefined> {
-  const key = createHash("sha1").update(JSON.stringify(scene)).digest("hex");
+async function shotThumb(scene: z.infer<typeof MockupInputSchema>, width = 240): Promise<string | undefined> {
+  const key = createHash("sha1").update(JSON.stringify(scene) + (width === 240 ? "" : `@${width}`)).digest("hex");
   if (!shotThumbs.has(key)) {
     if (shotThumbs.size > 200) shotThumbs.delete(shotThumbs.keys().next().value!);
     const out = path.join(cacheDir("shot-thumbs"), `${key}.jpg`);
     shotThumbs.set(
       key,
-      (existsSync(out) ? Promise.resolve() : createMockup({ ...scene, quality: "preview", format: "jpeg", jpegQuality: 72, deliveryWidth: 240, preview: false, output: out }).then(() => undefined))
+      (existsSync(out) ? Promise.resolve() : createMockup({ ...scene, quality: "preview", format: "jpeg", jpegQuality: width > 240 ? 82 : 72, deliveryWidth: width, preview: false, output: out }).then(() => undefined))
         .then(() => `data:image/jpeg;base64,${readFileSync(out).toString("base64")}`)
         .catch(() => undefined),
     );
@@ -584,12 +585,25 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       result.versions?.forEach((v) => tagExport(v.path, url));
       return send(200, result);
     }
+    case "/api/export-set": {
+      // Every screen of every size of the design, into numbered files with a contact sheet per size.
+      const body = await json<{ name?: unknown; sizes?: Array<{ label?: unknown; screens?: Array<{ scene?: unknown; name?: unknown }> }>; folders?: unknown; format?: unknown; jpegQuality?: unknown; contactSheets?: unknown }>(req);
+      if (!Array.isArray(body.sizes) || !body.sizes.some((x) => x.screens?.length)) throw new HttpError(400, "Nothing to export: add a screenshot first");
+      const sizes = body.sizes
+        .filter((x) => Array.isArray(x.screens) && x.screens.length)
+        .map((x) => ({ label: String(x.label ?? "Size"), screens: x.screens!.map((sc) => ({ scene: MockupInputSchema.parse(sc.scene), name: typeof sc.name === "string" ? sc.name : undefined })) }));
+      const jpegQuality = typeof body.jpegQuality === "number" ? Math.min(100, Math.max(40, Math.round(body.jpegQuality))) : undefined;
+      const result = await exportSet({ name: typeof body.name === "string" ? body.name : "Design", sizes, folders: body.folders === "fastlane" ? "fastlane" : "size", format: body.format === "jpeg" ? "jpeg" : "png", jpegQuality, contactSheets: body.contactSheets !== false });
+      result.sizes.forEach((x) => x.files.forEach((f) => tagExport(f.path, url)));
+      return send(200, result);
+    }
     case "/api/sequence-board":
       return send(200, await sequenceStoryboard(SequenceInputSchema.parse(await json(req))));
     case "/api/shot-thumb": {
       // A small picture of a shot for the shot strip, remembered by its contents.
       const scene = MockupInputSchema.parse(await json(req));
-      return send(200, { image: await shotThumb(scene) });
+      const w = Number(url.searchParams.get("w"));
+      return send(200, { image: await shotThumb(scene, Number.isFinite(w) && w > 0 ? Math.min(900, Math.max(120, Math.round(w))) : 240) });
     }
     case "/api/delete": {
       const { path: p } = await json<{ path: string }>(req);
