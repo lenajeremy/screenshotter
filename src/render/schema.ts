@@ -213,7 +213,7 @@ export const DeviceInputSchema = z.object({
   device: z
     .string()
     .optional()
-    .describe("Hardware to draw, e.g. \"iPhone 17 Pro\", \"iPhone Air\", \"iPad Pro 13-inch\", \"MacBook Pro 14-inch\", \"Apple Watch 46mm\", or any simulator device type. Default: detected from the capture."),
+    .describe("Hardware to draw, e.g. \"iPhone 17 Pro\", \"iPhone Air\", \"iPad Pro 13-inch\", \"MacBook Pro 14-inch\", \"Apple Watch Series 11 46mm\", or any simulator device type. Default: detected from the capture."),
   color: z.string().optional().describe("Frame finish: model colour (\"Cosmic Orange\"), generic finish (Black, Silver, White, Graphite, Natural, Gold, Blue, Orange) or any hex. Default Black."),
   buttons: z.boolean().optional().describe("Draw side buttons. Default true."),
   bezel: z

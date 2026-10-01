@@ -561,9 +561,10 @@ export const DEVICE_MODELS: DeviceModel[] = [
   // Apple Watch
   {
     id: "apple-watch-46mm",
-    name: "Apple Watch 46mm",
+    name: "Apple Watch Series 11 46mm",
     family: "watch",
-    aliases: ["Apple Watch Series 11 (46mm)", "Apple Watch Series 10 (46mm)"],
+    // "Apple Watch 46mm" was its name before; Apple's art says "Apple Watch S11 - 46mm".
+    aliases: ["Apple Watch Series 11 (46mm)", "Apple Watch Series 10 (46mm)", "Apple Watch 46mm"],
     screen: screen(416, 496, 2, 50),
     cutout: "none",
     bezel: 16,
@@ -575,9 +576,9 @@ export const DEVICE_MODELS: DeviceModel[] = [
   },
   {
     id: "apple-watch-42mm",
-    name: "Apple Watch 42mm",
+    name: "Apple Watch Series 11 42mm",
     family: "watch",
-    aliases: ["Apple Watch Series 11 (42mm)", "Apple Watch Series 10 (42mm)"],
+    aliases: ["Apple Watch Series 11 (42mm)", "Apple Watch Series 10 (42mm)", "Apple Watch 42mm"],
     screen: screen(374, 446, 2, 46),
     cutout: "none",
     bezel: 16,
@@ -589,10 +590,11 @@ export const DEVICE_MODELS: DeviceModel[] = [
   },
   {
     id: "apple-watch-ultra",
-    name: "Apple Watch Ultra 49mm",
+    name: "Apple Watch Ultra 3",
     family: "watch",
-    // The Ultra comes in one size, so Apple's art may leave out "49mm" or shorten it to "U3".
-    aliases: ["Apple Watch Ultra 3 (49mm)", "Apple Watch Ultra 2 (49mm)", "Apple Watch Ultra", "Apple Watch U3", "Apple Watch U2"],
+    // It comes in one size, so Apple's art leaves out "49mm" ("AW Ultra 3 - Black + Ocean Band Black").
+    // "Apple Watch Ultra 49mm" was its name before.
+    aliases: ["Apple Watch Ultra 3 (49mm)", "Apple Watch Ultra 49mm", "Apple Watch Ultra 2 (49mm)", "Apple Watch Ultra", "Apple Watch U3", "AW Ultra 3", "AW Ultra"],
     screen: screen(422, 514, 2, 57),
     cutout: "none",
     bezel: 12,

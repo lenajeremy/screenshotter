@@ -408,6 +408,13 @@ await check("Apple's art files are told apart by model, colour and orientation",
   // The Ultra comes in one size: its art may leave out "49mm", or shorten the name to "U3".
   is("PNG/Apple Watch Ultra 3 - Black Titanium - Alpine Loop.png", "apple-watch-ultra", "Black Titanium");
   is("PNG/Apple Watch U3 - 49mm - Titanium Natural + Trail Loop Blue.png", "apple-watch-ultra", "Natural Titanium");
+  // Apple's own Ultra 3 file names.
+  is("PNG/Alpine Loop/AW Ultra 3 - Natural + Alpine Loop Terra Cotta.png", "apple-watch-ultra", "Natural Titanium");
+  is("PNG/Ocean Band/AW Ultra 3 - Black + Ocean Band Anchor Blue.png", "apple-watch-ultra", "Black Titanium");
+  // Designs saved before the watches were named by generation still find them.
+  const { findModel } = await import("../src/devices/catalog.js");
+  assert(findModel("Apple Watch Ultra 49mm")?.name === "Apple Watch Ultra 3", "the Ultra's old name");
+  assert(findModel("Apple Watch 46mm")?.name === "Apple Watch Series 11 46mm", "the Series 11's old name");
   // A set from Apple names its one model when the file doesn't.
   assert(!classify("/art/Ocean Band/Natural Titanium.png", "/art"), "a file naming no model is skipped");
   assert(classify("/art/Ocean Band/Natural Titanium.png", "/art", "apple-watch-ultra")?.model === "apple-watch-ultra", "a set's one model is used when the file doesn't name it");

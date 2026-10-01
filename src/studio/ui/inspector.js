@@ -137,7 +137,8 @@ function DeviceInspector({ id }) {
   const frame = d.frame ?? "device";
   const models = s.opts?.devices ?? [];
   const modelName = d.device ?? e?.device;
-  const model = models.find((m) => m.name === modelName);
+  // A model saved under a name it had before (or an alias) is the same model.
+  const model = models.find((m) => m.name === modelName) ?? models.find((m) => m.aliases?.includes(modelName));
   const colors = [...(model?.colors ?? []), ...(s.opts?.genericColors ?? []).filter((g) => !model?.colors.some((c) => c.name === g.name))];
   // Finishes with Apple's product art installed render photographically; everything else is drawn.
   const artNames = s.opts?.bezels?.models?.find((b) => b.name === model?.name)?.colors ?? [];
@@ -201,7 +202,7 @@ function DeviceInspector({ id }) {
 
       ${frame === "device"
         ? html`<${Section} title="Device">
-        <div class="row"><label>Device</label><${Dropdown} value=${d.device ?? ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
+        <div class="row"><label>Device</label><${Dropdown} value=${d.device ? (model?.name ?? d.device) : ""} options=${modelOpts} search onChange=${(v) => upd((dev) => {
           dev.device = v || undefined;
           delete dev.color;
         })} /></div>

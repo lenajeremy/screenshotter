@@ -778,14 +778,14 @@ export async function previewShots() {
 // Sizes
 
 /** The device a size is made for, when one of its family is swapped in. */
-const SIZE_DEVICES = { iphone: "iPhone 17 Pro Max", ipad: "iPad Pro 13-inch", mac: "MacBook Pro 16-inch", watch: "Apple Watch Ultra 49mm" };
+const SIZE_DEVICES = { iphone: "iPhone 17 Pro Max", ipad: "iPad Pro 13-inch", mac: "MacBook Pro 16-inch", watch: "Apple Watch Ultra 3" };
 
 /** The family of each device in a scene, by its model or (left to the app) by what its layout chose. */
 function familiesIn(scene, layout) {
   const models = S.opts?.devices ?? [];
   return scene.devices.map((d, i) => {
     const name = d.device ?? layout?.entities.find((e) => e.id === `device-${i + 1}`)?.device;
-    return models.find((m) => m.name === name)?.family;
+    return (models.find((m) => m.name === name) ?? models.find((m) => m.aliases?.includes(name)))?.family;
   });
 }
 

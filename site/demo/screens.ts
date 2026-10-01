@@ -255,7 +255,7 @@ export const saved = () => {
 };
 
 // ---------------------------------------------------------------------------------------------
-// iPad Pro 13 (1032 × 1376 pt), Apple Watch 46mm (208 × 248 pt), MacBook Pro 14 (1512 × 982 pt)
+// iPad Pro 13 (1032 × 1376 pt), Apple Watch Series 11 46mm (208 × 248 pt), MacBook Pro 14 (1512 × 982 pt)
 
 export const ipad = () => {
   const card = (p: string, name: string, meta: string) => `<div class="c"><img src="${ph(p)}"><b>${name}</b><span>${meta}</span></div>`;
