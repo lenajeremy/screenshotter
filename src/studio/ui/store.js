@@ -517,6 +517,8 @@ export async function restore() {
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
   if (ui.scenesPrefs) patch.scenesPrefs = { ...S.scenesPrefs, ...ui.scenesPrefs };
   set(patch);
+  // A set saved before its spans were kept in step (or by an agent) gets them now.
+  syncSpans();
 }
 
 // ---------------------------------------------------------------------------------------------
