@@ -7,7 +7,7 @@ import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
 import { S, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, addShot, addSize, closeStills, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, closeStills, openCopyStyle, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -1007,6 +1007,7 @@ function screenMenu(ev, i) {
   openMenu(ev.clientX, ev.clientY, [
     { label: "Rename", icon: "text", run: () => canvasApi.rename(i) },
     { label: "Duplicate", icon: "duplicate", run: () => addShot("copy", { at: i + 1, copyOf: i }) },
+    { label: "Copy style to the others…", icon: "copy", run: () => (goToShot(i), openCopyStyle()) },
     { label: "Move left", icon: "left", disabled: i === 0, run: () => moveShot(i, -1) },
     { label: "Move right", icon: "right", disabled: i === n - 1, run: () => moveShot(i, 1) },
     "-",

@@ -3,7 +3,7 @@ import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, ColorPicker, Dropdown, Num, Popover, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
-import { deleteEntity, duplicateEntity, openStills, replaceMode, setCanvasSize, uploadFiles } from "./actions.js";
+import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
 
@@ -696,7 +696,7 @@ function SceneInspector() {
           return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => setCanvasSize(c.value)}><i style=${box}></i>${c.label}</button>`;
         })}</div>
         <div class="row"><label>All sizes</label><${Dropdown} value=${presets[cur] ? cur : ""} options=${sizeOptions(presets)} placeholder=${custom ? "Custom size" : "Every store slot…"} search=${true} onChange=${setCanvasSize} /></div>
-        ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${(v) => edit((d) => (d.landscape = v || undefined))} label="Landscape" />`}
+        ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${setLandscape} label="Landscape" />`}
       <//>
       <${Section} title="Backdrop">
         <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
@@ -705,14 +705,22 @@ function SceneInspector() {
           <${Icon} n="right" s=${14} />
         </button>
       <//>
+      ${(s.shots || s.groups) &&
+      html`<${Section} title="This screen">
+        <button class="bg-summary" onClick=${openCopyStyle}>
+          <span class="sw ico"><${Icon} n="copy" s=${16} /></span>
+          <span class="grow"><b style=${{ display: "block" }}>Copy its style to the others</b><span class="note">Backdrop, text style, film look or devices</span></span>
+          <${Icon} n="right" s=${14} />
+        </button>
+      <//>`}
       <${Section} title="In this design">
         <${LayersList} />
       <//>
       <${More} id="image">
       <${Section} title="Custom size">
         <div class="grid2">
-          <${Num} label="W" value=${custom ? cw : undefined} placeholder=${s.layout?.canvas.width ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${Math.round(v)}x${ch || s.layout?.canvas.height || Math.round(v)}`))} />
-          <${Num} label="H" value=${custom ? ch : undefined} placeholder=${s.layout?.canvas.height ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${cw || s.layout?.canvas.width || Math.round(v)}x${Math.round(v)}`))} />
+          <${Num} label="W" value=${custom ? cw : undefined} placeholder=${s.layout?.canvas.width ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && setCanvasSize(`${Math.round(v)}x${ch || s.layout?.canvas.height || Math.round(v)}`)} />
+          <${Num} label="H" value=${custom ? ch : undefined} placeholder=${s.layout?.canvas.height ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && setCanvasSize(`${cw || s.layout?.canvas.width || Math.round(v)}x${Math.round(v)}`)} />
         </div>
       <//>
       <//>

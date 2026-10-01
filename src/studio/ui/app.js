@@ -46,6 +46,10 @@ import {
   uploadFiles,
   useCapture,
   goToShot,
+  STYLE_PARTS,
+  copyStyle,
+  screenName,
+  sizeLabel,
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
@@ -1193,6 +1197,56 @@ function Prompt() {
   </div>`;
 }
 
+/** Copy the screen's style to the others: which parts, and to this size or every size. */
+function CopyStyle() {
+  const s = useStore();
+  const [parts, setParts] = useState({ backdrop: true, text: true, film: true, device: false, placement: false });
+  const [every, setEvery] = useState(false);
+  const here = s.shots ? s.shot : 0;
+  const sizes = s.groups?.length > 1 ? s.groups : null;
+  const mine = s.shots?.length ?? 1;
+  const others = sizes ? sizes.reduce((n, g, i) => n + (i === s.group ? 0 : g.shots.length), 0) : 0;
+  const n = mine - 1 + (every ? others : 0);
+  const any = STYLE_PARTS.some((p) => parts[p.key]);
+  const go = () => any && n > 0 && copyStyle(parts, every);
+  const close = () => set({ modal: null });
+  useEffect(() => {
+    const key = (e) => {
+      if (e.key === "Escape") close();
+      if (e.key === "Enter") go();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  });
+  const sizeNow = sizeLabel(s.scene);
+  return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
+    <div class="sheet copy-style" style=${{ width: "440px" }}>
+      <div class="sheet-head"><h2>Copy style</h2></div>
+      <div class="sheet-body">
+        <div class="note">From <b>${String(here + 1).padStart(2, "0")} · ${screenName(here)}</b> to the other screens. What they say and show stays theirs.</div>
+        <div class="cs-parts">
+          ${STYLE_PARTS.map(
+            (p) => html`<label class="cs-part ${parts[p.key] ? "on" : ""} ${every && p.sameSize ? "here-only" : ""}">
+              <input type="checkbox" checked=${parts[p.key]} onChange=${(e) => setParts({ ...parts, [p.key]: e.target.checked })} />
+              <span class="box"><${Icon} n="check" s=${11} w=${2.6} /></span>
+              <span class="t"><b>${p.label}</b><span>${every && p.sameSize ? `${sizeNow} screens only: each size keeps its own devices.` : p.hint}</span></span>
+            </label>`,
+          )}
+        </div>
+        ${sizes &&
+        html`<div class="cs-where"><span class="lbl">Copy to</span><${Seg} value=${every ? "all" : "size"} onChange=${(v) => setEvery(v === "all")}
+          options=${[
+            { value: "size", label: `${sizeNow} · ${mine - 1}` },
+            { value: "all", label: `Every size · ${mine - 1 + others}` },
+          ]} /></div>`}
+      </div>
+      <div class="sheet-foot"><button class="btn" onClick=${close}>Cancel</button>
+        <button class="btn primary" disabled=${!any || n < 1} onClick=${go}>${n < 1 ? "No other screens" : `Copy to ${n} screen${n === 1 ? "" : "s"}`}</button></div>
+    </div>
+  </div>`;
+}
+
 /** Toasts show AI summaries verbatim; drop the **accent** markers. */
 const plain = (v) => (typeof v === "string" ? v.replace(/\*\*(.+?)\*\*/g, "$1") : v);
 
@@ -1273,6 +1327,7 @@ function App() {
     ${s.modal?.kind === "help" && html`<${Help} />`}
     ${s.modal?.kind === "whatsNew" && html`<${WhatsNew} />`}
     ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
+    ${s.modal?.kind === "copyStyle" && html`<${CopyStyle} />`}
     <${Toasts} />
     <${ContextMenu} />
     ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new design" : "Drop to add to the design"}</div></div>`}

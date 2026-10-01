@@ -815,6 +815,16 @@ export async function setCanvasSize(value) {
   toast({ kind: "ok", icon: "replace", title: `All ${next.length} screens are ${label}`, text: swapNote(value, n) || "The size is the set's: every screen has it.", timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
 }
 
+/** Landscape or portrait: in a set, every screen. */
+export function setLandscape(on) {
+  const shots = allShots();
+  if (!shots) return edit((d) => (d.landscape = on || undefined));
+  const next = shots.map((x) => ({ ...x, scene: { ...x.scene, landscape: on || undefined } }));
+  set({ shots: next });
+  setScene(next[S.shot].scene);
+  persist();
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sizes of one design: its screens made again for iPad, Apple Watch, Google Play… The size on the
 // canvas has its screens in S.shots; the others wait in S.groups.
@@ -859,6 +869,62 @@ export async function addSize(value) {
   goToSize(S.groups.length - 1);
   const label = sizeLabel({ canvas: value });
   toast({ kind: "ok", icon: "plus", title: `${label} added`, text: `${shots.length === 1 ? "The design" : `All ${shots.length} screens`}, made again at ${label}. ${swapNote(value, n)}`.trim(), timeout: 6000 });
+}
+
+/**
+ * What "Copy style" carries from the screen being edited to the others, and the parts of a scene each
+ * is. Devices (matched by order) only go to screens of the same size: an iPad's place doesn't suit a phone.
+ */
+export const STYLE_PARTS = [
+  { key: "backdrop", label: "Backdrop", hint: "Colour, gradient, photo or AI image, and its finish" },
+  { key: "text", label: "Text style", hint: "Fonts, sizes, colours and where the text sits. The words stay." },
+  { key: "film", label: "Film look", hint: "Grain, vignette, blur and colour grade" },
+  { key: "device", label: "Device look", hint: "Frame, model, colour, shadow and glare", sameSize: true },
+  { key: "placement", label: "Device placement", hint: "Where each device sits, its size and tilt", sameSize: true },
+];
+const DEVICE_LOOK = ["frame", "device", "color", "buttons", "bezel", "side", "island", "shadow", "glare", "radius", "chrome", "bandColor"];
+const DEVICE_PLACE = ["x", "y", "anchor", "height", "width", "rotate", "rotateX", "rotateY", "perspective", "z", "landscape"];
+
+/** A scene with the chosen parts of another's style. */
+function withStyle(target, from, parts) {
+  const d = clone(target);
+  const put = (to, src, k) => (src[k] === undefined ? delete to[k] : (to[k] = clone(src[k])));
+  if (parts.backdrop) put(d, from, "background");
+  if (parts.text) ["textStyle", "fonts"].forEach((k) => put(d, from, k));
+  if (parts.film) put(d, from, "effects");
+  const keys = [...(parts.device ? DEVICE_LOOK : []), ...(parts.placement ? DEVICE_PLACE : [])];
+  if (parts.placement) put(d, from, "layout");
+  if (keys.length)
+    d.devices = d.devices.map((dev, i) => {
+      const src = from.devices[i];
+      if (!src) return dev;
+      const out = { ...dev };
+      keys.forEach((k) => put(out, src, k));
+      return out;
+    });
+  return d;
+}
+
+/** Ask what to copy from the screen being edited, and where to: every screen of this size, or of every size. */
+export function openCopyStyle() {
+  if (!S.shots && !S.groups) return toast({ kind: "warn", title: "Nothing to copy to yet", text: "Add a screen or a size first: the style goes from this screen to the others." });
+  set({ modal: { kind: "copyStyle" } });
+}
+
+/** Copy the screen's style: `parts` ({ backdrop: true, … }), to this size's screens or (`everySize`) every size's. */
+export function copyStyle(parts, everySize = false) {
+  const from = S.scene;
+  const before = { groups: S.groups, group: S.group, shots: S.shots, shot: S.shot, scene: S.scene };
+  const here = S.shots ? S.shot : 0;
+  let n = 0;
+  const shots = activeScreens().map((x, i) => (i === here ? x : (n++, { ...x, scene: withStyle(x.scene, from, parts) })));
+  const across = { ...parts, device: false, placement: false };
+  const groups = everySize && allGroups() ? allGroups().map((g, gi) => (gi === S.group ? g : { ...g, shots: g.shots.map((x) => (n++, { ...x, scene: withStyle(x.scene, from, across) })) })) : S.groups;
+  set({ modal: null, shots: shots.length > 1 ? shots : null, groups });
+  persist();
+  const what = STYLE_PARTS.filter((p) => parts[p.key]).map((p) => p.label.toLowerCase());
+  const list = what.length > 1 ? `${what.slice(0, -1).join(", ")} and ${what.at(-1)}` : what[0];
+  toast({ kind: "ok", icon: "check", title: `Copied to ${n} screen${n === 1 ? "" : "s"}`, text: `${list[0].toUpperCase()}${list.slice(1)}, from ${screenName(here)}.`, timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
 }
 
 /** Take a size out (with a way back). The last one left is a design at one size again. */
