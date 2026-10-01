@@ -368,7 +368,12 @@ export function syncSpans() {
     changed = true;
     return { ...x, scene: sc };
   });
-  if (changed) set({ shots: next, scene: next[S.shot].scene });
+  if (!changed) return;
+  const was = S.scene;
+  set({ shots: next, scene: next[S.shot].scene });
+  // The screen on the canvas lent or borrowed a device (a neighbour moved, screens were reordered,
+  // the design was reopened): lay it out again, or the canvas shows the copies where they were.
+  if (S.scene !== was) scheduleLayout(0);
 }
 /** Save the app's state but not the scene: only a preference changed, not the design. */
 export function persistPrefs() {

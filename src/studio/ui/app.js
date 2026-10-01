@@ -48,6 +48,7 @@ import {
   goToShot,
   STYLE_PARTS,
   copyStyle,
+  previewScreen,
   exportWholeSet,
   setSizes,
   screenName,
@@ -488,6 +489,21 @@ function ExportStep() {
   </div>`;
 }
 
+/** Previewing a set: which screen this is, a dot for each, and the way to the ones either side (← →). */
+function PreviewNav() {
+  const s = useStore();
+  const n = s.shots.length;
+  const num = (i) => String(i + 1).padStart(2, "0");
+  return html`<div class="preview-nav">
+    <button class="pn-side l" disabled=${s.shot === 0} title=${s.shot > 0 ? `${num(s.shot - 1)} · ${screenName(s.shot - 1)} (←)` : ""} onClick=${() => previewScreen(s.shot - 1)}><${Icon} n="left" s=${22} w=${2} /></button>
+    <button class="pn-side r" disabled=${s.shot === n - 1} title=${s.shot < n - 1 ? `${num(s.shot + 1)} · ${screenName(s.shot + 1)} (→)` : ""} onClick=${() => previewScreen(s.shot + 1)}><${Icon} n="right" s=${22} w=${2} /></button>
+    <div class="float pn-bar">
+      <span class="pn-name"><b>${num(s.shot)}</b>${screenName(s.shot)}<span class="pn-of">of ${n}</span></span>
+      <span class="pn-dots">${s.shots.map((_, i) => html`<button class=${`pn-dot ${i === s.shot ? "on" : ""}`} title=${`${num(i)} · ${screenName(i)}`} onClick=${() => previewScreen(i)}></button>`)}</span>
+    </div>
+  </div>`;
+}
+
 function RenderView() {
   const s = useStore();
   const r = s.render;
@@ -510,7 +526,8 @@ function RenderView() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
   };
-  return html`<div class="render-view">
+  const nav = s.shots?.length > 1 && r && !r.sheet && !r.isVideo;
+  return html`<div class=${`render-view ${nav ? "with-nav" : ""}`}>
     ${r
       ? html`
         <div class="render-meta">
@@ -532,7 +549,8 @@ function RenderView() {
                 <button class="btn danger" onClick=${() => deleteFile(r.path)}><${Icon} n="trash" s=${14} />Delete</button>`}
           <span style=${{ width: "1px", height: "18px", background: "var(--line-2)", margin: "0 4px" }}></span>
           <button class="btn" onClick=${() => set({ view: "canvas" })}><${Icon} n="canvas" s=${14} />Back to editing</button>
-        </div>`
+        </div>
+        ${nav && html`<${PreviewNav} />`}`
       : html`<div class="render-empty">
           <div class="big"><${Icon} n="eye" s=${30} w=${1.4} /></div>
           <h2>${s.scene.devices.length ? "See the finished image" : "Nothing to preview yet"}</h2>
@@ -1609,6 +1627,11 @@ window.addEventListener("keydown", (e) => {
     if (S.view === "canvas" && !S.selected && !S.timelineOpen && S.shots?.length > 1 && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       return goToShot(Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1))));
+    }
+    // In Preview, they step through the set's screens, each previewed.
+    if (S.view === "render" && S.shots?.length > 1 && !S.render?.sheet && !S.render?.isVideo && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      return previewScreen(S.shot + (e.key === "ArrowLeft" ? -1 : 1));
     }
     if (e.key === "Tab" && S.layout?.entities.length) {
       e.preventDefault();

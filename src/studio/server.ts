@@ -224,7 +224,8 @@ function deleteWithCompanions(file: string): string[] {
 }
 
 /** Keep only the newest few live-preview renders. */
-function prunePreviews(dir: string, keep = 6) {
+/** Previews are kept for a while: flipping through a set's screens in Preview reuses them (the Studio remembers 20). */
+function prunePreviews(dir: string, keep = 24) {
   const files = readdirSync(dir)
     .filter((f) => f.startsWith("preview-"))
     .map((f) => ({ f, t: statSync(path.join(dir, f)).mtimeMs }))

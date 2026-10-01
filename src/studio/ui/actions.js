@@ -613,19 +613,47 @@ function renderResult(r, extra) {
   set({ render: { ...r, ...extra, at: Date.now(), scene: JSON.stringify(S.scene) }, renderStale: false, view: "render" });
 }
 
+/** Previews by what they show, so stepping back and forth through a set in Preview is instant. */
+const previews = new Map();
+function previewOf(scene) {
+  const key = JSON.stringify(scene);
+  if (!previews.has(key)) {
+    const job = api("/api/mockup", { ...clone(scene), quality: "preview", format: "jpeg", jpegQuality: 88, preview: false });
+    job.catch(() => previews.delete(key));
+    previews.set(key, job);
+    if (previews.size > 20) previews.delete(previews.keys().next().value);
+  }
+  return previews.get(key);
+}
+
 export async function renderPreview() {
-  if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (!S.scene.devices.length && !S.shots) return toast({ kind: "warn", title: "Add a screenshot first" });
   if (S.rendering) return;
   const started = performance.now();
-  set({ rendering: { label: "Rendering preview…" }, view: "render" });
+  const known = previews.has(JSON.stringify(S.scene));
+  set(known ? { view: "render" } : { rendering: { label: "Rendering preview…" }, view: "render" });
   try {
-    const r = await api("/api/mockup", { ...clone(S.scene), quality: "preview", format: "jpeg", jpegQuality: 88, preview: false });
-    renderResult(r, { preview: true, ms: performance.now() - started });
+    const r = await previewOf(S.scene);
+    renderResult(r, { preview: true, ms: known ? undefined : performance.now() - started });
   } catch (e) {
     fail(e, "Preview failed");
   } finally {
     set({ rendering: null });
   }
+  // The screens either side are next: have them ready.
+  const shots = allShots();
+  if (shots) for (const j of [S.shot + 1, S.shot - 1]) if (shots[j]) previewOf(shots[j].scene).catch(() => undefined);
+}
+
+/** In Preview, show another screen of the set: its preview, at once if it's been seen. */
+export function previewScreen(i) {
+  const shots = allShots();
+  if (!shots?.[i] || i === S.shot || S.rendering) return;
+  const shown = S.render;
+  goToShot(i);
+  // Until its preview is ready, the last one stays up under the "Rendering" veil.
+  if (!previews.has(JSON.stringify(S.scene))) set({ render: shown, renderStale: false });
+  renderPreview();
 }
 
 /** Exports carry the scene they came from, so the library can show each scene's versions. */
