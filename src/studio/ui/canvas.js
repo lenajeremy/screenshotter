@@ -1,13 +1,14 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { createContext } from "preact";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ColorPicker, Popover, html } from "./controls.js";
+import { ColorPicker, Dropdown, Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
-import { S, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
-import { addDevice, addShot, closeStills, deleteEntity, deleteShot, duplicateEntity, goToShot, moveShot, moveZ, openAI, openStills, recordingFor, replaceMode, screenName, togglePanel, updateShot } from "./actions.js";
+import { S, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
+import { addDevice, addShot, addSize, closeStills, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
+import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
 export const canvasApi = { fit: () => {}, zoomBy: () => {}, zoomTo: () => {}, editText: () => {} };
@@ -921,6 +922,7 @@ export function CanvasView() {
       </div>
     </div>`}
     ${sel && selBox && !live && !editing && !s.timelineOpen && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
+    ${layout && !s.timelineOpen && s.view === "canvas" && (s.scene.devices.length || s.groups) && html`<${SizeSwitch} />`}
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>
@@ -931,6 +933,38 @@ export function CanvasView() {
             <button class="icon-btn sm ${view.zoom === null && fit === "set" ? "on" : ""}" title="Fit the whole set (⇧⌘0)" onClick=${() => canvasApi.fitSet()}><${Icon} n="grid" s=${14} /></button>`
         : html`<button class="icon-btn sm ${view.zoom === null ? "on" : ""}" title="Zoom to fit (⌘0)" onClick=${() => canvasApi.fit()}><${Icon} n="fit" s=${14} /></button>`}
     </div>`}
+  </div>`;
+}
+
+/**
+ * The design's sizes, above the canvas: the one being edited, the others to switch to (right-click
+ * one to remove it), and + to make every screen again at another size.
+ */
+function SizeSwitch() {
+  const s = useStore();
+  const groups = allGroups() ?? [{ shots: activeScreens() }];
+  const presets = s.opts?.canvases ?? {};
+  const have = new Set(groups.map((g) => g.shots[0].scene.canvas ?? ""));
+  const options = sizeOptions(presets).map((o) => (have.has(o.value) ? { ...o, hint: "In this design" } : o));
+  const menu = (ev, i) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openMenu(ev.clientX, ev.clientY, [
+      { label: "Open", icon: "eye", run: () => goToSize(i), disabled: i === s.group },
+      "-",
+      { label: `Remove ${sizeLabel(groups[i].shots[0].scene)}`, icon: "trash", danger: true, run: () => removeSize(i) },
+    ]);
+  };
+  return html`<div class="size-switch" onPointerDown=${(e) => e.stopPropagation()} onContextMenu=${(e) => (e.preventDefault(), e.stopPropagation())}>
+    <div class="tabs">${groups.map((g, i) => {
+      const on = i === s.group || groups.length === 1;
+      const label = on && !g.shots[0].scene.canvas && s.layout ? canvasName(s.layout.canvas.name) : sizeLabel(g.shots[0].scene);
+      return html`<button class="size-tab ${on ? "on" : ""}" title=${on ? `${label}, on the canvas${groups.length > 1 ? ". Right-click to remove it." : ""}` : `Open ${label}`}
+        onClick=${() => goToSize(i)} onContextMenu=${(e) => (groups.length > 1 ? menu(e, i) : (e.preventDefault(), e.stopPropagation()))}>
+        ${label}${g.shots.length > 1 && html`<span class="n">${g.shots.length}</span>`}
+      </button>`;
+    })}</div>
+    <${Dropdown} value=${null} options=${options} search onChange=${addSize} btnClass="icon-btn sm size-add" title="Add a size: every screen made again for iPad, Apple Watch, Google Play…" trigger=${html`<${Icon} n="plus" s=${14} />`} />
   </div>`;
 }
 

@@ -685,6 +685,17 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 
 .float { position: absolute; z-index: 40; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 12px; background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow-pop); }
 .zoom-ctl { left: 12px; bottom: 12px; }
+/* The design's sizes, top centre: iPhone 6.9″ 4 · iPad 13″ 4 · + */
+/* Its frosted ground is a layer of its own: a backdrop filter on the bar would trap the + menu inside it. */
+.size-switch { position: absolute; z-index: 40; top: 10px; left: 0; right: 0; margin-inline: auto; width: max-content; max-width: calc(100% - 220px); display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; box-shadow: var(--shadow-pop); isolation: isolate; }
+.size-switch::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(22, 22, 26, 0.9); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.size-switch .tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.size-tab { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text-3); font: inherit; font-size: 12px; font-weight: 530; white-space: nowrap; cursor: pointer; }
+.size-tab:hover { background: var(--panel-3); color: var(--text); }
+.size-tab.on { background: var(--panel-3); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+.size-tab .n { font: 10.5px var(--mono); color: var(--text-4); }
+.size-tab.on .n { color: var(--lime); }
+.size-switch .size-add { flex: none; color: var(--text-3); }
 .zoom-ctl .pct { min-width: 50px; text-align: center; font: 11.5px var(--mono); color: var(--text-2); border: 0; background: none; height: 28px; border-radius: 7px; }
 .zoom-ctl .pct:hover { background: var(--panel-3); color: var(--text); }
 

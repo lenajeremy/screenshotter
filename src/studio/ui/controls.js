@@ -233,16 +233,20 @@ export function Popover({ anchor, onClose, children, class: cls = "", align = "s
 // ---------------------------------------------------------------------------------------------
 // Dropdown: options [{value, label, hint, group}] with optional search.
 
-export function Dropdown({ value, options, onChange, placeholder = "Choose…", search = false, icon, render }) {
+/** A menu of options to pick one from. `trigger` replaces the button's contents (a bare icon button, say). */
+export function Dropdown({ value, options, onChange, placeholder = "Choose…", search = false, icon, render, trigger, btnClass = "dd-btn", title }) {
   const btn = useRef();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
+  const field = useRef();
   const current = options.find((o) => o.value === value);
   const filtered = q ? options.filter((o) => `${o.label} ${o.hint ?? ""} ${o.group ?? ""}`.toLowerCase().includes(q.toLowerCase())) : options;
   useEffect(() => {
     if (open) setActive(Math.max(0, filtered.findIndex((o) => o.value === value)));
     else setQ("");
+    // autofocus only works for what's on the page when it loads: focus the search box by hand.
+    if (open && search) requestAnimationFrame(() => field.current?.focus());
   }, [open]);
   const pick = (o) => {
     onChange(o.value);
@@ -262,16 +266,17 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
   };
   let lastGroup;
   return html`
-    <button class="dd-btn ${open ? "open" : ""}" ref=${btn} onClick=${() => setOpen(!open)}>
-      ${icon && html`<${Icon} n=${icon} s=${14} />`}
-      <span class="label">${current ? (render ? render(current) : html`${current.label}${current.hint && html`<span class="muted">${current.hint}</span>`}`) : html`<span class="muted">${placeholder}</span>`}</span>
-      <${Icon} n="down" s=${13} />
+    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title} onClick=${() => setOpen(!open)}>
+      ${trigger ??
+      html`${icon && html`<${Icon} n=${icon} s=${14} />`}
+        <span class="label">${current ? (render ? render(current) : html`${current.label}${current.hint && html`<span class="muted">${current.hint}</span>`}`) : html`<span class="muted">${placeholder}</span>`}</span>
+        <${Icon} n="down" s=${13} />`}
     </button>
     ${open &&
     html`<${Popover} anchor=${btn.current} onClose=${() => setOpen(false)}>
       <div onKeyDown=${key}>
         ${search &&
-        html`<div class="menu-search"><div class="input-wrap"><${Icon} n="search" s=${13} /><input class="input sm" autoFocus placeholder="Search" value=${q}
+        html`<div class="menu-search"><div class="input-wrap"><${Icon} n="search" s=${13} /><input class="input sm" ref=${field} placeholder="Search" value=${q}
           onInput=${(e) => {
             setQ(e.target.value);
             setActive(0);

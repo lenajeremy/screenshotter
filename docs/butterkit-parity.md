@@ -109,9 +109,9 @@ A design holds one list of screens per size ("iPhone 6.9″", "iPad 13″", "App
 
 Steps, each shipped and tested on its own:
 
-1. **Sizes.** Every App Store slot as a preset: iPhone, iPad, Mac, Apple Watch, Apple TV, Vision Pro, Google Play, portrait and landscape. Choosing a size swaps the device to match.
-2. **The set on the canvas.** In Edit, every screen of the size side by side, labelled "01 · Name"; click one to edit it; "Fit the set" and "Fit this screen"; an "Add screen" tile; a menu on each label to rename, duplicate, move, leave out of the video and delete; ⌥← and ⌥→ to step through.
-3. **Sizes in one design.** A size switcher above the set; "Add a size" makes the whole set again at that size; remove a size.
+1. **Sizes.** Every App Store slot as a preset: iPhone, iPad, Mac, Apple Watch, Apple TV, Vision Pro, Google Play, portrait and landscape. Choosing a size swaps the device to match. *Done (88d2610).*
+2. **The set on the canvas.** In Edit, every screen of the size side by side, labelled "01 · Name"; click one to edit it; "Fit the set" and "Fit this screen"; an "Add screen" tile; a menu on each screen to rename, duplicate, move and delete; ← and → (with nothing selected) to step through. *Done (45eeb85).* "Leave out of the video" moved to step 5, where the screenshots and the video part ways.
+3. **Sizes in one design.** A size switcher above the set; "Add a size" makes the whole set again at that size (devices swapped to suit); remove a size. In a set the image size is the set's: changing it changes every screen. *Done.*
 4. **Copy style.** Backdrop, text style, device and film look onto every screen of the set (or of every size).
 5. **Export the set.** Every screen of every size in one go, into folders by language and size with numbered filenames, plus a contact sheet per size; and the App Store page preview.
 6. **Agents.** `get_scene` and `save_scene` carry sizes and screen names; a tool to export a saved design's whole set.

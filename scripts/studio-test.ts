@@ -575,6 +575,29 @@ try {
     assert.throws(() => findScene({ name: "no such scene" }), /No scene named/);
     for (const id of [copy.id, original.id]) await post("/api/scenes/delete", { id });
   });
+  await check("a design at several sizes keeps them all, and an agent saving the first size keeps the rest", async () => {
+    const { getScene, saveScene } = await import("../src/studio/scenes.js");
+    const sc = (canvas: string, headline: string) => ({ canvas, headline, devices: [{ screenshot: shot }] });
+    const iphone = [{ scene: sc("iphone-6.9", "One"), name: "Intro" }, { scene: sc("iphone-6.9", "Two") }];
+    const ipad = [{ scene: sc("ipad-13", "One") }, { scene: sc("ipad-13", "Two") }];
+    const saved = await (
+      await post("/api/scenes/save", { name: "Sizes", scene: iphone[0].scene, shots: [{ name: "Intro" }, iphone[1]], groups: [{ shots: iphone }, { shots: ipad }] })
+    ).json();
+    assert.equal(saved.sizes, 2);
+    assert.equal(saved.shots, 2);
+    assert.deepEqual(getScene(saved.id).groups?.map((g) => g.shots.map((x) => (x.scene as { canvas: string }).canvas).join()), ["iphone-6.9,iphone-6.9", "ipad-13,ipad-13"]);
+    // An agent that knows nothing of sizes changes the first one; the iPad size stays.
+    saveScene({ id: saved.id, scene: sc("iphone-6.9", "One, by an agent"), by: "agent" });
+    const after = getScene(saved.id);
+    assert.equal((after.groups?.[0].shots[0].scene as { headline: string }).headline, "One, by an agent");
+    assert.equal(after.groups?.[0].shots[0].name, "Intro", "the screen keeps its name");
+    assert.equal(after.groups?.[1].shots.length, 2);
+    // Sent as null, a design is at one size again; one size sent is no sizes at all.
+    assert.equal(saveScene({ id: saved.id, scene: after.scene, groups: null }).sizes, undefined);
+    assert.equal(getScene(saved.id).groups, undefined);
+    assert.equal(saveScene({ id: saved.id, scene: after.scene, groups: [{ shots: ipad }] }).sizes, undefined);
+    await post("/api/scenes/delete", { id: saved.id });
+  });
   await check("thumbnails only for files in the output folder", async () => {
     const res = await fetch(`${base}/thumb?path=${encodeURIComponent(shot)}&w=100`);
     assert.equal(res.status, 200);

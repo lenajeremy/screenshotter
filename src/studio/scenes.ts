@@ -22,11 +22,21 @@ export interface SavedScene {
    * A video of several shots: each one's length and how it comes in, and (after the first, which is
    * `scene`) its scene. Absent for a single design.
    */
-  shots?: Array<{ scene?: unknown; length?: number; transition?: { type: string; duration?: number } }>;
+  shots?: Array<{ scene?: unknown; name?: string; length?: number; transition?: { type: string; duration?: number } }>;
+  /**
+   * A design made at several sizes (iPhone, iPad, Apple Watch…): each size's screens, every one with
+   * its scene. The first is the same as `scene` and `shots`. Absent for a design at one size.
+   */
+  groups?: SavedGroup[];
   createdAt: string;
   updatedAt: string;
   /** Set when the last change came from an agent (the MCP server), so the Studio can pick it up. */
   by?: "agent";
+}
+
+export interface SavedGroup {
+  name?: string;
+  shots: Array<{ scene: unknown; name?: string; length?: number; transition?: { type: string; duration?: number } }>;
 }
 
 /** What a scene shows, for filtering: a device family, or a website in a browser frame. */
@@ -53,6 +63,8 @@ export interface SceneSummary {
   by?: "agent";
   /** How many shots, when it's a video of several. */
   shots?: number;
+  /** How many sizes, when it's made at several. */
+  sizes?: number;
 }
 
 const THUMB_WIDTH = 640;
@@ -136,6 +148,7 @@ function summarize(s: SavedScene): SceneSummary {
     thumbAt: thumbAt ? Math.round(thumbAt) : undefined,
     by: s.by,
     shots: s.shots && s.shots.length > 1 ? s.shots.length : undefined,
+    sizes: s.groups && s.groups.length > 1 ? s.groups.length : undefined,
   };
 }
 
@@ -166,7 +179,19 @@ export function getScene(id: unknown): SavedScene {
 }
 
 /** Save a scene: a new document when `id` is missing, else an update. Returns its summary. */
-export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; by?: "agent" }): SceneSummary {
+/** Sizes as sent: at most 12, each with its screens (at most 20), every screen with a scene. */
+function cleanGroups(raw: unknown[]): SavedGroup[] {
+  return raw
+    .slice(0, 12)
+    .filter((g): g is { name?: unknown; shots: unknown[] } => Boolean(g) && typeof g === "object" && Array.isArray((g as { shots?: unknown }).shots))
+    .map((g) => ({
+      ...(typeof g.name === "string" && g.name.trim() ? { name: g.name.trim().slice(0, 80) } : {}),
+      shots: g.shots.slice(0, 20).filter((x): x is SavedGroup["shots"][number] => Boolean(x) && typeof x === "object" && Boolean((x as { scene?: unknown }).scene)),
+    }))
+    .filter((g) => g.shots.length);
+}
+
+export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; groups?: unknown; by?: "agent" }): SceneSummary {
   if (!input.scene || typeof input.scene !== "object" || !Array.isArray((input.scene as { devices?: unknown }).devices)) throw new Error("A scene needs a devices array");
   const now = new Date().toISOString();
   const existing = validId(input.id) ? read(input.id) : undefined;
@@ -177,10 +202,22 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   // scenes, opening the Scenes page), so the list keeps its order.
   // Shots: as sent, cleared with null (a single design again), else kept (an agent saving the first).
   const shots = input.shots === null ? undefined : Array.isArray(input.shots) && input.shots.length > 1 ? (input.shots.slice(0, 20) as SavedScene["shots"]) : Array.isArray(input.shots) ? undefined : existing?.shots;
-  const changed = !existing || JSON.stringify(existing.scene) !== JSON.stringify(input.scene) || JSON.stringify(existing.shots ?? null) !== JSON.stringify(shots ?? null);
+  // Sizes: as sent, cleared with null, else kept; saving just the first size (an agent sending
+  // `scene` and `shots`) replaces that one and keeps the others.
+  let groups = input.groups === null ? undefined : Array.isArray(input.groups) ? cleanGroups(input.groups) : existing?.groups;
+  if (groups && groups.length < 2) groups = undefined;
+  if (groups && input.groups === undefined) {
+    const first = shots ? shots.map((x, i) => (i === 0 ? { ...x, scene: input.scene } : x)) : [{ scene: input.scene }];
+    groups = [{ ...groups[0], shots: first as SavedGroup["shots"] }, ...groups.slice(1)];
+  }
+  const changed =
+    !existing ||
+    JSON.stringify(existing.scene) !== JSON.stringify(input.scene) ||
+    JSON.stringify(existing.shots ?? null) !== JSON.stringify(shots ?? null) ||
+    JSON.stringify(existing.groups ?? null) !== JSON.stringify(groups ?? null);
   // Who made the last change: the Studio's own saves clear an agent's mark.
   const by = changed ? input.by : existing.by;
-  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, shots, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
+  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, shots, groups, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
   write(saved);
   if (changed || !existsSync(thumbFile(id))) scheduleThumb(id);
   return summarize(saved);

@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, aiEngine, aiName, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -737,33 +737,143 @@ export async function previewShots() {
 /** The device a size is made for, when one of its family is swapped in. */
 const SIZE_DEVICES = { iphone: "iPhone 17 Pro Max", ipad: "iPad Pro 13-inch", mac: "MacBook Pro 16-inch", watch: "Apple Watch Ultra 49mm" };
 
-/** The family of a device in the design, by its model or (left to the app) by what the layout chose. */
-function familyOf(i) {
+/** The family of each device in a scene, by its model or (left to the app) by what its layout chose. */
+function familiesIn(scene, layout) {
   const models = S.opts?.devices ?? [];
-  const name = S.scene.devices[i]?.device ?? S.layout?.entities.find((e) => e.id === `device-${i + 1}`)?.device;
-  return models.find((m) => m.name === name)?.family;
+  return scene.devices.map((d, i) => {
+    const name = d.device ?? layout?.entities.find((e) => e.id === `device-${i + 1}`)?.device;
+    return models.find((m) => m.name === name)?.family;
+  });
+}
+
+/** A screen's layout, to tell which devices the app chose for it (only asked when it chose some). */
+function layoutFor(scene) {
+  if (scene === S.scene) return Promise.resolve(S.layout);
+  if (!scene.devices.some((d) => !d.device && (!d.frame || d.frame === "device"))) return Promise.resolve(null);
+  return api("/api/layout", scene).catch(() => null);
 }
 
 /**
- * Change the image size. A size made for another kind of device (iPad, Mac, Apple Watch) swaps each
- * framed device for that kind's model, keeping its screenshot until a new one is dropped on it.
+ * Make a scene at another size (in place): the canvas set, and each framed device of another kind
+ * swapped for the size's model (keeping its screenshot). Returns how many were swapped.
  */
-export function setCanvasSize(value) {
+function resize(d, value, families) {
   const preset = S.opts?.canvases?.[value];
   const want = preset && SIZE_DEVICES[preset.platform] ? preset.platform : null;
   const model = want && (S.opts?.devices ?? []).find((m) => m.name === SIZE_DEVICES[want]);
-  const swap = model ? S.scene.devices.map((d, i) => (!d.frame || d.frame === "device") && familyOf(i) && familyOf(i) !== want) : [];
-  edit((d) => {
-    d.canvas = value || undefined;
-    if (preset?.platform === "watch") delete d.landscape;
-    swap.forEach((on, i) => {
-      if (!on) return;
-      d.devices[i].device = model.name;
-      delete d.devices[i].color;
+  d.canvas = value || undefined;
+  if (preset?.platform === "watch") delete d.landscape;
+  let n = 0;
+  if (model)
+    d.devices.forEach((dev, i) => {
+      if ((dev.frame && dev.frame !== "device") || !families[i] || families[i] === want) return;
+      dev.device = model.name;
+      delete dev.color;
+      n++;
     });
+  return n;
+}
+
+/** What a swap of devices asks of the person: a screenshot of the new kind on each. */
+function swapNote(value, n) {
+  const want = S.opts?.canvases?.[value]?.platform;
+  const kind = { mac: "a Mac", watch: "an Apple Watch", ipad: "an iPad" }[want] ?? "an iPhone";
+  return n ? `${n === 1 ? `A device is now ${an(SIZE_DEVICES[want])}` : `${n} devices are now ${SIZE_DEVICES[want]}`}: drop ${kind} screenshot on ${n === 1 ? "it" : "each"}.` : "";
+}
+const an = (name) => `${/^(i|[AEIOU])/.test(name) ? "an" : "a"} ${name}`;
+
+/**
+ * Change the image size. A size made for another kind of device (iPad, Mac, Apple Watch) swaps each
+ * framed device for that kind's model, keeping its screenshot until a new one is dropped on it. In a
+ * set the size is the set's, so every screen changes.
+ */
+export async function setCanvasSize(value) {
+  const preset = S.opts?.canvases?.[value];
+  const label = preset ? (preset.short ?? preset.label) : value ? value.replace("x", " × ") : "the automatic size";
+  const many = allShots();
+  if (!many) {
+    let n = 0;
+    const families = familiesIn(S.scene, S.layout);
+    edit((d) => (n = resize(d, value, families)));
+    if (n) toast({ kind: "ok", icon: "replace", title: `Made for ${label}`, text: `${swapNote(value, n)} Undo (⌘Z) goes back.`, timeout: 5000 });
+    return;
+  }
+  // Every screen's devices, told apart by its layout, before anything changes.
+  const layouts = new Map(await Promise.all(many.map(async (x) => [x.scene, await layoutFor(x.scene)])));
+  const shots = allShots();
+  if (!shots) return;
+  const before = { shots: clone(shots), shot: S.shot, scene: S.scene };
+  let n = 0;
+  const next = shots.map((x) => {
+    const scene = clone(x.scene);
+    n += resize(scene, value, familiesIn(scene, layouts.get(x.scene) ?? (x.scene === S.scene ? S.layout : null)));
+    return { ...x, scene };
   });
-  const n = swap.filter(Boolean).length;
-  if (n) toast({ kind: "ok", icon: "replace", title: `Now ${n === 1 ? "an" : n} ${model.name}${n === 1 ? "" : "s"}`, text: `Made for ${preset.short ?? preset.label}. Drop ${want === "mac" ? "a Mac" : want === "watch" ? "an Apple Watch" : want === "ipad" ? "an iPad" : "an iPhone"} screenshot on ${n === 1 ? "it" : "them"}. Undo (⌘Z) goes back.`, timeout: 5000 });
+  set({ shots: next });
+  setScene(next[S.shot].scene);
+  persist();
+  toast({ kind: "ok", icon: "replace", title: `All ${next.length} screens are ${label}`, text: swapNote(value, n) || "The size is the set's: every screen has it.", timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sizes of one design: its screens made again for iPad, Apple Watch, Google Play… The size on the
+// canvas has its screens in S.shots; the others wait in S.groups.
+
+/** What a size is called: its image size's short name ("iPad 13″"), else its pixels. */
+export function sizeLabel(scene) {
+  const c = scene?.canvas;
+  const p = typeof c === "string" ? S.opts?.canvases?.[c] : null;
+  if (p) return p.short ?? p.label;
+  if (typeof c === "string" && /^\d+x\d+$/.test(c)) return c.replace("x", " × ");
+  if (c && typeof c === "object") return `${c.width} × ${c.height}`;
+  return "Auto size";
+}
+
+/** Put another size on the canvas: its screens, the first one to edit. */
+export function goToSize(i) {
+  const groups = allGroups();
+  if (!groups || i === S.group || !groups[i]) return;
+  const shots = groups[i].shots;
+  set({ groups, group: i, shots: shots.length > 1 ? shots : null, shot: 0, scene: shots[0].scene, past: [], future: [], selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  scheduleLayout(0);
+  persist();
+}
+
+/** Make every screen again at another size (devices swapped to suit), and open it. A size the design has already just opens. */
+export async function addSize(value) {
+  const groups = allGroups() ?? [{ shots: activeScreens() }];
+  const have = groups.findIndex((g) => (g.shots[0].scene.canvas ?? "") === value);
+  if (have >= 0) {
+    if (S.groups) goToSize(have);
+    return toast({ kind: "ok", title: `This design has ${sizeLabel({ canvas: value })} already`, timeout: 2600 });
+  }
+  const screens = activeScreens();
+  const layouts = await Promise.all(screens.map((x) => layoutFor(x.scene)));
+  let n = 0;
+  const shots = screens.map((x, i) => {
+    const scene = clone(x.scene);
+    n += resize(scene, value, familiesIn(scene, layouts[i]));
+    return { ...x, scene };
+  });
+  set({ groups: [...(allGroups() ?? [{ shots: activeScreens() }]), { shots }], group: S.groups ? S.group : 0 });
+  goToSize(S.groups.length - 1);
+  const label = sizeLabel({ canvas: value });
+  toast({ kind: "ok", icon: "plus", title: `${label} added`, text: `${shots.length === 1 ? "The design" : `All ${shots.length} screens`}, made again at ${label}. ${swapNote(value, n)}`.trim(), timeout: 6000 });
+}
+
+/** Take a size out (with a way back). The last one left is a design at one size again. */
+export function removeSize(i) {
+  const groups = allGroups();
+  if (!groups?.[i]) return;
+  const before = { groups, group: S.group, shots: S.shots, shot: S.shot, scene: S.scene };
+  const label = sizeLabel(groups[i].shots[0].scene);
+  const rest = groups.filter((_, n) => n !== i);
+  const show = i === S.group ? Math.max(0, i - 1) : S.group > i ? S.group - 1 : S.group;
+  const shots = rest[show].shots;
+  set({ groups: rest.length > 1 ? rest : null, group: rest.length > 1 ? show : 0, shots: shots.length > 1 ? shots : null, shot: i === S.group ? 0 : S.shot, scene: i === S.group ? shots[0].scene : S.scene, past: i === S.group ? [] : S.past, future: i === S.group ? [] : S.future, selected: i === S.group ? null : S.selected });
+  scheduleLayout(0);
+  persist();
+  toast({ kind: "ok", title: `${label} removed`, timeout: 6000, actions: [{ label: "Undo", run: () => (set({ ...before, past: [], future: [] }), scheduleLayout(0), persist()) }] });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1243,6 +1353,8 @@ export async function newScene() {
     scene: { devices: [], background: DEFAULT_SCENE.background },
     shots: null,
     shot: 0,
+    groups: null,
+    group: 0,
     sceneId: null,
     sceneStamp: null,
     guide: null,
@@ -1268,9 +1380,10 @@ export async function openScene(id) {
   await saveSceneNow();
   try {
     const saved = await api(`/api/scene?id=${encodeURIComponent(id)}`);
-    // A video of several shots opens on its first.
+    // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
-    set({ scene: saved.scene, shots, shot: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, animRows: [], sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    const groups = saved.groups?.length > 1 ? saved.groups : null;
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, animRows: [], sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
@@ -1296,6 +1409,22 @@ export async function pickUpAgentChanges(scenes, known) {
   if (mine && mine.by === "agent" && mine.updatedAt !== S.sceneStamp && !savePending() && !S.ai.busy) {
     try {
       const saved = await api(`/api/scene?id=${encodeURIComponent(mine.id)}`);
+      // A design at several sizes: the saved one has every size (an agent's save of the first size
+      // is merged in), so take all of it when it differs, on the size that was showing.
+      const theirSizes = saved.groups?.length > 1 ? saved.groups : null;
+      const ourSizes = allGroups();
+      if (theirSizes || ourSizes) {
+        const bare = (gs) => gs?.map((g) => g.shots.map((x) => [x.scene, x.length, x.transition]));
+        if (JSON.stringify(bare(theirSizes)) !== JSON.stringify(bare(ourSizes))) {
+          const group = theirSizes ? Math.min(S.group, theirSizes.length - 1) : 0;
+          const shots = theirSizes ? theirSizes[group].shots : saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : [{ scene: saved.scene }];
+          const shot = Math.min(group === S.group ? S.shot : 0, shots.length - 1);
+          set({ sceneStamp: saved.updatedAt, groups: theirSizes, group, shots: shots.length > 1 ? shots : null, shot: shots.length > 1 ? shot : 0, scene: shots[shot].scene, sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false });
+          scheduleLayout(0);
+          toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: theirSizes ? `${theirSizes.length} sizes.` : undefined, timeout: 9000 });
+        } else set({ sceneStamp: saved.updatedAt });
+        return;
+      }
       // An agent saved a video of several shots (or made this one single again): take all of it.
       const theirs = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
       const ours = allShots();

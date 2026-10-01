@@ -60,6 +60,13 @@ export const S = {
    */
   shots: null,
   shot: 0,
+  /**
+   * A design made at several sizes: each size's screens ({ name?, shots: [{ scene, … }] }), and which
+   * size is on the canvas. That size's screens are `shots` (its entry here waits until another size
+   * is opened). null for a design at one size.
+   */
+  groups: null,
+  group: 0,
   /** Shots an AI change just touched, highlighted in the strip for a moment. */
   shotPulse: [],
   scenes: [],
@@ -253,6 +260,8 @@ const snapshot = () => ({
   sceneId: S.sceneId,
   shots: S.shots,
   shot: S.shot,
+  groups: S.groups,
+  group: S.group,
   ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 2 },
 });
 export function persist() {
@@ -296,14 +305,29 @@ export function allShots() {
   if (!S.shots || S.shots.length < 2) return null;
   return S.shots.map((x, i) => (i === S.shot ? { ...x, scene: S.scene } : x));
 }
-/** What the library keeps: the first shot as the design's scene, and the shots (the first without its scene). */
+/** The screens of the size on the canvas, each with its scene (one screen when it isn't a set). */
+export function activeScreens() {
+  return allShots() ?? [{ ...(S.shots?.[0] ?? {}), scene: S.scene }];
+}
+/** Every size of the design, the one on the canvas as it is now; null for a design at one size. */
+export function allGroups() {
+  if (!S.groups || S.groups.length < 2) return null;
+  return S.groups.map((g, i) => (i === S.group ? { ...g, shots: activeScreens() } : g));
+}
+/**
+ * What the library keeps: the first size's first screen as the design's scene, its screens as the
+ * shots (the first without its scene), and every size when there are several.
+ */
 export function saveBody() {
-  const shots = allShots();
+  const groups = allGroups();
+  const first = groups ? groups[0].shots : activeScreens();
+  const shots = first.length > 1 ? first : null;
   return {
     id: S.sceneId ?? undefined,
     name: S.sceneName,
-    scene: shots ? shots[0].scene : S.scene,
-    shots: shots ? shots.map((x, i) => (i === 0 ? { length: x.length, transition: x.transition } : x)) : null,
+    scene: first[0].scene,
+    shots: shots ? shots.map((x, i) => (i === 0 ? { name: x.name, length: x.length, transition: x.transition } : x)) : null,
+    groups,
     chat: S.ai.thread.slice(-60),
   };
 }
@@ -368,6 +392,7 @@ export async function restore() {
   const patch = {};
   if (saved.scene && Array.isArray(saved.scene.devices)) patch.scene = saved.scene;
   if (Array.isArray(saved.shots) && saved.shots.length > 1) Object.assign(patch, { shots: saved.shots, shot: Math.min(saved.shots.length - 1, Math.max(0, saved.shot ?? 0)) });
+  if (Array.isArray(saved.groups) && saved.groups.length > 1) Object.assign(patch, { groups: saved.groups, group: Math.min(saved.groups.length - 1, Math.max(0, saved.group ?? 0)) });
   if (saved.sceneName) patch.sceneName = saved.sceneName;
   if (saved.sceneId) patch.sceneId = saved.sceneId;
   // Tabs that were merged or moved: Shapes joined Text; Layers and Exports left the rail.
