@@ -83,6 +83,8 @@ export interface BezelRef {
   cutout: boolean;
   /** Frame colour for the 3D edge. */
   edge: string;
+  /** The device's body, top to bottom (image px): a watch's case without its band. */
+  body?: { top: number; bottom: number; left?: number; right?: number };
 }
 
 /** Points per bezel-image pixel: the opening is exactly the screen. */
@@ -850,12 +852,19 @@ function bezelFrame(o: FrameOptions, u: number, depth: boolean): FrameOutput {
     }
   }
   let edge = "";
-  // Tilted, an iPhone or iPad gets its thickness from its own silhouette. A watch's art includes its
-  // band and a MacBook's is the open laptop, so their silhouettes can't be extruded: they tilt flat.
-  if (depth && (drawnFrames() || m.family === "iphone" || m.family === "ipad")) {
+  // Tilted, the device gets its thickness from its own silhouette, extruded behind it. A watch's is
+  // its case alone (with its crown and button): the band is thin, so it stays the art's flat strap.
+  // A MacBook's art is the open laptop, which can't be extruded: it tilts flat.
+  const watch = m.family === "watch";
+  if (depth && (drawnFrames() || m.family === "iphone" || m.family === "ipad" || (watch && b.body))) {
     const T = m.thickness * u;
     const n = Math.max(6, Math.min(24, Math.ceil(T / 1.5)));
-    const mask = `-webkit-mask:url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat;mask:url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat;`;
+    // The case's own span, its corners kept round: the band's ends sit in front of it at the lugs.
+    // Its sides without the crown and buttons, which sit mid-depth on the real thing: they stay the
+    // art's own, at the front.
+    const bd = b.body;
+    const clip = watch && bd ? `clip-path:inset(${f(bd.top * k)} ${f((b.width - (bd.right ?? b.width)) * k)} ${f((b.height - bd.bottom) * k)} ${f((bd.left ?? 0) * k)} round ${f(hr * 0.9)});` : "";
+    const mask = `-webkit-mask:url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat;mask:url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat;${clip}`;
     for (let i = 1; i <= n; i++) {
       const t = i / n;
       const light = 0.3 * Math.exp(-(((t - 0.2) / 0.11) ** 2)) - 0.26 * Math.min(1, Math.max(0, (t - 0.62) / 0.38)) ** 1.4;

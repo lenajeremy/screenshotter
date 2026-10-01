@@ -223,7 +223,7 @@ async function macMenuBarFor(input: DeviceInput, file: string, sidecar: CaptureS
 
 async function bezelRef(model: ResolvedDevice["model"], color: { name: string; hex: string } | undefined, band?: string) {
   const art = await findBezel(model, color ? { id: "", ...color } : undefined, false, band).catch(() => undefined);
-  return art ? { url: fileUrl(art.file), file: art.file, width: art.width, height: art.height, hole: art.hole, cutout: art.cutout, edge: art.edge } : undefined;
+  return art ? { url: fileUrl(art.file), file: art.file, width: art.width, height: art.height, hole: art.hole, cutout: art.cutout, edge: art.edge, body: art.body } : undefined;
 }
 
 /**

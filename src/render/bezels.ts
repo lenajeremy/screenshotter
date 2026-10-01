@@ -26,6 +26,11 @@ export interface BezelArt {
   cutout: boolean;
   /** Frame colour sampled from the silhouette, for the 3D edge. */
   edge: string;
+  /**
+   * Where the device's body starts and ends (image px, top to bottom), measured beside the screen:
+   * a watch's case without its band. The whole image for a phone or tablet.
+   */
+  body?: { top: number; bottom: number; left?: number; right?: number };
 }
 
 export interface BezelEntry {
@@ -167,10 +172,10 @@ export function bezelSummary(): { dir: string; count: number; models: Array<{ mo
 
 const analysisCache = new Map<string, BezelArt>();
 
-// Bump the "v2" in the cache key whenever the analysis changes.
+// Bump the "v5" in the cache key whenever the analysis changes.
 async function analyze(file: string): Promise<BezelArt | undefined> {
   const stat = statSync(file);
-  const key = createHash("sha1").update(`v2:${file}:${stat.mtimeMs}:${stat.size}`).digest("hex").slice(0, 20);
+  const key = createHash("sha1").update(`v5:${file}:${stat.mtimeMs}:${stat.size}`).digest("hex").slice(0, 20);
   const mem = analysisCache.get(key);
   if (mem) return mem;
   const disk = path.join(cacheDir("bezels"), `${key}.json`);
@@ -255,25 +260,54 @@ async function analyze(file: string): Promise<BezelArt | undefined> {
           if (reach > 0 && dark / reach > 0.15) cutout = true;
         }
         // Frame colour: the outermost rim of the band, a few pixels in from the silhouette (deeper
-        // in, the band turns into a polished highlight), along the left and top edges.
+        // in, the band turns into a polished highlight), along the left and right sides, level with
+        // the screen (above and below it, a watch's art is its strap).
         const inset = Math.max(1, Math.round(Math.min(W, H) * 0.002));
         const samples: number[][] = [];
-        const probe = (x: number, y: number, dx: number, dy: number, limit: number) => {
+        const probe = (x: number, y: number, dx: number, limit: number) => {
           let t = 0;
-          while (t < limit && alpha(x + dx * t, y + dy * t) < 250) t++;
+          while (t < limit && alpha(x + dx * t, y) < 250) t++;
           const u = t + inset;
           if (t >= limit || u >= limit) return;
-          const i = ((y + dy * u) * W + (x + dx * u)) * 4;
+          const i = (y * W + (x + dx * u)) * 4;
           samples.push([d[i], d[i + 1], d[i + 2]]);
         };
-        for (const f of [0.3, 0.4, 0.5, 0.6, 0.7]) {
-          probe(0, Math.round(H * f), 1, 0, minX);
-          probe(Math.round(W * f), 0, 0, 1, minY);
+        for (let f = 0.1; f <= 0.901; f += 0.08) {
+          const y = Math.round(minY + (maxY - minY) * f);
+          probe(0, y, 1, minX);
+          probe(W - 1, y, -1, W - 1 - maxX);
         }
-        samples.sort((a, b) => a[0] + a[1] + a[2] - (b[0] + b[1] + b[2]));
-        const mid = samples[samples.length >> 1] ?? [40, 40, 42];
+        // The body's top and bottom, just outside the screen's left edge: a watch's band is
+        // narrower than its case, so there the art is the case alone.
+        const col = Math.max(0, minX - Math.max(2, Math.round((maxX - minX) * 0.02)));
+        let top = minY;
+        while (top > 0 && alpha(col, top - 1) > 128) top--;
+        let bottom = maxY;
+        while (bottom < H - 1 && alpha(col, bottom + 1) > 128) bottom++;
+        // Its sides, without what sticks out of them (a crown, buttons): on most rows level with the
+        // screen the silhouette is the plain side, so take the edges most rows agree on.
+        const lefts: number[] = [];
+        const rights: number[] = [];
+        for (let y = minY; y <= maxY; y += Math.max(1, Math.round((maxY - minY) / 60))) {
+          let l = 0;
+          while (l < minX && alpha(l, y) <= 128) l++;
+          let r = W - 1;
+          while (r > maxX && alpha(r, y) <= 128) r--;
+          lefts.push(l);
+          rights.push(r + 1);
+        }
+        const most = (list: number[], pick: (a: number, b: number) => number) => {
+          const sorted = [...list].sort(pick);
+          return sorted[Math.floor(sorted.length * 0.3)];
+        };
+        const left = most(lefts, (a, b) => b - a);
+        const right = most(rights, (a, b) => a - b);
+        // The colour most samples agree with: a button in another colour (an Ultra's orange Action
+        // button, a crown) is outvoted rather than averaged in.
+        const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        const mid = samples.length ? samples.reduce((best, s) => (samples.reduce((n, o) => n + dist(s, o), 0) < samples.reduce((n, o) => n + dist(best, o), 0) ? s : best)) : [40, 40, 42];
         const hex = "#" + mid.map((v) => v.toString(16).padStart(2, "0")).join("");
-        return { width: W, height: H, hole: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, r }, cutout, edge: hex };
+        return { width: W, height: H, hole: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, r }, cutout, edge: hex, body: { top, bottom: bottom + 1, left, right } };
       }
       return null;
     }, src);
