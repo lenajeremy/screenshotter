@@ -15,7 +15,8 @@
 ### Sets
 - An **Add screen** tile ends the row, and a single design offers **Add a screen** under it. Right-click a screen to rename, duplicate, move, copy its style, leave it out of the video or delete it.
 - Zoom to the whole set (⇧⌘0) or the screen you're on (⌘0); with nothing selected, ← and → step between screens.
-- In Preview, ← and → (or the arrows and dots) step through the set's screens, each previewed; the ones either side are made ready, so it's instant.
+- In Preview, ← and → (or the arrows and dots) step through the set's screens, each previewed; the ones either side are made ready, so it's instant. **Whole set** shows every screen side by side, as the store shows them; click one to see it alone.
+- A device or backdrop across the set runs on behind the App Store's gap between screenshots, so it meets itself there, in the Edit row and in the previews.
 - Undo (⌘Z) goes back through the whole design, whichever screen a change was made on: copying a style, adding a size, moving or deleting a screen are steps like any other.
 - The image size is the set's: choosing one, landscape or a custom width changes every screen.
 - A screen can be left out of the video: it stays one of the screenshots, marked **No video**, and the screens either side join.

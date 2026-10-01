@@ -67,6 +67,8 @@ export const S = {
    */
   groups: null,
   group: 0,
+  /** Preview shows every screen of the set side by side, instead of the one being edited. */
+  previewAll: false,
   /** Shots an AI change just touched, highlighted in the strip for a moment. */
   shotPulse: [],
   scenes: [],
@@ -324,6 +326,13 @@ export function persist() {
 }
 
 /**
+ * The space between screenshots on the App Store (about 10 pt beside a 230 pt screenshot), as a share
+ * of a screen's width. A device or backdrop across the set runs on behind it, so it meets itself
+ * across the gap where people see the set: the store, the Edit row, the store page preview.
+ */
+export const STORE_GAP = 0.043;
+
+/**
  * Keep a set's spans in step after any change: a backdrop across the set (every screen the
  * backdrop of the one being edited, each with its slice: `backgroundSpan`), and devices that carry
  * on into the neighbouring screens (drawn there, in their terms, as `spill`). Derived from the
@@ -353,14 +362,14 @@ export function syncSpans() {
     const sc = { ...x.scene };
     if (across) {
       sc.background = S.scene.background;
-      sc.backgroundSpan = { count: shots.length, index: i };
+      sc.backgroundSpan = { count: shots.length, index: i, gap: STORE_GAP };
     } else delete sc.backgroundSpan;
-    // A spanning device of the screen on the left is 1 to the left in this one's terms; of the one on the right, 1 to the right.
+    // A spanning device of the screen on the left is a screen and a gap to the left in this one's terms; of the one on the right, to the right.
     const spill = [];
     for (const j of [i - 1, i + 1])
       shots[j]?.scene.devices.forEach((d, k) => {
         // In a set, a device you've placed carries on into the screen beside it unless it's told not to.
-        if (d.span !== false && typeof d.x === "number" && reaches(d)) spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
+        if (d.span !== false && typeof d.x === "number" && reaches(d)) spill.push(tidy({ ...d, x: r4(d.x + (j - i) * (1 + STORE_GAP)), span: undefined, spillOf: { shot: j, device: k } }));
       });
     if (spill.length) sc.spill = spill;
     else delete sc.spill;

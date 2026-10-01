@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, STORE_GAP, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
   applyRecipe,
@@ -49,6 +49,8 @@ import {
   STYLE_PARTS,
   copyStyle,
   previewScreen,
+  previewSet,
+  setPreviewAll,
   exportWholeSet,
   setSizes,
   screenName,
@@ -504,6 +506,50 @@ function PreviewNav() {
   </div>`;
 }
 
+/**
+ * Preview's whole-set view: every screen of the size in a row, as the store shows them (its spacing,
+ * so a backdrop or device across the set meets itself), as big as the window allows. Click one to
+ * preview it alone.
+ */
+function SetPreview() {
+  const s = useStore();
+  const shots = s.shots.map((x, i) => (i === s.shot ? s.scene : x.scene));
+  const key = shots.map((x) => JSON.stringify(x)).join("|");
+  const [imgs, setImgs] = useState({});
+  useEffect(() => {
+    let alive = true;
+    setImgs({});
+    previewSet((i, r) => alive && setImgs((m) => ({ ...m, [i]: r })));
+    return () => (alive = false);
+  }, [key]);
+  const box = useRef();
+  const [room, setRoom] = useState({ w: 1000, h: 600 });
+  useLayoutEffect(() => {
+    const el = box.current;
+    const ro = new ResizeObserver(() => setRoom({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const c = s.layout?.canvas ?? { width: 1320, height: 2868 };
+  const n = shots.length;
+  const aspect = c.width / c.height;
+  // As tall as fits, and every screen in view when they fit at a readable size; else the row scrolls.
+  const fitAll = (room.w - 48) / (n + (n - 1) * STORE_GAP) / aspect;
+  const tileH = Math.max(Math.min(room.h - 70, Math.max(fitAll, 260)), 120);
+  const tileW = tileH * aspect;
+  const num = (i) => String(i + 1).padStart(2, "0");
+  return html`<div class="set-preview" ref=${box}>
+    <div class="spv-row" style=${{ gap: tileW * STORE_GAP + "px" }}>
+      ${shots.map(
+        (x, i) => html`<button class="spv-tile" key=${i} title=${`${num(i)} · ${screenName(i)}: preview it alone`} onClick=${() => (set({ previewAll: false }), i === s.shot ? renderPreview() : previewScreen(i))}>
+          <span class="spv-img" style=${{ width: tileW + "px", height: tileH + "px" }}>${imgs[i] ? html`<img src=${fileUrl(imgs[i].path, imgs[i].at)} draggable=${false} />` : html`<span class="spinner"></span>`}</span>
+          <span class=${`spv-label ${i === s.shot ? "on" : ""}`} style=${{ width: tileW + "px" }}><b>${num(i)}</b>${screenName(i)}</span>
+        </button>`,
+      )}
+    </div>
+  </div>`;
+}
+
 function RenderView() {
   const s = useStore();
   const r = s.render;
@@ -527,7 +573,21 @@ function RenderView() {
     window.addEventListener("mouseup", stop);
   };
   const nav = s.shots?.length > 1 && r && !r.sheet && !r.isVideo;
+  const all = s.previewAll && s.shots?.length > 1;
+  const modes = s.shots?.length > 1 && html`<div class="preview-modes"><${Seg} value=${all ? "all" : "one"} onChange=${(v) => setPreviewAll(v === "all")}
+    options=${[{ value: "one", label: "Screen", title: "One screen at a time (← → step through them)" }, { value: "all", label: "Whole set", title: "Every screen side by side, as the store shows them" }]} /></div>`;
+  if (all)
+    return html`<div class="render-view whole">
+      ${modes}
+      <${SetPreview} />
+      <div class="float render-actions">
+        <button class="btn" onClick=${() => set({ exportOpts: { ...S.exportOpts, tab: "set" }, exportOpen: true })}><${Icon} n="export" s=${14} />Export the set…</button>
+        <span style=${{ width: "1px", height: "18px", background: "var(--line-2)", margin: "0 4px" }}></span>
+        <button class="btn" onClick=${() => set({ view: "canvas" })}><${Icon} n="canvas" s=${14} />Back to editing</button>
+      </div>
+    </div>`;
   return html`<div class=${`render-view ${nav ? "with-nav" : ""}`}>
+    ${modes}
     ${r
       ? html`
         <div class="render-meta">
@@ -1370,7 +1430,7 @@ function StorePage() {
             <div class="sp-icon">${name.trim()[0]?.toUpperCase()}</div>
             <div class="sp-meta"><b>${name}</b><span>${device} app</span><button class="sp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
           </div>
-          <div class="sp-row" style=${{ "--tile-h": tileH + "px" }}>
+          <div class="sp-row" style=${{ "--tile-h": tileH + "px", gap: Math.round(tileW * STORE_GAP) + "px" }}>
             ${size.screens.map((x, i) => html`<div class="sp-shot ${platform}" key=${i} title=${`${String(i + 1).padStart(2, "0")} · ${x.name}`} style=${{ width: tileW + "px", height: tileH + "px" }}>
               ${thumbs[i] ? html`<img src=${thumbs[i]} alt=${x.name} />` : html`<span class="spin"></span>`}
             </div>`)}
@@ -1629,9 +1689,11 @@ window.addEventListener("keydown", (e) => {
       return goToShot(Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1))));
     }
     // In Preview, they step through the set's screens, each previewed.
-    if (S.view === "render" && S.shots?.length > 1 && !S.render?.sheet && !S.render?.isVideo && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (S.view === "render" && S.shots?.length > 1 && (S.previewAll || (!S.render?.sheet && !S.render?.isVideo)) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
-      return previewScreen(S.shot + (e.key === "ArrowLeft" ? -1 : 1));
+      const to = Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1)));
+      // Seeing the whole set, they move which screen is the one in hand; seeing one, they preview the next.
+      return S.previewAll ? goToShot(to) : previewScreen(to);
     }
     if (e.key === "Tab" && S.layout?.entities.length) {
       e.preventDefault();

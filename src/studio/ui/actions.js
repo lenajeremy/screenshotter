@@ -645,6 +645,18 @@ export async function renderPreview() {
   if (shots) for (const j of [S.shot + 1, S.shot - 1]) if (shots[j]) previewOf(shots[j].scene).catch(() => undefined);
 }
 
+/** Every screen's preview for Preview's whole-set view, each handed over as it's ready (from memory when seen). */
+export function previewSet(onEach) {
+  const shots = allShots() ?? [{ scene: S.scene }];
+  shots.forEach((x, i) => previewOf(x.scene).then((r) => onEach(i, r), () => onEach(i, null)));
+}
+
+/** Preview one screen, or the whole set side by side as the store shows it. */
+export function setPreviewAll(on) {
+  set({ previewAll: on, view: "render" });
+  if (!on && !S.render) renderPreview();
+}
+
 /** In Preview, show another screen of the set: its preview, at once if it's been seen. */
 export function previewScreen(i) {
   const shots = allShots();

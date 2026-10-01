@@ -872,12 +872,14 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
 
   // A backdrop across a set is drawn as wide as every screen side by side; this one shows its slice.
   const span = input.backgroundSpan && input.backgroundSpan.count > 1 ? input.backgroundSpan : undefined;
-  const BW = span ? W * span.count : W;
+  // The panorama runs on behind the store's gap between screenshots, so each slice meets the next across it.
+  const gapPx = span ? (span.gap ?? 0) * W : 0;
+  const BW = span ? W * span.count + gapPx * (span.count - 1) : W;
   const bg = await resolveBackground(input.background, BW, H, prepared[0]?.file, warnings, averageColor);
   // A print or paint finish replaces the background with its processed image.
   const finish = typeof input.background === "object" ? input.background.finish : undefined;
   if (finish && !bg.transparent) Object.assign(bg, await finishBackground(bg, BW, H, finish));
-  const slice = (html: string) => (span ? `<div class="bg-span" style="left:${px(-Math.min(span.index, span.count - 1) * W)};width:${px(BW)}">${html}</div>` : html);
+  const slice = (html: string) => (span ? `<div class="bg-span" style="left:${px(-Math.min(span.index, span.count - 1) * (W + gapPx))};width:${px(BW)}">${html}</div>` : html);
   // Fitted into a frame, the backdrop fills the whole frame and the design sits on it.
   let outer: typeof bg | undefined;
   if (framed?.fit === "fit") {

@@ -469,7 +469,11 @@ export const MockupInputShape = {
     .describe("hero (caption top, device below), hero-bleed (big device cropped by the bottom edge), text-bottom, tilted (3D), floating (device only), duo, trio, split (caption beside devices), stack (overlapping multi-device), grid (a mosaic of screens in rows), staircase (screens stepping up to the right, each overlapping the next), rising (the same steps, counter-rotated), custom."),
   background: BackgroundSchema.optional(),
   backgroundSpan: z
-    .object({ count: z.number().int().min(2).max(20), index: z.number().int().min(0).max(19) })
+    .object({
+      count: z.number().int().min(2).max(20),
+      index: z.number().int().min(0).max(19),
+      gap: z.number().min(0).max(0.5).optional().describe("The space between screens as the store shows them, as a share of a screen's width (the App Store's is about 0.043): the panorama runs on behind it, so it meets itself across the gap."),
+    })
     .optional()
     .describe("A backdrop laid across a set of screens side by side, one panorama: how many screens, and which this is (from 0); this screen shows its slice. The Studio sets it when a set's backdrop goes across the set."),
   spill: z

@@ -6,7 +6,7 @@ import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
-import { S, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
+import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
 import { addDevice, addShot, addSize, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
@@ -89,9 +89,10 @@ function Backdrop({ bg, W, H, span }) {
   const [ready, setReady] = useState(null);
   // Across a set, the backdrop is as wide as every screen side by side, and this one shows its slice.
   const n = span && span.count > 1 ? span.count : 1;
-  const w = Math.round(Math.min(720 * Math.min(n, 3), (W * n) / 3));
-  const still = needsStill(bg, looks) ? `/api/bg-preview?bg=${encodeURIComponent(key)}&w=${w}&h=${Math.round((w * H) / (W * n))}` : null;
-  const slice = n > 1 ? { width: n * 100 + "%", right: "auto", left: -Math.min(span.index, n - 1) * 100 + "%" } : null;
+  const w = Math.round(Math.min(720 * Math.min(n, 3), (W * (n + (n - 1) * (span?.gap ?? 0))) / 3));
+  const still = needsStill(bg, looks) ? `/api/bg-preview?bg=${encodeURIComponent(key)}&w=${w}&h=${Math.round((w * H) / (W * (n + (n - 1) * (span?.gap ?? 0))))}` : null;
+  const g = n > 1 ? (span.gap ?? 0) * 100 : 0;
+  const slice = n > 1 ? { width: n * 100 + (n - 1) * g + "%", right: "auto", left: -Math.min(span.index, n - 1) * (100 + g) + "%" } : null;
   // The backdrop's own move (Animate) turns and scales the inner layer; the camera moves the outer.
   return html`<div class="bg"><div class="bg-move" style=${{ background: guess, ...slice }}>
     ${still && html`<img key=${still} src=${still} style=${{ opacity: ready === still ? 1 : 0, transition: "opacity .35s" }} onLoad=${() => setReady(still)} onError=${() => setReady(null)} />`}
@@ -1048,7 +1049,7 @@ function SizeSwitch() {
 }
 
 /** The gap between screens of a set, and the Add screen tile's width, as fractions of a screen's width. */
-const SET_GAP = 0.1;
+const SET_GAP = STORE_GAP;
 const SET_ADD = 0.42;
 
 /**
