@@ -271,6 +271,10 @@ export const DeviceInputSchema = z.object({
     .optional()
     .describe("Apple Watch: the band, as Apple's art names it for the finish, e.g. \"Sport Band Black\", \"Sport Loop Forest\", \"Milanese Loop\", \"Alpine Loop Light Blue\" (list_mockup_options lists each finish's bands; part of a name, like \"Milanese\", is enough). Default: a Sport Band if the finish has one."),
   bandColor: z.string().optional().describe("Apple Watch band colour, or \"none\" (drawn watches only, a development option)."),
+  span: z
+    .boolean()
+    .optional()
+    .describe("In a set of screens: the device carries on into the neighbouring screens where it reaches past an edge (Device Overflow), so swiping between them reads as one picture. Needs x and y. The Studio draws its continuation on the neighbours (`spill`)."),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -464,6 +468,15 @@ export const MockupInputShape = {
     .optional()
     .describe("hero (caption top, device below), hero-bleed (big device cropped by the bottom edge), text-bottom, tilted (3D), floating (device only), duo, trio, split (caption beside devices), stack (overlapping multi-device), grid (a mosaic of screens in rows), staircase (screens stepping up to the right, each overlapping the next), rising (the same steps, counter-rotated), custom."),
   background: BackgroundSchema.optional(),
+  backgroundSpan: z
+    .object({ count: z.number().int().min(2).max(20), index: z.number().int().min(0).max(19) })
+    .optional()
+    .describe("A backdrop laid across a set of screens side by side, one panorama: how many screens, and which this is (from 0); this screen shows its slice. The Studio sets it when a set's backdrop goes across the set."),
+  spill: z
+    .array(DeviceInputSchema)
+    .max(16)
+    .optional()
+    .describe("Devices of the neighbouring screens that carry on into this one (`span`), in this screen's terms (x less 1 for the screen on the left, plus 1 for the one on the right). Drawn after this screen's own devices, not laid out. The Studio keeps it in step."),
   effects: EffectsSchema,
   headline: z.string().optional().describe("Main caption. **Accent** markup supported."),
   subheadline: z.string().optional(),

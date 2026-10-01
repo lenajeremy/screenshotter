@@ -3,7 +3,7 @@ import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
-import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
+import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
 
@@ -232,6 +232,16 @@ function DeviceInspector({ id }) {
           dev.rotateX = rx || undefined;
           dev.rotateY = ry || undefined;
         }, "3d")} />
+        ${s.shots &&
+        html`<${Switch} checked=${Boolean(d.span)} label="Carry on into the next screens" onChange=${(v) => upd((dev) => {
+          // It needs a place of its own: where the layout put it, from now on.
+          dev.x ??= r4(e?.x ?? 0.5);
+          dev.y ??= r4(e?.y ?? 0.5);
+          dev.height ??= r4(e?.height ?? 0.7);
+          dev.anchor = "center";
+          dev.span = v || undefined;
+        })} />
+          ${d.span && html`<div class="note">Drag it past an edge: the part beyond shows on the screen beside it, so the set reads as one picture.</div>`}`}
       <//>
 
       <${More} id="device">
@@ -701,6 +711,9 @@ function SceneInspector() {
           <span class="grow"><b style=${{ display: "block", textTransform: "capitalize" }}>${String(bgName).replace(/-/g, " ")}</b><span class="note">Change the look, colours or photo</span></span>
           <${Icon} n="right" s=${14} />
         </button>
+        ${s.shots &&
+        html`<${Switch} checked=${Boolean(sc.backgroundSpan)} label="Across the set" onChange=${setBackdropAcross} />
+          <div class="note">${sc.backgroundSpan ? `One backdrop across all ${s.shots.length} screens, each showing its slice. Changing it here changes it everywhere.` : "Lay this backdrop across every screen, one panorama, each showing its slice."}</div>`}
       <//>
       ${(s.shots || s.groups) &&
       html`<${Section} title="This screen">

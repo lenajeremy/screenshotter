@@ -27,7 +27,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 - Realistic materials and colours, a camera cutout (notch) toggle, iPhone Duo's hinge. **Partly**: colours and the Dynamic Island setting.
 - Models: iPhone 17 Pro Max, 18 Pro Max, Duo, 15 Pro Max; iPad Pro 11" and 12.9"; MacBook Pro 16"; Apple Watch Series 11 and Ultra; Vision Pro; Pixel 10 Pro; a generic device. **Partly**: no Vision Pro, Pixel or generic device.
 - 3D drop shadows. **Partly**: 2D shadows.
-- Device Overflow: one device spanning neighbouring artboards. **Missing.**
+- Device Overflow: one device spanning neighbouring artboards. **Have** (0.6.0): "Carry on into the next screens"; the neighbours draw its continuation behind their own devices.
 - Callouts: a region of the screenshot raised as its own 3D plane, with altitude, scale, corner radius and a border; different per language. **Have** in 2D (lift, breakout, loupe, outline, spotlight); **missing** per language.
 
 ## 4. Text and images
@@ -42,7 +42,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 ## 5. Backgrounds
 
 - Solid colour, gradient, image. **Have**, and ahead: looks, paintings, photos, print finishes, AI images.
-- Seamless panoramic background: one ultra-wide image sliced across a group of artboards. **Missing.**
+- Seamless panoramic background: one ultra-wide image sliced across a group of artboards. **Have** (0.6.0): Backdrop › Across the set.
 - Background overrides per language. **Missing.**
 
 ## 6. Templates

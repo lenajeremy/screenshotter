@@ -82,14 +82,18 @@ function SceneMenuBar({ bar, H }) {
   </div>`;
 }
 
-function Backdrop({ bg, W, H }) {
+function Backdrop({ bg, W, H, span }) {
   const looks = S.opts?.looks;
   const guess = bgGuess(bg, looks);
   const key = JSON.stringify(bg ?? null);
   const [ready, setReady] = useState(null);
-  const still = needsStill(bg, looks) ? `/api/bg-preview?bg=${encodeURIComponent(key)}&w=${Math.round(Math.min(720, W / 3))}&h=${Math.round((Math.min(720, W / 3) * H) / W)}` : null;
+  // Across a set, the backdrop is as wide as every screen side by side, and this one shows its slice.
+  const n = span && span.count > 1 ? span.count : 1;
+  const w = Math.round(Math.min(720 * Math.min(n, 3), (W * n) / 3));
+  const still = needsStill(bg, looks) ? `/api/bg-preview?bg=${encodeURIComponent(key)}&w=${w}&h=${Math.round((w * H) / (W * n))}` : null;
+  const slice = n > 1 ? { width: n * 100 + "%", right: "auto", left: -Math.min(span.index, n - 1) * 100 + "%" } : null;
   // The backdrop's own move (Animate) turns and scales the inner layer; the camera moves the outer.
-  return html`<div class="bg"><div class="bg-move" style=${{ background: guess }}>
+  return html`<div class="bg"><div class="bg-move" style=${{ background: guess, ...slice }}>
     ${still && html`<img key=${still} src=${still} style=${{ opacity: ready === still ? 1 : 0, transition: "opacity .35s" }} onLoad=${() => setReady(still)} onError=${() => setReady(null)} />`}
   </div></div>`;
 }
@@ -219,7 +223,8 @@ function DeviceEnt({ e, W, H }) {
   const bw = e.width * W;
   const frame = e.frame ?? "device";
   const { scene, layout, ghost } = useShot();
-  const dev = scene.devices?.[e.index] ?? {};
+  // A neighbour's device carrying on into this screen is described in `spill`, not `devices`.
+  const dev = (e.spill ? scene.spill : scene.devices)?.[e.index] ?? {};
   const bar = dev.chrome === "dark" ? "#2a2a2f" : "#e9e9ec";
   const body = frame === "device" ? e.color || "#1d1d1f" : frame === "browser" || frame === "window" ? bar : "transparent";
   const screen = { left: s.x * 100 + "%", top: s.y * 100 + "%", width: s.width * 100 + "%", height: s.height * 100 + "%", borderRadius: Math.max(0, (s.radius - s.x) * bw) + "px" };
@@ -389,7 +394,7 @@ function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging 
       onContextMenu=${(ev) => inSet && screenMenu(ev, index)}>
     <${ShotCtx.Provider} value=${{ scene, layout, ghost: true }}>
       <div class="artboard ghost" style=${{ width: gw + "px", height: gh + "px", left: (W - gw) / 2 + "px", top: (H - gh) / 2 + "px" }}>
-        <${Backdrop} bg=${scene.background} W=${gW0} H=${gH0} />
+        <${Backdrop} bg=${scene.background} W=${gW0} H=${gH0} span=${scene.backgroundSpan} />
         ${scene.menuBar && html`<${SceneMenuBar} bar=${scene.menuBar} H=${gh} />`}
         ${layout.entities.map(
           (e) => html`<div key=${e.id} class="ent ent-${e.kind}" data-id=${e.id} style=${place(e, gw, gh)}>
@@ -689,6 +694,16 @@ export function CanvasView() {
       return startPan(ev);
     }
     const id = handle ? S.selected : entEl.dataset.id;
+    // A neighbour's device carrying on into this screen: edit it on its own screen.
+    if (id?.startsWith("spill-")) {
+      ev.preventDefault();
+      const from = S.scene.spill?.[Number(id.split("-")[1]) - 1]?.spillOf;
+      if (from) {
+        goToShot(from.shot);
+        set({ selected: `device-${from.device + 1}` });
+      }
+      return;
+    }
     const e0 = entities.find((x) => x.id === id);
     if (!e0) return;
     ev.preventDefault();
@@ -930,7 +945,8 @@ export function CanvasView() {
 
   return html`<div class="viewport ${space ? "space" : ""}" ref=${vp} onPointerDown=${onPointerDown} onDblClick=${onDblClick}
       onPointerMove=${(e) => {
-        const id = e.target.closest?.(".ghost-wrap") ? null : (e.target.closest?.(".ent")?.dataset.id ?? null);
+        const over = e.target.closest?.(".ghost-wrap") ? null : (e.target.closest?.(".ent")?.dataset.id ?? null);
+        const id = over?.startsWith("spill-") ? null : over;
         if (id !== S.hover) set({ hover: id });
       }}
       onPointerLeave=${() => S.hover && set({ hover: null })}
@@ -951,10 +967,11 @@ export function CanvasView() {
         persistPrefs();
       }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><${Icon} n="down" s=${11} /></button><span class="faint">${s.shots?.length > 1 ? html`· <b class="shot-of">Screen ${s.shot + 1} of ${s.shots.length}</b> ` : ""}${!s.timelineOpen && !(s.shots?.length > 1) ? html`· <button class="link-btn" onPointerDown=${(e) => e.stopPropagation()} onClick=${() => addShot("copy")} title="Make this a set: add another screen beside it">Add a screen</button> ` : ""}· Edit view shows placement. Preview shows the finished look.</span></div>
       <div class="artboard ${setMode ? "in-set" : ""} ${dropOver === true ? "drop-over" : ""} ${s.ai.busy || s.designing ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px", "--set-gap": G + "px" }}>
-        <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} />
+        <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} span=${s.scene.backgroundSpan} />
         ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
         ${entities.map(
-          (e) => html`<div key=${e.id} class="ent ent-${e.kind} ${s.pulse.includes(e.id) ? "pulse" : ""}" data-id=${e.id} style=${place(e, W, H)}>
+          (e) => html`<div key=${e.id} class="ent ent-${e.kind} ${e.spill ? "spill" : ""} ${s.pulse.includes(e.id) ? "pulse" : ""}" data-id=${e.id} style=${place(e, W, H)}
+              title=${e.spill ? `Carries on from screen ${(s.scene.spill?.[e.index]?.spillOf?.shot ?? 0) + 1}: click to edit it there` : undefined}>
             ${e.kind === "shape"
               ? html`<${ShapeEnt} e=${e} W=${W} H=${H} />`
               : e.kind === "device"

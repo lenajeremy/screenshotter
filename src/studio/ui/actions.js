@@ -696,6 +696,13 @@ export async function exportWholeSet() {
   }
 }
 
+/** A scene without the devices its neighbours lend it (they're drawn from the neighbours' own). */
+const withoutSpill = (scene) => {
+  if (!scene.spill) return scene;
+  const { spill: _spill, ...rest } = scene;
+  return rest;
+};
+
 /** A shot's video options: the camera motion chosen for export, and its own length when it has one. */
 function shotVideo(scene, length) {
   const v = S.exportOpts.video;
@@ -861,6 +868,21 @@ export async function setCanvasSize(value) {
   scheduleLayout(0);
   persist();
   toast({ kind: "ok", icon: "replace", title: `All ${next.length} screens are ${label}`, text: `${swapNote(value, n) || "The size is the set's: every screen has it."} Undo (⌘Z) puts every screen back.`, timeout: 6000, actions: [{ label: "Undo", run: undo }] });
+}
+
+/**
+ * Lay the backdrop across the set, one panorama: every screen takes the backdrop of the one being
+ * edited and shows its slice of it (or, off, the whole of it again).
+ */
+export function setBackdropAcross(on) {
+  const shots = allShots();
+  if (!shots) return;
+  checkpoint();
+  const next = shots.map((x, i) => ({ ...x, scene: tidy({ ...x.scene, background: on ? S.scene.background : x.scene.background, backgroundSpan: on ? { count: shots.length, index: i } : undefined }) }));
+  set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
+  scheduleLayout(0);
+  persist();
+  if (on) toast({ kind: "ok", icon: "image", title: `The backdrop goes across all ${shots.length} screens`, text: "Each shows its slice, so swiping between them on the App Store reads as one picture. A device can carry on across them too (its Size & tilt). ⌘Z undoes it.", timeout: 7000 });
 }
 
 /** Landscape or portrait: in a set, every screen. */
@@ -1227,7 +1249,8 @@ export async function aiEdit(text) {
 
   try {
     const r = await streamEdit(
-      { request: snapshot, instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, name: x.name, video: x.video, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
+      // A neighbour's device carrying on into a screen is the Studio's to draw, not Claude's to edit.
+      { request: withoutSpill(snapshot), instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: withoutSpill(x.scene), name: x.name, video: x.video, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
       (p) => {
         if (p.step === "look") {
           if (!p.image) return step("look");

@@ -449,6 +449,8 @@ function place(d: Prepared, p: Placement, bgColor: string | undefined, W: number
 export interface SceneEntity {
   id: string;
   kind: "device" | "caption" | "text" | "shape";
+  /** A neighbouring screen's device carrying on into this one: drawn here, edited there. */
+  spill?: boolean;
   /** Index into `devices`, `texts` or `shapes`. */
   index?: number;
   /** Devices: centre. Captions and texts: the anchor point (see align and anchor). */
@@ -503,6 +505,9 @@ interface CaptionPlan {
 
 interface ScenePlan {
   prepared: Prepared[];
+  /** Devices from neighbouring screens carrying on into this one, and where each goes. */
+  spill: Prepared[];
+  spillPlacements: Placement[];
   warnings: string[];
   canvas: { width: number; height: number; name: string };
   layout: LayoutResult;
@@ -531,6 +536,12 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
   const families = prepared.map((d) => (d.family === "flat" ? "mac" : d.family)) as Family[];
   const layout = computeLayout(input.layout, W, H, families, hasText, style.position);
   const placements = prepared.map((d, i) => placement(d, layout.devices[i] ?? layout.devices[layout.devices.length - 1], W, H, input.menuBar));
+  // A neighbour's device carrying on into this screen has its own place (its x, y and height).
+  const spill = await Promise.all((input.spill ?? []).map((d) => prepare(d, light)));
+  const anySlot: DeviceSlot = layout.devices[0] ?? { x: 0.5, y: 0.5, boxW: 1, boxH: 1, height: 0.7, anchor: "center", rotate: 0, rotateX: 0, rotateY: 0, z: 1 };
+  // Below this screen's own devices, whatever order they had on their own screen.
+  const lowest = Math.min(1, ...placements.map((p) => p.z));
+  const spillPlacements = spill.map((d) => ({ ...placement(d, anySlot, W, H), z: lowest - 1 }));
 
   const headSize = sizePx(style.headlineSize, H, layout.headlineSize);
   let caption: CaptionPlan | undefined;
@@ -548,7 +559,7 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
     };
   }
   const shapes = await resolveShapes(input, prepared, placements, W, H, warnings);
-  return { prepared, warnings, canvas, layout, placements, caption, headSize, shapes };
+  return { prepared, spill, spillPlacements, warnings, canvas, layout, placements, caption, headSize, shapes };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -655,12 +666,12 @@ function menuBarFraction(d: Prepared): number | undefined {
 function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): SceneEntity[] {
   const { width: W, height: H } = plan.canvas;
   const round = (v: number) => Math.round(v * 10000) / 10000;
-  const entities: SceneEntity[] = plan.prepared.map((d, i) => {
-    const p = plan.placements[i];
+  const deviceEntity = (d: Prepared, p: Placement, i: number, spill = false): SceneEntity => {
     return {
-      id: `device-${i + 1}`,
+      id: spill ? `spill-${i + 1}` : `device-${i + 1}`,
       kind: "device",
       index: i,
+      ...(spill ? { spill: true } : {}),
       x: round(p.cx / W),
       y: round(p.cy / H),
       width: round(p.visW / W),
@@ -680,7 +691,8 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       band: watchBand(d),
       bezel: d.kind === "device" && !d.options.back ? d.options.bezel?.file : undefined,
     };
-  });
+  };
+  const entities: SceneEntity[] = [...plan.prepared.map((d, i) => deviceEntity(d, plan.placements[i], i)), ...plan.spill.map((d, i) => deviceEntity(d, plan.spillPlacements[i], i, true))];
   const style = input.textStyle ?? {};
   if (plan.caption) {
     const c = plan.caption;
@@ -855,10 +867,14 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   const style = input.textStyle ?? {};
   const hasText = Boolean(caption);
 
-  const bg = await resolveBackground(input.background, W, H, prepared[0].file, warnings, averageColor);
+  // A backdrop across a set is drawn as wide as every screen side by side; this one shows its slice.
+  const span = input.backgroundSpan && input.backgroundSpan.count > 1 ? input.backgroundSpan : undefined;
+  const BW = span ? W * span.count : W;
+  const bg = await resolveBackground(input.background, BW, H, prepared[0].file, warnings, averageColor);
   // A print or paint finish replaces the background with its processed image.
   const finish = typeof input.background === "object" ? input.background.finish : undefined;
-  if (finish && !bg.transparent) Object.assign(bg, await finishBackground(bg, W, H, finish));
+  if (finish && !bg.transparent) Object.assign(bg, await finishBackground(bg, BW, H, finish));
+  const slice = (html: string) => (span ? `<div class="bg-span" style="left:${px(-Math.min(span.index, span.count - 1) * W)};width:${px(BW)}">${html}</div>` : html);
   // Fitted into a frame, the backdrop fills the whole frame and the design sits on it.
   let outer: typeof bg | undefined;
   if (framed?.fit === "fit") {
@@ -957,6 +973,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
     .join("\n");
 
   const placed = prepared.map((d, i) => place(d, plan.placements[i], bg.color, W, anim, `device-${i + 1}`));
+  const spilled = plan.spill.map((d, i) => place(d, plan.spillPlacements[i], bg.color, W, undefined, `spill-${i + 1}`));
 
   // Effects.
   const grade = gradeFor(effects.grade);
@@ -978,7 +995,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   const groupOf = (b: typeof bg) =>
     `<div class="bg-group" style="${grade.filter && grade.scope === "background" ? `filter:${grade.filter};` : ""}">` +
     // A video's backdrop moves on a layer of its own; vignette and grain stay put over it.
-    (anim ? `<div class="bg-move">${b.html}</div>` : b.html) +
+    (anim ? `<div class="bg-move">${b === bg ? slice(b.html) : b.html}</div>` : b === bg ? slice(b.html) : b.html) +
     (grade.scope === "background" ? grade.overlays : "") +
     vignetteHtml(effects.vignette) +
     (grainScope === "background" ? grainHtml(effects.grain, 4) : "") +
@@ -986,7 +1003,8 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   const bgGroup = outer ? "" : groupOf(bg);
   // Shapes belong to the scene: a camera zoom or a video's push-in moves them with the devices.
   const shapes = plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40, `shape-${i + 1}`)).join("");
-  let scene = `${bgGroup}${placed.map((p) => p.html).join("\n")}${shapes}`;
+  // A neighbour's device passes behind this screen's own, which are its subject.
+  let scene = `${bgGroup}${spilled.map((p) => p.html).join("\n")}${placed.map((p) => p.html).join("\n")}${shapes}`;
   if (grade.scope === "all") scene = `<div class="scene" style="${grade.filter ? `filter:${grade.filter};` : ""}">${scene}${grade.overlays}</div>`;
   // A close-up: scale the scene about the focus and bring it to the centre, never past an edge.
   if (input.camera && input.camera.zoom > 1) {
@@ -1016,6 +1034,7 @@ html,body{margin:0;padding:0;background:transparent;}
 #canvas{position:relative;width:${W}px;height:${H}px;overflow:hidden;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
 .scene,.bg-group{position:absolute;inset:0;}
 .bg{position:absolute;inset:0;overflow:hidden;}
+.bg-span{position:absolute;top:0;bottom:0;}
 .bg-move{position:absolute;inset:0;transform-origin:0 0;}
 .dev-wrap{position:absolute;width:0;height:0;}
 .dev-stage,.dev-rot{position:absolute;}

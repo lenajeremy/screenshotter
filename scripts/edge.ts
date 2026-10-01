@@ -400,6 +400,32 @@ await check("with no Apple art installed, a device is its bare screen (rounded l
   }
 });
 
+await check("a set reads as one picture: a backdrop's slices line up, and a spanning device carries on next door", async () => {
+  const { layoutScene } = await import("../src/render/mockup.js");
+  const { run } = await import("../src/util/exec.js");
+  const { readBmp } = await import("../src/util/png.js");
+  const bg = { colors: ["#ff0000", "#0000ff"], angle: 90 };
+  const scene = (index: number, extra = {}) => ({ devices: [{ screenshot: shot, frame: "none", x: 0.5, y: 0.5, height: 0.4 }], canvas: "200x400", layout: "custom", background: bg, backgroundSpan: { count: 2, index }, preview: false, ...extra });
+  // The left screen's right edge and the right screen's left edge are the same colour: the middle of one gradient.
+  const files = [0, 1].map((i) => path.join(out, `span-${i}.png`));
+  for (const [i, f] of files.entries()) await createMockup({ ...scene(i), output: f } as never);
+  const edge = async (f: string, x: number) => {
+    await run("sips", ["-s", "format", "bmp", f, "--out", `${f}.bmp`]);
+    const img = readBmp(readFileSync(`${f}.bmp`));
+    const i = (Math.round(img.height * 0.1) * img.width + Math.round(x * (img.width - 1))) * 4;
+    return [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]];
+  };
+  const [a, b] = [await edge(files[0], 1), await edge(files[1], 0)];
+  assert(Math.abs(a[0] - b[0]) < 16 && Math.abs(a[2] - b[2]) < 16, `the slices don't meet: ${a} vs ${b}`);
+  const [l, r] = [await edge(files[0], 0), await edge(files[1], 1)];
+  assert(l[0] > 200 && r[2] > 200, `each screen shows its own end of the gradient: ${l} … ${r}`);
+  // A neighbour's spanning device is an entity of its own, below this screen's devices.
+  const layout = await layoutScene({ ...scene(1), spill: [{ screenshot: shot, frame: "none", x: -0.1, y: 0.5, height: 0.4 }] } as never);
+  const own = layout.entities.find((e) => e.id === "device-1")!;
+  const spill = layout.entities.find((e) => e.id === "spill-1")!;
+  assert(spill?.spill && spill.x === -0.1 && spill.z < own.z, `spill entity: ${JSON.stringify(spill)}`);
+});
+
 await check("Apple's art files are told apart by model, colour and orientation", async () => {
   const { classify } = await import("../src/render/bezels.js");
   const root = "/art";

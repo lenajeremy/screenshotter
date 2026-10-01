@@ -5,6 +5,7 @@
 ### Highlights
 - **Sets.** A design can be a whole App Store set: its screens sit side by side in Edit, numbered and named ("01 · Introduction"). Click one to edit it, drag one to put it elsewhere, double-click a name to rename it, and drop a screenshot on any of them. The same screens, in order, are the shots of its preview video in Animate.
 - **Every size, in one design.** Every App Store slot (iPhone, iPad, Mac, Apple Watch, Apple TV, Vision Pro) and Google Play size is a preset. A switcher above the set holds the design's sizes: **+** makes every screen again at another size, an iPad set from the iPhone one, its devices swapped to iPads.
+- **One picture across the set.** Lay one backdrop across every screen, each showing its slice, and let a device carry on from one screen into the next, so swiping through the screenshots on the App Store reads as one picture.
 - **Copy style.** Copy one screen's backdrop, text style, film look, device look or device placement onto the others, at its size or every size.
 - **Export the whole set.** Every screen of every size at full size, numbered in store order, with a contact sheet per size, in a folder per size or ready for fastlane. **Preview the store page** shows each size's screenshots in a row, the way the App Store does.
 - **Apple's own devices.** Devices are Apple's product renders: the list shows the models whose art you've installed, in the finishes Apple drew. An Apple Watch can wear any band Apple shows it with (Sport Band, Sport Loop, Milanese Loop, Alpine Loop, Trail Loop, Ocean Band…).

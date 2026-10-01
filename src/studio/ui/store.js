@@ -316,8 +316,44 @@ const snapshot = () => ({
   ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 2 },
 });
 export function persist() {
+  syncSpans();
   persistPrefs();
   scheduleSceneSave();
+}
+
+/**
+ * Keep a set's spans in step after any change: a backdrop across the set (every screen the
+ * backdrop of the one being edited, each with its slice: `backgroundSpan`), and devices that carry
+ * on into the neighbouring screens (drawn there, in their terms, as `spill`). Derived from the
+ * screens, so it isn't an undo step of its own.
+ */
+export function syncSpans() {
+  const shots = allShots();
+  if (!shots) {
+    if (S.scene.backgroundSpan || S.scene.spill) set({ scene: tidy({ ...S.scene, backgroundSpan: undefined, spill: undefined }) });
+    return;
+  }
+  const across = shots.some((x) => x.scene.backgroundSpan);
+  let changed = false;
+  const next = shots.map((x, i) => {
+    const sc = { ...x.scene };
+    if (across) {
+      sc.background = S.scene.background;
+      sc.backgroundSpan = { count: shots.length, index: i };
+    } else delete sc.backgroundSpan;
+    // A spanning device of the screen on the left is 1 to the left in this one's terms; of the one on the right, 1 to the right.
+    const spill = [];
+    for (const j of [i - 1, i + 1])
+      shots[j]?.scene.devices.forEach((d, k) => {
+        if (d.span && typeof d.x === "number") spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
+      });
+    if (spill.length) sc.spill = spill;
+    else delete sc.spill;
+    if (JSON.stringify(sc) === JSON.stringify(x.scene)) return x;
+    changed = true;
+    return { ...x, scene: sc };
+  });
+  if (changed) set({ shots: next, scene: next[S.shot].scene });
 }
 /** Save the app's state but not the scene: only a preference changed, not the design. */
 export function persistPrefs() {
