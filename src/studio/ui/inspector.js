@@ -3,7 +3,7 @@ import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, ColorPicker, Dropdown, Num, Popover, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
-import { deleteEntity, duplicateEntity, openStills, replaceMode, uploadFiles } from "./actions.js";
+import { deleteEntity, duplicateEntity, openStills, replaceMode, setCanvasSize, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
 
@@ -650,14 +650,30 @@ function ShapeInspector({ id }) {
 
 const CANVASES = [
   { value: "", label: "Auto", w: 9, h: 19.5, hint: "The App Store size for your device" },
-  { value: "iphone-6.9", label: "iPhone 6.9″", w: 1320, h: 2868, hint: "App Store: required iPhone size" },
-  { value: "iphone-6.5", label: "iPhone 6.5″", w: 1284, h: 2778, hint: "App Store: older iPhone size" },
-  { value: "ipad-13", label: "iPad 13″", w: 2064, h: 2752, hint: "App Store: iPad size" },
+  { value: "iphone-6.9", label: "iPhone 6.9″", w: 1320, h: 2868, hint: "App Store: the iPhone size (every smaller iPhone is scaled from it)" },
+  { value: "ipad-13", label: "iPad 13″", w: 2064, h: 2752, hint: "App Store: the iPad size" },
+  { value: "mac", label: "Mac", w: 2880, h: 1800, hint: "Mac App Store, 16:10" },
   { value: "9:16", label: "Story", w: 9, h: 16, hint: "9:16 for Stories, Reels and TikTok" },
   { value: "4:5", label: "Post", w: 4, h: 5, hint: "4:5 for Instagram posts" },
   { value: "1:1", label: "Square", w: 1, h: 1, hint: "1:1" },
   { value: "16:9", label: "Wide", w: 16, h: 9, hint: "16:9 for websites, X and YouTube" },
 ];
+/** Every size, grouped the way the stores list them, for the All sizes menu. */
+const SIZE_GROUPS = [
+  ["App Store · iPhone", (p) => p.store === "app-store" && p.platform === "iphone"],
+  ["App Store · iPad", (p) => p.store === "app-store" && p.platform === "ipad"],
+  ["App Store · Mac", (p) => p.store === "app-store" && p.platform === "mac"],
+  ["App Store · Apple Watch", (p) => p.store === "app-store" && p.platform === "watch"],
+  ["App Store · Apple TV and Vision Pro", (p) => p.store === "app-store" && (p.platform === "tv" || p.platform === "vision")],
+  ["Google Play", (p) => p.store === "google-play"],
+  ["Social and web", (p) => !p.store && p.short],
+];
+export function sizeOptions(presets) {
+  const out = [];
+  for (const [group, test] of SIZE_GROUPS)
+    for (const [value, p] of Object.entries(presets)) if (test(p)) out.push({ value, label: p.short ?? p.label, hint: `${p.width} × ${p.height}`, group });
+  return out;
+}
 function SceneInspector() {
   const s = useStore();
   const sc = s.scene;
@@ -677,8 +693,10 @@ function SceneInspector() {
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;
           const box = r >= 1 ? { width: "26px", height: 26 / r + "px" } : { width: 30 * r + "px", height: "30px" };
-          return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => edit((d) => (d.canvas = c.value || undefined))}><i style=${box}></i>${c.label}</button>`;
+          return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => setCanvasSize(c.value)}><i style=${box}></i>${c.label}</button>`;
         })}</div>
+        <div class="row"><label>All sizes</label><${Dropdown} value=${presets[cur] ? cur : ""} options=${sizeOptions(presets)} placeholder=${custom ? "Custom size" : "Every store slot…"} search=${true} onChange=${setCanvasSize} /></div>
+        ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${(v) => edit((d) => (d.landscape = v || undefined))} label="Landscape" />`}
       <//>
       <${Section} title="Backdrop">
         <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
@@ -696,7 +714,6 @@ function SceneInspector() {
           <${Num} label="W" value=${custom ? cw : undefined} placeholder=${s.layout?.canvas.width ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${Math.round(v)}x${ch || s.layout?.canvas.height || Math.round(v)}`))} />
           <${Num} label="H" value=${custom ? ch : undefined} placeholder=${s.layout?.canvas.height ?? ""} min=${64} max=${8192} step=${10} onChange=${(v) => v && edit((d) => (d.canvas = `${cw || s.layout?.canvas.width || Math.round(v)}x${Math.round(v)}`))} />
         </div>
-        <${Switch} checked=${Boolean(sc.landscape)} onChange=${(v) => edit((d) => (d.landscape = v || undefined))} label="Landscape" />
       <//>
       <//>
       ${s.layout?.warnings?.length ? html`<${Section} title="Notes">${s.layout.warnings.map((w) => html`<div class="note warn">${w}</div>`)}<//>` : null}

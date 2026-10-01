@@ -5,35 +5,57 @@ export interface CanvasPreset {
   width: number;
   height: number;
   label: string;
+  /** Which store slot it fills, if any. */
+  store?: "app-store" | "google-play";
+  /** What it's for: a device family (a size for it swaps the devices to match), or another platform. */
+  platform?: Family | "tv" | "vision" | "android";
+  /** A short name for pickers and set headings ("iPhone 6.9″"). */
+  short?: string;
 }
 
 export const CANVAS_PRESETS: Record<string, CanvasPreset> = {
-  "iphone-6.9": { width: 1320, height: 2868, label: "App Store iPhone 6.9\" (required for iPhone apps)" },
-  "iphone-6.9-alt": { width: 1290, height: 2796, label: "App Store iPhone 6.9\" (alternate)" },
-  "iphone-6.5": { width: 1284, height: 2778, label: "App Store iPhone 6.5\"" },
-  "iphone-6.5-alt": { width: 1242, height: 2688, label: "App Store iPhone 6.5\" (alternate)" },
-  "iphone-6.3": { width: 1206, height: 2622, label: "App Store iPhone 6.3\"" },
-  "iphone-6.1": { width: 1179, height: 2556, label: "App Store iPhone 6.1\"" },
-  "iphone-5.5": { width: 1242, height: 2208, label: "App Store iPhone 5.5\"" },
-  "ipad-13": { width: 2064, height: 2752, label: "App Store iPad 13\" (required for iPad apps)" },
-  "ipad-12.9": { width: 2048, height: 2732, label: "App Store iPad 12.9\"" },
-  "ipad-11": { width: 1668, height: 2420, label: "App Store iPad 11\"" },
-  mac: { width: 2880, height: 1800, label: "Mac App Store 16:10" },
-  "app-store": { width: 1320, height: 2868, label: "Alias of iphone-6.9" },
-  "16:9": { width: 2560, height: 1440, label: "16:9 landscape (web, video, keynote)" },
-  "16:10": { width: 2560, height: 1600, label: "16:10 landscape" },
-  "4:3": { width: 2048, height: 1536, label: "4:3 landscape" },
-  "3:2": { width: 2400, height: 1600, label: "3:2 landscape" },
-  "1:1": { width: 2048, height: 2048, label: "Square" },
-  "4:5": { width: 1600, height: 2000, label: "4:5 portrait (Instagram feed)" },
-  "9:16": { width: 1440, height: 2560, label: "9:16 portrait (stories, reels, TikTok)" },
-  square: { width: 1080, height: 1080, label: "Square social post" },
-  portrait: { width: 1080, height: 1350, label: "4:5 social post" },
-  story: { width: 1080, height: 1920, label: "9:16 story" },
-  landscape: { width: 1920, height: 1080, label: "1080p landscape" },
-  og: { width: 1200, height: 630, label: "Open Graph / link preview" },
-  twitter: { width: 1600, height: 900, label: "X/Twitter card" },
-  "product-hunt": { width: 1270, height: 760, label: "Product Hunt gallery" },
+  // App Store slots, as Apple lists them (July 2026). Every one but Apple Watch also takes landscape.
+  "iphone-6.9": { width: 1320, height: 2868, label: "App Store iPhone 6.9\" (required for iPhone apps)", store: "app-store", platform: "iphone", short: "iPhone 6.9″" },
+  "iphone-6.9-alt": { width: 1290, height: 2796, label: "App Store iPhone 6.9\" (alternate)", store: "app-store", platform: "iphone", short: "iPhone 6.9″ (1290)" },
+  "iphone-6.9-1260": { width: 1260, height: 2736, label: "App Store iPhone 6.9\" (third size)", store: "app-store", platform: "iphone", short: "iPhone 6.9″ (1260)" },
+  "iphone-6.5": { width: 1284, height: 2778, label: "App Store iPhone 6.5\" (instead of 6.9\")", store: "app-store", platform: "iphone", short: "iPhone 6.5″" },
+  "iphone-6.5-alt": { width: 1242, height: 2688, label: "App Store iPhone 6.5\" (alternate)", store: "app-store", platform: "iphone", short: "iPhone 6.5″ (1242)" },
+  "iphone-6.3": { width: 1206, height: 2622, label: "App Store iPhone 6.3\" (optional; scaled from 6.9\")", store: "app-store", platform: "iphone", short: "iPhone 6.3″" },
+  "iphone-6.1": { width: 1179, height: 2556, label: "App Store iPhone 6.1\" (optional; scaled from 6.9\")", store: "app-store", platform: "iphone", short: "iPhone 6.1″" },
+  "iphone-5.5": { width: 1242, height: 2208, label: "App Store iPhone 5.5\" (optional; scaled from 6.9\")", store: "app-store", platform: "iphone", short: "iPhone 5.5″" },
+  "ipad-13": { width: 2064, height: 2752, label: "App Store iPad 13\" (required for iPad apps)", store: "app-store", platform: "ipad", short: "iPad 13″" },
+  "ipad-12.9": { width: 2048, height: 2732, label: "App Store iPad 13\" (alternate) and 12.9\"", store: "app-store", platform: "ipad", short: "iPad 12.9″" },
+  "ipad-11": { width: 1668, height: 2420, label: "App Store iPad 11\" (optional; scaled from 13\")", store: "app-store", platform: "ipad", short: "iPad 11″" },
+  mac: { width: 2880, height: 1800, label: "Mac App Store 16:10", store: "app-store", platform: "mac", short: "Mac" },
+  "mac-1440": { width: 1440, height: 900, label: "Mac App Store 16:10 (1440 × 900)", store: "app-store", platform: "mac", short: "Mac (1440)" },
+  "watch-ultra-3": { width: 422, height: 514, label: "App Store Apple Watch Ultra 3", store: "app-store", platform: "watch", short: "Watch Ultra 3" },
+  "watch-ultra": { width: 410, height: 502, label: "App Store Apple Watch Ultra and Ultra 2", store: "app-store", platform: "watch", short: "Watch Ultra" },
+  "watch-11": { width: 416, height: 496, label: "App Store Apple Watch Series 11 and 10", store: "app-store", platform: "watch", short: "Watch Series 11" },
+  "watch-9": { width: 396, height: 484, label: "App Store Apple Watch Series 9, 8 and 7", store: "app-store", platform: "watch", short: "Watch Series 9" },
+  "apple-tv": { width: 3840, height: 2160, label: "App Store Apple TV 4K", store: "app-store", platform: "tv", short: "Apple TV" },
+  "apple-tv-hd": { width: 1920, height: 1080, label: "App Store Apple TV HD", store: "app-store", platform: "tv", short: "Apple TV HD" },
+  "vision-pro": { width: 3840, height: 2160, label: "App Store Apple Vision Pro", store: "app-store", platform: "vision", short: "Vision Pro" },
+  "app-store": { width: 1320, height: 2868, label: "Alias of iphone-6.9", platform: "iphone" },
+  // Google Play: phone and tablet screenshots (16:9 or 9:16), and the feature graphic.
+  "play-phone": { width: 1080, height: 1920, label: "Google Play phone screenshot", store: "google-play", platform: "android", short: "Play phone" },
+  "play-tablet-7": { width: 1200, height: 1920, label: "Google Play 7\" tablet screenshot", store: "google-play", platform: "android", short: "Play 7″ tablet" },
+  "play-tablet-10": { width: 1600, height: 2560, label: "Google Play 10\" tablet screenshot", store: "google-play", platform: "android", short: "Play 10″ tablet" },
+  "play-feature": { width: 1024, height: 500, label: "Google Play feature graphic", store: "google-play", platform: "android", short: "Play feature graphic" },
+  // Everywhere else.
+  "16:9": { width: 2560, height: 1440, label: "16:9 landscape (web, video, keynote)", short: "Wide 16:9" },
+  "16:10": { width: 2560, height: 1600, label: "16:10 landscape", short: "Wide 16:10" },
+  "4:3": { width: 2048, height: 1536, label: "4:3 landscape", short: "4:3" },
+  "3:2": { width: 2400, height: 1600, label: "3:2 landscape", short: "3:2" },
+  "1:1": { width: 2048, height: 2048, label: "Square", short: "Square" },
+  "4:5": { width: 1600, height: 2000, label: "4:5 portrait (Instagram feed)", short: "Post 4:5" },
+  "9:16": { width: 1440, height: 2560, label: "9:16 portrait (stories, reels, TikTok)", short: "Story 9:16" },
+  square: { width: 1080, height: 1080, label: "Square social post", short: "Square 1080" },
+  portrait: { width: 1080, height: 1350, label: "4:5 social post", short: "Post 1080" },
+  story: { width: 1080, height: 1920, label: "9:16 story", short: "Story 1080" },
+  landscape: { width: 1920, height: 1080, label: "1080p landscape", short: "1080p" },
+  og: { width: 1200, height: 630, label: "Open Graph / link preview", short: "Link preview" },
+  twitter: { width: 1600, height: 900, label: "X/Twitter card", short: "X card" },
+  "product-hunt": { width: 1270, height: 760, label: "Product Hunt gallery", short: "Product Hunt" },
 };
 
 export function defaultCanvasFor(family: Family | "flat"): string {

@@ -896,7 +896,7 @@ export function CanvasView() {
 
 function canvasName(name) {
   const presets = S.opts?.canvases ?? {};
-  if (presets[name]?.label) return presets[name].label;
+  if (presets[name]) return presets[name].short ?? presets[name].label;
   if (/^\d+x\d+$/i.test(name)) return "Custom size";
   return { "iphone-6.9": "iPhone 6.9″ App Store", "iphone-6.5": "iPhone 6.5″ App Store", "ipad-13": "iPad 13″ App Store", "ipad-12.9": "iPad 12.9″ App Store" }[name] ?? name;
 }

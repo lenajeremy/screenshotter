@@ -732,6 +732,41 @@ export async function previewShots() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Sizes
+
+/** The device a size is made for, when one of its family is swapped in. */
+const SIZE_DEVICES = { iphone: "iPhone 17 Pro Max", ipad: "iPad Pro 13-inch", mac: "MacBook Pro 16-inch", watch: "Apple Watch Ultra 49mm" };
+
+/** The family of a device in the design, by its model or (left to the app) by what the layout chose. */
+function familyOf(i) {
+  const models = S.opts?.devices ?? [];
+  const name = S.scene.devices[i]?.device ?? S.layout?.entities.find((e) => e.id === `device-${i + 1}`)?.device;
+  return models.find((m) => m.name === name)?.family;
+}
+
+/**
+ * Change the image size. A size made for another kind of device (iPad, Mac, Apple Watch) swaps each
+ * framed device for that kind's model, keeping its screenshot until a new one is dropped on it.
+ */
+export function setCanvasSize(value) {
+  const preset = S.opts?.canvases?.[value];
+  const want = preset && SIZE_DEVICES[preset.platform] ? preset.platform : null;
+  const model = want && (S.opts?.devices ?? []).find((m) => m.name === SIZE_DEVICES[want]);
+  const swap = model ? S.scene.devices.map((d, i) => (!d.frame || d.frame === "device") && familyOf(i) && familyOf(i) !== want) : [];
+  edit((d) => {
+    d.canvas = value || undefined;
+    if (preset?.platform === "watch") delete d.landscape;
+    swap.forEach((on, i) => {
+      if (!on) return;
+      d.devices[i].device = model.name;
+      delete d.devices[i].color;
+    });
+  });
+  const n = swap.filter(Boolean).length;
+  if (n) toast({ kind: "ok", icon: "replace", title: `Now ${n === 1 ? "an" : n} ${model.name}${n === 1 ? "" : "s"}`, text: `Made for ${preset.short ?? preset.label}. Drop ${want === "mac" ? "a Mac" : want === "watch" ? "an Apple Watch" : want === "ipad" ? "an iPad" : "an iPhone"} screenshot on ${n === 1 ? "it" : "them"}. Undo (⌘Z) goes back.`, timeout: 5000 });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Shots: a design can be a video of several, one after another. The one on the canvas is S.scene.
 
 /** Put another shot on the canvas (its own undo history). */
