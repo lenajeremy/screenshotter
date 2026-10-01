@@ -778,9 +778,13 @@ export function goToShot(i) {
   persist();
 }
 
-/** Add a shot after the one on the canvas: a copy of it, or a saved design (by id). */
-export async function addShot(from = "copy") {
-  let scene = clone(S.scene);
+/**
+ * Add a screen (a shot of the video): a copy of one (the one on the canvas unless `copyOf` says
+ * which), or a saved design (by id); after the one on the canvas unless `at` says where.
+ */
+export async function addShot(from = "copy", { at, copyOf } = {}) {
+  const shots = allShots() ?? [{ scene: S.scene }];
+  let scene = clone(shots[copyOf ?? (S.shots ? S.shot : 0)]?.scene ?? S.scene);
   if (from !== "copy") {
     try {
       scene = (await api(`/api/scene?id=${encodeURIComponent(from)}`)).scene;
@@ -788,12 +792,20 @@ export async function addShot(from = "copy") {
       return fail(e, "Couldn't add that design");
     }
   }
-  const shots = allShots() ?? [{ scene: S.scene }];
-  const at = (S.shots ? S.shot : 0) + 1;
+  at = Math.max(0, Math.min(shots.length, at ?? (S.shots ? S.shot : 0) + 1));
   shots.splice(at, 0, { scene, transition: { type: "fade", duration: 0.5 } });
-  set({ shots, shot: S.shots ? S.shot : 0 });
+  set({ shots, shot: S.shots ? (S.shot >= at ? S.shot + 1 : S.shot) : at === 0 ? 1 : 0 });
   goToShot(at);
-  toast({ kind: "ok", title: `Shot ${at + 1} added`, text: from === "copy" ? "A copy of the one before. Change it, then Play or Export video." : "Change it here: it's its own copy.", timeout: 3200 });
+  toast({ kind: "ok", title: `Screen ${at + 1} added`, text: from === "copy" ? "A copy to change. In Animate the screens play in order as a video." : "Change it here: it's its own copy.", timeout: 3200 });
+}
+
+/** A screen's name: the one it was given, else its headline, else its number. */
+export function screenName(i) {
+  const x = S.shots?.[i];
+  if (x?.name) return x.name;
+  const scene = !S.shots || i === S.shot ? S.scene : x?.scene;
+  const head = (scene?.headline ?? "").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+  return head ? (head.length > 40 ? head.slice(0, 38).trim() + "…" : head) : `Screen ${i + 1}`;
 }
 
 /** Take a shot out (with a way back). The last one left is a single design again. */
@@ -806,7 +818,7 @@ export function deleteShot(i) {
   set({ shots: rest.length > 1 ? rest : null, shot: rest.length > 1 ? next : 0, scene: rest[next].scene, past: [], future: [], selected: null, animSel: null });
   scheduleLayout(0);
   persist();
-  toast({ kind: "ok", title: `Shot ${i + 1} removed`, timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
+  toast({ kind: "ok", title: `Screen ${i + 1} removed`, timeout: 6000, actions: [{ label: "Undo", run: () => (set(before), scheduleLayout(0), persist()) }] });
 }
 
 /** Move a shot one place earlier (-1) or later (1). */
@@ -969,7 +981,7 @@ export async function aiEdit(text) {
 
   try {
     const r = await streamEdit(
-      { request: snapshot, instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
+      { request: snapshot, instruction, selection, history, ...aiChoice(), preview: S.ai.preview !== false, ...(video ? { shots: video.map((x) => tidy({ scene: x.scene, name: x.name, length: x.length, transition: x.transition })), shot: S.shot } : {}) },
       (p) => {
         if (p.step === "look") {
           if (!p.image) return step("look");

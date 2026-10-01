@@ -45,6 +45,7 @@ import {
   reveal,
   uploadFiles,
   useCapture,
+  goToShot,
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
@@ -1399,7 +1400,12 @@ window.addEventListener("keydown", (e) => {
   if (mod && k === "3") return e.preventDefault(), openTimeline();
   if (mod && (k === "=" || k === "+")) return e.preventDefault(), commands.zoomIn();
   if (mod && k === "-") return e.preventDefault(), commands.zoomOut();
-  if (mod && k === "0") return e.preventDefault(), commands.fit();
+  if (mod && (k === "0" || e.code === "Digit0")) {
+    e.preventDefault();
+    // In a set, ⌘0 fits the screen being edited and ⇧⌘0 the whole set.
+    const inSet = S.shots?.length > 1 && !S.timelineOpen;
+    return e.shiftKey && inSet ? canvasApi.fitSet() : inSet ? canvasApi.fitScreen() : commands.fit();
+  }
   if (mod && k === "d") return e.preventDefault(), commands.duplicate();
   if (mod && k === "o") return e.preventDefault(), commands.import();
   if (mod && k === ",") return e.preventDefault(), commands.settings();
@@ -1424,6 +1430,11 @@ window.addEventListener("keydown", (e) => {
     return set({ selected: null });
   }
   if (S.view !== "canvas" || !S.selected) {
+    // A set with nothing selected: ← and → step through its screens.
+    if (S.view === "canvas" && !S.selected && !S.timelineOpen && S.shots?.length > 1 && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      return goToShot(Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1))));
+    }
     if (e.key === "Tab" && S.layout?.entities.length) {
       e.preventDefault();
       set({ selected: S.layout.entities[0].id });

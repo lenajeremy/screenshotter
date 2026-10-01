@@ -54,7 +54,7 @@ export const AIEditSchema = z.object({
    * A video of several shots: every shot (each a scene, its length and how it comes in), and which
    * one is on the canvas (whose scene is `request`, as it is now). Claude sees and edits them all.
    */
-  shots: z.array(z.object({ scene: MockupInputSchema, length: z.number().min(0.5).max(60).optional(), transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional() })).min(2).max(20).optional(),
+  shots: z.array(z.object({ scene: MockupInputSchema, length: z.number().min(0.5).max(60).optional(), transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(), name: z.string().max(80).optional() })).min(2).max(20).optional(),
   shot: z.number().int().min(0).max(19).optional(),
 });
 export type AIEditInput = z.infer<typeof AIEditSchema>;
@@ -1152,6 +1152,8 @@ export async function editScene(raw: AIEditInput, onProgress: (p: AIProgress) =>
 
 type Shot = NonNullable<AIEditInput["shots"]>[number];
 const ShotMetaSchema = z.object({
+  /** The screen's name in the set ("Introduction"). */
+  name: z.string().max(80).optional(),
   length: z.number().min(0.5).max(60).optional(),
   transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
 });
@@ -1238,7 +1240,7 @@ async function editVideo(input: AIEditInput, engine: Engine, onProgress: (p: AIP
   // Every shot as it is now (the one on the canvas as the person has it), without delivery settings.
   const before: Shot[] = input.shots!.map((s, i) => ({ ...s, scene: designOf(i === onCanvas ? input.request : s.scene) }));
   const shared = { assets: new Map<string, string>(), byPath: new Map<string, string>() };
-  const safeShots = before.map((s) => ({ ...sceneAssets(s.scene, shared).safe, ...(s.length !== undefined ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) }));
+  const safeShots = before.map((s) => ({ ...sceneAssets(s.scene, shared).safe, ...(s.name ? { name: s.name } : {}), ...(s.length !== undefined ? { length: s.length } : {}), ...(s.transition ? { transition: s.transition } : {}) }));
   const assets = shared.assets;
   const view = (shots: Shot[]): View => ({ animated: true, frames: async (times) => (await videoSheet(shots, times))?.image, whole: () => videoSheet(shots) });
 
@@ -1263,13 +1265,13 @@ async function editVideo(input: AIEditInput, engine: Engine, onProgress: (p: AIP
     if (edited.shots.length > 20) throw new Error("A video can have 20 shots at most.");
     const shots = edited.shots.map((raw, i) => {
       if (!raw || typeof raw !== "object") throw new Error(`Shot ${i + 1} isn't a scene.`);
-      const { length, transition, ...scene } = raw as Record<string, unknown>;
-      return { scene: MockupInputSchema.parse(scene), ...ShotMetaSchema.parse({ length, transition }) };
+      const { length, transition, name, ...scene } = raw as Record<string, unknown>;
+      return { scene: MockupInputSchema.parse(scene), ...ShotMetaSchema.parse({ length, transition, name }) };
     });
     const restored: Shot[] = shots.map((sh) => ({ ...sh, scene: restoreAssets(structuredClone(sh.scene), assets) }));
     await Promise.all(restored.map((sh) => layoutScene(sh.scene)));
     // The document for a follow-up (the review): shots in token space, as Claude wrote them.
-    return { doc: { shots: shots.map((sh) => ({ ...sh.scene, ...(sh.length !== undefined ? { length: sh.length } : {}), ...(sh.transition ? { transition: sh.transition } : {}) })) }, restored };
+    return { doc: { shots: shots.map((sh) => ({ ...sh.scene, ...(sh.name ? { name: sh.name } : {}), ...(sh.length !== undefined ? { length: sh.length } : {}), ...(sh.transition ? { transition: sh.transition } : {}) })) }, restored };
   };
 
   let { reply, model } = await ask();

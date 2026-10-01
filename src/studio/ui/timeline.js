@@ -9,7 +9,7 @@ import { Icon } from "./icons.js";
 import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, useStore } from "./store.js";
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
-import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, updateShot } from "./actions.js";
+import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, updateShot } from "./actions.js";
 
 // ---------------------------------------------------------------------------------------------
 // The playhead lives outside the store: it moves every frame while playing, and only the canvas
@@ -925,7 +925,7 @@ function ShotStrip() {
         const left = plan.starts[i] * pps;
         const right = (i < n - 1 ? plan.starts[i + 1] : plan.total) * pps;
         return html`<button class="tl-shot ${i === s.shot ? "on" : ""} ${s.shotPulse?.includes(i) ? "pulse" : ""}" key=${`s${i}`} style=${{ left: left + "px", width: Math.max(18, right - left - 3) + "px" }}
-            title=${i === s.shot ? `Shot ${i + 1}, on the canvas. Right-click to move or remove it.` : `Shot ${i + 1}: click to edit it`} onClick=${() => goToShot(i)} onContextMenu=${(e) => shotMenu(e, i)}>
+            title=${i === s.shot ? `${i + 1} · ${screenName(i)}, on the canvas. Right-click to move or remove it.` : `${i + 1} · ${screenName(i)}: click to edit it`} onClick=${() => goToShot(i)} onContextMenu=${(e) => shotMenu(e, i)}>
           <${ShotThumb} scene=${i === s.shot ? s.scene : x.scene} film />
           <span class="shot-n">${i + 1}</span>
           ${right - left > 70 && html`<span class="shot-len">${plan.lengths[i].toFixed(1)}s</span>`}
