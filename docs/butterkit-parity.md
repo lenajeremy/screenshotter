@@ -22,8 +22,8 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 ## 3. Devices
 
-- Real-time 3D models (Metal and RealityKit): free X, Y and Z rotation, scale, X, Y and Z offset, HDR lighting. **Partly**: 2D frames with a 3D tilt.
-- Device styles: Realistic, Clay (any colour), UI only. **Partly**: device, browser, window, card and no frame; no clay.
+- Real-time 3D models (Metal and RealityKit): free X, Y and Z rotation, scale, X, Y and Z offset, HDR lighting. **Partly**: Apple's art tilted in perspective with an extruded body; real 3D models are an open decision.
+- Device styles: Realistic, Clay (any colour), UI only. **Partly**: Apple's art (realistic), browser, window, card and no frame; no clay.
 - Realistic materials and colours, a camera cutout (notch) toggle, iPhone Duo's hinge. **Partly**: colours and the Dynamic Island setting.
 - Models: iPhone 17 Pro Max, 18 Pro Max, Duo, 15 Pro Max; iPad Pro 11" and 12.9"; MacBook Pro 16"; Apple Watch Series 11 and Ultra; Vision Pro; Pixel 10 Pro; a generic device. **Partly**: no Vision Pro, Pixel or generic device.
 - 3D drop shadows. **Partly**: 2D shadows.
@@ -93,7 +93,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 In dependency order. Each phase lists what "done" means.
 
 1. **Sets** (the foundation; everything below needs it). *Done on 1 October 2026.* A project of artboards on one canvas, grouped by size and numbered in store order; add, rename, reorder, duplicate and delete; copy style across artboards; the full App Store size matrix (landscape, Watch, Apple TV, Vision Pro, Google Play); batch export into Fastlane-style folders; the App Store page preview; MCP tools for sets.
-2. **Localization.** Variant artboards with inheritance and overrides; translation through Claude Code, Codex or an API key, plus Apple's on-device translation through the Swift app; manual mode; Do Not Translate; translation instructions; delta translation; fit-to-one-line and reflowing text; per-language images; capturing each language by relaunching the app in the Simulator in that language.
+2. **Localization.** *Next: see "Phase 2 in detail" below.* Variant artboards with inheritance and overrides; translation through Claude Code, Codex or an API key, plus Apple's on-device translation through the Swift app; manual mode; Do Not Translate; translation instructions; delta translation; fit-to-one-line and reflowing text; per-language images; capturing each language by relaunching the app in the Simulator in that language.
 3. **App Store Connect.** The API key in the Keychain; apps and versions; screenshots uploaded into the right slots in order, plus app preview videos (ButterKit doesn't); a metadata editor with limits and validation; translating and uploading metadata.
 4. **Automation.** A floating Capture Tool that follows the Simulator; a linked Fastlane folder that's watched for changes; MCP tools for languages and App Store Connect; a command-line tool for CI.
 5. **Design parity.** Clay and UI-only styles; image blocks (logos, laurels, stickers); text stroke, decoration, padding, line height and pills; panoramic backgrounds; Device Overflow; more device models (Vision Pro, Apple TV, Pixel, generic); review and award templates. Real 3D devices is a separate decision: it needs 3D models we can license or build, and a WebGL renderer.
@@ -116,7 +116,20 @@ Steps, each shipped and tested on its own:
 5. **Export the set.** Every screen of every size in one go, into folders by language and size with numbered filenames, plus a contact sheet per size; and the App Store page preview. *Done*: Export → Set, "By size" (`en-US/iPhone 6.9/01 Introduction.png`) or "fastlane" (`screenshots/en-US/iPhone 6.9 - 01 Introduction.png`), PNG or JPEG at full size; "Preview the store page" shows each size's row on a sketch of the product page. A screen can be left out of the video (its menu, on the canvas or Animate's strip): it takes no time, the screens either side join with the later one's transition, and Ask AI and agents see the flag (`video: false`).
 6. **Agents.** `get_scene` and `save_scene` carry sizes and screen names; a tool to export a saved design's whole set. *Done*: `list_scenes` counts screens and sizes, `get_scene` returns every size, `save_scene` takes `sizes` and names (saving just the first screen keeps the other sizes; a copy keeps them too), and `export_scene_set` exports a saved set by size or for fastlane, returning its contact sheets.
 
+## Phase 2 in detail: Localization
+
+A design gets **languages**. The first is the source (the words as written); every other language holds its own words for each screen, and anything else it overrides (a screenshot captured in that language, a smaller headline, another backdrop). Words are kept per screen and shared by every size, since sizes are copies of the same screens, so the German headline of screen 3 is the same on iPhone, iPad and Watch. On disk the source stays where it is (`scene`, `shots`, `groups`), so older readers and agents keep working, and `languages` holds the rest.
+
+Steps, each shipped and tested on its own:
+
+1. **Languages in a design.** Add and remove languages from all 50 App Store Connect languages, with the biggest markets first; a language switcher beside the size switcher; the canvas, Preview and the store page preview show the chosen language; editing a text in a language changes that language only, and the source's change is marked for translation everywhere else.
+2. **Translate.** Every text of every screen at once, into one language or all, through the engine Ask AI already uses (Claude Code or Codex: no new setup), with manual editing always; then Apple's on-device translation through the Mac app, and an API key (OpenAI, Claude, Gemini, OpenRouter or any OpenAI-compatible endpoint) as options. Only what changed is translated again; translation instructions per design (tone, capitalisation, words never to translate); **Do Not Translate** per text.
+3. **Text that fits.** Fit to one line (shrink to fit), and longer languages reflowing within the text's box, with a warning on any screen where a translation still doesn't fit.
+4. **Screenshots in every language.** Capture each screen in each language by relaunching the app in the Simulator in that language (`-AppleLanguages`, `-AppleLocale`), filed under the language; a per-language screenshot, image or backdrop on any screen.
+5. **Export every language.** The set export's language folders filled for every language (by size, or fastlane's `screenshots/<language>/`), contact sheets per language, and the store page preview per language.
+6. **Agents.** MCP tools to list, add and translate a design's languages and read or write its words, and `export_scene_set` for any or every language.
+
 ## Open decisions
 
-- Real 3D devices or not.
+- Real 3D devices: likely needed for tilt to look right (Jeremiah, 1 October 2026). Until then, devices are Apple's own art only: the device list shows the models whose art is installed, the drawn frames are off (`SCREENSHOTTER_DRAWN_FRAMES=1` brings them back for development), and a tilted device is its art in perspective with a body extruded from its silhouette (a watch's case alone, its band a flat strap).
 - Mac App Store or direct sales only (the store needs sandboxing and a bundled Node).
