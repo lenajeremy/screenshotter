@@ -1,5 +1,40 @@
 # What's new
 
+## 0.6.0 · 1 October 2026
+
+### Highlights
+- **Sets.** A design can be a whole App Store set: its screens sit side by side in Edit, numbered and named ("01 · Introduction"). Click one to edit it, drag one to put it elsewhere, double-click a name to rename it, and drop a screenshot on any of them. The same screens, in order, are the shots of its preview video in Animate.
+- **Every size, in one design.** Every App Store slot (iPhone, iPad, Mac, Apple Watch, Apple TV, Vision Pro) and Google Play size is a preset. A switcher above the set holds the design's sizes: **+** makes every screen again at another size, an iPad set from the iPhone one, its devices swapped to iPads.
+- **Copy style.** Copy one screen's backdrop, text style, film look, device look or device placement onto the others, at its size or every size.
+- **Export the whole set.** Every screen of every size at full size, numbered in store order, with a contact sheet per size, in a folder per size or ready for fastlane. **Preview the store page** shows each size's screenshots in a row, the way the App Store does.
+- **Apple's own devices.** Devices are Apple's product renders: the list shows the models whose art you've installed, in the finishes Apple drew. An Apple Watch can wear any band Apple shows it with (Sport Band, Sport Loop, Milanese Loop, Alpine Loop, Trail Loop, Ocean Band…).
+- **Tilt you can see.** Edit shows a device's 3D tilt as it will render, and a tilted Apple Watch has a solid case with its band as a strap.
+- **Ask AI with Codex.** Ask AI can use Codex as well as Claude Code.
+
+### Sets
+- An **Add screen** tile ends the row, and a single design offers **Add a screen** under it. Right-click a screen to rename, duplicate, move, copy its style, leave it out of the video or delete it.
+- Zoom to the whole set (⇧⌘0) or the screen you're on (⌘0); with nothing selected, ← and → step between screens.
+- Undo (⌘Z) goes back through the whole design, whichever screen a change was made on: copying a style, adding a size, moving or deleting a screen are steps like any other.
+- The image size is the set's: choosing one, landscape or a custom width changes every screen.
+- A screen can be left out of the video: it stays one of the screenshots, marked **No video**, and the screens either side join.
+- My designs shows a set as its first screens side by side, with how many screens and sizes it has.
+
+### Devices
+- Only Apple's art is used: a model you haven't installed is shown as an installed one of its family whose screen fits, else as its bare screen, and the device panel offers **Get Apple's device art…** when there's none.
+- The watches are named by generation: Apple Watch Ultra 3 and Apple Watch Series 11 46mm and 42mm. Designs saved with their old names still open on them.
+- Apple's Apple Watch Ultra 3 art now installs (its images were all skipped), and iPad Pro and iPad Air art is filed under the right models (it was taken for the plain iPad).
+- Choosing a size swaps devices to an installed model of the size's kind.
+
+### Agents
+- `get_scene` and `save_scene` carry a set's screens, their names, every size and which screens are in the video; saving just the first screen keeps the others.
+- `export_scene_set` exports a saved set: every screen of every size, by size or for fastlane, with its contact sheets.
+- `list_mockup_options` lists the devices with Apple's art installed, with their finishes and Apple Watch bands; `band` picks one.
+
+### Fixes
+- Scrolling the size menu over the canvas scrolls the menu.
+- Searchable menus put the cursor in their search box.
+- The Screenshots panel's cards and the design switcher's columns line up again.
+
 ## 0.5.0 · 30 September 2026
 
 ### Highlights
