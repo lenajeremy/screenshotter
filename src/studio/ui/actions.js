@@ -567,15 +567,27 @@ export function placeImports(items, { at, replace, device } = {}) {
 }
 
 export async function deleteFile(p) {
-  const ok = await confirmDialog({ title: `Delete ${base(p)}?`, text: "The file and its metadata are removed from the output folder. This can't be undone.", confirm: "Delete", danger: true });
+  // Every screen of every size that shows it loses it, not just the one on the canvas.
+  const uses = (scene) => scene.devices.some((d) => d.screenshot === p || d.video === p);
+  const groups = allGroups() ?? [{ shots: activeScreens() }];
+  const n = groups.reduce((k, g) => k + g.shots.filter((x) => uses(x.scene)).length, 0);
+  const where = n === 0 ? "" : n === 1 && !S.shots && !S.groups ? " This design uses it, so its device goes too." : ` ${n} screen${n === 1 ? "" : "s"} of this design use${n === 1 ? "s" : ""} it, and lose${n === 1 ? "s" : ""} it.`;
+  const ok = await confirmDialog({ title: `Delete ${base(p)}?`, text: `The file and its metadata are removed from the output folder. This can't be undone.${where}`, confirm: "Delete", danger: true });
   if (!ok) return;
   try {
     await api("/api/delete", { path: p });
-    if (S.scene.devices.some((d) => d.screenshot === p || d.video === p)) {
-      const next = clone(S.scene);
-      next.devices = next.devices.filter((d) => d.screenshot !== p);
-      next.devices.forEach((d) => d.video === p && delete d.video);
-      setScene(next);
+    if (n) {
+      const strip = (scene) => {
+        const next = clone(scene);
+        next.devices = next.devices.filter((d) => d.screenshot !== p);
+        next.devices.forEach((d) => d.video === p && delete d.video);
+        return next;
+      };
+      const next = groups.map((g) => ({ ...g, shots: g.shots.map((x) => (uses(x.scene) ? { ...x, scene: strip(x.scene) } : x)) }));
+      const screens = next[S.groups ? S.group : 0].shots;
+      set({ groups: S.groups ? next : null, shots: screens.length > 1 ? screens : null, scene: screens[S.shots ? S.shot : 0].scene, selected: null, past: [], future: [] });
+      scheduleLayout(0);
+      persist();
     }
     if (S.render?.path === p) set({ render: null, renderStale: false });
     await refreshFiles();

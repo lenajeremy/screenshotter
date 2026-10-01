@@ -546,7 +546,8 @@ function RenderView() {
 
 function Stage() {
   const s = useStore();
-  const empty = !s.scene.devices.length;
+  // The start screen is for a design with nothing in it; a screen of a set waiting for its screenshot stays in the set.
+  const empty = !s.scene.devices.length && !s.shots;
   const focused = !s.leftOpen && !s.rightOpen;
   return html`<main class="stage ${s.guide && !empty ? "guiding" : ""} ${s.timelineOpen && s.view === "canvas" && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
     <div class="stage-glow"></div>

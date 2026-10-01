@@ -274,7 +274,7 @@ export const DeviceInputSchema = z.object({
   span: z
     .boolean()
     .optional()
-    .describe("In a set of screens: the device carries on into the neighbouring screens where it reaches past an edge (Device Overflow), so swiping between them reads as one picture. Needs x and y. The Studio draws its continuation on the neighbours (`spill`)."),
+    .describe("In a set of screens, a device with x and y carries on into the neighbouring screens where it reaches past an edge (Device Overflow), so swiping between them reads as one picture; false keeps it within its own screen. The Studio draws its continuation on the neighbours (`spill`)."),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -457,7 +457,7 @@ export const AnimationSchema = z
 export const LAYOUTS = ["hero", "hero-bleed", "text-bottom", "tilted", "floating", "duo", "trio", "split", "stack", "grid", "staircase", "rising", "custom"] as const;
 
 export const MockupInputShape = {
-  devices: z.array(DeviceInputSchema).min(1).max(8).describe("Screenshots to frame and place. Several make a multi-device composition (e.g. MacBook + iPhone)."),
+  devices: z.array(DeviceInputSchema).max(8).describe("Screenshots to frame and place. Several make a multi-device composition (e.g. MacBook + iPhone). Empty is a screen of text and backdrop alone (a set's intro, say)."),
   canvas: z
     .union([z.string(), z.object({ width: z.number().int().min(64).max(8192), height: z.number().int().min(64).max(8192) })])
     .optional()

@@ -273,8 +273,12 @@ export async function madeBackdrop(bg: BackgroundInput | undefined, W: number, H
   return g ? madeImage(g, W, H) : undefined;
 }
 
-async function photoSource(bg: BackgroundObject, W: number, H: number, firstScreenshot: string, type: string): Promise<Photo> {
-  if (type === "blur") return { path: bg.screenshot ?? firstScreenshot };
+async function photoSource(bg: BackgroundObject, W: number, H: number, firstScreenshot: string | undefined, type: string): Promise<Photo> {
+  if (type === "blur") {
+    const path = bg.screenshot ?? firstScreenshot;
+    if (!path) throw new Error("A blurred-screenshot backdrop needs a screenshot: this screen has none.");
+    return { path };
+  }
   if (bg.generate) {
     const g = typeof bg.generate === "string" ? { prompt: bg.generate } : bg.generate;
     return generateImage({ ...g, seed: bg.seed }, W, H);
@@ -287,7 +291,7 @@ export async function resolveBackground(
   input: BackgroundInput | undefined,
   W: number,
   H: number,
-  firstScreenshot: string,
+  firstScreenshot: string | undefined,
   warnings: string[],
   averageColor: (file: string) => Promise<string | undefined>,
 ): Promise<ResolvedBackground> {

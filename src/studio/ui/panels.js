@@ -8,6 +8,7 @@ import {
   SHAPE_KINDS,
   TEXT_PRESETS,
   addShape,
+  setBackdropAcross,
   deleteEntity,
   addCaption,
   addDevice,
@@ -508,6 +509,11 @@ export function BackgroundsPanel() {
     </div>
     <div class="panel-body">
       <div class="intro">What sits behind your device. Start with a ready-made look, or use your own colours or photo.</div>
+      ${s.shots &&
+      html`<div class="across-set ${s.scene.backgroundSpan ? "on" : ""}">
+        <${Switch} checked=${Boolean(s.scene.backgroundSpan)} label=${`Across all ${s.shots.length} screens`} onChange=${setBackdropAcross} />
+        <span>${s.scene.backgroundSpan ? "One backdrop, each screen showing its slice: swiping through them reads as one picture." : "Lay this backdrop across the whole set as one panorama, each screen showing its slice."}</span>
+      </div>`}
       <${Seg} value=${mode} onChange=${setMode} options=${[{ value: "looks", label: "Looks" }, { value: "color", label: "Colours" }, { value: "photo", label: "Photos" }, { value: "ai", label: "AI image" }]} />
       ${mode === "looks" && html`<${Looks} />`}
       ${mode === "color" && html`<div class="vstack">${html`<${ColorBg} />`}</div>`}

@@ -354,7 +354,7 @@ function useShotLayouts(on) {
     if (!on) return;
     let alive = true;
     (s.shots ?? []).forEach((x, i) => {
-      if (i === s.shot || !x.scene?.devices?.length) return;
+      if (i === s.shot || !x.scene?.devices) return;
       const key = JSON.stringify(x.scene);
       if (shotLayouts.has(key)) return;
       shotLayouts.set(key, null);
@@ -980,6 +980,11 @@ export function CanvasView() {
           </div>`,
         )}
         <div class="clip"></div>
+        ${!s.scene.devices.length &&
+        html`<div class="empty-screen" onPointerDown=${(e) => e.stopPropagation()}>
+          <b>No screenshot on this screen</b><span>Drop one here, or choose one.</span>
+          <button class="btn sm" onClick=${() => set({ leftTab: "captures", leftOpen: true })}><${Icon} n="upload" s=${13} />Choose a screenshot…</button>
+        </div>`}
         ${s.timelineOpen && html`<${Viewfinder} /><${MotionPathOverlay} />`}
         ${guides.map((g) => (g.v !== undefined ? html`<div class="guide v" style=${{ left: g.v * W + "px", top: -4000 + "px", height: 8000 + "px" }}></div>` : html`<div class="guide h" style=${{ top: g.h * H + "px", left: -4000 + "px", width: 8000 + "px" }}></div>`))}
         ${hovBox && !live && html`<div class="hover-box" style=${hovBox}></div>`}

@@ -233,15 +233,15 @@ function DeviceInspector({ id }) {
           dev.rotateY = ry || undefined;
         }, "3d")} />
         ${s.shots &&
-        html`<${Switch} checked=${Boolean(d.span)} label="Carry on into the next screens" onChange=${(v) => upd((dev) => {
+        html`<${Switch} checked=${d.span !== false && d.x !== undefined} label="Carry on into the next screens" onChange=${(v) => upd((dev) => {
           // It needs a place of its own: where the layout put it, from now on.
           dev.x ??= r4(e?.x ?? 0.5);
           dev.y ??= r4(e?.y ?? 0.5);
           dev.height ??= r4(e?.height ?? 0.7);
           dev.anchor = "center";
-          dev.span = v || undefined;
+          dev.span = v ? undefined : false;
         })} />
-          ${d.span && html`<div class="note">Drag it past an edge: the part beyond shows on the screen beside it, so the set reads as one picture.</div>`}`}
+          <div class="note">${d.span === false ? "It stops at this screen's edges." : "Drag it past an edge: the part beyond shows on the screen beside it, so the set reads as one picture."}</div>`}
       <//>
 
       <${More} id="device">

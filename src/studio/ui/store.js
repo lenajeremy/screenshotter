@@ -289,7 +289,9 @@ export function scheduleLayout(delay = 40) {
 }
 async function fetchLayout() {
   const mine = ++layoutSeq;
-  if (!S.scene.devices?.length) {
+  // A design with nothing in it shows the start screen; a screen of a set with no device yet is
+  // still laid out (its backdrop and text), so the set stays on the canvas.
+  if (!S.scene.devices?.length && !S.shots) {
     set({ layout: null, layoutError: null });
     return;
   }
@@ -334,6 +336,18 @@ export function syncSpans() {
     return;
   }
   const across = shots.some((x) => x.scene.backgroundSpan);
+  // Whether a device reaches past a side edge, from its height, the canvas's shape and its kind's
+  // proportions, erring wide (a copy that turns out to miss is dropped by the render).
+  const ratio = S.layout ? S.layout.canvas.height / S.layout.canvas.width : 2.17;
+  const wide = { mac: 1.55, ipad: 0.76, watch: 0.84 };
+  const reaches = (d) => {
+    const fam = (S.opts?.devices ?? []).find((m) => m.name === d.device || m.aliases?.includes(d.device))?.family;
+    // Its width and height as fractions of the canvas's width, then the box its rotation turns it into.
+    const tall = (d.height ?? 0.7) * ratio;
+    const a = (Math.abs(d.rotate ?? 0) * Math.PI) / 180;
+    const half = ((tall * (wide[fam] ?? 0.5) * Math.cos(a) + tall * Math.sin(a)) * 1.06) / 2;
+    return d.x - half < 0 || d.x + half > 1;
+  };
   let changed = false;
   const next = shots.map((x, i) => {
     const sc = { ...x.scene };
@@ -345,7 +359,8 @@ export function syncSpans() {
     const spill = [];
     for (const j of [i - 1, i + 1])
       shots[j]?.scene.devices.forEach((d, k) => {
-        if (d.span && typeof d.x === "number") spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
+        // In a set, a device you've placed carries on into the screen beside it unless it's told not to.
+        if (d.span !== false && typeof d.x === "number" && reaches(d)) spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
       });
     if (spill.length) sc.spill = spill;
     else delete sc.spill;

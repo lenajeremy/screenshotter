@@ -508,6 +508,7 @@ interface ScenePlan {
   /** Devices from neighbouring screens carrying on into this one, and where each goes. */
   spill: Prepared[];
   spillPlacements: Placement[];
+  spillSeen: boolean[];
   warnings: string[];
   canvas: { width: number; height: number; name: string };
   layout: LayoutResult;
@@ -528,7 +529,7 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
   }
   // Desktop windows or laptops alongside phones read best on a wide canvas.
   const mixedDesktop = prepared.length > 1 && prepared.some((d) => d.family === "mac" || d.family === "flat") && prepared.some((d) => d.family !== "mac" && d.family !== "flat");
-  const canvas = resolveCanvas(input.canvas, input.landscape, mixedDesktop ? "16:9" : defaultCanvasFor(prepared[0].family));
+  const canvas = resolveCanvas(input.canvas, input.landscape, mixedDesktop ? "16:9" : defaultCanvasFor(prepared[0]?.family ?? "iphone"));
   const W = canvas.width;
   const H = canvas.height;
   const style = input.textStyle ?? {};
@@ -542,6 +543,8 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
   // Below this screen's own devices, whatever order they had on their own screen.
   const lowest = Math.min(1, ...placements.map((p) => p.z));
   const spillPlacements = spill.map((d) => ({ ...placement(d, anySlot, W, H), z: lowest - 1 }));
+  // Only what reaches into this screen is drawn: a copy wholly beyond its edges isn't (it keeps its number).
+  const spillSeen = spillPlacements.map((p) => p.cx + p.visW / 2 > 0 && p.cx - p.visW / 2 < W);
 
   const headSize = sizePx(style.headlineSize, H, layout.headlineSize);
   let caption: CaptionPlan | undefined;
@@ -559,7 +562,7 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
     };
   }
   const shapes = await resolveShapes(input, prepared, placements, W, H, warnings);
-  return { prepared, spill, spillPlacements, warnings, canvas, layout, placements, caption, headSize, shapes };
+  return { prepared, spill, spillPlacements, spillSeen, warnings, canvas, layout, placements, caption, headSize, shapes };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -692,7 +695,7 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       bezel: d.kind === "device" && !d.options.back ? d.options.bezel?.file : undefined,
     };
   };
-  const entities: SceneEntity[] = [...plan.prepared.map((d, i) => deviceEntity(d, plan.placements[i], i)), ...plan.spill.map((d, i) => deviceEntity(d, plan.spillPlacements[i], i, true))];
+  const entities: SceneEntity[] = [...plan.prepared.map((d, i) => deviceEntity(d, plan.placements[i], i)), ...plan.spill.flatMap((d, i) => (plan.spillSeen[i] ? [deviceEntity(d, plan.spillPlacements[i], i, true)] : []))];
   const style = input.textStyle ?? {};
   if (plan.caption) {
     const c = plan.caption;
@@ -870,7 +873,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   // A backdrop across a set is drawn as wide as every screen side by side; this one shows its slice.
   const span = input.backgroundSpan && input.backgroundSpan.count > 1 ? input.backgroundSpan : undefined;
   const BW = span ? W * span.count : W;
-  const bg = await resolveBackground(input.background, BW, H, prepared[0].file, warnings, averageColor);
+  const bg = await resolveBackground(input.background, BW, H, prepared[0]?.file, warnings, averageColor);
   // A print or paint finish replaces the background with its processed image.
   const finish = typeof input.background === "object" ? input.background.finish : undefined;
   if (finish && !bg.transparent) Object.assign(bg, await finishBackground(bg, BW, H, finish));
@@ -878,7 +881,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   // Fitted into a frame, the backdrop fills the whole frame and the design sits on it.
   let outer: typeof bg | undefined;
   if (framed?.fit === "fit") {
-    outer = await resolveBackground(input.background, framed.width, framed.height, prepared[0].file, [], averageColor);
+    outer = await resolveBackground(input.background, framed.width, framed.height, prepared[0]?.file, [], averageColor);
     if (finish && !outer.transparent) Object.assign(outer, await finishBackground(outer, framed.width, framed.height, finish));
   }
   const effects: NonNullable<EffectsInput> = { ...bg.lookEffects, ...(input.effects ?? {}) };
@@ -973,7 +976,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
     .join("\n");
 
   const placed = prepared.map((d, i) => place(d, plan.placements[i], bg.color, W, anim, `device-${i + 1}`));
-  const spilled = plan.spill.map((d, i) => place(d, plan.spillPlacements[i], bg.color, W, undefined, `spill-${i + 1}`));
+  const spilled = plan.spill.flatMap((d, i) => (plan.spillSeen[i] ? [place(d, plan.spillPlacements[i], bg.color, W, undefined, `spill-${i + 1}`)] : []));
 
   // Effects.
   const grade = gradeFor(effects.grade);
