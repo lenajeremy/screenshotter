@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync
 import path from "node:path";
 import { type Family, findModel } from "../devices/catalog.js";
 import { readSidecar } from "../devices/resolve.js";
-import { defaultCanvasFor } from "../render/layouts.js";
+import { CANVAS_PRESETS, defaultCanvasFor } from "../render/layouts.js";
 import { createMockup, resolveCanvas } from "../render/mockup.js";
 import type { MockupInput } from "../render/schema.js";
 import { cacheDir, ensureDir, outputRoot, resolveUserPath, slug } from "../util/files.js";
@@ -179,6 +179,33 @@ export function getScene(id: unknown): SavedScene {
 }
 
 /** Save a scene: a new document when `id` is missing, else an update. Returns its summary. */
+type Shot = SavedGroup["shots"][number];
+
+/** A design's screens at its first size, each with its scene: `scene` and the rest of `shots`. */
+export function firstScreens(s: Pick<SavedScene, "scene" | "shots">): Shot[] {
+  return s.shots && s.shots.length > 1 ? s.shots.map((x, i) => ({ ...x, scene: i === 0 ? s.scene : x.scene }) as Shot) : [{ scene: s.scene }];
+}
+
+/** Sizes with the first one's screens replaced (what saving `scene` and `shots` changes). */
+export function withFirstSize(groups: SavedGroup[], scene: unknown, shots?: SavedScene["shots"]): SavedGroup[] {
+  return [{ ...groups[0], shots: firstScreens({ scene: scene as SavedScene["scene"], shots }) }, ...groups.slice(1)];
+}
+
+/** What a size is called: its image size's short name ("iPad 13″"), its pixels, or "Auto size". */
+export function sizeLabel(scene: unknown): string {
+  const c = (scene as { canvas?: unknown } | undefined)?.canvas;
+  if (typeof c === "string" && CANVAS_PRESETS[c]) return CANVAS_PRESETS[c].short ?? CANVAS_PRESETS[c].label;
+  if (typeof c === "string" && /^\d+x\d+$/.test(c)) return c.replace("x", " × ");
+  if (c && typeof c === "object" && "width" in c && "height" in c) return `${(c as { width: number }).width} × ${(c as { height: number }).height}`;
+  return "Auto size";
+}
+
+/** Every size of a saved design, each with its screens in store order (one size when it has no others). */
+export function sceneSizes(s: SavedScene): Array<{ label: string; screens: Shot[] }> {
+  const groups = s.groups && s.groups.length > 1 ? s.groups : [{ shots: firstScreens(s) }];
+  return groups.map((g) => ({ label: g.name ?? sizeLabel(g.shots[0]?.scene), screens: g.shots }));
+}
+
 /** Sizes as sent: at most 12, each with its screens (at most 20), every screen with a scene. */
 function cleanGroups(raw: unknown[]): SavedGroup[] {
   return raw
@@ -206,10 +233,7 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   // `scene` and `shots`) replaces that one and keeps the others.
   let groups = input.groups === null ? undefined : Array.isArray(input.groups) ? cleanGroups(input.groups) : existing?.groups;
   if (groups && groups.length < 2) groups = undefined;
-  if (groups && input.groups === undefined) {
-    const first = shots ? shots.map((x, i) => (i === 0 ? { ...x, scene: input.scene } : x)) : [{ scene: input.scene }];
-    groups = [{ ...groups[0], shots: first as SavedGroup["shots"] }, ...groups.slice(1)];
-  }
+  if (groups && input.groups === undefined) groups = withFirstSize(groups, input.scene, shots);
   const changed =
     !existing ||
     JSON.stringify(existing.scene) !== JSON.stringify(input.scene) ||

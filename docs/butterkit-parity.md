@@ -6,12 +6,12 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 ## 1. Projects and canvas
 
-- A project (`.butterkit` file) holds a whole screenshot set: many artboards side by side on one canvas, grouped by size ("iPhone 6.9" for App Store · 1290 × 2796 · 9 artboards") and numbered in store order ("01 · Introduction", "02 · Bottom"). **Missing**: we design one image at a time; sets exist only through MCP (`create_mockup_set`).
-- Artboard list: add (with a menu of artboard types), rename on the canvas, reorder, duplicate, delete with a confirmation, copy and paste between projects. **Missing.**
-- "Copy Style to…" for text blocks, and copying 3D devices, to other artboards. **Missing.**
-- Size presets for every App Store slot, landscape included, plus Apple Watch, Apple TV, Vision Pro and Google Play. Changing a preset swaps the device. **Partly**: iPhone, iPad, Mac and social sizes.
+- A project (`.butterkit` file) holds a whole screenshot set: many artboards side by side on one canvas, grouped by size ("iPhone 6.9" for App Store · 1290 × 2796 · 9 artboards") and numbered in store order ("01 · Introduction", "02 · Bottom"). **Have** (phase 1): a design's screens side by side, numbered and named, at one or several sizes.
+- Artboard list: add (with a menu of artboard types), rename on the canvas, reorder, duplicate, delete with a confirmation, copy and paste between projects. **Have**: add, rename, reorder, duplicate, delete (with Undo); not copy and paste between designs.
+- "Copy Style to…" for text blocks, and copying 3D devices, to other artboards. **Have**: Copy style (backdrop, text, film look, device look and placement) to the size's screens or every size.
+- Size presets for every App Store slot, landscape included, plus Apple Watch, Apple TV, Vision Pro and Google Play. Changing a preset swaps the device. **Have.**
 - Infinite canvas with trackpad and middle-mouse navigation, ⌘1 to ⌘4 for inspector tabs, undo and redo, light and dark modes, the interface in 5 languages, recent projects on launch, toasts and macOS notifications. **Partly**: dark only, English only.
-- App Store preview: a mock product page for each device (iPhone, iPad, Mac) and language, with arrows to page through. **Missing.**
+- App Store preview: a mock product page for each device (iPhone, iPad, Mac) and language, with arrows to page through. **Have**, per size; languages come with phase 2.
 
 ## 2. Capture and import
 
@@ -62,7 +62,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 ## 9. Publish
 
-- Export: pick artboards, scale, transparent background, anti-aliasing, organised folders. **Partly**: one image or video at a time.
+- Export: pick artboards, scale, transparent background, anti-aliasing, organised folders. **Partly**: the whole set at full size in folders by size or for fastlane, PNG or JPEG; no picking artboards, scale or anti-aliasing options.
 - Upload to App Store Connect through Apple's API: an API key (issuer ID, key ID, `.p8`) in the Keychain, a connection test, choice of app, version, device and languages, screenshots in the right display-size slots and in order, retries, batching, a live log, metadata that never overwrites fields left empty, uploads to rejected versions, Product Page Headers. **Missing.**
 
 ## 10. AI agents (MCP)
@@ -92,7 +92,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 In dependency order. Each phase lists what "done" means.
 
-1. **Sets** (the foundation; everything below needs it). A project of artboards on one canvas, grouped by size and numbered in store order; add, rename, reorder, duplicate and delete; copy style across artboards; the full App Store size matrix (landscape, Watch, Apple TV, Vision Pro, Google Play); batch export into Fastlane-style folders; the App Store page preview; MCP tools for sets.
+1. **Sets** (the foundation; everything below needs it). *Done on 1 October 2026, except leaving a screen out of the video.* A project of artboards on one canvas, grouped by size and numbered in store order; add, rename, reorder, duplicate and delete; copy style across artboards; the full App Store size matrix (landscape, Watch, Apple TV, Vision Pro, Google Play); batch export into Fastlane-style folders; the App Store page preview; MCP tools for sets.
 2. **Localization.** Variant artboards with inheritance and overrides; translation through Claude Code, Codex or an API key, plus Apple's on-device translation through the Swift app; manual mode; Do Not Translate; translation instructions; delta translation; fit-to-one-line and reflowing text; per-language images; capturing each language by relaunching the app in the Simulator in that language.
 3. **App Store Connect.** The API key in the Keychain; apps and versions; screenshots uploaded into the right slots in order, plus app preview videos (ButterKit doesn't); a metadata editor with limits and validation; translating and uploading metadata.
 4. **Automation.** A floating Capture Tool that follows the Simulator; a linked Fastlane folder that's watched for changes; MCP tools for languages and App Store Connect; a command-line tool for CI.
@@ -114,7 +114,7 @@ Steps, each shipped and tested on its own:
 3. **Sizes in one design.** A size switcher above the set; "Add a size" makes the whole set again at that size (devices swapped to suit); remove a size. In a set the image size is the set's: changing it changes every screen. *Done.*
 4. **Copy style.** Backdrop, text style, device and film look onto every screen of the set (or of every size). *Done*: from a screen's menu or the inspector; devices only within a size. Landscape and custom sizes also change the whole set.
 5. **Export the set.** Every screen of every size in one go, into folders by language and size with numbered filenames, plus a contact sheet per size; and the App Store page preview. *Done*: Export → Set, "By size" (`en-US/iPhone 6.9/01 Introduction.png`) or "fastlane" (`screenshots/en-US/iPhone 6.9 - 01 Introduction.png`), PNG or JPEG at full size; "Preview the store page" shows each size's row on a sketch of the product page. Still to do: leaving a screen out of the video (Animate's timeline counts every screen by position, so it needs its own change).
-6. **Agents.** `get_scene` and `save_scene` carry sizes and screen names; a tool to export a saved design's whole set.
+6. **Agents.** `get_scene` and `save_scene` carry sizes and screen names; a tool to export a saved design's whole set. *Done*: `list_scenes` counts screens and sizes, `get_scene` returns every size, `save_scene` takes `sizes` and names (saving just the first screen keeps the other sizes; a copy keeps them too), and `export_scene_set` exports a saved set by size or for fastlane, returning its contact sheets.
 
 ## Open decisions
 

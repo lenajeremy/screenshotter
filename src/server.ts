@@ -6,13 +6,13 @@ import { captureScreenshot } from "./simulator/capture.js";
 import * as sim from "./simulator/simctl.js";
 import { CANVAS_PRESETS } from "./render/layouts.js";
 import { createMockup, layoutScene } from "./render/mockup.js";
-import { LAYOUTS, MockupInputShape } from "./render/schema.js";
-import { createMockupSet, MockupSetShape } from "./render/set.js";
+import { LAYOUTS, MockupInputShape, type MockupInput } from "./render/schema.js";
+import { createMockupSet, exportSet, MockupSetShape } from "./render/set.js";
 import { cropImage, CropInputShape, createGrid, GridInputShape } from "./render/compose.js";
 import { houseStyle, updateHouseStyle } from "./util/style.js";
 import { DESIGN_GUIDE } from "./design/guide.js";
 import { RECIPES, buildRecipe } from "./design/recipes.js";
-import { adoptFiles, findScene, getScene, libraryFolder, listScenes, saveScene, sceneThumb, useLibrary } from "./studio/scenes.js";
+import { adoptFiles, findScene, firstScreens, getScene, libraryFolder, listScenes, saveScene, sceneSizes, sceneThumb, useLibrary, withFirstSize, type SavedGroup } from "./studio/scenes.js";
 import { studioFolder } from "./util/studio.js";
 import { recordMac, RecordMacShape, recordWeb, RecordWebShape } from "./capture/record.js";
 import { outputRoot } from "./util/files.js";
@@ -45,7 +45,7 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 - Highlights call out UI: lift a row (\`breakout\` makes a card wider than the device), loupe (can sit beside the device), outline, spotlight, blur-rest, blur (hide something private), highlighter, numbered step markers and curved arrows. Target by visible text (on-device OCR) or a rect; find_text lists the text boxes.
 - Shapes: arrows, lines, circles, boxes, triangles, stars and number badges drawn over the scene, each with a fill and a stroke, clean or hand-drawn (sketch). Aim one at text on a screen with \`around\` (an ellipse goes around it, a badge beside it, an arrow to its edge), or place it freely with x/y, or from/to.
 - Animation: a scene's \`animations\` time each item's entrance, changes and exit in a video (create_video): \`{ targets: "caption", at: 0.5, enter: "slide-up" }\`, \`{ targets: ["device-1", "device-2"], at: 2, enter: "zoom", ease: "back-out" }\` (a group, zooming from its shared centre), \`{ targets: "shape-1", at: 3.5, to: { fill: "#ff3b30", scale: 1.3 } }\`, \`{ targets: "shape-2", at: 4, to: { end: { x: 0.6, y: 0.4 }, bend: 0.4 } }\` (an arrow's end and curve), \`{ targets: "camera", at: 5, to: { zoom: 2.5, x: 0.8, y: 0.6 } }\` (the camera pushes in on a point; \`zoom: 1\` pulls back), \`{ targets: "caption", at: 0.3, enter: "blur", by: "word" }\` (text a word or letter at a time, here coming into focus), \`{ targets: "shape-1", at: 0, duration: 3, path: { shape: "circle", size: 0.03 }, repeat: true }\` (a loop round a circle for the whole video; \`path: { points: [...] }\` is a route of your own), \`{ targets: "device-1", at: 1, duration: 1.6, to: { dy: -0.015 }, repeat: true, yoyo: true }\` (a float), \`{ targets: "backdrop", at: 0, duration: 6, to: { zoom: 1.15, hue: 30 } }\` (only the backdrop pushes in and shifts colour). Anything can blur (\`blur\` on texts, shapes, devices, textStyle; animate \`to: { blur }\`). Item ids come from layout_mockup. The design guide has the pacing. preview_video shows the frames at the key moments in a second or so: check the timing there before create_video.
-- Studio scenes: list_scenes and get_scene open the designs the person saved in the Studio; save_scene puts a design into it (a new scene by default; replace an existing one only when asked). Every element stays editable there.
+- Studio scenes: list_scenes and get_scene open the designs the person saved in the Studio; save_scene puts a design into it (a new scene by default; replace an existing one only when asked). Every element stays editable there. A design can be a set: screens in store order (shots), each an App Store screenshot that also plays as a shot of its preview video, made at one or several sizes (sizes: iPhone, iPad, Apple Watch…). export_scene_set exports a saved set's every screen of every size, by size or ready for fastlane deliver.
 - Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic), fonts from Google Fonts, top/bottom/left/right.
 - Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
 - Several shots in one video: create_sequence joins scenes (each with its own animations and length) with transitions (cut, crossfade, fade through black, push, wipe, iris, zoom, blur). preview_sequence shows its key moments first. For the App Store, \`size: "app-store-iphone"\` (or app-store-ipad, app-store-mac) follows Apple's app preview rules (15–30 s, 30 fps, H.264, a stereo track); \`versions\` on create_video or create_sequence also makes vertical, square, 4:5, widescreen or App Store copies, each design fitted (or laid out again) for that shape.
@@ -503,12 +503,26 @@ export function createServer(): McpServer {
   // Scenes live in the Studio's library: the folder of the Studio last opened on this Mac.
   useLibrary(studioFolder);
 
+  /** A screen's name when it wasn't given one: its headline, else its number. */
+  const screenTitle = (scene: unknown, i: number) => {
+    const head = String((scene as { headline?: unknown })?.headline ?? "").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+    return head ? (head.length > 40 ? head.slice(0, 38).trim() + "…" : head) : `Screen ${i + 1}`;
+  };
+
+  /** A screen of a set: its design, its name, and as a shot of the video its length and way in. */
+  const ScreenShape = z.object({
+    scene: z.object(MockupInputShape),
+    name: z.string().max(80).optional().describe("What the screen is called in the Studio and in exported file names, e.g. \"Introduction\"."),
+    length: z.number().min(0.5).max(60).optional(),
+    transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
+  });
+
   server.registerTool(
     "list_scenes",
     {
       title: "List the Studio's scenes",
       description:
-        "The designs saved in the Studio (its Scenes page), most recently edited first: id, name, devices, canvas size, headline and when each was last edited. Open one with get_scene.",
+        "The designs saved in the Studio (its Scenes page), most recently edited first: id, name, devices, canvas size, headline, how many screens and sizes a set has, and when each was last edited. Open one with get_scene.",
       inputSchema: {
         query: z.string().optional().describe("Only scenes whose name, headline or devices contain these words."),
       },
@@ -518,7 +532,7 @@ export function createServer(): McpServer {
         const q = a.query?.trim().toLowerCase();
         const scenes = listScenes()
           .filter((x) => !q || [x.name, x.headline, ...x.deviceNames].some((v) => v?.toLowerCase().includes(q)))
-          .map((x) => ({ id: x.id, name: x.name, devices: x.deviceNames, size: x.size ? `${x.size.width}x${x.size.height}` : undefined, headline: x.headline, editedAt: x.updatedAt, lastEditedBy: x.by ?? "the person" }));
+          .map((x) => ({ id: x.id, name: x.name, devices: x.deviceNames, size: x.size ? `${x.size.width}x${x.size.height}` : undefined, screens: x.shots, sizes: x.sizes, headline: x.headline, editedAt: x.updatedAt, lastEditedBy: x.by ?? "the person" }));
         return [text({ library: libraryFolder(), scenes })];
       }),
   );
@@ -528,7 +542,7 @@ export function createServer(): McpServer {
     {
       title: "Open a Studio scene",
       description:
-        "A scene saved in the Studio, as a create_mockup request you can change and render, with a preview of how it looks. Give its id (from list_scenes) or its name. To put your changes back in the Studio, use save_scene.",
+        "A scene saved in the Studio, as a create_mockup request you can change and render, with a preview of how it looks. A set has its screens in store order (`shots`: the App Store screenshots, and the shots its preview video plays), and a set made at several sizes has every size (`sizes`: iPhone 6.9″, iPad 13″, Apple Watch…). Give its id (from list_scenes) or its name. To put your changes back in the Studio, use save_scene; export the whole set with export_scene_set.",
       inputSchema: {
         id: z.string().optional().describe("The scene's id."),
         name: z.string().optional().describe("The scene's name, or words from it, when you don't have the id."),
@@ -537,9 +551,14 @@ export function createServer(): McpServer {
     (a) =>
       guard(async () => {
         const s = findScene(a);
-        // A video of several shots: each shot's scene, length and way in (the first is `request`).
-        const shots = s.shots && s.shots.length > 1 ? s.shots.map((x, i) => ({ ...x, scene: i === 0 ? s.scene : x.scene })) : undefined;
-        const content: Content = [text({ id: s.id, name: s.name, editedAt: s.updatedAt, request: s.scene, shots, note: shots ? `A video of ${shots.length} shots: render it with create_sequence (each shot's scene, length and transition), and save changes with save_scene's shots.` : undefined })];
+        // A set: each screen's name, scene, and its length and way in as a shot of the video (the first is `request`).
+        const shots = s.shots && s.shots.length > 1 ? firstScreens(s) : undefined;
+        const sizes = s.groups && s.groups.length > 1 ? sceneSizes(s).map((z) => ({ size: z.label, screens: z.screens })) : undefined;
+        const note = [
+          shots && `A set of ${shots.length} screens, in store order: each is an App Store screenshot, and together they play as a video (render it with create_sequence). Save changes with save_scene's shots.`,
+          sizes && `Made at ${sizes.length} sizes (${sizes.map((z) => z.size).join(", ")}); \`request\` and \`shots\` are the first. Change other sizes with save_scene's sizes, or leave them out to keep them.`,
+        ].filter(Boolean).join(" ");
+        const content: Content = [text({ id: s.id, name: s.name, editedAt: s.updatedAt, request: s.scene, shots, sizes, note: note || undefined })];
         const thumb = await sceneThumb(s.id);
         const img = thumb ? await image(thumb, 1200) : undefined;
         if (img) content.push(img);
@@ -552,7 +571,7 @@ export function createServer(): McpServer {
     {
       title: "Save a scene to the Studio",
       description:
-        "Save a design into the Studio's Scenes, where the person can open it and keep editing: every device, caption, text, shape and call-out stays editable there. For a video of several shots, pass `shots` (the first shot's scene is also `scene`). By default it is saved as a NEW scene and nothing existing changes. To change an existing scene in place, pass its `id` and `replace: true`, and only when the person asked you to change that scene: if they have it open, the change appears on their canvas (as one step they can undo). Files from outside the library are copied in. Render with create_mockup first and look at it; save what you'd be happy to hand over.",
+        "Save a design into the Studio's Scenes, where the person can open it and keep editing: every device, caption, text, shape and call-out stays editable there. For a set of screens (App Store screenshots that also play in order as a video), pass `shots` (the first screen's scene is also `scene`). For a set made at several sizes, pass `sizes` instead (the first size's first screen is also `scene`). By default it is saved as a NEW scene and nothing existing changes. To change an existing scene in place, pass its `id` and `replace: true`, and only when the person asked you to change that scene: if they have it open, the change appears on their canvas (as one step they can undo). Files from outside the library are copied in. Render with create_mockup first and look at it; save what you'd be happy to hand over.",
       inputSchema: {
         scene: z.object(MockupInputShape).describe("The design: a create_mockup request (output and format settings are ignored)."),
         name: z.string().max(120).optional().describe("The scene's name. Default: the original's name (a copy is marked as the agent's), else \"Untitled scene\"."),
@@ -560,21 +579,29 @@ export function createServer(): McpServer {
         replace: z.boolean().optional().describe("With `id`: overwrite that scene instead of saving a copy. Default false."),
         shots: z
           .array(
-            z.object({
-              scene: z.object(MockupInputShape),
-              length: z.number().min(0.5).max(60).optional(),
-              transition: z.object({ type: z.enum(TRANSITIONS), duration: z.number().min(0).max(3).optional() }).optional(),
-            }),
+            ScreenShape,
           )
           .min(2)
           .max(20)
           .optional()
-          .describe("A video of several shots, in order: each a scene, its length (seconds) and how it comes in (as create_sequence takes them). The first shot's scene is the design's `scene`. Leave out to keep the scene's shots as they are."),
+          .describe("A set's screens, in store order: each a scene, a name (\"Introduction\"), and as a shot of the video its length (seconds) and how it comes in (as create_sequence takes them). The first screen's scene is the design's `scene`. Leave out to keep the scene's screens as they are."),
+        sizes: z
+          .array(z.object({ screens: z.array(ScreenShape).min(1).max(20).describe("This size's screens in store order; set each scene's `canvas` to the size (\"ipad-13\", \"watch-ultra-3\"…).") }))
+          .min(2)
+          .max(12)
+          .optional()
+          .describe("A set made at several sizes (iPhone, iPad, Apple Watch…), each with its screens. Replaces `shots`: the first size's screens are the design's. Leave out to keep the scene's other sizes as they are."),
       },
     },
     (a) =>
       guard(async () => {
         if (a.replace && !a.id) throw new Error("`replace` needs the `id` of the scene to replace.");
+        if (a.sizes && a.shots) throw new Error("Pass `sizes` or `shots`, not both: with sizes, the first size's screens are the shots.");
+        // Several sizes: the first size's screens are the design's own; every scene is checked and its files brought in.
+        if (a.sizes) {
+          const [head, ...rest] = a.sizes[0].screens;
+          a = { ...a, scene: head.scene, shots: a.sizes[0].screens.length > 1 ? [head, ...rest] : undefined };
+        }
         const original = a.id ? getScene(a.id) : undefined;
         // Rendering settings belong to an export, not to the design.
         const { output: _o, preview: _p, quality: _q, format: _f, jpegQuality: _j, deliveryWidth: _d, ...design } = a.scene;
@@ -586,15 +613,29 @@ export function createServer(): McpServer {
         const shots = a.shots
           ? await Promise.all(
               a.shots.map(async (x, i) => {
-                if (i === 0) return { length: x.length, transition: x.transition };
-                const { output: _o3, preview: _p3, quality: _q3, format: _f3, jpegQuality: _j3, deliveryWidth: _d3, ...rest } = x.scene;
-                const own = adoptFiles(rest);
-                adopted.copied.push(...own.copied);
-                await layoutScene(own.scene as Parameters<typeof layoutScene>[0]);
-                return { scene: own.scene, length: x.length, transition: x.transition };
+                if (i === 0) return { name: x.name, length: x.length, transition: x.transition };
+                return { ...(await checked(x.scene)), name: x.name, length: x.length, transition: x.transition };
               }),
             )
           : undefined;
+        // The other sizes, each screen checked and its files brought in.
+        const otherSizes = a.sizes
+          ? await Promise.all(a.sizes.slice(1).map(async (z) => ({ shots: await Promise.all(z.screens.map(async (x) => ({ ...(await checked(x.scene)), name: x.name, length: x.length, transition: x.transition }))) })))
+          : undefined;
+        async function checked(scene: typeof a.scene) {
+          const { output: _o3, preview: _p3, quality: _q3, format: _f3, jpegQuality: _j3, deliveryWidth: _d3, ...rest } = scene;
+          const own = adoptFiles(rest);
+          adopted.copied.push(...own.copied);
+          await layoutScene(own.scene as Parameters<typeof layoutScene>[0]);
+          return { scene: own.scene };
+        }
+        // Sizes: as sent; else a copy keeps the original's, its first size now this design.
+        type Shots = Parameters<typeof firstScreens>[0]["shots"];
+        const groups: SavedGroup[] | undefined = otherSizes
+          ? [{ shots: firstScreens({ scene: adopted.scene as MockupInput, shots: shots as Shots }) }, ...otherSizes]
+          : !a.replace && original?.groups
+            ? withFirstSize(original.groups, adopted.scene, (shots ?? original.shots) as Shots)
+            : undefined;
         const saved = saveScene({
           id: a.replace ? a.id : undefined,
           name: a.name ?? (original ? (a.replace ? original.name : `${original.name} (agent's version)`) : undefined),
@@ -602,6 +643,7 @@ export function createServer(): McpServer {
           chat: a.replace ? undefined : original?.chat,
           // A copy keeps the original's shots unless new ones are given.
           shots: shots ?? (!a.replace ? original?.shots : undefined),
+          groups,
           by: "agent",
         });
         const content: Content = [
@@ -616,6 +658,42 @@ export function createServer(): McpServer {
         const thumb = await sceneThumb(saved.id);
         const img = thumb ? await image(thumb, 1200) : undefined;
         if (img) content.push(img);
+        return content;
+      }),
+  );
+
+  server.registerTool(
+    "export_scene_set",
+    {
+      title: "Export a Studio scene's whole set",
+      description:
+        "Export every screen of every size of a scene saved in the Studio, at full size, numbered in store order, with a contact sheet per size to look at. Folders go by size (<language>/<size>/01 Introduction.png) or are ready for `fastlane deliver` (screenshots/<language>/<size> - 01 Introduction.png). Give the scene's id (from list_scenes) or its name.",
+      inputSchema: {
+        id: z.string().optional().describe("The scene's id."),
+        name: z.string().optional().describe("The scene's name, or words from it, when you don't have the id."),
+        folders: z.enum(["size", "fastlane"]).optional().describe("\"size\" (default): a folder per size. \"fastlane\": one folder per language, files prefixed by size, for fastlane deliver."),
+        language: z.string().max(12).optional().describe("The language folder, as App Store Connect names it. Default \"en-US\"."),
+        format: z.enum(["png", "jpeg"]).optional().describe("Default png."),
+        output: z.string().optional().describe("Folder to export into. Default: ./screenshots/sets/<scene>-<timestamp>/."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const s = findScene(a);
+        const sizes = sceneSizes(s).map((z) => ({ label: z.label, screens: z.screens.map((x, i) => ({ scene: x.scene as MockupInput, name: x.name ?? screenTitle(x.scene, i) })) }));
+        const r = await exportSet({ name: s.name, sizes, folders: a.folders, language: a.language, format: a.format, output: a.output });
+        const content: Content = [
+          text({
+            directory: r.directory,
+            screenshots: a.folders === "fastlane" ? r.screenshots : undefined,
+            sizes: r.sizes.map((z) => ({ size: z.label, files: z.files.map((f) => f.path), width: z.files[0]?.width, height: z.files[0]?.height, contactSheet: z.contactSheet })),
+            next: a.folders === "fastlane" ? `Upload with \`fastlane deliver --screenshots_path "${r.screenshots}"\`.` : undefined,
+          }),
+        ];
+        for (const z of r.sizes.slice(0, 4)) {
+          const img = z.contactSheet ? await image(z.contactSheet, 1600) : undefined;
+          if (img) content.push(img);
+        }
         return content;
       }),
   );
