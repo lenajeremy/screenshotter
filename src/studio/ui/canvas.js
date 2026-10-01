@@ -231,20 +231,28 @@ function DeviceEnt({ e, W, H }) {
     const bar = s.height * e.menuBar;
     Object.assign(screen, { top: (s.y + bar) * 100 + "%", height: (s.height - bar) * 100 + "%", objectPosition: "top", borderRadius: 0 });
   }
-  const tags = [dev.video && (S.stillPick?.id === e.id ? "Still" : "▶ Recording"), (Math.abs(e.rotateX || 0) > 0.5 || Math.abs(e.rotateY || 0) > 0.5) && "3D tilt applied on render"].filter(Boolean);
+  const tags = [dev.video && (S.stillPick?.id === e.id ? "Still" : "▶ Recording")].filter(Boolean);
   // Soft focus and fade, like the render: blur is a fraction of canvas width (or canvas px).
   const cw = layout?.canvas.width || W;
   const blur = dev.blur ? (dev.blur <= 0.5 ? dev.blur * W : (dev.blur * W) / cw) : 0;
   const fade = dev.fade ? (typeof dev.fade === "number" ? { edge: "bottom", extent: dev.fade } : { edge: "bottom", extent: 0.4, ...dev.fade }) : null;
   const mask = fade && `linear-gradient(to ${fade.edge}, #000 ${(1 - fade.extent) * 100}%, rgba(0,0,0,.55) ${(1 - fade.extent * 0.55) * 100}%, transparent 100%)`;
+  // Tilted in 3D like the render: Apple's art is flat, so the same perspective (2.6× the device's
+  // longer side, unless the design sets one) and turn show it as it will look. An animation that
+  // tilts it adds to that (--arx, --ary), as it does in the render.
+  const persp = dev.perspective ? (dev.perspective * W) / cw : Math.max(bw, e.height * H) * 2.6;
+  const tilt = `perspective(${persp}px) rotateX(calc(${e.rotateX || 0}deg + var(--arx, 0deg))) rotateY(calc(${e.rotateY || 0}deg + var(--ary, 0deg)))`;
   // A drawn watch: band stubs above and below, the case between them.
   const band = e.band;
   const caseBox = band ? { position: "absolute", left: 0, right: 0, top: band.stub * 100 + "%", bottom: band.stub * 100 + "%", background: body, borderRadius: s.radius * bw + "px" } : null;
   const stub = (top) => ({ position: "absolute", left: (1 - band.width) * 50 + "%", width: band.width * 100 + "%", top: top ? 0 : undefined, bottom: top ? undefined : 0, height: band.stub * 100 + 6 + "%", background: band.color, borderRadius: top ? "8% 8% 0 0 / 20% 20% 0 0" : "0 0 8% 8% / 0 0 20% 20%" });
   // With an installed product bezel, the canvas shows the real art over the screen.
   // A blur the timeline animates comes from --ablur, set as the playhead moves.
-  const filter = blurAnimated(e.id, scene) ? `blur(var(--ablur, ${blur}px))` : blur ? `blur(${blur}px)` : undefined;
-  return html`<div class="body" style=${{ background: e.bezel || band ? "transparent" : body, borderRadius: s.radius * bw + "px", filter, WebkitMaskImage: mask || undefined, maskImage: mask || undefined }}>
+  const soft = blurAnimated(e.id, scene) ? `blur(var(--ablur, ${blur}px))` : blur ? `blur(${blur}px)` : "";
+  // Apple's art is a cut-out (a watch's band, a laptop's base): its shadow follows its shape, not its box.
+  const shade = e.bezel && dev.shadow !== "none" ? `drop-shadow(0 ${Math.max(2, bw * 0.03)}px ${Math.max(4, bw * 0.06)}px rgba(0,0,0,.5))` : "";
+  const filter = [shade, soft].filter(Boolean).join(" ") || undefined;
+  return html`<div class="body" style=${{ background: e.bezel || band ? "transparent" : body, borderRadius: s.radius * bw + "px", filter, WebkitMaskImage: mask || undefined, maskImage: mask || undefined, transform: tilt, boxShadow: e.bezel || dev.shadow === "none" ? "none" : undefined }}>
     ${band && html`<div style=${stub(true)}></div><div style=${stub(false)}></div><div style=${caseBox}></div>`}
     ${menuStrip && html`<div style=${menuStrip}></div>`}
     <img draggable=${false} src=${thumbUrl(e.screenshot, Math.min(900, Math.max(240, Math.round(bw * s.width * 2))))} style=${screen} />

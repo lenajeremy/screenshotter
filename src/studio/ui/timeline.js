@@ -311,7 +311,7 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
       if (el.dataset.anim) {
         delete el.dataset.anim;
         el.style.translate = el.style.scale = el.style.rotate = el.style.opacity = "";
-        el.style.removeProperty("--acolor");
+        for (const v of ["--acolor", "--arx", "--ary"]) el.style.removeProperty(v);
         for (const u of el.querySelectorAll(".u")) u.style.translate = u.style.scale = u.style.rotate = u.style.opacity = u.style.filter = "";
         if (e?.kind === "shape") drawShape(el, e.shape, art);
       }
@@ -356,6 +356,11 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
     el.style.opacity = String(clamp(st.opacity, 0, 1));
     if (st.color) el.style.setProperty("--acolor", st.color);
     else el.style.removeProperty("--acolor");
+    // A device's 3D tilt and turn, on top of its own (its body adds them, as the render does).
+    for (const [v, n] of [["--arx", st.rotateX], ["--ary", st.rotateY]]) {
+      if (n) el.style.setProperty(v, `${n}deg`);
+      else el.style.removeProperty(v);
+    }
     // Words or letters, each about its own middle.
     pieces.forEach((u, i) => {
       const p = st.units?.[i];

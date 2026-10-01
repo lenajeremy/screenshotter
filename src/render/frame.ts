@@ -850,7 +850,9 @@ function bezelFrame(o: FrameOptions, u: number, depth: boolean): FrameOutput {
     }
   }
   let edge = "";
-  if (depth) {
+  // Tilted, an iPhone or iPad gets its thickness from its own silhouette. A watch's art includes its
+  // band and a MacBook's is the open laptop, so their silhouettes can't be extruded: they tilt flat.
+  if (depth && (drawnFrames() || m.family === "iphone" || m.family === "ipad")) {
     const T = m.thickness * u;
     const n = Math.max(6, Math.min(24, Math.ceil(T / 1.5)));
     const mask = `-webkit-mask:url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat;mask:url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat;`;
