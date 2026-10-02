@@ -16,6 +16,10 @@ import { entitlements, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundleNode = process.argv.includes("--bundle-node");
+// Updates (Sparkle): the feed the app checks, and the public half of the key releases are signed
+// with (the private half is in the keychain of whoever publishes: see scripts/release-feed.mjs).
+const FEED_URL = process.env.SCREENSHOTTER_FEED_URL ?? "https://screenshotter-umber.vercel.app/appcast.xml";
+const UPDATE_KEY = "opZoJmL49A5/xAnivPGIucSxtQXaUKtTac3kJGQ2D4k=";
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 
 const run = (cmd, args, opts = {}) => {
@@ -42,6 +46,12 @@ mkdirSync(path.join(contents, "MacOS"), { recursive: true });
 mkdirSync(engine, { recursive: true });
 copyFileSync(path.join(bin, "Screenshotter"), path.join(contents, "MacOS", "Screenshotter"));
 chmodSync(path.join(contents, "MacOS", "Screenshotter"), 0o755);
+// Sparkle, with its symlinks and helpers intact, where the app looks for frameworks.
+const frameworks = path.join(contents, "Frameworks");
+mkdirSync(frameworks, { recursive: true });
+run("ditto", [path.join(bin, "Sparkle.framework"), path.join(frameworks, "Sparkle.framework")]);
+const rpaths = execFileSync("otool", ["-l", path.join(contents, "MacOS", "Screenshotter")], { encoding: "utf8" });
+if (!rpaths.includes("@executable_path/../Frameworks")) run("install_name_tool", ["-add_rpath", "@executable_path/../Frameworks", path.join(contents, "MacOS", "Screenshotter")]);
 
 // Engine: compiled JS (no source maps), docs, and production dependencies.
 cpSync(path.join(root, "dist"), path.join(engine, "dist"), { recursive: true, filter: (src) => !src.endsWith(".map") });
@@ -111,6 +121,9 @@ writeFileSync(
   <key>NSHumanReadableCopyright</key><string>Screenshotter — marketing mockups from your app's real screens.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>NSAppleEventsUsageDescription</key><string>Screenshotter asks other apps about their windows so it can capture the one you pick.</string>
+  <key>SUFeedURL</key><string>${FEED_URL}</string>
+  <key>SUPublicEDKey</key><string>${UPDATE_KEY}</string>
+  <key>SUEnableAutomaticChecks</key><true/>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Screenshot</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
@@ -126,9 +139,18 @@ if (identity) {
   step(`Signing with ${identity}`);
   const ent = entitlements();
   const sign = (target, file) => run("codesign", ["--force", "--options", "runtime", "--timestamp", "--entitlements", file, "--sign", identity, target]);
-  // Inside out: a bundled Node first, then the app around it.
+  // Inside out: a bundled Node, Sparkle's helpers and Sparkle itself, then the app around them.
   const node = path.join(resources, "node");
   if (existsSync(node)) sign(node, ent.node);
+  const plain = (target, extra = []) => run("codesign", ["--force", "--options", "runtime", "--timestamp", ...extra, "--sign", identity, target]);
+  const sparkle = path.join(frameworks, "Sparkle.framework", "Versions", "B");
+  for (const xpc of ["Installer.xpc", "Downloader.xpc"]) {
+    const p = path.join(sparkle, "XPCServices", xpc);
+    if (existsSync(p)) plain(p, xpc === "Downloader.xpc" ? ["--preserve-metadata=entitlements"] : []);
+  }
+  plain(path.join(sparkle, "Autoupdate"));
+  plain(path.join(sparkle, "Updater.app"));
+  plain(path.join(frameworks, "Sparkle.framework"));
   sign(app, ent.app);
   run("codesign", ["--verify", "--deep", "--strict", app]);
 } else {

@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import UniformTypeIdentifiers
 import WebKit
 
@@ -6,6 +7,8 @@ import WebKit
     let engine = Engine()
     var window: StudioWindow!
     var web: StudioWebView!
+    /// Updates: checks the feed on the site once a day (SUFeedURL in Info.plist), and on demand.
+    let updates = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
 
@@ -393,6 +396,7 @@ import WebKit
         }
         _ = submenu("Screenshotter", [
             action("About Screenshotter", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+            action("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:)), target: updates),
             .separator(),
             item("Settings…", "settings", ","),
             .separator(),

@@ -54,6 +54,8 @@ if (identity) {
     run("xcrun", ["notarytool", "submit", dmg, ...auth, "--wait"]);
     run("xcrun", ["stapler", "staple", dmg]);
     state = "signed and notarized";
+    // Notarized, it can be offered as an update: sign it with the update key and write the feed.
+    run("node", [path.join(root, "scripts", "release-feed.mjs")]);
   }
 }
 

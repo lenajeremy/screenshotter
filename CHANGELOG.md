@@ -1,5 +1,11 @@
 # What's new
 
+## 0.9.0 · 2 October 2026
+
+### Highlights
+- **Updates, built in.** Screenshotter now checks for a new version once a day and offers it with its notes: one click downloads it, installs it and relaunches. **Screenshotter › Check for Updates…** looks right away. Every update is signed by us and notarized by Apple, and is checked before it installs. This version is the last you need to download by hand.
+- **Drag in stickers, badges and awards.** Everything in the Images panel drags onto the design and lands where you let go (a click still adds it in its usual place).
+
 ## 0.8.0 · 2 October 2026
 
 ### Highlights

@@ -97,7 +97,7 @@ In dependency order. Each phase lists what "done" means.
 3. **App Store Connect.** The API key in the Keychain; apps and versions; screenshots uploaded into the right slots in order, plus app preview videos (ButterKit doesn't); a metadata editor with limits and validation; translating and uploading metadata.
 4. **Automation.** A floating Capture Tool that follows the Simulator; a linked Fastlane folder that's watched for changes; MCP tools for languages and App Store Connect; a command-line tool for CI.
 5. **Design parity.** *Done on 2 October 2026 (moved ahead of 2–4): see "Phase 5 in detail" below.* Clay and UI-only styles; image blocks (logos, laurels, stickers); text stroke, decoration, padding, line height and pills; panoramic backgrounds; Device Overflow; more device models (Vision Pro, Apple TV, Pixel, generic); review and award templates. Real 3D devices is a separate decision: it needs 3D models we can license or build, and a WebGL renderer.
-6. **Templates and business.** A template gallery; saving and sharing templates; a free tier with a watermark and a Pro licence; in-app updates; docs, changelog, roadmap and comparison pages.
+6. **Templates and business.** *In-app updates done on 2 October 2026 (Sparkle, 0.9.0).* A template gallery; saving and sharing templates; a free tier with a watermark and a Pro licence; in-app updates; docs, changelog, roadmap and comparison pages.
 
 Motion's extras (music, narration, intro and outro presets, animated gradients, playback speed) can follow phase 3, building on Animate.
 

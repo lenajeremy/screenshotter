@@ -6,8 +6,11 @@ let package = Package(
     name: "Screenshotter",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "Screenshotter", targets: ["Screenshotter"])],
+    // Sparkle: updates for an app sold outside the App Store (a new version offered, downloaded,
+    // checked against our signing key and installed).
+    dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")],
     targets: [
-        .executableTarget(name: "Screenshotter", path: "Sources/Screenshotter"),
+        .executableTarget(name: "Screenshotter", dependencies: [.product(name: "Sparkle", package: "Sparkle")], path: "Sources/Screenshotter"),
         .testTarget(name: "ScreenshotterTests", dependencies: ["Screenshotter"], path: "Tests/ScreenshotterTests"),
     ]
 )
