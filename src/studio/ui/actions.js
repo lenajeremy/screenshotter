@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -282,6 +282,16 @@ export function closeStills(cancel = false) {
 }
 
 /** Bring in the sample screenshot (a made-up recipe app), for trying the app with nothing to hand. */
+/**
+ * A design of words and pictures, no screenshot: an App Store canvas with a headline to write over,
+ * on a light ground, with the Images panel open for stickers and illustrations.
+ */
+export function startWithWords() {
+  setScene({ ...S.scene, canvas: S.scene.canvas ?? "iphone-6.9", layout: "custom", background: "cream-grain", headline: "Say what it does,\n**in a few words**", textStyle: { font: "Caveat", headlineWeight: 700, color: "#22314d", accentMark: "squiggle", accentMarkColor: "#2f6fd6", x: 0.5, y: 0.4, anchor: "middle", headlineSize: 0.075, width: 0.86 } });
+  set({ leftTab: "images", leftOpen: true, guide: null, view: "canvas" });
+  scheduleLayout(0);
+}
+
 export async function trySample() {
   try {
     const { path } = await api("/api/sample", {});
@@ -504,7 +514,6 @@ const lineKind = (t) => t === "arrow" || t === "line";
 export function addShape(kind, { tint = "#ff3b30", at, around } = {}) {
   const k = SHAPE_KINDS.find((x) => x.id === kind);
   if (!k) return;
-  if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Shapes go on top of a design." });
   const shapes = S.scene.shapes ?? [];
   if (shapes.length >= 40) return toast({ kind: "warn", title: "Forty shapes is the limit" });
   const sh = k.make(tint);
@@ -587,6 +596,37 @@ export function guessLook(src) {
     img.onerror = () => resolve({});
     img.src = pictureUrl(src);
   });
+}
+
+/**
+ * Delete a picture you added: it leaves the library (and any design using it shows it missing), with
+ * Undo to bring it back.
+ */
+export async function deletePicture(p) {
+  try {
+    const { usedIn = [] } = await api("/api/images/delete", { path: p });
+    set({ imagesStamp: Date.now() });
+    const name = p.split("/").pop();
+    const where = usedIn.length ? `${usedIn.length === 1 ? `"${usedIn[0]}" uses` : `${usedIn.length} designs use`} it, and will show it missing.` : "";
+    toast({
+      kind: usedIn.length ? "warn" : "ok",
+      icon: "trash",
+      title: `Deleted ${name}`,
+      text: where || undefined,
+      timeout: 8000,
+      actions: [
+        {
+          label: "Undo",
+          run: () =>
+            api("/api/images/restore", { path: p })
+              .then(() => set({ imagesStamp: Date.now() }))
+              .catch((e) => fail(e, "Couldn't bring it back")),
+        },
+      ],
+    });
+  } catch (e) {
+    fail(e, "Couldn't delete that picture");
+  }
 }
 
 /**
@@ -925,7 +965,7 @@ function previewOf(scene) {
 }
 
 export async function renderPreview() {
-  if (!S.scene.devices.length && !S.shots) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (!hasDesign(S.scene) && !S.shots) return toast({ kind: "warn", title: "Nothing to preview yet", text: "Add a screenshot, a headline or a picture first." });
   if (S.rendering) return;
   const started = performance.now();
   const known = previews.has(JSON.stringify(S.scene));
@@ -985,7 +1025,7 @@ export async function restoreVersion(file) {
 }
 
 export async function exportImage() {
-  if (!S.scene.devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (!hasDesign(S.scene)) return toast({ kind: "warn", title: "Nothing to export yet", text: "Add a screenshot, a headline or a picture first." });
   if (S.rendering) return;
   const started = performance.now();
   set({ rendering: { label: "Rendering full resolution…" }, view: "render", exportOpen: false });
@@ -1023,7 +1063,7 @@ export async function exportWholeSet() {
   const o = S.exportOpts.set;
   const sizes = setSizes();
   const n = sizes.reduce((k, z) => k + z.screens.length, 0);
-  if (!sizes.some((z) => z.screens.some((x) => x.scene.devices.length))) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (!sizes.some((z) => z.screens.some((x) => hasDesign(x.scene)))) return toast({ kind: "warn", title: "Nothing to export yet", text: "Add a screenshot, a headline or a picture first." });
   const started = performance.now();
   set({ rendering: { label: `Exporting ${n} images…` }, exportOpen: false });
   try {
@@ -1115,7 +1155,7 @@ function sequenceShots(list) {
  */
 export async function exportVideo() {
   const shots = exportScreens();
-  if (!(shots ? shots[0].scene : S.scene).devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
+  if (!(shots ?? [{ scene: S.scene }]).some((x) => hasDesign(x.scene))) return toast({ kind: "warn", title: "Nothing to export yet", text: "Add a screenshot, a headline or a picture first." });
   if (S.rendering) return;
   // Several screens, one video each: export them one after another.
   if (shots && shots.length > 1 && S.exportOpts.video.join === false) return exportEachVideo(shots);
@@ -1604,8 +1644,8 @@ export async function aiEdit(text) {
   const recall = [...S.ai.history.filter((h) => h !== instruction), instruction].slice(-20);
   const user = msg({ role: "user", text: instruction, about: selection ? entityLabel(selection) : undefined });
   set({ ai: { ...S.ai, open: true, busy: true, text: "", error: null, history: recall, thread: [...S.ai.thread, user] } });
-  if (!S.scene.devices.length) {
-    set({ ai: { ...S.ai, busy: false, thread: [...S.ai.thread, msg({ role: "error", text: "Add a screenshot first, then describe the change." })] } });
+  if (!hasDesign(S.scene)) {
+    set({ ai: { ...S.ai, busy: false, thread: [...S.ai.thread, msg({ role: "error", text: "Add a screenshot, a headline or a picture first, then describe the change." })] } });
     return;
   }
   const snapshot = S.scene;
@@ -1973,7 +2013,7 @@ export async function openScene(id) {
 }
 
 export async function saveNow() {
-  if (!S.scene.devices.length && !S.scene.headline) return toast({ kind: "warn", title: "Nothing to save yet", text: "Add a screenshot first." });
+  if (!hasDesign(S.scene)) return toast({ kind: "warn", title: "Nothing to save yet", text: "Add a screenshot, a headline or a picture first." });
   await saveSceneNow();
   toast({ kind: "ok", title: "Saved", text: `“${S.sceneName}” is in your scenes.`, timeout: 2200 });
 }

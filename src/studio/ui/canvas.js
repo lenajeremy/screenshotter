@@ -6,7 +6,7 @@ import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
-import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout } from "./store.js";
+import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout, hasDesign } from "./store.js";
 import { addDevice, addShot, addSize, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
@@ -145,6 +145,9 @@ const accentStyle = (accent) => ({
   fontWeight: accent.weight,
   fontStyle: accent.italic ? "italic" : undefined,
 });
+
+/** A screen with nothing on it yet but its backdrop: it asks for a screenshot (one with words or pictures only gets a small button). */
+const bare = (sc) => !sc.texts?.length && !sc.images?.length && !sc.shapes?.length && !sc.headline && !sc.subheadline;
 
 /** A mark as a background that Animate can draw in (--amark), as the render's are. */
 const sweep = { backgroundRepeat: "no-repeat", WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" };
@@ -1094,10 +1097,12 @@ export function CanvasView() {
         )}
         <div class="clip"></div>
         ${!s.scene.devices.length &&
-        html`<div class="empty-screen" onPointerDown=${(e) => e.stopPropagation()}>
-          <b>No screenshot on this screen</b><span>Drop one here, or choose one.</span>
-          <button class="btn sm" onClick=${() => set({ leftTab: "captures", leftOpen: true })}><${Icon} n="upload" s=${13} />Choose a screenshot…</button>
-        </div>`}
+        (bare(s.scene)
+          ? html`<div class="empty-screen" onPointerDown=${(e) => e.stopPropagation()}>
+              <b>No screenshot on this screen</b><span>Drop one here, or choose one. Or keep it to words and pictures: add a headline, stickers or illustrations.</span>
+              <button class="btn sm" onClick=${() => set({ leftTab: "captures", leftOpen: true })}><${Icon} n="upload" s=${13} />Choose a screenshot…</button>
+            </div>`
+          : html`<button class="add-shot-pill" title="This screen has no screenshot, and that's fine: it exports as it is. Click to add one." onPointerDown=${(e) => e.stopPropagation()} onClick=${() => set({ leftTab: "captures", leftOpen: true })}><${Icon} n="plus" s=${12} />Add a screenshot</button>`)}
         ${s.timelineOpen && html`<${Viewfinder} /><${MotionPathOverlay} />`}
         ${guides.map((g) => (g.v !== undefined ? html`<div class="guide v" style=${{ left: g.v * W + "px", top: -4000 + "px", height: 8000 + "px" }}></div>` : html`<div class="guide h" style=${{ top: g.h * H + "px", left: -4000 + "px", width: 8000 + "px" }}></div>`))}
         ${hovBox && !live && html`<div class="hover-box" style=${hovBox}></div>`}
@@ -1114,7 +1119,7 @@ export function CanvasView() {
       </div>
     </div>`}
     ${sel && selBox && !live && !editing && !s.timelineOpen && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
-    ${layout && !s.timelineOpen && s.view === "canvas" && (s.scene.devices.length || s.groups) && html`<${SizeSwitch} />`}
+    ${layout && !s.timelineOpen && s.view === "canvas" && (hasDesign(s.scene) || s.groups) && html`<${SizeSwitch} />`}
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>

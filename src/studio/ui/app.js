@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, STORE_GAP, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, STORE_GAP, hasDesign, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
   applyRecipe,
@@ -48,6 +48,7 @@ import {
   uploadImages,
   setAppIcon,
   appIconOf,
+  startWithWords,
   useCapture,
   goToShot,
   STYLE_PARTS,
@@ -72,7 +73,7 @@ import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage,
 
 /** Edit shows placement; Preview shows the finished render, re-rendering when the design changed. */
 export function showPreview() {
-  if (!S.scene.devices.length) return set({ view: "render" });
+  if (!hasDesign(S.scene)) return set({ view: "render" });
   if (!S.render || S.renderStale) renderPreview();
   else set({ view: "render" });
 }
@@ -131,7 +132,7 @@ function Topbar() {
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!s.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
       <span style=${{ width: "6px" }}></span>
       <button class="btn ai" onClick=${() => (s.ai.open ? set({ ai: { ...s.ai, open: false } }) : openAI())} title="Describe a change in plain words and AI makes it (⌘K)"><${Icon} n="spark" s=${15} class="spark" />Ask AI<span class="kbd">⌘K</span></button>
-      <button class="btn primary" ref=${exportBtn} disabled=${!s.scene.devices.length || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => set({ exportOpen: !s.exportOpen })}><${Icon} n="export" s=${15} w=${2} />Export</button>
+      <button class="btn primary" ref=${exportBtn} disabled=${!(hasDesign(s.scene) || s.shots) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => set({ exportOpen: !s.exportOpen })}><${Icon} n="export" s=${15} w=${2} />Export</button>
     </div>
     ${(s.busy || s.rendering) && html`<div class="progress-line"></div>`}
     ${s.exportOpen && html`<${ExportPopover} anchor=${exportBtn.current} />`}
@@ -347,6 +348,7 @@ function Welcome() {
     <div class="welcome-alt">
       ${hasSim && html`<button class="alt" onClick=${() => go("simulator")} title=${booted ? `Grabs whatever ${booted.name} is showing, with a clean status bar` : "Opens an iPhone simulator and grabs its screen"}><${Icon} n="sim" s=${15} />From the iOS Simulator</button>`}
       <button class="alt" onClick=${() => go("web")} title="Type an address; it's captured on a phone or a desktop"><${Icon} n="globe" s=${15} />From a website</button>
+      <button class="alt" onClick=${startWithWords} title="A screen of just words, stickers and doodles: no screenshot needed"><${Icon} n="text" s=${15} />Just words and doodles</button>
       <button class="alt" onClick=${trySample} title="See what it does with a made-up app's screenshot"><${Icon} n="spark" s=${15} />Try a sample</button>
     </div>
     ${shots.length > 0 &&
@@ -651,10 +653,10 @@ function RenderView() {
         ${nav && html`<${PreviewNav} />`}`
       : html`<div class="render-empty">
           <div class="big"><${Icon} n="eye" s=${30} w=${1.4} /></div>
-          <h2>${s.scene.devices.length ? "See the finished image" : "Nothing to preview yet"}</h2>
-          <span>${s.scene.devices.length ? "Edit shows where things go. Preview shows the real device frame, lighting and effects." : "Add a screenshot first, then come back here."}</span>
-          <div class="hstack"><button class="btn" onClick=${renderPreview} disabled=${!s.scene.devices.length}>Show preview <span class="kbd">⌘R</span></button>
-          <button class="btn primary" onClick=${exportImage} disabled=${!s.scene.devices.length}>Export image <span class="kbd">⌘E</span></button></div>
+          <h2>${hasDesign(s.scene) ? "See the finished image" : "Nothing to preview yet"}</h2>
+          <span>${hasDesign(s.scene) ? "Edit shows where things go. Preview shows the real device frame, lighting and effects." : "Add a screenshot, a headline or a picture first, then come back here."}</span>
+          <div class="hstack"><button class="btn" onClick=${renderPreview} disabled=${!hasDesign(s.scene)}>Show preview <span class="kbd">⌘R</span></button>
+          <button class="btn primary" onClick=${exportImage} disabled=${!hasDesign(s.scene)}>Export image <span class="kbd">⌘E</span></button></div>
         </div>`}
     ${s.rendering && html`<div class="rendering-overlay"><div><div class="orb" style=${{ margin: "0 auto" }}></div><div class="label">${s.rendering.label}</div></div></div>`}
   </div>`;
@@ -663,7 +665,7 @@ function RenderView() {
 function Stage() {
   const s = useStore();
   // The start screen is for a design with nothing in it; a screen of a set waiting for its screenshot stays in the set.
-  const empty = !s.scene.devices.length && !s.shots;
+  const empty = !hasDesign(s.scene) && !s.shots;
   const focused = !s.leftOpen && !s.rightOpen;
   return html`<main class="stage ${s.guide && !empty ? "guiding" : ""} ${s.timelineOpen && s.view === "canvas" && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
     <div class="stage-glow"></div>
@@ -965,7 +967,7 @@ function JsonDrawer() {
     try {
       const next = JSON.parse(text);
       if (!Array.isArray(next.devices)) throw new Error("The design needs a devices array.");
-      if (next.devices.length) await api("/api/layout", next);
+      await api("/api/layout", next);
       setScene(next);
       setDirty(false);
       setErr(null);
@@ -2043,7 +2045,7 @@ async function boot() {
     // Scenes: list them, and make sure the design on screen is one of them. An agent may have
     // changed the open one while the Studio was closed.
     refreshScenes().then((scenes) => pickUpAgentChanges(scenes, null));
-    if (!S.sceneId && (S.scene.devices.length || S.scene.headline)) saveSceneNow();
+    if (!S.sceneId && hasDesign(S.scene)) saveSceneNow();
     // Scenes saved by agents through the MCP server show up while you work.
     setInterval(async () => {
       if (document.visibilityState !== "visible" || S.busy || S.ai.busy) return;

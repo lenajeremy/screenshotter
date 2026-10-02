@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, createWriteStream, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import http from "node:http";
 import path from "node:path";
@@ -38,7 +38,7 @@ import { deleteTemplate, exportTemplate, fillTemplate, importTemplate, listTempl
 import { backgroundPreview, loadState, lookThumbnail, saveState, searchUnsplash, thumbnail } from "./assets.js";
 import { houseStyle, updateHouseStyle } from "../util/style.js";
 import { SUGGESTED_SETS, bezelJob, bezelSets, bezelSummary, bezelsDir, getAppleBezels, importBezels } from "../render/bezels.js";
-import { deleteScene, duplicateScene, getScene, listScenes, saveScene } from "./scenes.js";
+import { deleteScene, duplicateScene, getScene, listScenes, saveScene, scenesUsing } from "./scenes.js";
 import { markSeen, whatsNew } from "./whatsnew.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -219,6 +219,31 @@ function imageLibrary(): Array<{ path: string; mtime: number }> {
     .map((f) => ({ path: path.join(dir, f), mtime: statSync(path.join(dir, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, 120);
+}
+
+/**
+ * Deleting a picture you added: it moves aside (images/.deleted) so it can come back with Undo, and
+ * goes for good after 30 days. Only pictures in the library's images folder.
+ */
+const imagesDir = () => path.join(outputRoot(), "images");
+const deletedDir = () => ensureDir(path.join(imagesDir(), ".deleted"));
+function libraryPicture(p: unknown): string {
+  if (typeof p !== "string" || path.dirname(path.resolve(p)) !== path.resolve(imagesDir()) || !/\.(png|jpe?g|webp|gif|svg)$/i.test(p)) throw new HttpError(403, "Only pictures you added can be deleted");
+  return path.resolve(p);
+}
+function deletePicture(p: unknown): { usedIn: string[] } {
+  const file = libraryPicture(p);
+  if (!existsSync(file)) throw new HttpError(404, "That picture isn't there any more");
+  const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+  for (const f of readdirSync(deletedDir())) if (statSync(path.join(deletedDir(), f)).mtimeMs < cutoff) rmSync(path.join(deletedDir(), f), { force: true });
+  renameSync(file, path.join(deletedDir(), path.basename(file)));
+  return { usedIn: scenesUsing(file) };
+}
+function restorePicture(p: unknown): void {
+  const file = libraryPicture(p);
+  const kept = path.join(deletedDir(), path.basename(file));
+  if (!existsSync(kept)) throw new HttpError(404, "That picture can't be brought back");
+  renameSync(kept, file);
 }
 
 /** Recent files the studio can show: captures, uploads, renders. */
@@ -651,6 +676,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     }
     case "/api/scenes/save":
       return send(200, saveScene(await json(req)));
+    case "/api/images/delete":
+      return send(200, deletePicture((await json<{ path: string }>(req)).path));
+    case "/api/images/restore":
+      restorePicture((await json<{ path: string }>(req)).path);
+      return send(200, { ok: true });
     case "/api/scenes/delete":
       deleteScene((await json<{ id: string }>(req)).id);
       return send(200, { ok: true });

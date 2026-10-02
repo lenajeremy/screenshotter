@@ -634,6 +634,19 @@ try {
     assert.match(r.path, /backdrops\/linen-.*\.png$/);
     assert(!(await listed()).includes(r.path));
   });
+  await check("a picture you added can be deleted, named where it's used, and brought back; nothing else can", async () => {
+    const pictures = async () => ((await (await fetch(base + "/api/images")).json()).images as Array<{ path: string }>).map((f) => f.path);
+    const pic = (await (await raw("/api/upload?kind=image&name=Logo.png", await readFile(shot))).json()).path as string;
+    assert((await pictures()).includes(pic));
+    await post("/api/scenes/save", { name: "Uses the logo", scene: { devices: [], headline: "Hi", images: [{ src: pic }] } });
+    const del = await (await post("/api/images/delete", { path: pic })).json();
+    assert(!(await pictures()).includes(pic) && !existsSync(pic), "it leaves the library");
+    assert.deepEqual(del.usedIn, ["Uses the logo"], "the design using it is named");
+    assert.equal((await post("/api/images/restore", { path: pic })).status, 200);
+    assert((await pictures()).includes(pic) && existsSync(pic), "undo brings it back");
+    assert.equal((await post("/api/images/delete", { path: shot })).status, 403, "only pictures in the library's images folder");
+    assert(existsSync(shot));
+  });
   const ffmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
   await check("a recording gets a poster frame, and deleting either removes both", async () => {
     if (!ffmpeg) return console.log("  (skipped: no ffmpeg)");

@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ColorButton, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html } from "./controls.js";
 import { openMenu } from "./menu.js";
 import { Icon } from "./icons.js";
-import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, useStore } from "./store.js";
+import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, useStore, hasDesign } from "./store.js";
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
 import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
@@ -844,7 +844,7 @@ function ShotThumb({ scene, film }) {
   const [img, setImg] = useState(thumbs.get(key));
   useEffect(() => {
     if (thumbs.has(key)) return setImg(thumbs.get(key));
-    if (!scene?.devices?.length) return;
+    if (!hasDesign(scene)) return;
     // The shot on the canvas changes as you work: wait for a pause before drawing it again.
     const timer = setTimeout(() => {
       api("/api/shot-thumb", { ...scene, animations: undefined })

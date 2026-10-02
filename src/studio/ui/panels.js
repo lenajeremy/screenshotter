@@ -4,6 +4,7 @@ import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextFi
 import { Icon, LayoutIcon } from "./icons.js";
 import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, touch, useStore, pictureUrl } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
+import { openMenu } from "./menu.js";
 import {
   SHAPE_KINDS,
   TEXT_PRESETS,
@@ -13,6 +14,7 @@ import {
   addPresetShape,
   addSticker,
   addArt,
+  deletePicture,
   replaceImage,
   uploadImages,
   addShape,
@@ -887,9 +889,16 @@ export function ImagesPanel() {
       <//>`}
       ${lib?.length > 0 &&
       html`<${Section} title="Your pictures" count=${lib.length}>
-        <div class="image-grid">${lib.map((f) => html`<button key=${f.path} title=${`${pictureName(f.path)}: ${replacing ? "click to use it" : "drag it onto the design, or click to add it"}`}
-          onPointerDown=${(e) => (replacing ? undefined : dragOnto(e, pictureGhost(f.path, 0.12), (at) => addPicture(f.path, { at })))} onClick=${() => replacing && use(f.path)}
-          onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), use(f.path))}><img loading="lazy" src=${fileUrl(f.path)} /></button>`)}</div>
+        <div class="image-grid">${lib.map((f) => html`<div class="image-tile" key=${f.path}>
+          <button title=${`${pictureName(f.path)}: ${replacing ? "click to use it" : "drag it onto the design, or click to add it"}`}
+            onPointerDown=${(e) => (replacing || e.button !== 0 ? undefined : dragOnto(e, pictureGhost(f.path, 0.12), (at) => addPicture(f.path, { at })))} onClick=${() => replacing && use(f.path)}
+            onContextMenu=${(e) => (e.preventDefault(), openMenu(e.clientX, e.clientY, [{ label: replacing ? "Use it" : "Add to the design", icon: "plus", run: () => use(f.path) }, "-", { label: "Delete", icon: "trash", danger: true, run: () => deletePicture(f.path) }]))}
+            onKeyDown=${(e) => {
+              if (e.key === "Enter" || e.key === " ") (e.preventDefault(), use(f.path));
+              if (e.key === "Delete" || e.key === "Backspace") (e.preventDefault(), e.stopPropagation(), deletePicture(f.path));
+            }}><img loading="lazy" src=${fileUrl(f.path)} /></button>
+          <button class="tile-x" title="Delete this picture" aria-label=${`Delete ${pictureName(f.path)}`} onPointerDown=${(e) => e.stopPropagation()} onClick=${() => deletePicture(f.path)}><${Icon} n="x" s=${11} w=${2.4} /></button>
+        </div>`)}</div>
       <//>`}
       ${images.length > 0 &&
       html`<${Section} title="In this design" count=${images.length}>

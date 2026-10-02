@@ -308,9 +308,9 @@ export const knownLayout = (scene) => layoutCache.get(JSON.stringify(scene)) ?? 
 
 async function fetchLayout() {
   const mine = ++layoutSeq;
-  // A design with nothing in it shows the start screen; a screen of a set with no device yet is
-  // still laid out (its backdrop and text), so the set stays on the canvas.
-  if (!S.scene.devices?.length && !S.shots) {
+  // A design with nothing in it shows the start screen; one with only words or pictures, or a
+  // screen of a set with no device yet, is still laid out (its backdrop and the rest).
+  if (!hasDesign(S.scene) && !S.shots) {
     set({ layout: null, layoutError: null });
     return;
   }
@@ -458,7 +458,12 @@ export const TRANSITION_NAMES = {
   dissolve: "Dissolve",
 };
 
-const hasContent = (sc) => Boolean(sc?.devices?.length || sc?.headline || sc?.texts?.length);
+/**
+ * A screen has something to show: a screenshot, words, pictures or shapes. A screen of just a
+ * headline and doodles is a screen like any other, to edit, preview and export.
+ */
+export const hasDesign = (sc) => Boolean(sc?.devices?.length || sc?.headline || sc?.subheadline || sc?.texts?.length || sc?.images?.length || sc?.shapes?.length);
+const hasContent = hasDesign;
 
 /** Every shot with its scene, the one on the canvas included (null for a single design). */
 export function allShots() {

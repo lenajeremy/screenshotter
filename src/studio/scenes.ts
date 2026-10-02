@@ -253,6 +253,21 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   return summarize(saved);
 }
 
+/** The names of the saved designs that use a file (a picture, a screenshot), for a warning before it goes. */
+export function scenesUsing(file: string): string[] {
+  const needle = JSON.stringify(file).slice(1, -1);
+  return readdirSync(dir())
+    .filter((f) => f.endsWith(".json"))
+    .flatMap((f) => {
+      try {
+        const text = readFileSync(path.join(dir(), f), "utf8");
+        return text.includes(needle) ? [(JSON.parse(text) as SavedScene).name] : [];
+      } catch {
+        return [];
+      }
+    });
+}
+
 export function deleteScene(id: unknown) {
   if (!validId(id)) throw new Error("Unknown scene");
   rmSync(file(id), { force: true });

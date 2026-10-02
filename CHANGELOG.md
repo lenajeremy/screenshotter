@@ -1,5 +1,11 @@
 # What's new
 
+## 0.11.2 · 2 October 2026
+
+### Highlights
+- **Screens without a screenshot.** A screen can be just words, stickers and illustrations: it previews, exports as an image or video, and goes in a set like any other. **Just words and doodles** on the start screen begins one; a screen without a screenshot shows a small **Add a screenshot** button instead of asking for one.
+- **Delete pictures you added.** In Images › Your pictures, hover a picture and click its ×, right-click it, or select it and press Delete. If a design uses it you're told which; **Undo** brings it back.
+
 ## 0.11.1 · 2 October 2026
 
 ### Highlights
