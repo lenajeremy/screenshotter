@@ -1545,7 +1545,6 @@ li.done .work-shot .scan { display: none; }
 
 .set-template .made-for { font-style: normal; font-weight: 600; font-size: 10px; letter-spacing: .02em; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 6px; border-radius: 999px; margin-left: 4px; vertical-align: 1px; }
 
-/* A device's quick ways across a set's screens: half on this one, half on the one before or after. */
-.carry-btns { display: flex; gap: 6px; margin-top: 8px; }
-.carry-btns .btn { flex: 1 1 0; min-width: 0; justify-content: center; gap: 3px; padding: 0 6px; }
-.carry-btns .btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A device dragged onto the seam between two screens of a set: the seam lights up and says so. */
+.seam-glow { position: absolute; top: 0; bottom: 0; width: 3px; transform: translateX(-50%); z-index: 96; pointer-events: none; border-radius: 2px; background: var(--lime); box-shadow: 0 0 14px 2px color-mix(in srgb, var(--lime) 70%, transparent); animation: pop-in 0.15s var(--ease); }
+.seam-label { position: absolute; top: 12px; transform: translateX(-50%); z-index: 97; pointer-events: none; padding: 4px 10px; border-radius: 999px; background: var(--lime); color: var(--lime-ink); font: 650 11.5px -apple-system, system-ui, sans-serif; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); animation: pop-in 0.15s var(--ease); }

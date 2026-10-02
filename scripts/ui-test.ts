@@ -287,36 +287,39 @@ const CHECKS: Record<string, Check> = {
     if (process.env.UI_TEST_TIMES) console.log(`    (previews: ${Math.round((Date.now() - t0) / 1000)} s)`);
     return /iPad spread/.test(first) && loaded >= 2 ? "ok" : `first "${first}", ${loaded} previews loaded in ${Math.round((Date.now() - t0) / 1000)} s`;
   },
-  async "a device carries on into the previous screen and the next, by drag or by its buttons"(page) {
+  async "a device dragged onto a seam sits across both screens; dragged onto the next screen it moves there"(page) {
     const scenes = [0, 1, 2].map((i) => ({ devices: i === 1 ? [{ screenshot: shot, x: 0.5, y: 0.55, height: 0.7, anchor: "center" }] : [], background: "cream-grain", canvas: "iphone-6.9", layout: "custom", headline: `Screen ${i + 1}` }));
-    await setDesign(page, { shots: scenes.map((scene) => ({ scene })), shot: 1, groups: null, scene: scenes[1], leftOpen: false, rightOpen: true, selected: "device-1" });
+    await setDesign(page, { shots: scenes.map((scene) => ({ scene })), shot: 1, groups: null, scene: scenes[1], leftOpen: false, selected: null });
     await page.waitForTimeout(2000);
-    const spills = () => S(page, async () => ((await import("/ui/store.js" as string)).allShots() as Array<{ scene: { spill?: Array<{ x: number }> } }>).map((x) => (x.scene.spill ?? []).map((d) => d.x)));
-    const ghostDevices = (i: number) => S(page, (i: number) => document.querySelector(`.ghost-wrap.set[data-shot="${i}"]`)?.querySelectorAll("img").length ?? 0, i);
-    // Dragged past the left edge: the screen before picks up the part beyond.
-    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
-    const board = (await page.locator(".stage .artboard").first().boundingBox())!;
-    await page.mouse.move(dev.x + dev.width / 2, dev.y + dev.height / 2);
-    await page.mouse.down();
-    for (let k = 1; k <= 12; k++) await page.mouse.move(dev.x + dev.width / 2 - board.width * 0.45 * (k / 12), dev.y + dev.height / 2);
-    await page.mouse.up();
-    await page.waitForTimeout(2000);
-    const dragged = await spills();
-    const draggedShown = await ghostDevices(0);
-    // The buttons put it across either edge.
-    await page.locator(".carry-btns button", { hasText: "Next screen" }).click();
-    await page.waitForTimeout(1800);
-    const next = await spills();
-    const nextShown = await ghostDevices(2);
-    await page.locator(".carry-btns button", { hasText: "Previous screen" }).click();
-    await page.waitForTimeout(1800);
-    const prev = await spills();
-    const near = (list: number[], v: number) => list.some((x) => Math.abs(x - v) < 0.2);
-    const ok = near(dragged[0], 1) && draggedShown > 0 && near(next[2], 0) && nextShown > 0 && near(prev[0], 1);
-    // On the first screen there's no screen before it.
-    await S(page, async () => (await import("/ui/actions.js" as string)).goToShot(0));
-    await page.waitForTimeout(800);
-    return ok ? "ok" : `dragged left → screen 1 ${dragged[0]} (drawn ${draggedShown}); next button → screen 3 ${next[2]} (drawn ${nextShown}); previous button → screen 1 ${prev[0]}`;
+    const state = () => S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      const shots = st.allShots() as Array<{ scene: { devices: Array<{ x: number }>; spill?: Array<{ x: number }> } }>;
+      return { shot: st.S.shot, devices: shots.map((x) => x.scene.devices.map((d) => d.x)), spill: shots.map((x) => (x.scene.spill ?? []).map((d) => d.x)) };
+    });
+    /** Drag the device on the canvas by a share of the screen's width, reading the seam label just before letting go. */
+    const drag = async (by: number) => {
+      const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+      const board = (await page.locator(".stage .artboard").first().boundingBox())!;
+      const sx = dev.x + dev.width / 2;
+      const sy = dev.y + dev.height / 2;
+      await page.mouse.move(sx, sy);
+      await page.mouse.down();
+      for (let k = 1; k <= 14; k++) await page.mouse.move(sx + board.width * by * (k / 14), sy);
+      await page.waitForTimeout(150);
+      const label = await S(page, () => document.querySelector(".seam-label")?.textContent ?? "");
+      await page.mouse.up();
+      await page.waitForTimeout(1800);
+      return label;
+    };
+    // Near the left seam (not exactly on it): it's pulled across it, and says so.
+    const label = await drag(-0.47);
+    const across = await state();
+    const onSeam = across.shot === 1 && across.devices[1][0] === 0 && across.spill[0].some((x) => Math.abs(x - 1) < 0.01);
+    // Now well onto the next screen: it moves there, and that screen opens with it.
+    await drag(1.45);
+    const moved = await state();
+    const handed = moved.shot === 2 && moved.devices[1].length === 0 && moved.devices[2].length === 1 && Math.abs(moved.devices[2][0] - 0.5) < 0.15;
+    return /Across 1 & 2/.test(label) && onSeam && handed ? "ok" : `label "${label}", across ${JSON.stringify(across)}, moved ${JSON.stringify(moved)}`;
   },
   async "moving between the screens of a set, every screen keeps its device"(page) {
     const sc = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `S${i}` });

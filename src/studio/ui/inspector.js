@@ -189,16 +189,6 @@ function DeviceInspector({ id }) {
       Object.assign(dev, patch);
       if (patch.height !== undefined) delete dev.width;
     }, key);
-  /** Put it across a side edge, half on this screen and half on the one beside it, where it carries on. */
-  const across = (side) =>
-    upd((dev) => {
-      dev.y ??= r4(e?.y ?? 0.5);
-      dev.height ??= r4(e?.height ?? 0.7);
-      dev.anchor = "center";
-      dev.x = side < 0 ? 0 : 1;
-      delete dev.span;
-      delete dev.width;
-    });
   const custom = d.x !== undefined || d.y !== undefined || d.height !== undefined || d.rotate;
   // The frame chooser and its extras. Everyday for a browser, window or card; an extra for a device.
   const frameSection = html`<${Section} title="Frame style">
@@ -267,20 +257,6 @@ function DeviceInspector({ id }) {
           dev.rotateX = rx || undefined;
           dev.rotateY = ry || undefined;
         }, "3d")} />
-        ${s.shots &&
-        html`<${Switch} checked=${d.span !== false && d.x !== undefined} label="Carry on into the screens beside it" onChange=${(v) => upd((dev) => {
-          // It needs a place of its own: where the layout put it, from now on.
-          dev.x ??= r4(e?.x ?? 0.5);
-          dev.y ??= r4(e?.y ?? 0.5);
-          dev.height ??= r4(e?.height ?? 0.7);
-          dev.anchor = "center";
-          dev.span = v ? undefined : false;
-        })} />
-          <div class="carry-btns">
-            <button class="btn sm" disabled=${s.shot === 0} title=${s.shot === 0 ? "This is the first screen: there's none before it" : `Put it across the left edge, half on screen ${s.shot} and half on this one`} onClick=${() => across(-1)}><${Icon} n="left" s=${13} /><span>Previous screen</span></button>
-            <button class="btn sm" disabled=${s.shot >= s.shots.length - 1} title=${s.shot >= s.shots.length - 1 ? "This is the last screen: add one after it first" : `Put it across the right edge, half on this screen and half on screen ${s.shot + 2}`} onClick=${() => across(1)}><span>Next screen</span><${Icon} n="right" s=${13} /></button>
-          </div>
-          <div class="note">${d.span === false ? "It stops at this screen's edges." : "Drag it past either edge, or use the buttons: the part beyond shows on the screen beside it, so the set reads as one picture."}</div>`}
       <//>
 
       <${More} id="device">
@@ -297,7 +273,10 @@ function DeviceInspector({ id }) {
           <${Num} label="↕" title="Tilt: top leans away" value=${d.rotateX ?? 0} unit="°" digits=${1} min=${-60} max=${60} onChange=${(v) => upd((dev) => (dev.rotateX = v || undefined), "rx")} />
           <${Num} label="↔" title="Turn: right edge turns away" value=${d.rotateY ?? 0} unit="°" digits=${1} min=${-70} max=${70} onChange=${(v) => upd((dev) => (dev.rotateY = v || undefined), "ry")} />
         </div></div>
-        <div class="note">Tip: drag the device on the canvas. Hold ⌥ to turn snapping off.</div>
+        <div class="note">Tip: drag the device on the canvas. Hold ⌥ to turn snapping off.${s.shots ? " Drag it onto the gap between two screens to put it across both; drag it onto the next screen to move it there." : ""}</div>
+        ${s.shots &&
+        html`<${Switch} checked=${d.span === false} label="Keep inside this screen" onChange=${(v) => upd((dev) => (dev.span = v ? false : undefined))} />
+          <div class="note">${d.span === false ? "Anything past this screen's edges is cut off, and it stays on this screen." : "Off: the part past an edge shows on the screen beside it."}</div>`}
       <//>
       <${Section} title="Focus">
         <div class="row"><label>Blur</label><${Slider} value=${d.blur ?? 0} min=${0} max=${0.012} step=${0.0005} reset=${0}

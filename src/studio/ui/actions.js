@@ -1496,6 +1496,37 @@ export function goToShot(i) {
 }
 
 /**
+ * A device dragged mostly onto the screen beside it (its middle past this screen's edge) moves to
+ * that screen, which opens with it selected: a set's row works as one canvas. One that something on
+ * its screen points at (a shape aimed at it, an animation of it) stays, carrying on across instead.
+ */
+export function carryDeviceOver(index) {
+  if (!S.shots) return false;
+  const d = S.scene.devices[index];
+  if (!d || d.span === false || typeof d.x !== "number") return false;
+  const dir = d.x > 1 ? 1 : d.x < 0 ? -1 : 0;
+  const to = S.shot + dir;
+  if (!dir || to < 0 || to >= S.shots.length) return false;
+  const n = index + 1;
+  const aimed = (S.scene.shapes ?? []).some((sh) => sh.around && (sh.around.device ?? 1) === n);
+  if (aimed || JSON.stringify(S.scene.animations ?? []).includes(`"device-${n}"`)) return false;
+  checkpoint();
+  const shots = allShots().map((x) => ({ ...x, scene: clone(x.scene) }));
+  const from = shots[S.shot].scene;
+  const [dev] = from.devices.splice(index, 1);
+  // What pointed at the devices after it on this screen still points at them.
+  for (const sh of from.shapes ?? []) if (sh.around?.device > n) sh.around.device--;
+  if (from.animations) from.animations = JSON.parse(JSON.stringify(from.animations).replace(/"device-(\d+)"/g, (m, k) => (Number(k) > n ? `"device-${Number(k) - 1}"` : m)));
+  const target = shots[to].scene;
+  target.devices = [...(target.devices ?? []), { ...dev, x: r4(dev.x - dir) }];
+  rememberLayout(S.scene, S.layout);
+  set({ shots, shot: to, scene: target, selected: `device-${target.devices.length}`, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  scheduleLayout(0);
+  persist();
+  return true;
+}
+
+/**
  * Add a screen (a shot of the video): a copy of one (the one on the canvas unless `copyOf` says
  * which), or a saved design (by id); after the one on the canvas unless `at` says where.
  */

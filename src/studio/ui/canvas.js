@@ -7,7 +7,7 @@ import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
 import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout, hasDesign } from "./store.js";
-import { addDevice, addShot, addSize, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, carryDeviceOver, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -843,6 +843,13 @@ export function CanvasView() {
     let cur = { ...e0 };
     const tolX = 6 / W;
     const tolY = 6 / H;
+    // A set's seams beside this screen, for a device to sit across: dragged near one, it's pulled to
+    // sit halfway over it (⌥ places it freely). Not for a device kept inside its own screen.
+    const seams =
+      e0.kind === "device" && S.shots && S.scene.devices[e0.index]?.span !== false
+        ? [S.shot > 0 && { x: 0, a: S.shot, b: S.shot + 1 }, S.shot < S.shots.length - 1 && { x: 1, a: S.shot + 1, b: S.shot + 2 }].filter(Boolean)
+        : [];
+    const seamPull = Math.max(16 / W, 0.035);
     const snap1 = (vals, list, tol) => {
       let best = null;
       for (const v of vals) for (const t of list) if (Math.abs(t - v) < tol && (!best || Math.abs(t - v) < Math.abs(best.d))) best = { d: t - v, at: t };
@@ -859,7 +866,12 @@ export function CanvasView() {
         let fx = dx / W;
         let fy = dy / H;
         if (!e.altKey && box0) {
-          const sx = snap1([box0.l + fx, (box0.l + box0.r) / 2 + fx, box0.r + fx], targets.xs, tolX);
+          const seam = seams.find((sm) => Math.abs(e0.x + fx - sm.x) < seamPull);
+          if (seam) {
+            fx = seam.x - e0.x;
+            g.push({ v: seam.x, seam });
+          }
+          const sx = seam ? null : snap1([box0.l + fx, (box0.l + box0.r) / 2 + fx, box0.r + fx], targets.xs, tolX);
           const sy = snap1([box0.t + fy, (box0.t + box0.b) / 2 + fy, box0.b + fy], targets.ys, tolY);
           if (sx) {
             fx += sx.d;
@@ -951,6 +963,8 @@ export function CanvasView() {
       if (moved) {
         pending.current = cur;
         commit(cur);
+        // Let go mostly over the screen beside it: it moves there (not while setting an animation).
+        if (mode === "move" && cur.kind === "device" && !S.timelineOpen) carryDeviceOver(cur.index);
       }
       setLive(null);
     };
@@ -1104,7 +1118,13 @@ export function CanvasView() {
             </div>`
           : html`<button class="add-shot-pill" title="This screen has no screenshot, and that's fine: it exports as it is. Click to add one." onPointerDown=${(e) => e.stopPropagation()} onClick=${() => set({ leftTab: "captures", leftOpen: true })}><${Icon} n="plus" s=${12} />Add a screenshot</button>`)}
         ${s.timelineOpen && html`<${Viewfinder} /><${MotionPathOverlay} />`}
-        ${guides.map((g) => (g.v !== undefined ? html`<div class="guide v" style=${{ left: g.v * W + "px", top: -4000 + "px", height: 8000 + "px" }}></div>` : html`<div class="guide h" style=${{ top: g.h * H + "px", left: -4000 + "px", width: 8000 + "px" }}></div>`))}
+        ${guides.map((g) =>
+          g.seam
+            ? html`<div class="seam-glow" style=${{ left: g.v * W + "px" }}></div><div class="seam-label" style=${{ left: g.v * W + "px" }}>Across ${g.seam.a} & ${g.seam.b}</div>`
+            : g.v !== undefined
+              ? html`<div class="guide v" style=${{ left: g.v * W + "px", top: -4000 + "px", height: 8000 + "px" }}></div>`
+              : html`<div class="guide h" style=${{ top: g.h * H + "px", left: -4000 + "px", width: 8000 + "px" }}></div>`,
+        )}
         ${hovBox && !live && html`<div class="hover-box" style=${hovBox}></div>`}
         ${sel?.kind === "shape" && isLine(sel.shape.type) && html`<${LineHandles} sh=${sel.shape} W=${W} H=${H} dims=${dims} />`}
         ${selBox &&
