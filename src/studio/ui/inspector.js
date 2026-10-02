@@ -428,6 +428,39 @@ function TypeControls({ part, font, weight, color, onFont, onWeight, onColor, al
   `;
 }
 
+// Emphasis: a mark on the **accent** words, a line through or under (or a marker behind) all of them, an outline.
+const ACCENT_MARKS = [
+  { value: "", label: "None" },
+  { value: "highlight", label: "Marker" },
+  { value: "underline", label: "Under" },
+  { value: "pill", label: "Pill" },
+];
+const LINE_MARKS = [
+  { value: "", label: "None" },
+  { value: "underline", label: "Under" },
+  { value: "strike", label: "Strike" },
+  { value: "highlight", label: "Marker" },
+];
+
+/** Marks on the words, lines under or through them, and an outline: the headline's or a text's. */
+function Emphasis({ v, upd, starColor }) {
+  return html`<${Section} title="Emphasis">
+    <div class="row"><label>Accent</label><${Seg} value=${v.accentMark ?? ""} options=${ACCENT_MARKS} onChange=${(x) => upd((t) => (t.accentMark = x || undefined))} /></div>
+    ${v.accentMark &&
+    html`<div class="row"><label></label><${ColorButton} value=${v.accentMarkColor} auto=${starColor ? "Star colour" : "Yellow"} autoColor=${starColor ?? "#ffd60a"} onChange=${(x) => upd((t) => (t.accentMarkColor = x), "amc")} /></div>`}
+    <div class="row"><label>Lines</label><${Seg} value=${v.decoration ?? ""} options=${LINE_MARKS} onChange=${(x) => upd((t) => (t.decoration = x || undefined))} /></div>
+    ${v.decoration &&
+    html`<div class="row"><label></label><${ColorButton} value=${v.decorationColor} auto=${v.decoration === "highlight" ? "Yellow" : "Text colour"} autoColor=${v.decoration === "highlight" ? "#ffd60a" : undefined} onChange=${(x) => upd((t) => (t.decorationColor = x), "dc")} /></div>`}
+    <div class="row"><label>Outline</label><${ColorButton} value=${v.stroke} auto="None" onChange=${(x) => upd((t) => (t.stroke = x), "stroke")} /></div>
+    ${v.stroke &&
+    html`<div class="row"><label>Width</label><${Slider} value=${v.strokeWidth ?? 0.1} min=${0.02} max=${0.3} step=${0.01} fallback=${0.1} format=${(x) => Math.round(x * 100) + "%"} onChange=${(x) => upd((t) => (t.strokeWidth = x === 0.1 ? undefined : x), "sw")} /></div>`}
+  <//>`;
+}
+
+/** Line height, as the render sets it (the headline's default 1.08). */
+const lineHeightRow = (value, onChange) =>
+  html`<div class="row"><label>Line height</label><${Slider} value=${value ?? 1.08} min=${0.8} max=${1.8} step=${0.01} fallback=${1.08} format=${(x) => x.toFixed(2)} onChange=${(x) => onChange(x === 1.08 ? undefined : x)} /></div>`;
+
 function CaptionInspector() {
   const s = useStore();
   const sc = s.scene;
@@ -457,6 +490,7 @@ function CaptionInspector() {
           spacing=${st.letterSpacing} onSpacing=${(v) => upd((t) => (t.letterSpacing = v), "ls")} />
         <div class="row"><label>Size</label><${Slider} value=${st.headlineSize ?? e?.size} min=${0.015} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((t) => (t.headlineSize = v && r4(v)), "hs")} /></div>
       <//>
+      <${Emphasis} v=${st} upd=${upd} starColor=${st.accentColor} />
       <${More} id="text">
       <${Section} title="Position" right=${placed ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((t) => {
         for (const k of ["x", "y", "anchor", "width"]) delete t[k];
@@ -487,6 +521,7 @@ function CaptionInspector() {
           align=${st.align ?? e?.align} onAlign=${(v) => upd((t) => (t.align = v))}
           uppercase=${st.uppercase} onUpper=${(v) => upd((t) => (t.uppercase = v || undefined))}
           spacing=${st.letterSpacing} onSpacing=${(v) => upd((t) => (t.letterSpacing = v), "ls")} />
+        ${lineHeightRow(st.lineHeight, (v) => upd((t) => (t.lineHeight = v), "lh"))}
         <${Switch} checked=${Boolean(st.shadow)} onChange=${(v) => upd((t) => (t.shadow = v || undefined))} label="Soft text shadow" />
         <${BlurRow} value=${st.blur} onChange=${(v) => upd((t) => (t.blur = v), "blur")} />
       <//>
@@ -521,6 +556,7 @@ function TextInspector({ id }) {
           spacing=${t.letterSpacing} onSpacing=${(v) => upd((x) => (x.letterSpacing = v), "ls")} />
         <div class="row"><label>Size</label><${Slider} value=${t.size ?? e?.size} min=${0.008} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((x) => (x.size = v && r4(v)), "size")} /></div>
       <//>
+      <${Emphasis} v=${t} upd=${upd} starColor=${t.accentColor ?? headAccent} />
       <${More} id="text">
       <${Section} title="Position">
         <div class="grid2">
@@ -537,11 +573,15 @@ function TextInspector({ id }) {
           align=${t.align ?? "center"} onAlign=${(v) => upd((x) => (x.align = v))}
           uppercase=${t.uppercase} onUpper=${(v) => upd((x) => (x.uppercase = v || undefined))}
           spacing=${t.letterSpacing} onSpacing=${(v) => upd((x) => (x.letterSpacing = v), "ls")} />
+        ${lineHeightRow(t.lineHeight, (v) => upd((x) => (x.lineHeight = v), "lh"))}
         <div class="row"><label>Opacity</label><${Slider} value=${t.opacity} min=${0.1} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
         <${BlurRow} value=${t.blur} onChange=${(v) => upd((x) => (x.blur = v), "blur")} />
       <//>
       <${Section} title="Badge">
         <div class="row"><label>Pill colour</label><${ColorButton} value=${t.background} auto="None" onChange=${(v) => upd((x) => (x.background = v), "bg")} /></div>
+        ${t.background &&
+        html`<div class="row"><label>Padding</label><${Slider} value=${t.padding ?? 0.8} min=${0.1} max=${2} step=${0.05} fallback=${0.8} format=${(v) => v.toFixed(2) + " em"} onChange=${(v) => upd((x) => (x.padding = v === 0.8 ? undefined : v), "pad")} /></div>
+          <div class="row"><label>Corners</label><${Slider} value=${Math.min(t.radius ?? 2, 1)} min=${0} max=${1} step=${0.02} fallback=${1} format=${(v) => (v >= 1 ? "Round" : v.toFixed(2) + " em")} onChange=${(v) => upd((x) => (x.radius = v >= 1 ? undefined : v), "rad")} /></div>`}
         <${Switch} checked=${Boolean(t.shadow)} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft text shadow" />
       <//>
       <//>

@@ -146,10 +146,35 @@ const accentStyle = (accent) => ({
   fontStyle: accent.italic ? "italic" : undefined,
 });
 
+/** A highlighter's band: a translucent stroke over the lower half of the line (as the render's markerBand). */
+const markerBand = (c) => ({
+  backgroundImage: `linear-gradient(transparent 50%, color-mix(in oklab, ${c} 58%, transparent) 50%, color-mix(in oklab, ${c} 58%, transparent) 92%, transparent 92%)`,
+  WebkitBoxDecorationBreak: "clone",
+  boxDecorationBreak: "clone",
+});
+
+/** Accent words with their mark (highlighter, underline or pill), as the render's markAccent draws them. */
+function marked(nodes, accent) {
+  const solid = accent.color && !/gradient\(/.test(accent.color) ? accent.color : undefined;
+  const c = accent.markColor ?? solid ?? "#ffd60a";
+  // A pill or highlighter made in the accent colour sets its words in the text's own colour.
+  const own = (accent.mark === "pill" || accent.mark === "highlight") && !accent.markColor && solid ? { ...accent, color: accent.base } : accent;
+  const plain = !own.color && !own.font && own.weight === undefined && !own.italic;
+  const word = plain ? html`<strong>${nodes}</strong>` : html`<span class="accent" style=${accentStyle(own)}>${nodes}</span>`;
+  const st =
+    accent.mark === "highlight"
+      ? { ...markerBand(c), padding: "0 .08em", margin: "0 -.08em" }
+      : accent.mark === "underline"
+        ? { textDecoration: `underline ${c} .09em`, textUnderlineOffset: ".14em", textDecorationSkipInk: "none" }
+        : { background: c, borderRadius: ".32em", padding: "0 .24em", margin: "0 .04em", WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" };
+  return html`<span class="mark" style=${st}>${word}</span>`;
+}
+
 /** Text cut into words or letters (.u), like the video renderer, so Animate can move each one. */
 function richUnits(text, accent, by) {
   const plain = !accent.color && !accent.font && accent.weight === undefined && !accent.italic;
-  const wrap = (nodes, on, seg) => (!on ? nodes : plain ? html`<strong>${nodes}</strong>` : html`<span class="accent" data-acc=${seg} style=${accentStyle(accent)}>${nodes}</span>`);
+  const wrap = (nodes, on, seg) =>
+    !on ? nodes : accent.mark ? marked(nodes, accent) : plain ? html`<strong>${nodes}</strong>` : html`<span class="accent" data-acc=${seg} style=${accentStyle(accent)}>${nodes}</span>`;
   const pieces = textPieces(text, by);
   const out = [];
   for (let i = 0; i < pieces.length; ) {
@@ -183,6 +208,7 @@ const rich = (text, accent = {}, by) =>
     .split(/\*\*(.+?)\*\*/g)
     .map((part, i) => {
       if (i % 2 === 0) return part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
+      if (accent.mark) return marked(part, accent);
       if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${part}</strong>`;
       return html`<span style=${accentStyle(accent)}>${part}</span>`;
     });
@@ -328,7 +354,14 @@ function TextEnt({ e, H, editing, onDone }) {
     font: own.accentFont ?? style.accentFont,
     weight: own.accentWeight ?? style.accentWeight,
     italic: own.accentItalic ?? style.accentItalic,
+    mark: own.accentMark ?? (e.kind === "text" ? undefined : style.accentMark),
+    markColor: own.accentMarkColor ?? (e.kind === "text" ? undefined : style.accentMarkColor),
+    base: e.color || "#fff",
   };
+  // Outline, underline or strike-through, as the render draws them (sizes are shares of the font size).
+  const look = e.kind === "text" ? t : style;
+  const fs = e.size * H;
+  const dc = look.decorationColor || "currentColor";
   const base = {
     color: `var(--acolor, ${e.color || "#fff"})`,
     fontFamily: e.font || "-apple-system, system-ui, sans-serif",
@@ -339,7 +372,19 @@ function TextEnt({ e, H, editing, onDone }) {
     letterSpacing: (e.kind === "text" ? t.letterSpacing : style.letterSpacing) !== undefined ? `${e.kind === "text" ? t.letterSpacing : style.letterSpacing}em` : undefined,
     opacity: t.opacity,
     filter: textBlur(e, e.kind === "text" ? t.blur : style.blur, H, shot),
+    lineHeight: look.lineHeight ?? undefined,
+    WebkitTextStroke: look.stroke ? `${(look.strokeWidth ?? 0.1) * fs}px ${look.stroke}` : undefined,
+    paintOrder: look.stroke ? "stroke fill" : undefined,
   };
+  // Lines through or under the words, or a marker behind them: a text's, or the headline's alone
+  // (not its subheadline's), as the render draws them.
+  const lines = {
+    textDecoration: look.decoration === "underline" ? `underline ${dc} ${fs * 0.07}px` : look.decoration === "strike" ? `line-through ${dc} ${fs * 0.07}px` : undefined,
+    textUnderlineOffset: look.decoration === "underline" ? fs * 0.12 + "px" : undefined,
+    textDecorationSkipInk: look.decoration ? "none" : undefined,
+  };
+  if (e.kind === "text") Object.assign(base, lines);
+  const hl = (nodes) => (look.decoration === "highlight" ? html`<span style=${{ ...markerBand(look.decorationColor || "#ffd60a"), padding: "0 .1em" }}>${nodes}</span>` : nodes);
   // In Animate, text revealed by word or letter is drawn in pieces.
   const by = S.timelineOpen && !editing ? unitMode(scene.animations, e.id) : undefined;
   const ref = useRef();
@@ -371,14 +416,15 @@ function TextEnt({ e, H, editing, onDone }) {
   const editable = (part, text, cls) =>
     editing
       ? html`<div class="editing ${cls}" data-part=${part} contenteditable="plaintext-only" onBlur=${(ev) => finish(ev, part)} onKeyDown=${(ev) => keys(ev, part)}>${text}</div>`
-      : html`<div class=${cls} data-part=${part}>${rich(text, accent, by)}</div>`;
+      : html`<div class=${cls} data-part=${part} style=${part === "headline" ? lines : undefined}>${part === "subheadline" ? rich(text, accent, by) : hl(rich(text, accent, by))}</div>`;
   if (e.kind === "caption") {
     return html`<div ref=${ref} style=${base}>
       ${(e.text || editing) && editable("headline", e.text ?? "", "h")}
-      ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px", fontFamily: e.subFont, fontWeight: style.subheadlineWeight }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent, by)}</div>`}
+      ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px", fontFamily: e.subFont, fontWeight: style.subheadlineWeight, lineHeight: 1.25 }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent, by)}</div>`}
     </div>`;
   }
-  const pill = t.background ? { display: "inline-block", background: t.background, padding: ".35em .8em", borderRadius: "2em" } : null;
+  const pad = t.padding ?? 0.8;
+  const pill = t.background ? { display: "inline-block", background: t.background, padding: `${pad * 0.44}em ${pad}em`, borderRadius: `${t.radius ?? 2}em` } : null;
   return html`<div ref=${ref} style=${base}><span style=${pill}>${editable("text", e.text ?? "", "")}</span></div>`;
 }
 

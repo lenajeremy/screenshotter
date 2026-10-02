@@ -307,6 +307,15 @@ export const TextInputSchema = z.object({
   shadow: z.union([z.boolean(), z.string()]).optional().describe("true for a soft shadow, or a CSS text-shadow."),
   blur: z.number().min(0).optional().describe("Soft focus: a fraction of the canvas width up to 0.5 (0.004 soft, 0.012 clearly out of focus), or px. For depth, or to push it back behind what matters."),
   background: z.string().optional().describe("Pill background, turning the text into a badge."),
+  padding: z.number().min(0).max(4).optional().describe("Pill padding across, in ems (up and down is three-sevenths of it). Default 0.8."),
+  radius: z.number().min(0).max(4).optional().describe("Pill corner radius in ems. Default 2 (fully round)."),
+  stroke: z.string().optional().describe("An outline round the letters, in this colour (drawn behind them, so they keep their shape). With color \"transparent\", outlined letters."),
+  strokeWidth: z.number().min(0).max(0.5).optional().describe("Outline width as a share of the font size. Default 0.1."),
+  decoration: z.enum(["underline", "strike", "highlight"]).optional().describe("underline, strike (through), or highlight: a marker band behind the lines."),
+  decorationColor: z.string().optional().describe("The decoration's colour. Default the text's (highlight: yellow)."),
+  accentMark: z.enum(["highlight", "underline", "pill"]).optional().describe("A mark on the **accent** words: a highlighter behind them, an underline, or a pill (in the accent colour, the words then in the text's)."),
+  accentMarkColor: z.string().optional().describe("The accent mark's colour. Default the accent colour, else yellow."),
+
   z: z.number().optional(),
 });
 
@@ -399,9 +408,16 @@ export const TextStyleSchema = z
     y: z.number().optional().describe("y of the caption block's anchor as a fraction of canvas height."),
     anchor: z.enum(["top", "middle", "bottom"]).optional().describe("Which edge of the caption block sits on y. Default top."),
     width: z.number().positive().optional().describe("Caption block width as a fraction of canvas width."),
+    lineHeight: z.number().min(0.6).max(3).optional().describe("Headline line height. Default 1.08."),
     letterSpacing: z.number().optional(),
     uppercase: z.boolean().optional(),
     shadow: z.union([z.boolean(), z.string()]).optional().describe("Text shadow for busy photo backgrounds."),
+    stroke: z.string().optional().describe("An outline round the letters, in this colour (drawn behind them, so they keep their shape). With color \"transparent\", outlined letters."),
+    strokeWidth: z.number().min(0).max(0.5).optional().describe("Outline width as a share of the font size. Default 0.1."),
+    decoration: z.enum(["underline", "strike", "highlight"]).optional().describe("underline, strike (through), or highlight: a marker band behind the lines."),
+    decorationColor: z.string().optional().describe("The decoration's colour. Default the text's (highlight: yellow)."),
+    accentMark: z.enum(["highlight", "underline", "pill"]).optional().describe("A mark on the **accent** words: a highlighter behind them, an underline, or a pill (in the accent colour, the words then in the text's)."),
+    accentMarkColor: z.string().optional().describe("The accent mark's colour. Default the accent colour, else yellow."),
     blur: z.number().min(0).optional().describe("Soft focus on the headline and subheadline: a fraction of the canvas width up to 0.5, or px."),
   })
   .optional()

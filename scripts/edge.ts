@@ -475,6 +475,39 @@ await check("laurels wreath your words (wrapped to fit); ratings fill their star
   assert(!/opacity="0.28"/.test(r5) && (r5.match(/<path/g) ?? []).length === 5, "five stars by default, all filled");
 });
 
+await check("text emphasis: a pill on the accent words, a marker behind a text, and an outline are drawn", async () => {
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const file = path.join(out, "emphasis.png");
+  await createMockup({
+    devices: [],
+    canvas: "1000x1000",
+    layout: "custom",
+    background: "#000000",
+    texts: [
+      { text: "**WWWW**", x: 0.5, y: 0.25, anchor: "middle", size: 0.12, color: "#000000", accentMark: "pill", accentMarkColor: "#ff0000" },
+      { text: "WWWW", x: 0.5, y: 0.6, anchor: "middle", size: 0.12, color: "#000000", decoration: "highlight", decorationColor: "#00ff00" },
+    ],
+    preview: false,
+    output: file,
+  } as never);
+  await run("sips", ["-s", "format", "bmp", file, "--out", path.join(out, "emphasis.bmp")]);
+  const img = readBmp(readFileSync(path.join(out, "emphasis.bmp")));
+  const count = (y0: number, y1: number, test: (r: number, g: number, b: number) => boolean) => {
+    let n = 0;
+    for (let y = Math.round(y0 * img.height); y < y1 * img.height; y += 2)
+      for (let x = 0; x < img.width; x += 2) {
+        const i = (y * img.width + x) * 4;
+        if (test(img.rgba[i], img.rgba[i + 1], img.rgba[i + 2])) n++;
+      }
+    return n;
+  };
+  assert(count(0.15, 0.35, (r, g, b) => r > 200 && g < 60 && b < 60) > 500, "the accent pill isn't drawn");
+  // The marker sits on the lower half of the line, translucent over black: a dark green.
+  assert(count(0.6, 0.7, (r, g, b) => g > 90 && r < 40 && b < 40) > 300, "the marker band isn't drawn on the lower half of the line");
+  assert(count(0.5, 0.58, (r, g, b) => g > 90 && r < 40 && b < 40) < 50, "the marker band shouldn't cover the top of the line");
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

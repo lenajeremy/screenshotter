@@ -62,6 +62,36 @@ interface AccentStyle {
   font?: string;
   weight?: number;
   italic?: boolean;
+  /** A mark behind or under them: a highlighter, an underline or a pill. */
+  mark?: "highlight" | "underline" | "pill";
+  markColor?: string;
+  /** The text's own colour: a pill made in the accent colour sets its words in this. */
+  base?: string;
+}
+
+/** The highlighter's band: a translucent stroke over the lower half of the line, like a marker. */
+const markerBand = (c: string) => `background:linear-gradient(transparent 50%, color-mix(in oklab, ${c} 58%, transparent) 50%, color-mix(in oklab, ${c} 58%, transparent) 92%, transparent 92%);-webkit-box-decoration-break:clone;box-decoration-break:clone;`;
+
+/**
+ * Accent words with their mark: the mark on a span of its own round them (so a gradient accent
+ * colour, clipped to the text, keeps working inside it).
+ */
+function markAccent(html: string, accent: AccentStyle, css: string | undefined): string {
+  const solid = accent.color && !/gradient\(/.test(accent.color) ? accent.color : undefined;
+  const c = accent.markColor ?? solid ?? "#ffd60a";
+  if (!accent.mark) return css === undefined ? `<strong>${html}</strong>` : `<span class="accent" style="${css}">${html}</span>`;
+  let inner = css;
+  // A pill or highlighter made in the accent colour sets its words in the text's own colour, or
+  // they'd vanish into it (a pill) or blur into it (a highlighter).
+  if ((accent.mark === "pill" || accent.mark === "highlight") && !accent.markColor && solid) inner = accentCss({ ...accent, color: accent.base });
+  const word = inner === undefined ? `<strong>${html}</strong>` : `<span class="accent" style="${inner}">${html}</span>`;
+  const mark =
+    accent.mark === "highlight"
+      ? `${markerBand(esc(c))}padding:0 .08em;margin:0 -.08em;`
+      : accent.mark === "underline"
+        ? `text-decoration:underline ${esc(c)} .09em;text-underline-offset:.14em;text-decoration-skip-ink:none;`
+        : `background:${esc(c)};border-radius:.32em;padding:0 .24em;margin:0 .04em;-webkit-box-decoration-break:clone;box-decoration-break:clone;`;
+  return `<span class="mark" style="${mark}">${word}</span>`;
 }
 
 /** Escape text and turn **accent** spans and newlines into markup. */
@@ -89,7 +119,8 @@ function accentCss(accent: AccentStyle): string | undefined {
 function richUnits(text: string, accent: AccentStyle, by: Unit): string {
   const css = accentCss(accent);
   // data-acc: which starred phrase, so a gradient can be laid across the phrase's words (paintPieces).
-  const wrap = (html: string, on: boolean, seg: number) => (!on ? html : css === undefined ? `<strong>${html}</strong>` : `<span class="accent" data-acc="${seg}" style="${css}">${html}</span>`);
+  const wrap = (html: string, on: boolean, seg: number) =>
+    !on ? html : accent.mark ? markAccent(html, accent, css) : css === undefined ? `<strong>${html}</strong>` : `<span class="accent" data-acc="${seg}" style="${css}">${html}</span>`;
   const pieces = textPieces(text, by);
   let out = "";
   for (let i = 0; i < pieces.length; ) {
@@ -124,6 +155,7 @@ function richText(text: string, accent: AccentStyle, by?: Unit): string {
     .map((part, i) => {
       const safe = esc(part).replace(/\\n|\n/g, "<br>");
       if (i % 2 === 0) return safe;
+      if (accent.mark) return markAccent(safe, accent, accentCss(accent));
       if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return `<strong>${safe}</strong>`;
       const style = [
         accent.color
@@ -159,7 +191,18 @@ function textHtml(t: TextInput, W: number, H: number, flow = false, id?: string,
   const size = sizePx(t.size, H, W * 0.05);
   const shadow =
     t.shadow === true ? `text-shadow:0 ${px(size * 0.04)} ${px(size * 0.3)} rgba(0,0,0,.35);` : t.shadow ? `text-shadow:${esc(t.shadow)};` : "";
-  const badge = t.background ? `background:${esc(t.background)};padding:${px(size * 0.35)} ${px(size * 0.8)};border-radius:${px(size * 2)};` : "";
+  // A pill: its padding (ems across; three-sevenths of that up and down) and corner radius (ems).
+  const pad = t.padding ?? 0.8;
+  const badge = t.background ? `background:${esc(t.background)};padding:${px(size * pad * 0.44)} ${px(size * pad)};border-radius:${px(size * (t.radius ?? 2))};` : "";
+  // An outline drawn behind the letters, so they keep their shape.
+  const outline = t.stroke ? `-webkit-text-stroke:${px(size * (t.strokeWidth ?? 0.1))} ${esc(t.stroke)};paint-order:stroke fill;` : "";
+  const dc = t.decorationColor ? esc(t.decorationColor) : "currentColor";
+  const deco =
+    t.decoration === "underline"
+      ? `text-decoration:underline ${dc} ${px(size * 0.07)};text-underline-offset:${px(size * 0.12)};text-decoration-skip-ink:none;`
+      : t.decoration === "strike"
+        ? `text-decoration:line-through ${dc} ${px(size * 0.07)};`
+        : "";
   const box = flow
     ? `position:relative;width:100%;text-align:${align};`
     : `position:absolute;left:${px((t.x ?? 0.5) * W)};top:${px((t.y ?? 0.1) * H)};width:${px((t.width ?? 0.86) * W)};transform:translate(${tx},${ty}) rotate(${t.rotate ?? 0}deg);text-align:${align};z-index:${t.z ?? 30};`;
@@ -167,8 +210,12 @@ function textHtml(t: TextInput, W: number, H: number, flow = false, id?: string,
   const style =
     `display:inline-block;font-family:${esc(fontStack(t.font).stack)};font-size:${px(size)};font-weight:${t.weight ?? 700};` +
     `color:var(--acolor, ${esc(t.color ?? "#fff")});line-height:${t.lineHeight ?? 1.08};letter-spacing:${t.letterSpacing ?? -0.02}em;` +
-    `opacity:${t.opacity ?? 1};${t.uppercase ? "text-transform:uppercase;" : ""}${shadow}${badge}`;
-  return `<div class="text"${id ? ` data-ent="${id}"` : ""} style="${box}display:flex;justify-content:${justify};${flow ? "" : blurCss(t.blur, W, animBlur)}"><div style="${style}">${richText(t.text, { color: t.accentColor, font: t.accentFont, weight: t.accentWeight, italic: t.accentItalic }, by)}</div></div>`;
+    `opacity:${t.opacity ?? 1};${t.uppercase ? "text-transform:uppercase;" : ""}${shadow}${badge}${outline}${deco}`;
+  const accent: AccentStyle = { color: t.accentColor, font: t.accentFont, weight: t.accentWeight, italic: t.accentItalic, mark: t.accentMark, markColor: t.accentMarkColor, base: t.color ?? "#fff" };
+  let words = richText(t.text, accent, by);
+  // A highlighter across the whole text: a marker band behind every line.
+  if (t.decoration === "highlight") words = `<span style="${markerBand(t.decorationColor ? esc(t.decorationColor) : "#ffd60a")}padding:0 .1em">${words}</span>`;
+  return `<div class="text"${id ? ` data-ent="${id}"` : ""} style="${box}display:flex;justify-content:${justify};${flow ? "" : blurCss(t.blur, W, animBlur)}"><div style="${style}">${words}</div></div>`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -933,13 +980,19 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
       accentFont: style.accentFont,
       accentWeight: style.accentWeight,
       accentItalic: style.accentItalic,
+      accentMark: style.accentMark,
+      accentMarkColor: style.accentMarkColor,
       color: textColor,
       shadow: style.shadow,
+      stroke: style.stroke,
+      strokeWidth: style.strokeWidth,
+      decoration: style.decoration,
+      decorationColor: style.decorationColor,
     };
     const lines: string[] = [];
     // A headline animated by word or letter is drawn in pieces (the subheadline with it).
     const by = unitMode(input.animations, "caption");
-    if (input.headline) lines.push(textHtml({ ...common, text: input.headline, size: caption.headSize, weight: style.headlineWeight ?? 700 }, W, H, true, undefined, by));
+    if (input.headline) lines.push(textHtml({ ...common, text: input.headline, size: caption.headSize, weight: style.headlineWeight ?? 700, lineHeight: style.lineHeight }, W, H, true, undefined, by));
     if (input.subheadline) {
       lines.push(
         textHtml(
@@ -949,6 +1002,8 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
             text: input.subheadline,
             size: caption.subSize,
             weight: style.subheadlineWeight ?? 500,
+            // Lines and markers are the headline's; the outline stays on both, for legibility.
+            decoration: undefined,
             opacity: 0.78,
             letterSpacing: style.letterSpacing ?? -0.005,
             lineHeight: 1.25,
