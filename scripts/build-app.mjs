@@ -90,7 +90,7 @@ for (const size of [16, 32, 128, 256, 512]) {
 }
 execFileSync("iconutil", ["-c", "icns", iconset, "-o", path.join(resources, "AppIcon.icns")]);
 
-const imageTypes = ["public.png", "public.jpeg", "org.webmproject.webp", "public.tiff", "public.heic", "public.mpeg-4", "com.apple.quicktime-movie"];
+const imageTypes = ["public.png", "public.jpeg", "org.webmproject.webp", "public.tiff", "public.heic", "public.svg-image", "com.compuserve.gif", "public.mpeg-4", "com.apple.quicktime-movie"];
 writeFileSync(
   path.join(contents, "Info.plist"),
   `<?xml version="1.0" encoding="UTF-8"?>

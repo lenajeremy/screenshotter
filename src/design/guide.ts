@@ -153,7 +153,8 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 
 - **Logo**: an image block (\`images\`, \`height\` 0.03–0.05) at the top of the first screenshot, or none: the store shows the app's name already.
 - **App icon**: \`mask: "icon"\` (Apple's icon outline) with \`shadow\`, 0.08–0.12 high, beside or above the headline on the first or last screen.
-- **Sticker**: \`sticker: true\` gives a die-cut white edge and a shadow; tilt it 6–15°. One per image at most, for a playful set.
+- **Sticker**: \`sticker: true\` gives a die-cut white edge and a shadow; tilt it 6–15°. One per image at most, for a playful set. Built-in ones: \`src: "sticker:<name>"\` (heart, star, sparkles, bolt, flame, crown, trophy, rocket, check and more: list_mockup_options lists them), placed near the headline or a corner of the device, never over the UI.
+- **Badges** (shapes with your words): \`burst\` ("NEW", "50% off") at a jaunty angle by the device's corner; \`tag\` ("FREE", "No ads") or \`ribbon\` ("Try it free") under the headline; \`bubble\` for a short quote or reaction ("So easy!"). One per image, two or three words, colours from the palette with strong contrast.
 - **Laurel** (a shape: \`type: "laurel"\`, \`text\`, \`caption\`) and **rating** (\`type: "rating"\`, \`value\`, \`text\`): social proof, best on the first screen or a review screen, in gold, white or the accent. **Only what's true**: a real award, a real rating and count, a real review. If the person hasn't given you one, ask, or leave it out.
 
 ## 11. Devices and special shots

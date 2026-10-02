@@ -3,14 +3,35 @@
  * moved, sized, turned and layered, with rounded corners or an app icon's outline, a shadow, a
  * sticker's die-cut white edge, soft focus and opacity.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveUserPath } from "../util/files.js";
 import { imageSize } from "../util/image.js";
 import type { ImageBlockInput } from "./schema.js";
 
 const fileUrl = (p: string) => pathToFileURL(p).href;
+
+/** Screenshotter's own stickers ("sticker:heart"), shipped with the Studio's UI. */
+const STICKER_DIR = fileURLToPath(new URL("../studio/ui/stickers/", import.meta.url));
+
+/** The names of the built-in stickers. */
+export function stickerNames(): string[] {
+  try {
+    return readdirSync(STICKER_DIR)
+      .filter((f) => f.endsWith(".svg"))
+      .map((f) => f.slice(0, -4))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Where a block's picture is: a built-in sticker, or a path. */
+function pictureFile(src: string): string {
+  const m = /^sticker:([a-z0-9-]+)$/i.exec(src);
+  return m ? path.join(STICKER_DIR, `${m[1].toLowerCase()}.svg`) : resolveUserPath(src);
+}
 
 /** An image block with everything settled. Positions and sizes are canvas fractions. */
 export interface ImageBlock {
@@ -64,9 +85,11 @@ export async function resolveImages(input: { images?: ImageBlockInput[] }, W: nu
   const out: ImageBlock[] = [];
   for (const [i, b] of (input.images ?? []).entries()) {
     const remote = /^(https?:|data:)/.test(b.src);
-    const file = remote ? b.src : resolveUserPath(b.src);
+    const file = remote ? b.src : pictureFile(b.src);
     if (!remote && !existsSync(file)) {
-      warnings.push(`image ${i + 1} wasn't found (${b.src}), so it's left out.`);
+      warnings.push(
+        /^sticker:/i.test(b.src) ? `there's no sticker called ${b.src.slice(8)}, so image ${i + 1} is left out. Stickers: ${stickerNames().join(", ")}.` : `image ${i + 1} wasn't found (${b.src}), so it's left out.`,
+      );
       continue;
     }
     // A remote picture's size isn't known until it loads: it's laid out square unless both sides are given.

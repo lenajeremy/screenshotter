@@ -2,7 +2,7 @@
 import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore } from "./store.js";
+import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore, pictureUrl } from "./store.js";
 import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
@@ -615,6 +615,8 @@ const LINE_TYPES = [
 
 /** A laurel's words and caption; a rating's stars and the line under them. */
 function AwardFields({ g, upd }) {
+  if (g.type !== "laurel" && g.type !== "rating")
+    return html`<div class="row"><label>Words</label><${TextField} value=${g.text} placeholder="NEW" onChange=${(v) => upd((x) => (x.text = (v ?? "").slice(0, 60) || undefined), "text")} /></div>`;
   return g.type === "laurel"
     ? html`<div class="row"><label>Words</label><${TextField} value=${g.text} placeholder="App of the Day" onChange=${(v) => upd((x) => (x.text = (v ?? "").slice(0, 60) || undefined), "text")} /></div>
         <div class="row"><label>Under them</label><${TextField} value=${g.caption} placeholder="App Store" onChange=${(v) => upd((x) => (x.caption = (v ?? "").slice(0, 60) || undefined), "caption")} /></div>`
@@ -634,7 +636,8 @@ function ShapeInspector({ id }) {
   const upd = (fn, key) => edit((d) => fn(d.shapes[i]), key && `s${i}.${key}`);
   const line = g.type === "arrow" || g.type === "line";
   const badge = g.type === "badge";
-  const award = g.type === "laurel" || g.type === "rating";
+  // Shapes that carry words of their own: laurels, ratings and badges.
+  const award = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(g.type);
   // Setting the geometry by hand places it, so it stops following its target.
   const place = (fn, key) =>
     upd((x) => {
@@ -746,7 +749,7 @@ function ImageInspector({ id }) {
     <${Head} title=${entityLabel(id)} id=${id} />
     <div class="panel-body">
       <div class="insp-hero">
-        <div class="pic img-pic"><img src=${fileUrl(b.src)} /></div>
+        <div class="pic img-pic"><img src=${pictureUrl(b.src)} /></div>
         <div class="meta"><b title=${base(b.src)}>${pictureName(b.src)}</b><span>${e ? `${Math.round(e.width * W0)} × ${Math.round(e.height * H0)} on canvas` : ""}</span></div>
         <button class="btn sm" onClick=${() => set({ replacingImage: id, leftTab: "images", leftOpen: true })}>Replace</button>
       </div>

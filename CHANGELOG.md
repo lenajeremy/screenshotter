@@ -1,5 +1,18 @@
 # What's new
 
+## 0.8.0 · 2 October 2026
+
+### Highlights
+- **Stickers.** 24 ready-made stickers in the Images panel (a heart, stars, sparkles, a bolt, a flame, a crown, a trophy, a rocket, a check, a sun, a rainbow…), Screenshotter's own, with a die-cut white edge and a little tilt.
+- **Badges with your words.** A "NEW" starburst, a "FREE" price tag, a "Try it free" ribbon and a speech bubble: shapes that hold your own words, fitted on one line or two, recoloured and animated like the rest. In Images › Badges, and Shapes › Badges and awards.
+- **Ready-made awards and ratings.** App of the Day, Editors' Choice, #1 in a category, Featured, "Loved by" and five stars, in Images › Awards and ratings: placeholders for ones your app has really had.
+- **Pictures go on looking right.** Images › Add as › **Auto** guesses what a picture is: a wide cut-out becomes a logo at the top, an opaque square an app icon, another cut-out a sticker, a photo a rounded card with a shadow.
+- **SVGs everywhere.** SVG (and GIF) pictures come in however you add them: the Images panel, a drop anywhere, paste, Import… or opening one with Screenshotter from Finder. They always become image blocks, never screenshots.
+
+### Fixes
+- The code names in What's New show as code again.
+- A badge's bar offers its colour and its words' colour, not a stroke.
+
 ## 0.7.0 · 2 October 2026
 
 ### Highlights
@@ -15,8 +28,8 @@
 - **Screen only** (the card frame) has the device's own screen corners whenever the screenshot's device is known, in the render and on the canvas.
 
 ### Agents
-- \`clay\` on a device; \`images\` on a scene; shapes of type \`laurel\` and \`rating\` (\`text\`, \`caption\`, \`value\`); text \`accentMark\`, \`decoration\`, \`stroke\`, \`lineHeight\`, \`padding\` and \`radius\`; animation values \`mark\` and \`value\`, and \`color\` for a clay device. \`list_mockup_options\` lists the clay tones; the design guide says when to use each (and to claim only real awards and ratings).
-- \`apply_recipe\` has \`review\` and \`award\`. Sequences take a \`name\` for their file.
+- `clay` on a device; `images` on a scene; shapes of type `laurel` and `rating` (`text`, `caption`, `value`); text `accentMark`, `decoration`, `stroke`, `lineHeight`, `padding` and `radius`; animation values `mark` and `value`, and `color` for a clay device. `list_mockup_options` lists the clay tones; the design guide says when to use each (and to claim only real awards and ratings).
+- `apply_recipe` has `review` and `award`. Sequences take a `name` for their file.
 
 ## 0.6.0 · 1 October 2026
 

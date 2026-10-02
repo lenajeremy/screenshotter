@@ -76,7 +76,8 @@ final class StudioWebView: WKWebView, NSDraggingSource {
 
     // MARK: Paste
 
-    static let importableTypes: [UTType] = [.png, .jpeg, .webP, .tiff, .heic, .mpeg4Movie, .quickTimeMovie]
+    // SVGs and GIFs come in as pictures for image blocks (logos, icons, stickers), the rest as screenshots.
+    static let importableTypes: [UTType] = [.png, .jpeg, .webP, .tiff, .heic, .svg, .gif, .mpeg4Movie, .quickTimeMovie]
 
     static func pasteboardHasImport(_ pb: NSPasteboard = .general) -> Bool {
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],

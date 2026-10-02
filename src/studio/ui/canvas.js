@@ -6,7 +6,7 @@ import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
-import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore } from "./store.js";
+import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl } from "./store.js";
 import { addDevice, addShot, addSize, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
@@ -318,7 +318,7 @@ function ImageEnt({ e, W, H }) {
   else if (soft > 0.05) filters.push(`blur(${soft}px)`);
   const corners = b.mask === "icon" ? { borderRadius: "22.4%", cornerShape: "superellipse(1.35)" } : b.mask === "circle" ? { borderRadius: "50%" } : b.radius ? { borderRadius: b.radius * short + "px" } : {};
   return html`<div class="image-body" style=${{ filter: filters.join(" ") || undefined, opacity: b.opacity ?? undefined }}>
-    <img draggable=${false} src=${fileUrl(e.src ?? b.src)} style=${{ ...corners, transform: b.flip ? "scaleX(-1)" : undefined }} />
+    <img draggable=${false} src=${pictureUrl(b.src ?? e.src)} style=${{ ...corners, transform: b.flip ? "scaleX(-1)" : undefined }} />
   </div>`;
 }
 
@@ -1314,6 +1314,9 @@ function LineHandles({ sh, W, H, dims }) {
 // ---------------------------------------------------------------------------------------------
 // Floating actions above the selection
 
+/** Shapes that carry words of their own (laurels, ratings, badges): a colour and their words' colour. */
+const WORDED = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"];
+
 function ContextBar({ sel, box, vp }) {
   const [pick, setPick] = useState(null);
   const barRef = useRef();
@@ -1361,7 +1364,7 @@ function ContextBar({ sel, box, vp }) {
     const r = e.currentTarget.getBoundingClientRect();
     const z = sel.id !== "caption";
     openMenu(r.left, r.bottom + 6, [
-      sel.kind === "shape" && sh?.type !== "laurel" && sh?.type !== "rating" && { label: sh?.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => shapeUpd((x) => (x.sketch = sh?.sketch ? undefined : true)) },
+      sel.kind === "shape" && !["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(sh?.type) && { label: sh?.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => shapeUpd((x) => (x.sketch = sh?.sketch ? undefined : true)) },
       z && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(sel.id) },
       z && { label: "Bring forward", icon: "front", run: () => moveZ(sel.id, 1) },
       z && { label: "Send backward", icon: "back", run: () => moveZ(sel.id, -1) },
@@ -1374,8 +1377,10 @@ function ContextBar({ sel, box, vp }) {
     ? [{ key: "text", label: "Text colour", value: sel.color, onChange: textColor }]
     : sel.kind === "shape" && sh
       ? [
-          !isLine(sh.type) && { key: "fill", label: "Fill", value: sh.fill, none: true, onChange: (v) => shapeUpd((x) => (x.fill = v ?? "none"), "fill") },
-          {
+          !isLine(sh.type) && { key: "fill", label: WORDED.includes(sh.type) ? "Colour" : "Fill", value: sh.fill, none: !WORDED.includes(sh.type), onChange: (v) => shapeUpd((x) => (x.fill = v ?? "none"), "fill") },
+          // Laurels, ratings and badges have no stroke: their words take the other colour.
+          WORDED.includes(sh.type) && { key: "label", label: "Words", value: sh.labelColor, onChange: (v) => shapeUpd((x) => (x.labelColor = v), "labelColor") },
+          !WORDED.includes(sh.type) && {
             key: "stroke",
             label: sh.type === "badge" ? "Ring" : isLine(sh.type) ? "Colour" : "Stroke",
             value: sh.strokeWidth > 0 ? sh.stroke : undefined,

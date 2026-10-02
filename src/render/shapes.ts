@@ -4,7 +4,9 @@
  * with this same code (the server hands the compiled file to the browser as /ui/shapes.js).
  */
 
-export const SHAPE_TYPES = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge", "laurel", "rating"] as const;
+export const SHAPE_TYPES = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge", "laurel", "rating", "burst", "ribbon", "bubble", "tag"] as const;
+/** Shapes that carry words of their own (in \`text\`), fitted inside them. */
+export const WORD_SHAPES = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
 export const ARROW_HEADS = ["end", "start", "both", "none"] as const;
 export const DASHES = ["solid", "dashed", "dotted"] as const;
@@ -66,6 +68,10 @@ export const SHAPE_DEFAULTS: Record<ShapeType, Partial<ShapeSpec>> = {
   badge: { fill: "#ff3b30", stroke: "#ffffff", strokeWidth: 0.0035, size: 0.045, aspect: 1, label: "1", labelColor: "#ffffff" },
   laurel: { fill: "#e9c46a", stroke: "none", size: 0.085, aspect: 2.5, text: "App of the Day" },
   rating: { fill: "#ffd60a", stroke: "none", size: 0.06, aspect: 3.4, value: 5 },
+  burst: { fill: "#ff3b30", stroke: "none", size: 0.1, aspect: 1, text: "NEW", labelColor: "#ffffff" },
+  ribbon: { fill: "#ffd60a", stroke: "none", size: 0.05, aspect: 4.2, text: "Try it free", labelColor: "#1d1d1f" },
+  bubble: { fill: "#ffffff", stroke: "none", size: 0.07, aspect: 2.2, text: "So easy!", labelColor: "#1d1d1f" },
+  tag: { fill: "#34c759", stroke: "none", size: 0.05, aspect: 2.4, text: "FREE", labelColor: "#ffffff" },
 };
 
 export const isLine = (t: ShapeType) => t === "arrow" || t === "line";
@@ -292,6 +298,84 @@ function laurelSvg(s: ShapeSpec, w: number, h: number): string {
   return `<g fill="${esc(s.fill)}" color="${esc(s.fill)}">${branch}<g transform="translate(${f(w)} 0) scale(-1 1)">${branch}</g></g>${words}`;
 }
 
+/**
+ * Words fitted in a box (w×h, its middle at cx, cy): one line or two, whichever lets them be bigger,
+ * up to `max` of the box's height for one line.
+ */
+function fittedWords(text: string, cx: number, cy: number, w: number, h: number, color: string, max = 0.5, weight = 800): string {
+  if (!text.trim()) return "";
+  // Two lines can each take up to nearly half the box; one line up to `max` of it.
+  const fit = (ls: string[]) => Math.min(h * (ls.length > 1 ? Math.min(max, 0.44) : max), w / (Math.max(1, ...ls.map((l) => l.length)) * EM_PER_CHAR));
+  const ls = lineChoices(text).reduce((a, b) => (fit(b) > fit(a) * 1.08 ? b : a));
+  const size = fit(ls);
+  const lead = size * 1.02;
+  let y = cy - ((ls.length - 1) * lead) / 2 + size * 0.36;
+  let out = "";
+  for (const l of ls) {
+    out += `<text x="${f(cx)}" y="${f(y)}" text-anchor="middle" font-family="${TEXT_FONT}" font-weight="${weight}" font-size="${f(size)}" letter-spacing="-0.01em" fill="${esc(color)}">${esc(l)}</text>`;
+    y += lead;
+  }
+  return out;
+}
+
+/** A darker shade of a colour, for a ribbon's folded ends. */
+const shade = (c: string, k: number) => `color-mix(in oklab, ${c} ${Math.round((1 - k) * 100)}%, black)`;
+
+/** A starburst seal round the words, like a price sticker: "NEW", "FREE", "50% off". */
+function burstSvg(s: ShapeSpec, w: number, h: number): string {
+  const n = 18;
+  const pts: Point[] = [];
+  for (let i = 0; i < n * 2; i++) {
+    const r = i % 2 ? 0.86 : 1;
+    const a = -Math.PI / 2 + (i * Math.PI) / n;
+    pts.push({ x: w / 2 + (w / 2) * r * Math.cos(a), y: h / 2 + (h / 2) * r * Math.sin(a) });
+  }
+  return `<path d="${pathOf(pts, true)}" fill="${esc(s.fill)}" stroke-linejoin="round"/>` + fittedWords(s.text, w / 2, h / 2, w * 0.66, h * 0.62, s.labelColor, 0.34);
+}
+
+/** A ribbon banner: a band with its ends folded back behind it, notched. */
+function ribbonSvg(s: ShapeSpec, w: number, h: number): string {
+  const end = Math.min(w * 0.13, h * 0.9);
+  const top = h * 0.2;
+  const band = { x0: end * 0.62, x1: w - end * 0.62, y0: 0, y1: h * 0.8 };
+  const notch = end * 0.34;
+  const tail = (left: boolean) => {
+    const xo = left ? 0 : w;
+    const xi = left ? end : w - end;
+    return `<path d="M${f(xi)} ${f(top)}L${f(xo)} ${f(top)}L${f(left ? notch : w - notch)} ${f((top + h) / 2)}L${f(xo)} ${f(h)}L${f(xi)} ${f(h)}Z" fill="${shade(s.fill, 0.22)}"/>` +
+      // The fold where the band turns back into the tail.
+      `<path d="M${f(left ? band.x0 : band.x1)} ${f(band.y1)}L${f(xi)} ${f(h)}L${f(xi)} ${f(band.y1)}Z" fill="${shade(s.fill, 0.42)}"/>`;
+  };
+  return (
+    tail(true) +
+    tail(false) +
+    `<rect x="${f(band.x0)}" y="0" width="${f(band.x1 - band.x0)}" height="${f(band.y1)}" rx="${f(h * 0.06)}" fill="${esc(s.fill)}"/>` +
+    fittedWords(s.text, w / 2, band.y1 / 2, band.x1 - band.x0 - h * 0.5, band.y1 * 0.9, s.labelColor, 0.62)
+  );
+}
+
+/** A speech bubble: a rounded box with a tail at the bottom left. */
+function bubbleSvg(s: ShapeSpec, w: number, h: number): string {
+  const bodyH = h * 0.8;
+  const r = Math.min(bodyH * 0.42, w * 0.2);
+  const t0 = Math.min(w * 0.18, bodyH * 0.6);
+  const d =
+    `M${f(r)} 0H${f(w - r)}A${f(r)} ${f(r)} 0 0 1 ${f(w)} ${f(r)}V${f(bodyH - r)}A${f(r)} ${f(r)} 0 0 1 ${f(w - r)} ${f(bodyH)}` +
+    `H${f(t0 + bodyH * 0.42)}L${f(t0 * 0.55)} ${f(h)}L${f(t0)} ${f(bodyH)}H${f(r)}A${f(r)} ${f(r)} 0 0 1 0 ${f(bodyH - r)}V${f(r)}A${f(r)} ${f(r)} 0 0 1 ${f(r)} 0Z`;
+  return `<path d="${d}" fill="${esc(s.fill)}" stroke-linejoin="round"/>` + fittedWords(s.text, w / 2, bodyH / 2, w - r * 1.1, bodyH * 0.84, s.labelColor, 0.5, 700);
+}
+
+/** A price tag: pointed at the left with a hole, the words on the rest. */
+function tagSvg(s: ShapeSpec, w: number, h: number): string {
+  const point = Math.min(h * 0.5, w * 0.25);
+  const r = h * 0.16;
+  const hole = h * 0.11;
+  const d =
+    `M${f(point)} 0H${f(w - r)}A${f(r)} ${f(r)} 0 0 1 ${f(w)} ${f(r)}V${f(h - r)}A${f(r)} ${f(r)} 0 0 1 ${f(w - r)} ${f(h)}H${f(point)}L0 ${f(h / 2)}Z` +
+    `M${f(point * 0.72 + hole)} ${f(h / 2)}A${f(hole)} ${f(hole)} 0 1 0 ${f(point * 0.72 - hole)} ${f(h / 2)}A${f(hole)} ${f(hole)} 0 1 0 ${f(point * 0.72 + hole)} ${f(h / 2)}Z`;
+  return `<path d="${d}" fill="${esc(s.fill)}" fill-rule="evenodd" stroke-linejoin="round"/>` + fittedWords(s.text, point + (w - point) / 2, h / 2, (w - point) * 0.84, h * 0.84, s.labelColor, 0.58);
+}
+
 let clips = 0;
 
 /** A rating: five stars filled to `value`, the rest faint, and a line of words under them. */
@@ -463,9 +547,13 @@ export function renderShape(s: ShapeSpec, W: number, H: number, opts: { hit?: nu
       break;
     }
     case "laurel":
-    case "rating": {
-      // Drawn whole: the wreath or stars, and their words, in the fill colour.
-      body = s.type === "laurel" ? laurelSvg(s, w, h) : ratingSvg(s, w, h);
+    case "rating":
+    case "burst":
+    case "ribbon":
+    case "bubble":
+    case "tag": {
+      // Drawn whole: the shape and its words.
+      body = { laurel: laurelSvg, rating: ratingSvg, burst: burstSvg, ribbon: ribbonSvg, bubble: bubbleSvg, tag: tagSvg }[s.type](s, w, h);
       if (opts.hit) body += `<rect class="hit" x="0" y="0" width="${f(w)}" height="${f(h)}" fill="transparent" stroke="none" pointer-events="all"/>`;
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${f(w)}" height="${f(h)}" viewBox="0 0 ${f(w)} ${f(h)}" style="display:block;overflow:visible"><g opacity="${s.opacity}">${body}</g></svg>`;
       return { left: s.x * W - w / 2, top: s.y * H - h / 2, width: w, height: h, rotate: s.rotate, filter, svg };

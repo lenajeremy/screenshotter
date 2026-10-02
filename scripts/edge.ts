@@ -531,6 +531,26 @@ await check("marks draw in, stars fill up, clay changes colour and images animat
   assert(img && Math.abs(img.dx - 100) < 1 && Math.abs(img.sx - 1.5) < 0.01, `an image moves and grows: ${JSON.stringify(img)}`);
 });
 
+await check("badges hold their words, and built-in stickers resolve by name", async () => {
+  const { renderShape, shapeSpec } = await import("../src/render/shapes.js");
+  const { layoutScene } = await import("../src/render/mockup.js");
+  const { stickerNames } = await import("../src/render/images.js");
+  for (const [type, words] of [["burst", "NEW"], ["ribbon", "Try it free"], ["bubble", "So easy!"], ["tag", "FREE"]] as const) {
+    const svg = renderShape(shapeSpec({ type }), 1000, 1000).svg;
+    assert(svg.includes(`>${words}</text>`), `a ${type} says "${words}" by default`);
+  }
+  const two = renderShape(shapeSpec({ type: "burst", text: "Brand new" }), 1000, 1000).svg;
+  assert((two.match(/<text/g) ?? []).length === 2, "a burst puts two words on two lines when that's bigger");
+  const tag = renderShape(shapeSpec({ type: "tag" }), 1000, 1000).svg;
+  assert(/fill-rule="evenodd"/.test(tag), "a tag has its hole punched through");
+  const names = stickerNames();
+  assert(names.length >= 20 && names.includes("heart") && names.includes("rocket"), `the stickers are there: ${names.join(", ")}`);
+  const layout = await layoutScene({ devices: [], canvas: "1000x1000", layout: "custom", images: [{ src: "sticker:heart", height: 0.2 }, { src: "sticker:nope" }] } as never);
+  const heart = layout.entities.find((e) => e.id === "image-1");
+  assert(heart && /stickers[\\/]heart\.svg$/.test(heart.src ?? "") && Math.abs(heart.width - 0.2) < 0.001, `sticker:heart is the square heart: ${JSON.stringify(heart)}`);
+  assert(layout.warnings.some((w) => /no sticker called nope/.test(w)), `an unknown sticker is left out with a warning: ${layout.warnings}`);
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

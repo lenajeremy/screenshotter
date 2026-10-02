@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -348,7 +348,42 @@ export const SHAPE_KINDS = [
   // Awards and ratings start gold unless another colour is picked: red reads as a warning.
   { id: "laurel", label: "Laurel", icon: "star", group: "award", make: (tint) => ({ type: "laurel", fill: awardTint(tint, "#e9c46a"), text: "App of the Day", size: 0.085, aspect: 2.5 }) },
   { id: "rating", label: "Rating", icon: "star", group: "award", make: (tint) => ({ type: "rating", fill: awardTint(tint, "#ffd60a"), value: 5, text: "4.9 · 2K ratings", size: 0.06, aspect: 3.4 }) },
+  { id: "burst", label: "Burst", icon: "star", group: "award", make: (tint) => ({ type: "burst", fill: tint, text: "NEW", labelColor: "#ffffff", size: 0.09, rotate: -10 }) },
+  { id: "ribbon", label: "Ribbon", icon: "star", group: "award", make: (tint) => ({ type: "ribbon", fill: awardTint(tint, "#ffd60a"), text: "Try it free", labelColor: "#1d1d1f", size: 0.045, aspect: 4.4 }) },
+  { id: "bubble", label: "Bubble", icon: "star", group: "award", make: () => ({ type: "bubble", fill: "#ffffff", text: "So easy!", labelColor: "#1d1d1f", size: 0.06, aspect: 2.4 }) },
+  { id: "tag", label: "Tag", icon: "star", group: "award", make: (tint) => ({ type: "tag", fill: awardTint(tint, "#34c759"), text: "FREE", labelColor: "#ffffff", size: 0.045, aspect: 2.4 }) },
 ];
+
+/** Ready-made badges for a simple app's screenshots: change their words to your own. */
+export const BADGE_PRESETS = [
+  { id: "new", label: "New", shape: { type: "burst", text: "NEW", fill: "#ff3b30", labelColor: "#ffffff", size: 0.09, rotate: -10 } },
+  { id: "free", label: "Free", shape: { type: "tag", text: "FREE", fill: "#34c759", labelColor: "#ffffff", size: 0.045, aspect: 2.4 } },
+  { id: "try", label: "Try it free", shape: { type: "ribbon", text: "Try it free", fill: "#ffd60a", labelColor: "#1d1d1f", size: 0.045, aspect: 4.4 } },
+  { id: "bubble", label: "Speech bubble", shape: { type: "bubble", text: "So easy!", fill: "#ffffff", labelColor: "#1d1d1f", size: 0.06, aspect: 2.4 } },
+  { id: "sale", label: "Sale", shape: { type: "burst", text: "50% off", fill: "#ffd60a", labelColor: "#1d1d1f", size: 0.09, rotate: 8 } },
+  { id: "noads", label: "No ads", shape: { type: "tag", text: "No ads", fill: "#5b5bd6", labelColor: "#ffffff", size: 0.045, aspect: 3.2 } },
+];
+
+/** Ready-made awards and ratings: placeholders for ones the app has really had. */
+export const AWARD_PRESETS = [
+  { id: "aotd", label: "App of the Day", shape: { type: "laurel", text: "App of the Day", fill: "#e9c46a", size: 0.075, aspect: 2.6 } },
+  { id: "editors", label: "Editors' Choice", shape: { type: "laurel", text: "Editors' Choice", fill: "#e9c46a", size: 0.075, aspect: 2.6 } },
+  { id: "top", label: "#1 in a category", shape: { type: "laurel", text: "#1 in Food & Drink", caption: "App Store", fill: "#ffffff", size: 0.08, aspect: 2.7 } },
+  { id: "featured", label: "Featured", shape: { type: "laurel", text: "Featured", caption: "App Store", fill: "#ffffff", size: 0.075, aspect: 2.4 } },
+  { id: "rating", label: "Five stars", shape: { type: "rating", value: 5, text: "4.9 · 2K ratings", fill: "#ffd60a", size: 0.055, aspect: 3.4 } },
+  { id: "loved", label: "Loved by", shape: { type: "laurel", text: "Loved by 10,000+", caption: "people", fill: "#e9c46a", size: 0.075, aspect: 2.6 } },
+];
+
+/** Put a ready-made shape on the design: near the top middle, staggered so a few don't stack. */
+export function addPresetShape(spec, { at } = {}) {
+  const shapes = S.scene.shapes ?? [];
+  if (shapes.length >= 40) return toast({ kind: "warn", title: "Forty shapes is the limit" });
+  const off = (shapes.length % 5) * 0.035;
+  const c = at ?? { x: 0.5 + off, y: 0.16 + off };
+  edit((d) => (d.shapes = [...(d.shapes ?? []), { ...clone(spec), x: r4(c.x), y: r4(c.y) }]));
+  touch("shape");
+  set({ selected: `shape-${shapes.length + 1}`, view: "canvas" });
+}
 
 function awardTint(tint, gold) {
   return !tint || tint.toLowerCase() === "#ff3b30" ? gold : tint;
@@ -411,8 +446,55 @@ export async function uploadImages(files) {
 export const IMAGE_LOOKS = {
   picture: {},
   icon: { mask: "icon", shadow: true, height: 0.1 },
-  sticker: { sticker: true, height: 0.12 },
+  sticker: { sticker: true, height: 0.12, rotate: 8 },
 };
+
+/**
+ * What a picture probably is, from its shape and whether its corners are see-through: a wide cut-out
+ * is a logo (small, at the top), an opaque square an app icon, any other cut-out a sticker, and the
+ * rest a photo (rounded, with a shadow).
+ */
+export function guessLook(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || 1;
+      const h = img.naturalHeight || 1;
+      const ratio = w / h;
+      let clear = /\.svg$/i.test(src);
+      try {
+        const c = document.createElement("canvas");
+        c.width = 32;
+        c.height = Math.max(2, Math.round(32 / ratio));
+        const g = c.getContext("2d");
+        g.drawImage(img, 0, 0, c.width, c.height);
+        const alpha = (x, y) => g.getImageData(x, y, 1, 1).data[3];
+        clear = [alpha(0, 0), alpha(c.width - 1, 0), alpha(0, c.height - 1), alpha(c.width - 1, c.height - 1)].some((a) => a < 40);
+      } catch {
+        // Unreadable: go by its shape alone.
+      }
+      if (ratio >= 1.8) resolve({ height: 0.045, x: 0.5, y: 0.065 });
+      else if (!clear && ratio > 0.9 && ratio < 1.1) resolve(IMAGE_LOOKS.icon);
+      else if (clear) resolve(IMAGE_LOOKS.sticker);
+      else resolve({ radius: 0.06, shadow: true, height: 0.2 });
+    };
+    img.onerror = () => resolve({});
+    img.src = pictureUrl(src);
+  });
+}
+
+/** Add a picture with the look chosen in the Images panel (Auto guesses it). */
+export async function addPicture(src, { at } = {}) {
+  const as = S.imageAs ?? "auto";
+  const look = as === "auto" ? await guessLook(src) : (IMAGE_LOOKS[as] ?? {});
+  addImage(src, { at, look });
+}
+
+/** A built-in sticker, its die-cut edge on, tilted a little one way or the other. */
+export function addSticker(name) {
+  const n = (S.scene.images ?? []).length;
+  addImage(`sticker:${name}`, { look: { sticker: true, height: 0.11, rotate: n % 2 ? -8 : 8 } });
+}
 
 /**
  * Put a picture on the screen: a logo, an icon, a sticker. In free space near the top middle
@@ -575,8 +657,8 @@ export function captureMac() {
 }
 
 export async function uploadFiles(files, { at, replace, device } = {}) {
-  const list = [...files].filter((f) => /\.(png|jpe?g|webp|mp4|mov)$/i.test(f.name) || /^image\/|^video\//.test(f.type));
-  if (!list.length) return toast({ kind: "warn", title: "Drop PNG, JPEG, WebP, MP4 or MOV files" });
+  const list = [...files].filter((f) => /\.(png|jpe?g|webp|gif|svg|mp4|mov)$/i.test(f.name) || /^image\/|^video\//.test(f.type));
+  if (!list.length) return toast({ kind: "warn", title: "Drop PNG, JPEG, WebP, SVG, MP4 or MOV files" });
   const big = list.some((f) => f.size > 200 * 1024 * 1024);
   return task(list.length > 1 ? `Importing ${list.length} files…` : big ? "Importing a large recording…" : "Importing…", async () => {
     const items = [];
@@ -589,6 +671,9 @@ export async function uploadFiles(files, { at, replace, device } = {}) {
     placeImports(items, { at, replace, device });
   });
 }
+
+/** A file that goes on as an image block rather than as a screenshot. */
+const isPicture = (p) => /\.(svg|gif)$/i.test(p) || /[\\/]images[\\/][^\\/]+$/.test(p);
 
 /** Aspect ratio (width / height) of a device's screen on the canvas. */
 function screenAspect(e) {
@@ -606,6 +691,14 @@ function screenAspect(e) {
  */
 export function placeImports(items, { at, replace, device } = {}) {
   items = items.map((i) => (typeof i === "string" ? { path: i } : i)).filter((i) => i?.path);
+  // SVGs and GIFs (and anything filed under images/) are pictures, not screenshots: image blocks.
+  const pictures = items.filter((i) => isPicture(i.path));
+  if (pictures.length) {
+    for (const p of pictures) addPicture(p.path, { at });
+    set({ imagesStamp: Date.now() });
+    items = items.filter((i) => !isPicture(i.path));
+    if (!items.length) return;
+  }
   const images = items.filter((i) => !isVideo(i.path)).map((i) => i.path);
   const videos = items.filter((i) => isVideo(i.path));
   if (replace && images[0]) useCapture(images[0]);

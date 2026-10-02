@@ -11,7 +11,7 @@ import { captureWeb, WEB_VIEWPORTS } from "../capture/web.js";
 import { DEVICE_MODELS, GENERIC_COLORS, findModel } from "../devices/catalog.js";
 import { recognizeText, warmUpOcr } from "../native/ocr.js";
 import { getBrowser } from "../render/browser.js";
-import { svgSize } from "../render/images.js";
+import { stickerNames, svgSize } from "../render/images.js";
 import { CLAY_TONES } from "../render/frame.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
@@ -271,6 +271,7 @@ async function options() {
     webViewports: Object.keys(WEB_VIEWPORTS),
     bezels: bezelSummary(),
     clayTones: CLAY_TONES,
+    stickers: stickerNames(),
     aiProviders: [
       process.env.OPENAI_API_KEY && "openai",
       (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) && "gemini",
@@ -658,7 +659,8 @@ const UPLOAD_LIMIT = 4 * 1024 * 1024 * 1024;
 async function upload(req: http.IncomingMessage, url: URL) {
   const raw = url.searchParams.get("name") ?? "upload";
   const ext = (path.extname(raw).toLowerCase() || ".png").replace(/[^.a-z0-9]/g, "");
-  const kind = url.searchParams.get("kind");
+  // An SVG or GIF is never a screenshot: whichever way it arrives, it's a picture for an image block.
+  const kind = [".svg", ".gif"].includes(ext) && url.searchParams.get("kind") !== "backdrop" ? "image" : url.searchParams.get("kind");
   if (kind === "image" ? ![".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext) : ![".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"].includes(ext))
     throw new HttpError(400, kind === "image" ? "Add a PNG, JPEG, WebP, GIF or SVG" : "Upload a PNG, JPEG, WebP, MP4 or MOV");
   const folder = kind === "backdrop" ? "backdrops" : kind === "image" ? "images" : "uploads";

@@ -44,8 +44,7 @@ import {
   renderPreview,
   reveal,
   uploadFiles,
-  IMAGE_LOOKS,
-  addImage,
+  addPicture,
   uploadImages,
   useCapture,
   goToShot,
@@ -1799,7 +1798,7 @@ function entityMenu(id) {
     return [
       { label: `Ask AI about this ${entityLabel(id).toLowerCase()}…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
       "-",
-      sh.type !== "laurel" && sh.type !== "rating" && { label: sh.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => editScene((sc) => (sc.shapes[i].sketch = sh.sketch ? undefined : true)) },
+      !["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(sh.type) && { label: sh.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => editScene((sc) => (sc.shapes[i].sketch = sh.sketch ? undefined : true)) },
       { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },
       { label: "Bring forward", icon: "front", run: () => moveZ(id, 1) },
       { label: "Send backward", icon: "back", run: () => moveZ(id, -1) },
@@ -1922,7 +1921,7 @@ window.addEventListener("drop", (e) => {
   const files = [...e.dataTransfer.files];
   // With the Images panel open, pictures dropped on the design go on as image blocks.
   if (!S.scenesPage && S.leftOpen && S.leftTab === "images" && files.every((f) => /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name))) {
-    return uploadImages(files).then((paths) => paths.forEach((p) => addImage(p, { look: (IMAGE_LOOKS[S.imageAs] ?? {}) })));
+    return uploadImages(files).then((paths) => paths.forEach((p) => addPicture(p)));
   }
   // On the Scenes page, a drop starts a new scene with the files.
   if (S.scenesPage) return newScene().then(() => (closeScenesPage(), uploadFiles(files)));

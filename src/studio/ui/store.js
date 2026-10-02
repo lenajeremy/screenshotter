@@ -619,8 +619,12 @@ export function aiVia() {
 }
 export const IMAGE_PROVIDERS = { openai: "OpenAI", gemini: "Gemini", replicate: "Replicate", fal: "fal" };
 
+/** Where the canvas finds a picture: a built-in sticker ("sticker:heart") or a file. */
+export const pictureUrl = (src) => (/^sticker:/i.test(src ?? "") ? `/ui/stickers/${src.slice(8).toLowerCase()}.svg` : fileUrl(src));
+
 /** A picture's own name, without the timestamp the library adds: "logo-20261002-082507-857.svg" is "Logo". */
 export function pictureName(src) {
+  if (/^sticker:/i.test(src ?? "")) return `${src[8].toUpperCase()}${src.slice(9)} sticker`;
   const name = String(src ?? "").split("/").pop().replace(/\.[a-z0-9]+$/i, "").replace(/-\d{8}-\d{6}(-\d{3})?$/, "").replace(/[-_]+/g, " ").trim();
   return name ? name[0].toUpperCase() + name.slice(1, 28) : "Image";
 }
@@ -646,6 +650,7 @@ export function entityLabel(id, scene = S.scene, layout = S.layout) {
     if (sh.type === "rect") return (e?.fill ?? sh.fill ?? "none") === "none" ? "Box" : (e?.radius ?? sh.radius) >= 0.5 ? "Pill" : "Rectangle";
     if (sh.type === "laurel") return (sh.text ?? "Laurel").replace(/\\n|\n/g, " ").slice(0, 28) || "Laurel";
     if (sh.type === "rating") return `Rating ${sh.value ?? 5}`;
+    if (["burst", "ribbon", "bubble", "tag"].includes(sh.type)) return (sh.text ?? { burst: "NEW", ribbon: "Try it free", bubble: "So easy!", tag: "FREE" }[sh.type]).replace(/\\n|\n/g, " ").slice(0, 28);
     return { arrow: "Arrow", line: "Line", triangle: "Triangle", star: "Star" }[sh.type] ?? "Shape";
   }
   if (kind === "device") {

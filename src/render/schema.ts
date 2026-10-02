@@ -323,7 +323,7 @@ export const TextInputSchema = z.object({
 // Image blocks
 
 export const ImageBlockSchema = z.object({
-  src: z.string().describe("A PNG, JPEG, WebP, GIF or SVG: a path, or an https URL. A logo, the app icon, a sticker, a photo."),
+  src: z.string().describe('A PNG, JPEG, WebP, GIF or SVG: a path, or an https URL. A logo, the app icon, a photo. Or a built-in sticker, "sticker:<name>" (list_mockup_options lists them, e.g. "sticker:heart"), best with sticker: true.'),
   x: z.number().optional().describe("Centre x as a fraction of the canvas width. Default 0.5."),
   y: z.number().optional().describe("Centre y as a fraction of the canvas height. Default 0.5."),
   height: z.number().positive().max(5).optional().describe("Height as a fraction of the canvas height (the width follows the picture's shape). Default 0.12."),
@@ -348,7 +348,7 @@ const PointSchema = z.object({ x: z.number().describe("0 = left edge, 1 = right 
 export const ShapeInputSchema = z.object({
   type: z
     .enum(SHAPE_TYPES)
-    .describe("arrow, line, ellipse (circles and ovals), rect (boxes, rounded or pill), triangle, star, badge (a filled circle with a number or letter, for steps), laurel (an award wreath round your words, e.g. \"App of the Day\"), rating (five stars filled to `value`, with a line under them)."),
+    .describe("arrow, line, ellipse (circles and ovals), rect (boxes, rounded or pill), triangle, star, badge (a filled circle with a number or letter, for steps), laurel (an award wreath round your words, e.g. \"App of the Day\"), rating (five stars filled to `value`, with a line under them); badges with your words in \`text\`: burst (a starburst seal, \"NEW\"), ribbon (a banner, \"Try it free\"), bubble (a speech bubble, \"So easy!\"), tag (a price tag, \"FREE\"), coloured by \`fill\` and \`labelColor\`."),
   x: z.number().optional().describe("Box shapes: centre x as a fraction of the canvas width. Default 0.5 (ignored with `around`)."),
   y: z.number().optional().describe("Centre y as a fraction of the canvas height. Default 0.5."),
   size: z.number().positive().max(2).optional().describe("Box shapes: height as a fraction of the canvas height (badge default 0.045, ellipse 0.1)."),

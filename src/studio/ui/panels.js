@@ -2,13 +2,16 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, touch, useStore, pictureUrl } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import {
   SHAPE_KINDS,
   TEXT_PRESETS,
-  IMAGE_LOOKS,
-  addImage,
+  AWARD_PRESETS,
+  BADGE_PRESETS,
+  addPicture,
+  addPresetShape,
+  addSticker,
   replaceImage,
   uploadImages,
   addShape,
@@ -736,15 +739,15 @@ export function ShapesPanel() {
       <${Section} title="Shapes">
         <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "solid").map(tile)}</div>
       <//>
-      <${Section} title="Awards and ratings">
-        <div class="shape-tiles wide">${SHAPE_KINDS.filter((k) => k.group === "award").map(tile)}</div>
-        <div class="note">Your words go in the wreath or under the stars. Only claim what's true.</div>
+      <${Section} title="Badges and awards">
+        <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "award").map(tile)}</div>
+        <div class="note">Each holds your own words. Only claim what's true. More ready-made ones are in Images.</div>
       <//>
       ${shapes.length > 0 &&
       html`<${Section} title="In this design" count=${shapes.length}>
         ${shapes.map((sh, i) => {
           const id = `shape-${i + 1}`;
-          const icon = { arrow: "arrow", line: "line", ellipse: sh.sketch ? "circled" : "ellipse", rect: "square", triangle: "triangle", star: "star", badge: "badge", laurel: "star", rating: "star" }[sh.type];
+          const icon = { arrow: "arrow", line: "line", ellipse: sh.sketch ? "circled" : "ellipse", rect: "square", triangle: "triangle", star: "star", badge: "badge" }[sh.type] ?? "star";
           return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
             <span class="thumb" style=${{ color: sh.stroke && sh.stroke !== "none" ? sh.stroke : sh.fill && sh.fill !== "none" ? sh.fill : undefined }}><${Icon} n=${icon} s=${13} /></span>
             <span class="nm">${entityLabel(id)}${sh.around ? html` <span class="faint">on “${sh.around.text}”</span>` : ""}</span>
@@ -770,11 +773,13 @@ export function ShapesPanel() {
 // =============================================================================================
 // Images
 
-// How a picture goes on: as it is, as an app icon (Apple's icon outline and a shadow), or a sticker.
+// How a picture goes on: Auto guesses (a logo, an app icon, a sticker or a photo), or as it is, as an
+// app icon (Apple's icon outline and a shadow), or a sticker.
 const IMAGE_AS = [
-  { value: "picture", label: "Picture", look: IMAGE_LOOKS.picture },
-  { value: "icon", label: "App icon", look: IMAGE_LOOKS.icon },
-  { value: "sticker", label: "Sticker", look: IMAGE_LOOKS.sticker },
+  { value: "auto", label: "Auto" },
+  { value: "picture", label: "Plain" },
+  { value: "icon", label: "Icon" },
+  { value: "sticker", label: "Sticker" },
 ];
 
 export function ImagesPanel() {
@@ -794,8 +799,12 @@ export function ImagesPanel() {
     if (replacing) {
       replaceImage(replacing, p);
       set({ replacingImage: null, selected: replacing });
-    } else addImage(p, { look: as.look });
+    } else addPicture(p);
   };
+  const preset = (p) => html`<div class="shape-tile" role="button" tabindex="0" title=${`Add ${p.label.toLowerCase()}, then change its words`}
+      onClick=${() => addPresetShape(p.shape)} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addPresetShape(p.shape))}>
+    <${ShapePreview} kind=${{ make: () => p.shape }} tint=${p.shape.fill} /><span class="nm">${p.label}</span>
+  </div>`;
   const add = async (files) => {
     const paths = await uploadImages(files);
     // One picture goes straight on (or in, when replacing); several wait in the library.
@@ -829,6 +838,18 @@ export function ImagesPanel() {
         e.target.value = "";
         if (files.length) add(files);
       }} />
+      ${!replacing &&
+      html`<${Section} title="Stickers" count=${s.opts?.stickers?.length}>
+        <div class="sticker-grid">${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: click to add it`} onClick=${() => addSticker(n)}><img loading="lazy" src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
+      <//>
+      <${Section} title="Badges">
+        <div class="shape-tiles">${BADGE_PRESETS.map(preset)}</div>
+        <div class="note">Select one to change its words in the panel on the right.</div>
+      <//>
+      <${Section} title="Awards and ratings">
+        <div class="shape-tiles">${AWARD_PRESETS.map(preset)}</div>
+        <div class="note">Placeholders: put in an award, rating or count your app has really had.</div>
+      <//>`}
       ${lib?.length > 0 &&
       html`<${Section} title="Your pictures" count=${lib.length}>
         <div class="image-grid">${lib.map((f) => html`<button key=${f.path} title=${`${pictureName(f.path)}: click to ${replacing ? "use it" : "add it"}`} onClick=${() => use(f.path)}><img loading="lazy" src=${fileUrl(f.path)} /></button>`)}</div>
@@ -838,7 +859,7 @@ export function ImagesPanel() {
         ${images.map((b, i) => {
           const id = `image-${i + 1}`;
           return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
-            <span class="thumb img"><img src=${fileUrl(b.src)} /></span>
+            <span class="thumb img"><img src=${pictureUrl(b.src)} /></span>
             <span class="nm">${entityLabel(id)}</span>
             <button class="icon-btn sm" title="Remove" onClick=${(e) => {
               e.stopPropagation();
