@@ -196,7 +196,7 @@ const useShot = () => useContext(ShotCtx) ?? { scene: S.scene, layout: S.layout,
 
 function place(e, W, H) {
   if (e.kind === "shape") return placeShape(e, W, H);
-  if (e.kind === "device") {
+  if (e.kind === "device" || e.kind === "image") {
     return {
       left: e.x * W + "px",
       top: e.y * H + "px",
@@ -266,6 +266,32 @@ function DeviceEnt({ e, W, H }) {
     ${e.bezel && (e.clay ? html`<${ClayArt} e=${e} s=${s} bw=${bw} />` : html`<img class="bezel-art" draggable=${false} src=${fileUrl(e.bezel)} />`)}
   </div>
   ${tags.length > 0 && html`<span class="tag">${tags.join(" · ")}</span>`}`;
+}
+
+/**
+ * An image block, drawn as the render draws it (render/images.ts imageLook): its corners or app-icon
+ * outline, a sticker's white edge and shadows that follow the picture's outline, soft focus, opacity.
+ */
+function ImageEnt({ e, W, H }) {
+  const { scene, layout } = useShot();
+  const b = scene.images?.[e.index] ?? {};
+  const w = e.width * W;
+  const h = e.height * H;
+  const short = Math.min(w, h);
+  const filters = [];
+  if (b.sticker) {
+    const t = Math.max(1, short * 0.035);
+    filters.push(`drop-shadow(${t}px 0 0 #fff)`, `drop-shadow(-${t}px 0 0 #fff)`, `drop-shadow(0 ${t}px 0 #fff)`, `drop-shadow(0 -${t}px 0 #fff)`);
+  }
+  if (b.shadow || b.sticker) filters.push(`drop-shadow(0 ${short * 0.03}px ${short * 0.06}px rgba(0,0,0,${b.sticker ? 0.28 : 0.35}))`);
+  const cw = layout?.canvas.width || W;
+  const soft = !b.blur ? 0 : b.blur <= 0.5 ? b.blur * W : (b.blur * W) / cw;
+  if (blurAnimated(e.id, scene)) filters.push(`blur(var(--ablur, ${soft}px))`);
+  else if (soft > 0.05) filters.push(`blur(${soft}px)`);
+  const corners = b.mask === "icon" ? { borderRadius: "22.4%", cornerShape: "superellipse(1.35)" } : b.mask === "circle" ? { borderRadius: "50%" } : b.radius ? { borderRadius: b.radius * short + "px" } : {};
+  return html`<div class="image-body" style=${{ filter: filters.join(" ") || undefined, opacity: b.opacity ?? undefined }}>
+    <img draggable=${false} src=${fileUrl(e.src ?? b.src)} style=${{ ...corners, transform: b.flip ? "scaleX(-1)" : undefined }} />
+  </div>`;
 }
 
 /**
@@ -412,7 +438,7 @@ function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging 
         ${scene.menuBar && html`<${SceneMenuBar} bar=${scene.menuBar} H=${gh} />`}
         ${layout.entities.map(
           (e) => html`<div key=${e.id} class="ent ent-${e.kind}" data-id=${e.id} style=${place(e, gw, gh)}>
-            ${e.kind === "shape" ? html`<${ShapeEnt} e=${e} W=${gw} H=${gh} />` : e.kind === "device" ? html`<${DeviceEnt} e=${e} W=${gw} H=${gh} />` : html`<${TextEnt} e=${e} H=${gh} editing=${null} onDone=${() => undefined} />`}
+            ${e.kind === "shape" ? html`<${ShapeEnt} e=${e} W=${gw} H=${gh} />` : e.kind === "device" ? html`<${DeviceEnt} e=${e} W=${gw} H=${gh} />` : e.kind === "image" ? html`<${ImageEnt} e=${e} W=${gw} H=${gh} />` : html`<${TextEnt} e=${e} H=${gh} editing=${null} onDone=${() => undefined} />`}
           </div>`,
         )}
       </div>
@@ -829,7 +855,7 @@ export function CanvasView() {
         const f = clamp(d1 / d0, 0.05, 12);
         if (sh0) {
           cur = withShape(e0, (sh) => (sh.size = Math.max(0.004, sh0.size * f)), W0, H0);
-        } else if (cur.kind === "device") {
+        } else if (cur.kind === "device" || cur.kind === "image") {
           cur.width = e0.width * f;
           cur.height = e0.height * f;
         } else {
@@ -869,6 +895,8 @@ export function CanvasView() {
       setEditing({ id, part });
     } else if (id.startsWith("device-")) {
       replaceMode(id);
+    } else if (id.startsWith("image-")) {
+      set({ selected: id, replacingImage: id, leftTab: "images", leftOpen: true });
     }
   };
 
@@ -990,6 +1018,8 @@ export function CanvasView() {
               ? html`<${ShapeEnt} e=${e} W=${W} H=${H} />`
               : e.kind === "device"
               ? html`<${DeviceEnt} e=${e} W=${W} H=${H} />`
+              : e.kind === "image"
+              ? html`<${ImageEnt} e=${e} W=${W} H=${H} />`
               : html`<${TextEnt} e=${e} H=${H} editing=${editing?.id === e.id ? editing.part : null} onDone=${finishEdit} />`}
           </div>`,
         )}
@@ -1130,7 +1160,7 @@ function canvasName(name) {
 }
 
 function selectionBox(e, W, H, el) {
-  if (e.kind === "device" || e.kind === "shape") {
+  if (e.kind === "device" || e.kind === "shape" || e.kind === "image") {
     return {
       left: e.x * W - (e.width * W) / 2 + "px",
       top: e.y * H - (e.height * H) / 2 + "px",
@@ -1166,7 +1196,7 @@ function dimsText(e, mode, W0, H0) {
       return `${Math.round(len)} px  ·  ${Math.round(-ang)}°`;
     }
   }
-  if (mode === "resize") return e.kind === "device" ? `H ${Math.round(e.height * 1000) / 10}%  ·  ${Math.round(e.width * W0)}×${Math.round(e.height * H0)}` : `${Math.round(e.size * H0)} px`;
+  if (mode === "resize") return e.kind === "device" || e.kind === "image" ? `H ${Math.round(e.height * 1000) / 10}%  ·  ${Math.round(e.width * W0)}×${Math.round(e.height * H0)}` : `${Math.round(e.size * H0)} px`;
   return `X ${Math.round(e.x * 1000) / 10}%  Y ${Math.round(e.y * 1000) / 10}%`;
 }
 
@@ -1199,6 +1229,13 @@ function commit(e) {
         Object.assign(sh, { x: r4(g.x), y: r4(g.y), size: r4(g.size), aspect: Math.round(g.aspect * 1000) / 1000, rotate: Math.round((g.rotate || 0) * 2) / 2 });
         if (!sh.rotate) delete sh.rotate;
       }
+    } else if (e.kind === "image") {
+      const b = d.images?.[e.index];
+      if (!b) return;
+      // A block given both sides keeps its shape as it's scaled; otherwise its height sets its size.
+      Object.assign(b, { x: r4(e.x), y: r4(e.y), height: r4(clamp(e.height, 0.005, 5)), rotate: Math.round((e.rotate || 0) * 2) / 2 });
+      if (b.width !== undefined) b.width = r4(e.width);
+      if (!b.rotate) delete b.rotate;
     } else if (e.kind === "caption") {
       d.textStyle = { ...(d.textStyle ?? {}), x: r4(e.x), y: r4(e.y), anchor: e.anchor ?? "top", align: e.align ?? "center", headlineSize: r4(e.size) };
       if (e.subSize) d.textStyle.subheadlineSize = r4(e.subSize);

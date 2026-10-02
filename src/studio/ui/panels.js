@@ -2,11 +2,15 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, isVideo, persistPrefs, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, touch, useStore } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import {
   SHAPE_KINDS,
   TEXT_PRESETS,
+  IMAGE_LOOKS,
+  addImage,
+  replaceImage,
+  uploadImages,
   addShape,
   setBackdropAcross,
   deleteEntity,
@@ -754,6 +758,90 @@ export function ShapesPanel() {
         ${ocr
           ? html`<div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => addShape(s.shapeMark, { tint, around: { device: di + 1 > 1 ? di + 1 : undefined, text: b.text } })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`
           : html`<button class="btn sm block" onClick=${find} disabled=${busy}>${busy ? html`<span class="spinner"></span>` : html`<${Icon} n="search" s=${12} />`}Find the text${devices.length > 1 ? ` on ${entityLabel(`device-${di + 1}`)}` : ""}</button>`}
+      <//>`}
+    </div>
+  </div>`;
+}
+
+// =============================================================================================
+// Images
+
+// How a picture goes on: as it is, as an app icon (Apple's icon outline and a shadow), or a sticker.
+const IMAGE_AS = [
+  { value: "picture", label: "Picture", look: IMAGE_LOOKS.picture },
+  { value: "icon", label: "App icon", look: IMAGE_LOOKS.icon },
+  { value: "sticker", label: "Sticker", look: IMAGE_LOOKS.sticker },
+];
+
+export function ImagesPanel() {
+  const s = useStore();
+  const [lib, setLib] = useState(null);
+  const [over, setOver] = useState(false);
+  const file = useRef();
+  useEffect(() => {
+    api("/api/images")
+      .then((r) => setLib(r.images))
+      .catch(() => setLib([]));
+  }, [s.imagesStamp]);
+  const images = s.scene.images ?? [];
+  const replacing = s.replacingImage && images[Number(s.replacingImage.split("-")[1]) - 1] ? s.replacingImage : null;
+  const as = IMAGE_AS.find((a) => a.value === s.imageAs) ?? IMAGE_AS[0];
+  const use = (p) => {
+    if (replacing) {
+      replaceImage(replacing, p);
+      set({ replacingImage: null, selected: replacing });
+    } else addImage(p, { look: as.look });
+  };
+  const add = async (files) => {
+    const paths = await uploadImages(files);
+    // One picture goes straight on (or in, when replacing); several wait in the library.
+    if (paths.length === 1 || (replacing && paths.length)) use(paths[0]);
+  };
+  return html`<div class="panel left">
+    <div class="panel-head"><h2>Images</h2>${images.length > 0 && html`<span class="sub">${images.length}</span>`}</div>
+    <div class="panel-body">
+      ${replacing
+        ? html`<div class="follow-note"><${Icon} n="replace" s=${13} /><span>Choose a picture for <b>${entityLabel(replacing)}</b>.</span><button class="btn sm ghost" onClick=${() => set({ replacingImage: null })}>Cancel</button></div>`
+        : html`<div class="intro">Logos, your app icon, stickers or any picture. Add one, then move, size, turn and style it like a shape.</div>`}
+      ${!replacing && html`<div class="row"><label>Add as</label><${Seg} value=${as.value} options=${IMAGE_AS} onChange=${(v) => set({ imageAs: v })} /></div>`}
+      <div class="image-drop ${over ? "over" : ""}"
+        onDragOver=${(e) => {
+          if (![...(e.dataTransfer?.types ?? [])].includes("Files")) return;
+          e.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave=${() => setOver(false)}
+        onDrop=${(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOver(false);
+          add([...e.dataTransfer.files]);
+        }}>
+        <button class="btn block" onClick=${() => file.current.click()}><${Icon} n="upload" s=${14} />Add a picture…</button>
+        <span>or drop a PNG, JPEG, WebP, GIF or SVG here</span>
+      </div>
+      <input type="file" ref=${file} hidden multiple accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange=${(e) => {
+        const files = [...e.target.files];
+        e.target.value = "";
+        if (files.length) add(files);
+      }} />
+      ${lib?.length > 0 &&
+      html`<${Section} title="Your pictures" count=${lib.length}>
+        <div class="image-grid">${lib.map((f) => html`<button key=${f.path} title=${`${pictureName(f.path)}: click to ${replacing ? "use it" : "add it"}`} onClick=${() => use(f.path)}><img loading="lazy" src=${fileUrl(f.path)} /></button>`)}</div>
+      <//>`}
+      ${images.length > 0 &&
+      html`<${Section} title="In this design" count=${images.length}>
+        ${images.map((b, i) => {
+          const id = `image-${i + 1}`;
+          return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
+            <span class="thumb img"><img src=${fileUrl(b.src)} /></span>
+            <span class="nm">${entityLabel(id)}</span>
+            <button class="icon-btn sm" title="Remove" onClick=${(e) => {
+              e.stopPropagation();
+              deleteEntity(id);
+            }}><${Icon} n="trash" s=${13} /></button>
+          </div>`;
+        })}
       <//>`}
     </div>
   </div>`;

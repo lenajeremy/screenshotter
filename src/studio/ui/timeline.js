@@ -395,7 +395,7 @@ export function afterEntity(e, withShape) {
   if (!st) return e;
   if (st.shape) return withShape(e, (sh) => Object.assign(sh, st.shape), W0, H0);
   const out = { ...e, x: e.x + st.dx / W0, y: e.y + st.dy / H0, rotate: (e.rotate || 0) + st.rotate };
-  if (e.kind === "device") Object.assign(out, { width: e.width * st.sx, height: e.height * st.sy });
+  if (e.kind === "device" || e.kind === "image") Object.assign(out, { width: e.width * st.sx, height: e.height * st.sy });
   else Object.assign(out, { size: e.size * st.sy, subSize: e.subSize ? e.subSize * st.sy : e.subSize });
   return out;
 }
@@ -441,7 +441,7 @@ export function commitKeyframe(e) {
       to.start = { x: r4(e.shape.from.x), y: r4(e.shape.from.y) };
       to.end = { x: r4(e.shape.to.x), y: r4(e.shape.to.y) };
       to.bend = Math.round(e.shape.bend * 100) / 100;
-    } else if (e.kind === "device") {
+    } else if (e.kind === "device" || e.kind === "image") {
       to.x = r4(e.x);
       to.y = r4(e.y);
       put("scale", r3(e.height / base.height), 1);
@@ -597,7 +597,7 @@ export function deleteAnimation(i) {
 // ---------------------------------------------------------------------------------------------
 // The timeline under the canvas
 
-const ROW_ICON = { camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", shape: "shapes" };
+const ROW_ICON = { camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes" };
 const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const stop = (e) => e.stopPropagation();
 
@@ -612,7 +612,7 @@ export function TimelineDock() {
   const entities = s.layout?.entities ?? [];
   // Text first, then devices, then shapes: roughly the order things are introduced.
   // Each device's call-outs sit under it.
-  const rows = [{ id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "shape")];
+  const rows = [{ id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape")];
   const ents = entities.map(toAnim);
   const pps = width / len;
 

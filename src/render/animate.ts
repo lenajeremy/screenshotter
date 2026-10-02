@@ -106,7 +106,7 @@ export interface Animation {
 /** What the layout says about an item: enough to animate it. Positions are canvas fractions. */
 export interface AnimEntity {
   id: string;
-  kind: "device" | "caption" | "text" | "shape";
+  kind: "device" | "caption" | "text" | "shape" | "image";
   x: number;
   y: number;
   width: number;
@@ -512,7 +512,7 @@ export const uses3d = (list: Animation[] = []) => list.some((a) => [a.from, a.to
 /** Where an item's middle is, as canvas fractions (text is placed by an anchor, so estimate). */
 export function entityCentre(e: AnimEntity): Point {
   if (e.kind === "shape" && e.shape && isLine(e.shape.type)) return { x: (e.shape.from.x + e.shape.to.x) / 2, y: (e.shape.from.y + e.shape.to.y) / 2 };
-  if (e.kind === "device" || e.kind === "shape") return { x: e.x, y: e.y };
+  if (e.kind === "device" || e.kind === "shape" || e.kind === "image") return { x: e.x, y: e.y };
   const x = e.align === "left" ? e.x + e.width / 2 : e.align === "right" ? e.x - e.width / 2 : e.x;
   const h = e.height ?? (e.size ?? 0.05) * (e.kind === "caption" ? 2.6 : 1.2);
   const y = e.anchor === "bottom" ? e.y - h / 2 : e.anchor === "middle" ? e.y : e.y + h / 2;

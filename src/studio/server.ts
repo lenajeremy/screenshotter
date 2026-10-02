@@ -11,6 +11,7 @@ import { captureWeb, WEB_VIEWPORTS } from "../capture/web.js";
 import { DEVICE_MODELS, GENERIC_COLORS, findModel } from "../devices/catalog.js";
 import { recognizeText, warmUpOcr } from "../native/ocr.js";
 import { getBrowser } from "../render/browser.js";
+import { svgSize } from "../render/images.js";
 import { CLAY_TONES } from "../render/frame.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
@@ -180,6 +181,17 @@ function tagExport(file: string, url: URL) {
   } catch {
     // An export without history is still an export.
   }
+}
+
+/** The pictures added as image blocks (logos, icons, stickers), newest first. */
+function imageLibrary(): Array<{ path: string; mtime: number }> {
+  const dir = path.join(outputRoot(), "images");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => /\.(png|jpe?g|webp|gif|svg)$/i.test(f))
+    .map((f) => ({ path: path.join(dir, f), mtime: statSync(path.join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, 120);
 }
 
 /** Recent files the studio can show: captures, uploads, renders. */
@@ -443,6 +455,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/house-style") return send(200, { notes: houseStyle() });
+  if (req.method === "GET" && url.pathname === "/api/images") return send(200, { images: imageLibrary() });
   if (req.method === "GET" && url.pathname === "/api/bezels") return send(200, { ...bezelSummary(), sets: bezelSets(), suggested: SUGGESTED_SETS, job: bezelJob() });
   if (req.method === "GET" && url.pathname === "/api/apps") {
     const { s, all } = await sim.withSimulatorLock(async () => {
@@ -638,14 +651,17 @@ const UPLOAD_LIMIT = 4 * 1024 * 1024 * 1024;
 /**
  * Save an upload into the output folder, streamed to disk so long screen recordings fit.
  * Screenshots and recordings go to uploads/ (the library); `kind=backdrop` photos go to
- * backdrops/ so they don't show up as screens. A recording gets a poster frame next to it
+ * backdrops/ and `kind=image` pictures (logos, icons, stickers) to images/, so they don't show up
+ * as screens. A recording gets a poster frame next to it
  * (same name, .png), which the library shows and the canvas uses until the video plays.
  */
 async function upload(req: http.IncomingMessage, url: URL) {
   const raw = url.searchParams.get("name") ?? "upload";
   const ext = (path.extname(raw).toLowerCase() || ".png").replace(/[^.a-z0-9]/g, "");
-  if (![".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"].includes(ext)) throw new HttpError(400, "Upload a PNG, JPEG, WebP, MP4 or MOV");
-  const folder = url.searchParams.get("kind") === "backdrop" ? "backdrops" : "uploads";
+  const kind = url.searchParams.get("kind");
+  if (kind === "image" ? ![".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext) : ![".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"].includes(ext))
+    throw new HttpError(400, kind === "image" ? "Add a PNG, JPEG, WebP, GIF or SVG" : "Upload a PNG, JPEG, WebP, MP4 or MOV");
+  const folder = kind === "backdrop" ? "backdrops" : kind === "image" ? "images" : "uploads";
   const file = path.join(ensureDir(path.join(outputRoot(), folder)), `${slug(path.parse(raw).name)}-${timestamp()}${ext}`);
   const declared = Number(req.headers["content-length"] ?? 0);
   if (declared > UPLOAD_LIMIT) throw new HttpError(413, "That file is larger than 4 GB");
@@ -655,6 +671,7 @@ async function upload(req: http.IncomingMessage, url: URL) {
     rmSync(file, { force: true });
     throw e;
   }
+  if (ext === ".svg") return { path: file, ...(svgSize(readFileSync(file, "utf8")) ?? {}) };
   if (![".mp4", ".mov"].includes(ext)) return { path: file, ...(await imageSize(file).catch(() => ({}))) };
   const poster = file.replace(/\.(mp4|mov)$/i, ".png");
   try {

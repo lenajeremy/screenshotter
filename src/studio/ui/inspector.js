@@ -2,7 +2,7 @@
 import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, api, base, clamp, edit, entityLabel, fail, isVideo, r4, set, thumbUrl, useStore } from "./store.js";
+import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore } from "./store.js";
 import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
@@ -46,6 +46,7 @@ export function Inspector() {
   else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
   else if (id === "caption") body = html`<${CaptionInspector} />`;
   else if (id.startsWith("shape-")) body = html`<${ShapeInspector} id=${id} />`;
+  else if (id.startsWith("image-")) body = html`<${ImageInspector} id=${id} />`;
   else body = html`<${TextInspector} id=${id} />`;
   return html`<aside class="panel right">${body}</aside>`;
 }
@@ -661,6 +662,74 @@ function ShapeInspector({ id }) {
         <div class="row"><label>Opacity</label><${Slider} value=${g.opacity} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
         <${BlurRow} value=${g.blur} onChange=${(v) => upd((x) => (x.blur = v), "blur")} />
         <${Switch} checked=${g.shadow} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft shadow" />
+      <//>
+      <//>
+    </div>`;
+}
+
+// =============================================================================================
+// Image blocks
+
+// Its outline: as the picture is, rounded, Apple's app-icon shape, or round.
+const IMAGE_SHAPES = [
+  { value: "original", label: "Original" },
+  { value: "rounded", label: "Rounded" },
+  { value: "icon", label: "App icon" },
+  { value: "circle", label: "Circle" },
+];
+
+function ImageInspector({ id }) {
+  const s = useStore();
+  const i = Number(id.split("-")[1]) - 1;
+  const b = s.scene.images?.[i];
+  const e = s.layout?.entities.find((x) => x.id === id);
+  if (!b) return null;
+  const H0 = s.layout?.canvas.height ?? 1000;
+  const W0 = s.layout?.canvas.width ?? 1000;
+  const upd = (fn, key) => edit((d) => fn(d.images[i]), key && `i${i}.${key}`);
+  const outline = b.mask ?? (b.radius ? "rounded" : "original");
+  const X = b.x ?? e?.x ?? 0.5;
+  const Y = b.y ?? e?.y ?? 0.5;
+  const Hh = e?.height ?? b.height ?? 0.12;
+  return html`
+    <${Head} title=${entityLabel(id)} id=${id} />
+    <div class="panel-body">
+      <div class="insp-hero">
+        <div class="pic img-pic"><img src=${fileUrl(b.src)} /></div>
+        <div class="meta"><b title=${base(b.src)}>${pictureName(b.src)}</b><span>${e ? `${Math.round(e.width * W0)} × ${Math.round(e.height * H0)} on canvas` : ""}</span></div>
+        <button class="btn sm" onClick=${() => set({ replacingImage: id, leftTab: "images", leftOpen: true })}>Replace</button>
+      </div>
+      <${Section} title="Shape">
+        <${Seg} value=${outline} options=${IMAGE_SHAPES} onChange=${(v) => upd((x) => {
+          delete x.mask;
+          if (v === "icon" || v === "circle") {
+            x.mask = v;
+            delete x.radius;
+          } else if (v === "rounded") x.radius = x.radius || 0.12;
+          else delete x.radius;
+        })} />
+        ${outline === "rounded" && html`<div class="row"><label>Corners</label><${Slider} value=${b.radius ?? 0.12} min=${0.01} max=${0.5} step=${0.01} format=${(v) => (v >= 0.5 ? "Pill" : Math.round(v * 200) + "%")} onChange=${(v) => upd((x) => (x.radius = v ?? 0.12), "radius")} /></div>`}
+      <//>
+      <${Section} title="Look">
+        <${Switch} checked=${Boolean(b.sticker)} onChange=${(v) => upd((x) => (x.sticker = v || undefined))} label="Sticker: a white edge and a shadow" />
+        ${!b.sticker && html`<${Switch} checked=${Boolean(b.shadow)} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft shadow" />`}
+        <div class="row"><label>Opacity</label><${Slider} value=${b.opacity ?? 1} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
+      <//>
+      <${More} id="image">
+      <${Section} title="Size & position">
+        <div class="grid2">
+          <${Num} label="X" value=${X} ...${pct} onChange=${(v) => v !== undefined && upd((x) => (x.x = r4(v)), "x")} />
+          <${Num} label="Y" value=${Y} ...${pct} onChange=${(v) => v !== undefined && upd((x) => (x.y = r4(v)), "y")} />
+          <${Num} label="H" value=${Hh} scale=${H0} unit="px" min=${4 / H0} max=${5} onChange=${(v) => v !== undefined && upd((x) => {
+            if (x.width !== undefined && e) x.width = r4((e.width * v) / e.height);
+            x.height = r4(v);
+          }, "h")} />
+        </div>
+        <div class="row"><label>Rotation</label><${Slider} value=${b.rotate ?? 0} min=${-180} max=${180} step=${1} centered reset=${0} format=${(v) => v + "°"} onChange=${(v) => upd((x) => (x.rotate = v || undefined), "rot")} /></div>
+        <${Switch} checked=${Boolean(b.flip)} onChange=${(v) => upd((x) => (x.flip = v || undefined))} label="Mirror" />
+      <//>
+      <${Section} title="Focus">
+        <${BlurRow} value=${b.blur} onChange=${(v) => upd((x) => (x.blur = v), "blur")} />
       <//>
       <//>
     </div>`;

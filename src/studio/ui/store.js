@@ -619,11 +619,24 @@ export function aiVia() {
 }
 export const IMAGE_PROVIDERS = { openai: "OpenAI", gemini: "Gemini", replicate: "Replicate", fal: "fal" };
 
+/** A picture's own name, without the timestamp the library adds: "logo-20261002-082507-857.svg" is "Logo". */
+export function pictureName(src) {
+  const name = String(src ?? "").split("/").pop().replace(/\.[a-z0-9]+$/i, "").replace(/-\d{8}-\d{6}(-\d{3})?$/, "").replace(/[-_]+/g, " ").trim();
+  return name ? name[0].toUpperCase() + name.slice(1, 28) : "Image";
+}
+
 export function entityLabel(id, scene = S.scene, layout = S.layout) {
   if (!id) return "";
   if (id === "caption") return "Headline";
   const [kind, n] = id.split("-");
   if (kind === "text") return (scene.texts?.[n - 1]?.text || "Text").replace(/\*\*/g, "").slice(0, 28);
+  if (kind === "image") {
+    const b = scene.images?.[n - 1];
+    if (!b) return "Image";
+    if (b.mask === "icon") return "App icon";
+    if (b.sticker) return "Sticker";
+    return pictureName(b.src);
+  }
   if (kind === "shape") {
     const sh = scene.shapes?.[n - 1];
     const e = layout?.entities.find((x) => x.id === id)?.shape;

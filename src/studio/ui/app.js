@@ -44,6 +44,9 @@ import {
   renderPreview,
   reveal,
   uploadFiles,
+  IMAGE_LOOKS,
+  addImage,
+  uploadImages,
   useCapture,
   goToShot,
   STYLE_PARTS,
@@ -58,7 +61,7 @@ import {
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
-import { BackgroundsPanel, CapturesPanel, DesignsPanel, ShapesPanel, TextPanel } from "./panels.js";
+import { BackgroundsPanel, CapturesPanel, DesignsPanel, ImagesPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
 import { TimelineDock, closeTimeline, deleteAnimation, openTimeline, play } from "./timeline.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
@@ -254,6 +257,7 @@ const TABS = [
   { id: "backgrounds", label: "Backdrop", icon: "background", tip: "What sits behind your device" },
   { id: "text", label: "Text", icon: "text", tip: "Headline, labels, badges and ratings" },
   { id: "shapes", label: "Shapes", icon: "shapes", tip: "Arrows, circles, boxes and number badges" },
+  { id: "images", label: "Images", icon: "image", tip: "Logos, your app icon, stickers and pictures" },
 ];
 
 function Rail() {
@@ -278,7 +282,7 @@ function Rail() {
 
 function LeftPanel() {
   const s = useStore();
-  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: TextPanel, shapes: ShapesPanel }[s.leftTab] ?? CapturesPanel;
+  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: TextPanel, shapes: ShapesPanel, images: ImagesPanel }[s.leftTab] ?? CapturesPanel;
   return html`<${P} />`;
 }
 
@@ -1742,6 +1746,20 @@ function entityMenu(id) {
       { label: "Delete", icon: "trash", kbd: "⌫", danger: true, run: () => deleteEntity(id) },
     ];
   }
+  if (id.startsWith("image-")) {
+    const b = S.scene.images?.[i];
+    if (!b) return [];
+    return [
+      { label: "Replace picture…", icon: "replace", run: () => set({ selected: id, replacingImage: id, leftTab: "images", leftOpen: true }) },
+      { label: b.sticker ? "Remove the sticker edge" : "Make it a sticker", icon: "image", run: () => editScene((sc) => (sc.images[i].sticker = b.sticker ? undefined : true)) },
+      "-",
+      { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },
+      { label: "Bring forward", icon: "front", run: () => moveZ(id, 1) },
+      { label: "Send backward", icon: "back", run: () => moveZ(id, -1) },
+      "-",
+      { label: "Delete", icon: "trash", kbd: "⌫", danger: true, run: () => deleteEntity(id) },
+    ];
+  }
   if (id.startsWith("shape-")) {
     const sh = S.scene.shapes?.[i];
     if (!sh) return [];
@@ -1869,6 +1887,10 @@ window.addEventListener("drop", (e) => {
   dragDepth = 0;
   set({ dropping: false });
   const files = [...e.dataTransfer.files];
+  // With the Images panel open, pictures dropped on the design go on as image blocks.
+  if (!S.scenesPage && S.leftOpen && S.leftTab === "images" && files.every((f) => /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name))) {
+    return uploadImages(files).then((paths) => paths.forEach((p) => addImage(p, { look: (IMAGE_LOOKS[S.imageAs] ?? {}) })));
+  }
   // On the Scenes page, a drop starts a new scene with the files.
   if (S.scenesPage) return newScene().then(() => (closeScenesPage(), uploadFiles(files)));
   // On another screen of the set: open it, and the files go there (onto the device dropped on).

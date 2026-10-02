@@ -228,6 +228,11 @@ export function deleteEntity(id) {
       d.shapes.splice(idx(id), 1);
       if (!d.shapes.length) delete d.shapes;
     });
+  } else if (id.startsWith("image-")) {
+    edit((d) => {
+      d.images.splice(idx(id), 1);
+      if (!d.images.length) delete d.images;
+    });
   }
   set({ selected: null });
 }
@@ -263,6 +268,15 @@ export function duplicateEntity(id) {
       d.shapes.push(copy);
     });
     set({ selected: `shape-${S.scene.shapes.length}` });
+  } else if (id.startsWith("image-")) {
+    if ((S.scene.images ?? []).length >= 24) return toast({ kind: "warn", title: "Twenty-four images is the limit" });
+    edit((d) => {
+      const copy = clone(d.images[idx(id)]);
+      copy.x = r4((e?.x ?? copy.x ?? 0.5) + 0.03);
+      copy.y = r4((e?.y ?? copy.y ?? 0.5) + 0.03);
+      d.images.push(copy);
+    });
+    set({ selected: `image-${S.scene.images.length}` });
   } else {
     edit((d) => {
       const copy = clone(d.texts[idx(id)]);
@@ -288,6 +302,7 @@ export function moveZ(id, dir) {
     if (id.startsWith("device-")) d.devices[idx(id)].z = z;
     else if (id.startsWith("text-")) d.texts[idx(id)].z = z;
     else if (id.startsWith("shape-")) d.shapes[idx(id)].z = z;
+    else if (id.startsWith("image-")) d.images[idx(id)].z = z;
   });
 }
 
@@ -361,6 +376,54 @@ export function addShape(kind, { tint = "#ff3b30", at, around } = {}) {
   edit((d) => (d.shapes = [...(d.shapes ?? []), sh]));
   touch("shape");
   set({ selected: `shape-${shapes.length + 1}`, view: "canvas" });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Image blocks
+
+/** Save picked or dropped pictures to the library's images/ folder; returns their paths. */
+export async function uploadImages(files) {
+  const out = [];
+  for (const f of files) {
+    if (!/\.(png|jpe?g|webp|gif|svg)$/i.test(f.name)) {
+      toast({ kind: "warn", title: `${f.name} isn't a picture`, text: "Add a PNG, JPEG, WebP, GIF or SVG." });
+      continue;
+    }
+    try {
+      const r = await api(`/api/upload?kind=image&name=${encodeURIComponent(f.name)}`, f, true);
+      out.push(r.path);
+    } catch (e) {
+      toast({ kind: "error", title: `Couldn't add ${f.name}`, text: e.message });
+    }
+  }
+  set({ imagesStamp: Date.now() });
+  return out;
+}
+
+/** How a picture goes on: as it is, as an app icon (Apple's icon outline and a shadow), or as a sticker. */
+export const IMAGE_LOOKS = {
+  picture: {},
+  icon: { mask: "icon", shadow: true, height: 0.1 },
+  sticker: { sticker: true, height: 0.12 },
+};
+
+/**
+ * Put a picture on the screen: a logo, an icon, a sticker. In free space near the top middle
+ * (staggered so a few in a row don't stack), or at a point (canvas fractions, from a drop).
+ */
+export function addImage(src, { at, look = {} } = {}) {
+  const images = S.scene.images ?? [];
+  if (images.length >= 24) return toast({ kind: "warn", title: "Twenty-four images is the limit" });
+  const off = (images.length % 5) * 0.035;
+  const c = at ?? { x: 0.5 + off, y: 0.2 + off };
+  edit((d) => (d.images = [...(d.images ?? []), { src, x: r4(c.x), y: r4(c.y), height: 0.1, ...look }]));
+  touch("image");
+  set({ selected: `image-${images.length + 1}`, view: "canvas" });
+}
+
+/** Show another picture in an image block, keeping where it is and how it looks. */
+export function replaceImage(id, src) {
+  edit((d) => (d.images[idx(id)].src = src));
 }
 
 // ---------------------------------------------------------------------------------------------

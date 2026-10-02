@@ -417,6 +417,50 @@ await check("clay recolours Apple's art into one matte colour, keeping the scree
   }
 });
 
+await check("image blocks: placed by their centre, sized by height with their own shape, drawn in front of the scene", async () => {
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const { layoutScene } = await import("../src/render/mockup.js");
+  const { svgSize } = await import("../src/render/images.js");
+  // A 2:1 red picture, and an SVG that only has a viewBox.
+  const pic = path.join(out, "block.png");
+  await renderHtml(`<!doctype html><body style="margin:0;background:#ff0000"></body>`, pic, 200, 100, { scale: 1, format: "png", transparent: false, outWidth: 200, outHeight: 100 });
+  const svg = path.join(out, "block.svg");
+  writeFileSync(svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100"><rect width="300" height="100" fill="#00ff00"/></svg>`);
+  assert(JSON.stringify(svgSize(readFileSync(svg, "utf8"))) === JSON.stringify({ width: 300, height: 100 }), "an SVG's size comes from its viewBox");
+  const input = {
+    devices: [],
+    canvas: "1000x1000",
+    layout: "custom",
+    background: "#000000",
+    images: [
+      { src: pic, x: 0.3, y: 0.3, height: 0.2, sticker: true },
+      { src: svg, x: 0.7, y: 0.7, width: 0.3 },
+      { src: path.join(out, "nowhere.png") },
+    ],
+  };
+  const layout = await layoutScene(input as never);
+  const [a, b] = layout.entities.filter((e) => e.kind === "image");
+  assert(a?.id === "image-1" && Math.abs(a.width - 0.4) < 0.001 && Math.abs(a.height - 0.2) < 0.001, `a 2:1 picture 0.2 high is 0.4 wide: ${JSON.stringify(a)}`);
+  assert(b && Math.abs(b.height - 0.1) < 0.001, `an SVG 0.3 wide is 0.1 high: ${JSON.stringify(b)}`);
+  assert(layout.warnings.some((w) => /image 3 wasn't found/.test(w)), `a missing picture is left out with a warning: ${JSON.stringify(layout.warnings)}`);
+  const file = path.join(out, "blocks.png");
+  await createMockup({ ...input, preview: false, output: file } as never);
+  await run("sips", ["-s", "format", "bmp", file, "--out", path.join(out, "blocks.bmp")]);
+  const img = readBmp(readFileSync(path.join(out, "blocks.bmp")));
+  const at = (fx: number, fy: number) => {
+    const i = (Math.round(fy * (img.height - 1)) * img.width + Math.round(fx * (img.width - 1))) * 4;
+    return [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]];
+  };
+  const red = at(0.3, 0.3);
+  const green = at(0.7, 0.7);
+  assert(red[0] > 200 && red[1] < 60, `the picture is drawn at its centre: ${red}`);
+  assert(green[1] > 200 && green[0] < 60, `the SVG is drawn at its centre: ${green}`);
+  // The sticker's white edge sits just outside the picture's left edge (0.1 of the width).
+  const edge = at(0.094, 0.3);
+  assert(edge[0] > 220 && edge[1] > 220 && edge[2] > 220, `a sticker has a white edge: ${edge}`);
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

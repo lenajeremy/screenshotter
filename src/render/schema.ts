@@ -311,6 +311,27 @@ export const TextInputSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------------------------
+// Image blocks
+
+export const ImageBlockSchema = z.object({
+  src: z.string().describe("A PNG, JPEG, WebP, GIF or SVG: a path, or an https URL. A logo, the app icon, a sticker, a photo."),
+  x: z.number().optional().describe("Centre x as a fraction of the canvas width. Default 0.5."),
+  y: z.number().optional().describe("Centre y as a fraction of the canvas height. Default 0.5."),
+  height: z.number().positive().max(5).optional().describe("Height as a fraction of the canvas height (the width follows the picture's shape). Default 0.12."),
+  width: z.number().positive().max(5).optional().describe("Width as a fraction of the canvas width, instead of height. Both stretch it."),
+  rotate: z.number().optional().describe("Degrees, clockwise."),
+  opacity: z.number().min(0).max(1).optional(),
+  radius: z.number().min(0).max(0.5).optional().describe("Corner radius as a share of the shorter side; 0.5 makes a circle or pill."),
+  mask: z.enum(["icon", "circle"]).optional().describe("icon: Apple's app-icon outline (a continuous-cornered square), for an app icon. circle: round."),
+  shadow: z.boolean().optional().describe("A soft shadow that follows the picture's outline."),
+  sticker: z.boolean().optional().describe("A sticker: a die-cut white edge round the picture's outline, and a shadow."),
+  flip: z.boolean().optional().describe("Mirror it left to right."),
+  blur: z.number().min(0).optional().describe("Soft focus: a fraction of the canvas width up to 0.5 (0.004 soft), or px."),
+  z: z.number().optional().describe("Stacking order; higher is in front. Default 35: in front of devices and text, behind shapes."),
+});
+export type ImageBlockInput = z.infer<typeof ImageBlockSchema>;
+
+// ---------------------------------------------------------------------------------------------
 // Shapes
 
 const PointSchema = z.object({ x: z.number().describe("0 = left edge, 1 = right edge."), y: z.number().describe("0 = top edge, 1 = bottom edge.") });
@@ -495,6 +516,11 @@ export const MockupInputShape = {
     .max(40)
     .optional()
     .describe("Drawn shapes over the scene: arrows, lines, circles, boxes, stars and number badges, for pointing things out or decoration. Aim one at text on a screen with `around`."),
+  images: z
+    .array(ImageBlockSchema)
+    .max(24)
+    .optional()
+    .describe("Image blocks: logos, the app icon, stickers, badges or any picture placed on the scene, in front of devices and text (z 35), behind shapes."),
   menuBar: SceneMenuBarSchema.optional(),
   animations: z
     .array(AnimationSchema)

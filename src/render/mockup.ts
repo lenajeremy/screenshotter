@@ -14,6 +14,7 @@ import { edgeBlurHtml, esc, gradeFor, grainHtml, luminance, px, quickTone, resol
 import { SAFARI_MENUS, menuBarHtml, statusCentre, type MenuBarSpec } from "./menubar.js";
 import { newPage } from "./browser.js";
 import { finishBackground } from "./finish.js";
+import { imageBlockHtml, resolveImages, type ImageBlock } from "./images.js";
 import { FRAME_CSS, MAC_MENU_BAR, WATCH_BAND, clayColor, defaultBand, measureFrame, renderFrame, screenRect, type FrameKind, type FrameOptions } from "./frame.js";
 import { resolveHighlights } from "./highlights.js";
 import { findText } from "../native/ocr.js";
@@ -455,7 +456,7 @@ function place(d: Prepared, p: Placement, bgColor: string | undefined, W: number
 /** One element of the scene as positioned on the canvas. All positions are canvas fractions. */
 export interface SceneEntity {
   id: string;
-  kind: "device" | "caption" | "text" | "shape";
+  kind: "device" | "caption" | "text" | "shape" | "image";
   /** A neighbouring screen's device carrying on into this one: drawn here, edited there. */
   spill?: boolean;
   /** Index into `devices`, `texts` or `shapes`. */
@@ -473,6 +474,8 @@ export interface SceneEntity {
   anchor?: "top" | "middle" | "bottom";
   align?: "left" | "center" | "right";
   screenshot?: string;
+  /** Image blocks: the picture on disk. */
+  src?: string;
   /** Devices: their soft focus, as set (a fraction of the canvas width up to 0.5, or px). */
   blur?: number;
   frame?: FrameKind;
@@ -525,6 +528,7 @@ interface ScenePlan {
   caption?: CaptionPlan;
   headSize: number;
   shapes: ShapeSpec[];
+  images: ImageBlock[];
 }
 
 async function planScene(input: MockupInput, light = false): Promise<ScenePlan> {
@@ -571,7 +575,8 @@ async function planScene(input: MockupInput, light = false): Promise<ScenePlan> 
     };
   }
   const shapes = await resolveShapes(input, prepared, placements, W, H, warnings);
-  return { prepared, spill, spillPlacements, spillSeen, warnings, canvas, layout, placements, caption, headSize, shapes };
+  const images = await resolveImages(input, W, H, warnings);
+  return { prepared, spill, spillPlacements, spillSeen, warnings, canvas, layout, placements, caption, headSize, shapes, images };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -748,6 +753,21 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       color: t.color ?? textColor,
       font: fontStack(t.font).stack,
       blur: t.blur,
+    }),
+  );
+  plan.images.forEach((b, i) =>
+    entities.push({
+      id: `image-${i + 1}`,
+      kind: "image",
+      index: i,
+      x: round(b.x),
+      y: round(b.y),
+      width: round(b.width),
+      height: round(b.height),
+      rotate: b.rotate,
+      z: b.z,
+      src: b.file,
+      blur: b.blur || undefined,
     }),
   );
   plan.shapes.forEach((sh, i) => {
@@ -1017,7 +1037,8 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
     `</div>`;
   const bgGroup = outer ? "" : groupOf(bg);
   // Shapes belong to the scene: a camera zoom or a video's push-in moves them with the devices.
-  const shapes = plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40, `shape-${i + 1}`)).join("");
+  const shapes =
+    plan.images.map((b, i) => imageBlockHtml(b, W, H, `image-${i + 1}`)).join("") + plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40, `shape-${i + 1}`)).join("");
   // A neighbour's device passes behind this screen's own, which are its subject.
   let scene = `${bgGroup}${spilled.map((p) => p.html).join("\n")}${placed.map((p) => p.html).join("\n")}${shapes}`;
   if (grade.scope === "all") scene = `<div class="scene" style="${grade.filter ? `filter:${grade.filter};` : ""}">${scene}${grade.overlays}</div>`;
