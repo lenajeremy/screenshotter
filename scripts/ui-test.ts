@@ -162,11 +162,11 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(800);
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }));
     await page.waitForTimeout(700);
-    await page.locator(".sp-icon").click();
+    await page.locator(".stp-icon").click();
     await page.waitForTimeout(700);
-    await page.locator(".sp-icon-menu .pics button >> nth=0").click();
+    await page.locator(".stp-icon-menu .pics button >> nth=0").click();
     await page.waitForTimeout(700);
-    const before = await S(page, () => ((document.querySelector(".sp-icon img") as HTMLImageElement | null)?.naturalWidth ?? 0) > 0);
+    const before = await S(page, () => ((document.querySelector(".stp-icon img") as HTMLImageElement | null)?.naturalWidth ?? 0) > 0);
     await S(page, async () => {
       const st = await import("/ui/store.js" as string);
       st.set({ modal: null });
@@ -178,7 +178,7 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(1500);
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }));
     await page.waitForTimeout(900);
-    const after = await S(page, () => ((document.querySelector(".sp-icon img") as HTMLImageElement | null)?.naturalWidth ?? 0) > 0);
+    const after = await S(page, () => ((document.querySelector(".stp-icon img") as HTMLImageElement | null)?.naturalWidth ?? 0) > 0);
     return before && after ? "ok" : `shown ${before}, after a reload ${after}`;
   },
   async "deleting an unused picture deletes it; Undo brings it back"(page) {
@@ -320,6 +320,44 @@ const CHECKS: Record<string, Check> = {
     const moved = await state();
     const handed = moved.shot === 2 && moved.devices[1].length === 0 && moved.devices[2].length === 1 && Math.abs(moved.devices[2][0] - 0.5) < 0.15;
     return /Across 1 & 2/.test(label) && onSeam && handed ? "ok" : `label "${label}", across ${JSON.stringify(across)}, moved ${JSON.stringify(moved)}`;
+  },
+  async "My designs' list lines up in columns, and the store page keeps its own layout"(page) {
+    // Two saved designs, so the list has rows.
+    for (const name of ["List test A", "List test B"]) {
+      await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: name, scene: phone({ headline: name }) });
+      await S(page, async () => (await import("/ui/store.js" as string)).saveSceneNow());
+      await page.waitForTimeout(500);
+    }
+    await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      st.set({ scenesPrefs: { ...st.S.scenesPrefs, layout: "list" } });
+      (await import("/ui/scenes.js" as string)).openScenesPage();
+    });
+    await page.waitForTimeout(1800);
+    const list = await S(page, () => {
+      const rows = [...document.querySelectorAll(".sp-list .sp-row")];
+      if (rows.length < 3) return `only ${rows.length} rows`;
+      if (getComputedStyle(rows[0]).display !== "grid") return `rows are laid out as ${getComputedStyle(rows[0]).display}, not a grid`;
+      // Each column starts where its heading does, on every row.
+      const lefts = rows.map((r) => [...r.children].map((c) => Math.round(c.getBoundingClientRect().left)));
+      const off = lefts.slice(1).find((row) => row.some((x, i) => Math.abs(x - lefts[0][i]) > 2));
+      return off ? `columns don't line up: heading ${lefts[0]} vs row ${off}` : "ok";
+    });
+    const heading = await S(page, () => {
+      const h = document.querySelector(".sp-head");
+      return h ? getComputedStyle(h).display : "none";
+    });
+    await S(page, async () => (await import("/ui/scenes.js" as string)).closeScenesPage());
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }) });
+    await page.waitForTimeout(600);
+    await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }));
+    await page.waitForTimeout(800);
+    const store = await S(page, () => {
+      const row = document.querySelector(".store-page .stp-row");
+      const head = document.querySelector(".store-page .stp-head");
+      return row && head && getComputedStyle(row).display === "flex" && getComputedStyle(head).display === "flex" ? "ok" : "the store page lost its layout";
+    });
+    return list === "ok" && heading !== "flex" && store === "ok" ? "ok" : `list: ${list}; Scenes heading laid out as ${heading}; store: ${store}`;
   },
   async "moving between the screens of a set, every screen keeps its device"(page) {
     const sc = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `S${i}` });

@@ -1,5 +1,11 @@
 # What's new
 
+## Unreleased
+
+### Fixes
+- My designs' list view lines up in columns again (the Store page preview's styles had taken over its rows since 0.6.0), and the page's heading and cards lay out as they should.
+- Designs of just words and pictures get a thumbnail in My designs, like the rest.
+
 ## 0.11.5 · 2 October 2026
 
 ### Highlights

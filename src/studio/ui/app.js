@@ -1461,15 +1461,15 @@ function StoreIcon({ name }) {
     setOver(false);
     if (e.dataTransfer?.files?.length) use(e.dataTransfer.files);
   };
-  return html`<div class="sp-icon-wrap" ref=${wrap}>
-    <button class="sp-icon ${icon ? "mine" : ""} ${over ? "drop" : ""}" title="Your app's icon: click to choose one, or drop a picture here"
+  return html`<div class="stp-icon-wrap" ref=${wrap}>
+    <button class="stp-icon ${icon ? "mine" : ""} ${over ? "drop" : ""}" title="Your app's icon: click to choose one, or drop a picture here"
       onClick=${() => setOpen(!open)}
       onDragOver=${(e) => (e.preventDefault(), e.stopPropagation(), setOver(true))} onDragLeave=${() => setOver(false)} onDrop=${drop}>
       ${icon ? html`<img src=${pictureUrl(icon)} alt="" />` : name.trim()[0]?.toUpperCase()}
-      <span class="sp-icon-hint">${icon ? "Change" : "Add icon"}</span>
+      <span class="stp-icon-hint">${icon ? "Change" : "Add icon"}</span>
     </button>
     <input ref=${file} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange=${(e) => (e.target.files?.length && use(e.target.files), (e.target.value = ""))} />
-    ${open && html`<div class="sp-icon-menu" onPointerDown=${(e) => e.stopPropagation()}>
+    ${open && html`<div class="stp-icon-menu" onPointerDown=${(e) => e.stopPropagation()}>
       <h4>App icon</h4>
       ${pics?.length > 0 && html`<div class="pics">${pics.map((p) => html`<button key=${p.path} class=${p.path === icon ? "on" : ""} title=${p.path.split("/").pop()} onClick=${() => (setAppIcon(p.path), setOpen(false))}><img loading="lazy" src=${pictureUrl(p.path)} /></button>`)}</div>`}
       <div class="acts">
@@ -1520,17 +1520,17 @@ function StorePage() {
         <button class="icon-btn sm" title="Close (Esc)" onClick=${close}><${Icon} n="x" s=${15} /></button></div>
       <div class="sheet-body store-body">
         <div class="store-page ${platform}" style=${{ width: page + "px" }}>
-          <div class="sp-head">
+          <div class="stp-head">
             <${StoreIcon} name=${name} />
-            <div class="sp-meta"><b>${name}</b><span>${device} app</span><button class="sp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
+            <div class="stp-meta"><b>${name}</b><span>${device} app</span><button class="stp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
           </div>
-          <div class="sp-row" style=${{ "--tile-h": tileH + "px", gap: Math.round(tileW * STORE_GAP) + "px" }}>
-            ${size.screens.map((x, i) => html`<div class="sp-shot ${platform}" key=${i} title=${`${String(i + 1).padStart(2, "0")} · ${x.name}`} style=${{ width: tileW + "px", height: tileH + "px" }}>
+          <div class="stp-row" style=${{ "--tile-h": tileH + "px", gap: Math.round(tileW * STORE_GAP) + "px" }}>
+            ${size.screens.map((x, i) => html`<div class="stp-shot ${platform}" key=${i} title=${`${String(i + 1).padStart(2, "0")} · ${x.name}`} style=${{ width: tileW + "px", height: tileH + "px" }}>
               ${thumbs[i] ? html`<img src=${thumbs[i]} alt=${x.name} />` : html`<span class="spin"></span>`}
             </div>`)}
           </div>
-          <div class="sp-device"><${Icon} n=${{ ipad: "tablet", mac: "laptop", watch: "watch" }[platform] ?? "phone"} s=${13} />${device}</div>
-          <div class="sp-lines"><i></i><i></i><i style=${{ width: "62%" }}></i></div>
+          <div class="stp-device"><${Icon} n=${{ ipad: "tablet", mac: "laptop", watch: "watch" }[platform] ?? "phone"} s=${13} />${device}</div>
+          <div class="stp-lines"><i></i><i></i><i style=${{ width: "62%" }}></i></div>
         </div>
         <div class="note">${size.label}: ${size.screens.length} screenshot${size.screens.length === 1 ? "" : "s"} in store order. The first are the ones people see before they scroll.${sizes.length > 1 ? " ← and → switch sizes." : ""}${s.appIcon ? "" : " Click the icon to add your app's."}</div>
       </div>

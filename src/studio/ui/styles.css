@@ -707,39 +707,39 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .store-body { display: flex; flex-direction: column; align-items: center; gap: 14px; padding-block: 20px; overflow: auto; }
 .store-page { max-width: 100%; background: #fff; color: #1d1d1f; border-radius: 28px; padding: 22px 0 26px; box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08); font-family: -apple-system, system-ui, sans-serif; }
 .store-page.mac, .store-page.tv, .store-page.vision { border-radius: 14px; }
-.sp-head { display: flex; gap: 14px; padding: 0 20px 18px; }
+.stp-head { display: flex; gap: 14px; padding: 0 20px 18px; }
 /* The app's icon: yours (click or drop a picture on it to choose), or its initial until then. */
-.sp-icon-wrap { position: relative; flex: none; }
-.sp-icon { position: relative; display: grid; place-items: center; width: 96px; height: 96px; padding: 0; border: 0; border-radius: 22px; overflow: hidden; background: linear-gradient(145deg, #d4f560, #6fcf97); color: #10200a; font: 700 44px -apple-system, system-ui, sans-serif; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06); cursor: pointer; }
-.sp-icon.mine { background: #fff; }
-.sp-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sp-icon::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); pointer-events: none; }
-.sp-icon .sp-icon-hint { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 12px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
-.sp-icon:hover .sp-icon-hint, .sp-icon:focus-visible .sp-icon-hint, .sp-icon.drop .sp-icon-hint { opacity: 1; }
-.sp-icon.drop { outline: 2px solid #0071e3; outline-offset: 2px; }
-.sp-icon-menu { position: absolute; left: 0; top: calc(100% + 8px); z-index: 5; width: 264px; padding: 12px; border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--line); font-family: var(--sans, -apple-system, system-ui, sans-serif); }
-.sp-icon-menu h4 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
-.sp-icon-menu .pics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
-.sp-icon-menu .pics button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 22%; overflow: hidden; background: var(--panel-2); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
-.sp-icon-menu .pics button.on { box-shadow: 0 0 0 2px var(--lime); }
-.sp-icon-menu .pics img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sp-icon-menu .acts { display: flex; gap: 6px; }
-.sp-icon-menu .note { margin: 8px 0 0; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
-.sp-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding-top: 4px; }
-.sp-meta b { color: #1d1d1f; font-size: 21px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.15; }
-.sp-meta span { font-size: 13px; color: #86868b; }
-.sp-get { margin-top: auto; height: 28px; padding: 0 20px; border: 0; border-radius: 14px; background: #0071e3; color: #fff; font-weight: 650; font-size: 14px; pointer-events: none; }
-.sp-get.play { background: #01875f; border-radius: 8px; }
-.sp-row { display: flex; gap: 10px; padding: 0 20px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 20px; scrollbar-width: none; }
-.sp-shot { flex: none; display: grid; place-items: center; scroll-snap-align: start; border-radius: 18px; overflow: hidden; background: #f2f2f4; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.07); }
-.sp-shot.watch { border-radius: 30%; }
-.sp-shot.mac, .sp-shot.tv, .sp-shot.vision { border-radius: 8px; }
-.sp-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sp-shot .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #d2d2d7; border-top-color: #86868b; animation: sp-spin 0.8s linear infinite; }
+.stp-icon-wrap { position: relative; flex: none; }
+.stp-icon { position: relative; display: grid; place-items: center; width: 96px; height: 96px; padding: 0; border: 0; border-radius: 22px; overflow: hidden; background: linear-gradient(145deg, #d4f560, #6fcf97); color: #10200a; font: 700 44px -apple-system, system-ui, sans-serif; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06); cursor: pointer; }
+.stp-icon.mine { background: #fff; }
+.stp-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.stp-icon::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); pointer-events: none; }
+.stp-icon .stp-icon-hint { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 12px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
+.stp-icon:hover .stp-icon-hint, .stp-icon:focus-visible .stp-icon-hint, .stp-icon.drop .stp-icon-hint { opacity: 1; }
+.stp-icon.drop { outline: 2px solid #0071e3; outline-offset: 2px; }
+.stp-icon-menu { position: absolute; left: 0; top: calc(100% + 8px); z-index: 5; width: 264px; padding: 12px; border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--line); font-family: var(--sans, -apple-system, system-ui, sans-serif); }
+.stp-icon-menu h4 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.stp-icon-menu .pics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.stp-icon-menu .pics button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 22%; overflow: hidden; background: var(--panel-2); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.stp-icon-menu .pics button.on { box-shadow: 0 0 0 2px var(--lime); }
+.stp-icon-menu .pics img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.stp-icon-menu .acts { display: flex; gap: 6px; }
+.stp-icon-menu .note { margin: 8px 0 0; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
+.stp-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding-top: 4px; }
+.stp-meta b { color: #1d1d1f; font-size: 21px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.15; }
+.stp-meta span { font-size: 13px; color: #86868b; }
+.stp-get { margin-top: auto; height: 28px; padding: 0 20px; border: 0; border-radius: 14px; background: #0071e3; color: #fff; font-weight: 650; font-size: 14px; pointer-events: none; }
+.stp-get.play { background: #01875f; border-radius: 8px; }
+.stp-row { display: flex; gap: 10px; padding: 0 20px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 20px; scrollbar-width: none; }
+.stp-shot { flex: none; display: grid; place-items: center; scroll-snap-align: start; border-radius: 18px; overflow: hidden; background: #f2f2f4; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.07); }
+.stp-shot.watch { border-radius: 30%; }
+.stp-shot.mac, .stp-shot.tv, .stp-shot.vision { border-radius: 8px; }
+.stp-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.stp-shot .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #d2d2d7; border-top-color: #86868b; animation: sp-spin 0.8s linear infinite; }
 @keyframes sp-spin { to { transform: rotate(360deg); } }
-.sp-device { display: flex; align-items: center; gap: 6px; padding: 12px 20px 0; font-size: 12.5px; color: #86868b; }
-.sp-lines { display: flex; flex-direction: column; gap: 7px; padding: 18px 20px 0; }
-.sp-lines i { height: 9px; border-radius: 5px; background: #f0f0f2; }
+.stp-device { display: flex; align-items: center; gap: 6px; padding: 12px 20px 0; font-size: 12.5px; color: #86868b; }
+.stp-lines { display: flex; flex-direction: column; gap: 7px; padding: 18px 20px 0; }
+.stp-lines i { height: 9px; border-radius: 5px; background: #f0f0f2; }
 /* A screen of words and pictures, without a screenshot: a small way to add one, out of the way. */
 .add-shot-pill { position: absolute; left: 50%; bottom: 3%; transform: translateX(-50%); z-index: 60; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 11px; border: 0; border-radius: 13px; background: rgba(10, 10, 12, 0.62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: rgba(255, 255, 255, 0.85); font: 600 11.5px -apple-system, system-ui, sans-serif; cursor: pointer; opacity: 0.75; transition: opacity 0.15s; }
 .add-shot-pill:hover { opacity: 1; }

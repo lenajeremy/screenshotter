@@ -63,6 +63,8 @@ export interface SceneSummary {
   /** Thumbnail image, when one has been rendered, and when (ms), so cached copies refresh. */
   thumb?: string;
   thumbAt?: number;
+  /** Nothing on it yet (no screenshot, words, pictures or shapes): no thumbnail to draw. */
+  empty?: boolean;
   /** "agent" when the last change was saved through the MCP server. */
   by?: "agent";
   /** How many shots, when it's a video of several. */
@@ -159,11 +161,18 @@ function summarize(s: SavedScene): SceneSummary {
     by: s.by,
     shots: s.shots && s.shots.length > 1 ? s.shots.length : undefined,
     sizes: s.groups && s.groups.length > 1 ? s.groups.length : undefined,
+    ...(hasContent(s.scene) || firstScreens(s).some((x) => hasContent(x.scene)) ? {} : { empty: true }),
   };
 }
 
-// Scenes with devices but no thumbnail (imported, or saved before thumbnails) get one, once per run.
+// Designs with something on them but no thumbnail (imported, or saved before thumbnails) get one, once per run.
 const thumbTried = new Set<string>();
+
+/** A design has something to draw: a screenshot, words, pictures or shapes (a design of just words is one). */
+const hasContent = (sc: unknown) => {
+  const s = sc as { devices?: unknown[]; headline?: string; subheadline?: string; texts?: unknown[]; images?: unknown[]; shapes?: unknown[] } | undefined;
+  return Boolean(s?.devices?.length || s?.headline || s?.subheadline || s?.texts?.length || s?.images?.length || s?.shapes?.length);
+};
 
 export function listScenes(): SceneSummary[] {
   const out: SceneSummary[] = [];
@@ -178,7 +187,7 @@ export function listScenes(): SceneSummary[] {
     } catch {
       continue;
     }
-    if (summary.devices && !summary.thumb && !thumbTried.has(s.id)) {
+    if (!summary.empty && !summary.thumb && !thumbTried.has(s.id)) {
       thumbTried.add(s.id);
       scheduleThumb(s.id, 400);
     }
@@ -375,7 +384,7 @@ async function renderThumb(id: string) {
   const s = read(id);
   if (!s) return;
   const out = thumbFile(id);
-  if (!s.scene.devices.length) {
+  if (!hasContent(s.scene) && !firstScreens(s).some((x) => hasContent(x.scene))) {
     rmSync(out, { force: true });
     return;
   }

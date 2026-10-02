@@ -194,8 +194,9 @@ const moreMenu = (e, id) => {
 function Thumb({ x, mini }) {
   const [loaded, setLoaded] = useState(false);
   if (x.thumb) return html`<img src=${fileUrl(x.thumb, x.thumbAt ?? x.updatedAt)} class=${loaded ? "in" : ""} loading="lazy" decoding="async" draggable=${false} alt="" onLoad=${() => setLoaded(true)} />`;
-  if (mini) return x.devices ? html`<span class="spinner"></span>` : html`<${Icon} n="canvas" s=${14} />`;
-  if (x.devices) return html`<div class="sp-placeholder"><span class="spinner"></span>Drawing a preview…</div>`;
+  // Anything on it gets a picture (a design of just words too): until it's drawn, say so.
+  if (mini) return !x.empty ? html`<span class="spinner"></span>` : html`<${Icon} n="canvas" s=${14} />`;
+  if (!x.empty) return html`<div class="sp-placeholder"><span class="spinner"></span>Drawing a preview…</div>`;
   return html`<div class="sp-placeholder">${x.headline ? html`<span class="hl">${x.headline}</span>` : html`<${Icon} n="canvas" s=${22} /><span>Empty design</span>`}</div>`;
 }
 
