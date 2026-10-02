@@ -491,6 +491,30 @@ footer a:hover { color: var(--text); }
 .anim-reel video { display: block; width: min(100%, 380px); aspect-ratio: 9 / 16; border-radius: 26px; background: #111; box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.95), 0 0 0 1px var(--line), 0 0 80px -20px rgba(124, 207, 157, 0.18); }
 .anim-reel figcaption { font-size: 13px; color: var(--text-3); text-align: center; max-width: 30em; }
 @media (max-width: 980px) { .anim-grid { grid-template-columns: 1fr; } .anim-reel video { width: min(100%, 320px); } }
+
+/* ============================================================ sets: one picture across the set */
+.pano { margin: 52px 0 0; display: flex; flex-direction: column; gap: 16px; }
+.pano-scroll { overflow-x: auto; scrollbar-width: none; padding-bottom: 6px; }
+.pano-scroll::-webkit-scrollbar { display: none; }
+/* 1.04% of the row is 4.3% of one screenshot: the App Store's gap between screenshots. */
+.pano-row { --r: clamp(10px, 1.5vw, 18px); position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 1.04%; min-width: 600px; transition: column-gap 1100ms var(--ease); }
+.pano-row::before { content: ""; position: absolute; inset: 10% 3% 0; z-index: -1; border-radius: 24px; box-shadow: 0 50px 110px -30px rgba(0, 0, 0, 0.95); }
+.pano-row img { display: block; width: 100%; height: auto; border-radius: var(--r); box-shadow: 0 0 0 1px var(--line); transition: border-radius 1100ms var(--ease), box-shadow 500ms ease; }
+.pano.joined .pano-row { column-gap: 0; }
+.pano.joined .pano-row img { border-radius: 0; box-shadow: 0 0 0 1px transparent; }
+.pano.joined .pano-row img:first-child { border-radius: var(--r) 0 0 var(--r); }
+.pano.joined .pano-row img:last-child { border-radius: 0 var(--r) var(--r) 0; }
+/* Joined, each screen reaches a pixel under the one before, so no anti-aliased hairline shows where they meet. */
+.pano.joined .pano-row img + img { margin-left: -1px; width: calc(100% + 1px); }
+@media (max-width: 560px) { .pano-scroll { margin-inline: -20px; padding-inline: 20px; } }
+.pano figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; font-size: 13.5px; color: var(--text-3); }
+.pano figcaption span { max-width: 56em; }
+.pano-toggle { flex: none; display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 12px; border: 0; border-radius: 11px; background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text); font: 600 13.5px var(--sans); cursor: pointer; transition: background-color 150ms ease, box-shadow 150ms ease; }
+.pano-toggle:hover { background: rgba(255, 255, 255, 0.09); box-shadow: inset 0 0 0 1px var(--line-3); }
+.pano-toggle:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+.pano-toggle svg { color: var(--lime); }
+.sets-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 48px; margin-top: 48px; }
+@media (max-width: 760px) { .sets-checks { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -502,7 +526,7 @@ footer a:hover { color: var(--text); }
     <nav class="links" aria-label="Sections">
       <a href="index.html">Overview</a>
       <a href="#story">How it works</a>
-      <a href="#ai">Ask AI</a><a href="#animate">Animate</a>
+      <a href="#ai">Ask AI</a><a href="#sets">Sets</a><a href="#animate">Animate</a>
       <a href="#mcp">For agents</a>
       <a href="#features">Features</a>
       <a href="changelog.html">What's new</a>
@@ -520,7 +544,7 @@ footer a:hover { color: var(--text); }
     <a class="back" href="index.html"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>Overview</a>
     <span class="eyebrow"><i></i>All features</span>
     <h1>Everything Screenshotter <span class="ital grad">does.</span></h1>
-    <p class="lede">The long version: how one capture becomes a store image, how Animate turns it into a video, how Ask AI and the MCP server work, and every backdrop, device, call-out and export it has.</p>
+    <p class="lede">The long version: how one capture becomes a store image, how a design becomes a whole App Store set, how Animate turns it into a video, how Ask AI and the MCP server work, and every backdrop, device, call-out and export it has.</p>
   </div>
 </section>
 
@@ -596,10 +620,42 @@ footer a:hover { color: var(--text); }
 </section>
 
 <!-- ============================================================ Animate -->
+<!-- ============================================================ sets -->
+<section class="pad" id="sets" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><i></i>Sets · new in 0.6</span>
+      <h2 class="h2">One design. <span class="ital grad">The whole set.</span></h2>
+      <p class="lede">A design can be your whole App Store listing: every screenshot side by side, at every size the stores ask for, edited, previewed and exported together.</p>
+    </div>
+    <figure class="pano reveal-scale" data-pano>
+      <div class="pano-scroll">
+        <div class="pano-row">
+          <img src="assets/pano-1.webp" alt="App Store screenshot 1: Dinner, sorted, with Mise's Tonight screen" width="600" height="1304" loading="lazy">
+          <img src="assets/pano-2.webp" alt="Screenshot 2: Cook with both hands free, a tilted phone running off its right edge" width="600" height="1304" loading="lazy">
+          <img src="assets/pano-3.webp" alt="Screenshot 3: the rest of that phone, and an Apple Watch with the cooking timer" width="600" height="1304" loading="lazy">
+          <img src="assets/pano-4.webp" alt="Screenshot 4: Your list, sorted by aisle, with the grocery list" width="600" height="1304" loading="lazy">
+        </div>
+      </div>
+      <figcaption><span>Four exports from one design, spaced as the App Store shows them. Each picks up exactly where the one before ends, so pushed together they’re one picture.</span><button class="pano-toggle" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6M6 9l3 3-3 3M21 12h-6M18 9l-3 3 3 3"/><path d="M12 5v14" opacity=".45"/></svg><span>Close the gaps</span></button></figcaption>
+    </figure>
+    <ul class="checks sets-checks">
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>A row of screens.</b> The set's screens sit side by side in Edit, numbered and named. Click one to edit it, drag one elsewhere, drop a screenshot on any of them. In Animate, the same screens are the video's shots.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Every size, in one design.</b> Every App Store and Google Play size is a preset. Add one and every screen is made again at it, its devices swapped: an iPad set from the iPhone one.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>One picture across the set.</b> One backdrop across every screen, each showing its slice. Drag a device past a screen's edge and it carries on into the next, picking up exactly where it left off.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Copy style.</b> One screen's backdrop, text style, film look, device look or placement onto the others, at its size or every size.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Preview it like the store.</b> ← and → step through the screens. Whole set shows them side by side, and Preview the store page shows every size's row, the way the App Store does.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Export the whole set.</b> Every screen of every size at full size, numbered in store order, with a contact sheet per size. In a folder per size, or ready for fastlane.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Undo across the set.</b> ⌘Z steps back through the whole design, whichever screen a change was made on: copying a style, adding a size, moving a screen.</span></li>
+      <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span><b>Your agent too.</b> <code>get_scene</code> and <code>save_scene</code> carry every screen and size; <code>export_scene_set</code> exports the lot.</span></li>
+    </ul>
+  </div>
+</section>
+
 <section class="anim-sec pad" id="animate" style="padding-top:0">
   <div class="wrap anim-grid">
     <div class="sec-head reveal">
-      <span class="eyebrow"><i></i>Animate · new in 0.5</span>
+      <span class="eyebrow"><i></i>Animate</span>
       <h2 class="h2">Now it <span class="ital grad">moves.</span></h2>
       <p class="lede">The same designs, as App Store preview videos and launch clips. Animate is a third mode beside Edit and Preview: a timeline for when everything happens, and shots for videos of several designs.</p>
       <ul class="checks">
@@ -693,8 +749,8 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </div>
 
         <div class="stats">
-          <div class="stat"><b>27</b><span>MCP tools</span></div>
-          <div class="stat"><b>30</b><span>device frames</span></div>
+          <div class="stat"><b>28</b><span>MCP tools</span></div>
+          <div class="stat"><b>24</b><span>store sizes</span></div>
           <div class="stat"><b>49</b><span>built-in looks</span></div>
           <div class="stat"><b>7</b><span>export formats</span></div>
         </div>
@@ -714,7 +770,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
           <div class="tool"><code>find_text</code><p>On-device text recognition, to aim call-outs at words.</p></div>
           <div class="tool"><code>record_web</code> · <code>record_mac</code><p>Rehearsed click-throughs of a page, with a cursor track; Mac app recordings.</p></div>
           <div class="tool"><code>crop_image</code> · <code>create_grid</code><p>Zoom into details and compare variants side by side, the way a designer checks work.</p></div>
-          <div class="tool"><code>list_scenes</code> · <code>get_scene</code> · <code>save_scene</code><p>Open the designs saved in the Studio, and save new ones there, still editable by hand.</p></div>
+          <div class="tool"><code>list_scenes</code> · <code>get_scene</code> · <code>save_scene</code> · <code>export_scene_set</code><p>Open the designs saved in the Studio, whole sets and every size included, save new ones there, still editable by hand, and export a set.</p></div>
           <div class="tool"><code>design_guide</code><p>The art-direction guide: composition, copy, type, colour, call-outs.</p></div>
           <div class="tool"><code>get_house_style</code> · <code>remember_style</code><p>What you like, remembered between sessions and shared with the app.</p></div>
           <div class="tool"><code>simulator_control</code><p>Boot, launch, open links, set appearance and permissions.</p></div>
@@ -763,8 +819,8 @@ tool_timeout_sec = <span class="s">600</span></pre>
     </div>
     <div class="bento">
       <article class="tile span-4 reveal">
-        <h3>Every Apple device, in 3D</h3>
-        <p>iPhone (including iPhone Duo), iPad, Apple Watch and MacBook in their real finishes, or Apple's own product art. Tilt, turn and stack them in one scene.</p>
+        <h3>Every Apple device</h3>
+        <p>Apple's own product art for iPhone, iPad, Apple Watch and MacBook, in the finishes Apple drew, and an Apple Watch on any band Apple shows it with. Tilt, turn and stack them in one scene.</p>
         <div class="devices" data-parallax>
           <img class="d-mac" data-speed="0.3" src="assets/dev-mac.webp" alt="MacBook Pro showing Mise's website" width="1300" height="880" loading="lazy">
           <img class="d-ipad" data-speed="0.7" src="assets/dev-ipad.webp" alt="iPad Pro showing Mise's recipes" width="760" height="874" loading="lazy">
@@ -810,7 +866,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
       </article>
       <article class="tile span-2 reveal">
         <h3>A whole App Store set</h3>
-        <p>Five matching screens in one go, at every required size.</p>
+        <p>Every screen of your listing in one design, at every size the stores ask for, exported in one go.</p>
         <div class="fan" data-fan>
           <img style="--k:-2;--a:2" src="assets/set-1.webp" alt="" width="460" height="1000" loading="lazy">
           <img style="--k:-1;--a:0.5" src="assets/set-2.webp" alt="" width="460" height="1000" loading="lazy">
@@ -906,7 +962,7 @@ tool_timeout_sec = <span class="s">600</span></pre>
         </a>
         <a class="btn ghost lg" href="#mcp">Set up the MCP</a>
       </div>
-      <p class="dl-meta">Version 0.5.0 · <a href="changelog.html">What's new</a> · 28 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
+      <p class="dl-meta">Version 0.6.0 · <a href="changelog.html">What's new</a> · 27 MB · macOS 14 or later · Apple silicon · Needs Node.js 20+</p>
     </div>
     <div class="how">
       <ol>
@@ -928,7 +984,7 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/icon.svg" alt="">Screenshotter</a>
     <p>Every image on this page was made with Screenshotter. Mise is a made-up app; its food photos are from <a href="https://unsplash.com" style="text-decoration:underline;text-underline-offset:3px">Unsplash</a>.</p>
-    <nav class="links" aria-label="Footer"><a href="index.html">Overview</a><a href="#ai">Ask AI</a><a href="#animate">Animate</a><a href="#mcp">MCP</a><a href="#download">Download</a></nav>
+    <nav class="links" aria-label="Footer"><a href="index.html">Overview</a><a href="#ai">Ask AI</a><a href="#sets">Sets</a><a href="#animate">Animate</a><a href="#mcp">MCP</a><a href="#download">Download</a></nav>
   </div>
 </footer>
 
@@ -1119,6 +1175,21 @@ npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app
   const showView = (name) => { views.forEach((v) => v.classList.toggle("on", v.dataset.view === name)); const win = views[0]?.closest(".window"); if (win) win.dataset.current = name; vtabs.forEach((t) => { t.setAttribute("aria-selected", String(t.dataset.show === name)); const bar = t.querySelector("i"); bar.style.animation = "none"; bar.offsetWidth; bar.style.animation = ""; }); };
   vtabs.forEach((t, i) => t.addEventListener("click", () => { manual = true; vi = i; showView(t.dataset.show); }));
   if (!reduced && vtabs.length && winWrap) setInterval(() => { if (manual || !isVisible(winWrap)) return; vi = (vi + 1) % vtabs.length; showView(vtabs[vi].dataset.show); }, 5000);
+
+  // The set as the store spaces it; close the gaps and it's one picture. Shown once on its own.
+  const pano = $("[data-pano]");
+  if (pano) {
+    const btn = $(".pano-toggle", pano), label = $("span", btn);
+    let touched = false;
+    const join = (on) => { pano.classList.toggle("joined", on); label.textContent = on ? "Show the gaps" : "Close the gaps"; };
+    btn.addEventListener("click", () => { touched = true; join(!pano.classList.contains("joined")); });
+    if (!reduced && "IntersectionObserver" in window) new IntersectionObserver(([e], o) => {
+      if (!e.isIntersecting) return;
+      o.disconnect();
+      setTimeout(() => { if (touched) return; join(true); setTimeout(() => { if (!touched) join(false); }, 2800); }, 1500);
+    }, { threshold: 0.35 }).observe(pano);
+  }
+
 })();
 </script>
 </body>

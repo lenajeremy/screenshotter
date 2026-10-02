@@ -8,7 +8,7 @@
  * resolution, then framed, lit and exported by the same engine the app and the MCP use.
  * Output: site/assets/*.webp|mp4.
  */
-import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closeBrowser } from "../src/render/browser.js";
@@ -16,6 +16,7 @@ import { createMockup, renderHtml } from "../src/render/mockup.js";
 import type { MockupInput } from "../src/render/schema.js";
 import { createVideo } from "../src/render/video.js";
 import { createSequence } from "../src/render/sequence.js";
+import { buildRecipe } from "../src/design/recipes.js";
 import { ensurePhotos } from "../site/demo/photos.js";
 import * as screens from "../site/demo/screens.js";
 
@@ -85,7 +86,7 @@ const jobs: Job[] = [
   { name: "dev-mac", width: 1300, input: { devices: [{ screenshot: shot("web"), color: "Space Black", x: 0.5, y: 0.5, anchor: "center", height: 0.9, shadow: "soft" }], canvas: "1700x1150", layout: "custom", background: clear } },
   { name: "dev-ipad", width: 760, input: { devices: [{ screenshot: shot("ipad"), color: "Space Black", rotateY: 12, rotateX: 4, x: 0.5, y: 0.5, anchor: "center", height: 0.88, shadow: "soft" }], canvas: "1000x1150", layout: "custom", background: clear } },
   { name: "dev-iphone", width: 480, input: { devices: [{ screenshot: shot("recipe"), ...PHONE, rotateY: -14, rotateX: 5, x: 0.5, y: 0.5, anchor: "center", height: 0.9, shadow: "soft" }], canvas: "700x1200", layout: "custom", background: clear } },
-  { name: "dev-watch", width: 360, input: { devices: [{ screenshot: shot("watch"), color: "Jet Black", rotateY: 16, x: 0.5, y: 0.5, anchor: "center", height: 0.34, shadow: "soft" }], canvas: "600x1500", layout: "custom", background: clear } },
+  { name: "dev-watch", width: 382, input: { devices: [{ screenshot: shot("watch"), color: "Jet Black", rotateY: 16, x: 0.5, y: 0.5, anchor: "center", height: 0.84, shadow: "soft" }], canvas: "764x1280", layout: "custom", background: clear } },
   { name: "dev-browser", width: 1100, input: { devices: [{ screenshot: shot("web"), frame: "browser", url: "mise.app", chrome: "dark", x: 0.5, y: 0.5, anchor: "center", height: 0.86, shadow: "medium" }], canvas: "1700x1150", layout: "custom", background: clear } },
 
   // Call-outs, found by the words on screen.
@@ -125,6 +126,53 @@ SET.forEach(([screen, headline, extra], i) =>
   }),
 );
 
+// A set as one picture: the backdrop across all four screens, and a phone that runs from the second
+// into the third. Each screen is given its slice of the backdrop and its neighbours' spanning devices
+// (one screen over), as the Studio does, so the four exports butt together into one image.
+type PanoDevice = MockupInput["devices"][number] & { span?: boolean };
+const panoText = { ...INK, x: 0.5, y: 0.06, anchor: "top" as const, headlineSize: 0.064 };
+const PANO: Array<{ headline: string; devices: PanoDevice[] }> = [
+  { headline: "Dinner, **sorted.**", devices: [{ screenshot: shot("tonight"), ...PHONE, x: 0.5, y: 0.62, anchor: "center", height: 0.7, shadow: "studio" }] },
+  { headline: "Cook with **both hands** free", devices: [{ screenshot: shot("cook"), ...PHONE, x: 1, y: 0.665, anchor: "center", height: 0.71, rotate: -9, shadow: "studio", span: true }] },
+  { headline: "Timers on your **wrist**", devices: [{ screenshot: shot("watch"), color: "Jet Black", x: 0.71, y: 0.65, anchor: "center", height: 0.31, shadow: "studio" }] },
+  { headline: "Your list, **sorted by aisle**", devices: [{ screenshot: shot("groceries"), ...PHONE, x: 0.5, y: 0.62, anchor: "center", height: 0.7, shadow: "studio" }] },
+];
+PANO.forEach((screen, i) => {
+  const spill = [i - 1, i + 1].flatMap((j) => (PANO[j]?.devices ?? []).filter((d) => d.span).map(({ span: _, ...d }) => ({ ...d, x: (d.x ?? 0.5) + (j - i) })));
+  jobs.push({
+    name: `pano-${i + 1}`,
+    width: 600,
+    input: {
+      devices: screen.devices.map(({ span: _, ...d }) => d),
+      spill,
+      canvas: "iphone-6.9",
+      layout: "custom",
+      background: { ...BG.table, dim: 0.34 },
+      backgroundSpan: { count: PANO.length, index: i },
+      headline: screen.headline,
+      textStyle: panoText,
+      effects: { grain: 0.06 },
+    } as Job["input"],
+  });
+});
+
+// Every kind of device in one scene, for the "Every Apple device" tile.
+jobs.push({
+  name: "get-devices",
+  width: 1200,
+  input: {
+    devices: [
+      { screenshot: shot("web"), color: "Space Black", x: 0.5, y: 0.42, anchor: "center", height: 0.6, shadow: "soft" },
+      { screenshot: shot("ipad"), color: "Space Black", x: 0.2, y: 0.64, anchor: "center", height: 0.5, rotate: -3, shadow: "soft" },
+      { screenshot: shot("watch"), color: "Jet Black", x: 0.6, y: 0.79, anchor: "center", height: 0.3, shadow: "soft" },
+      { screenshot: shot("tonight"), ...PHONE, x: 0.8, y: 0.65, anchor: "center", height: 0.62, rotate: 3, shadow: "soft" },
+    ],
+    canvas: "2400x1800",
+    layout: "custom",
+    background: { type: "radial", colors: ["#1d2028", "#0b0b0e"], x: 0.5, y: 0.1 },
+  },
+});
+
 let n = 0;
 for (const job of jobs.filter((j) => want(j.name))) {
   const t = Date.now();
@@ -132,6 +180,22 @@ for (const job of jobs.filter((j) => want(j.name))) {
   await createMockup({ ...(job.input as MockupInput), format: "webp", jpegQuality: 86, deliveryWidth: job.width, preview: false, output: file });
   n++;
   console.log(`${job.name.padEnd(22)} ${String(Date.now() - t).padStart(5)} ms  ${(statSync(file).size / 1024).toFixed(0)} KB`);
+}
+
+// "One click later": five of the Studio's recipes made from the same screenshot, in a strip.
+if (want("recipes")) {
+  const t = Date.now();
+  const tiles: string[] = [];
+  for (const id of ["tilted", "gallery", "bold-hero", "risograph", "art-director"]) {
+    const file = path.join(demo, `recipe-${id}.png`);
+    const input = await buildRecipe(id, [{ screenshot: shot("tonight") }], { headline: "Dinner, **sorted**" });
+    await createMockup({ ...input, format: "png", deliveryWidth: 1000, preview: false, output: file });
+    tiles.push(`<img src="data:image/png;base64,${readFileSync(file).toString("base64")}">`);
+  }
+  const html = `<body style="margin:0;height:687px;box-sizing:border-box;padding:36px;display:flex;gap:24px;align-items:center;background:#101012">
+    <style>img{height:615px;border-radius:12px;display:block}</style>${tiles.join("")}</body>`;
+  await renderHtml(html, path.join(out, "recipes.webp"), 2000, 687, { scale: 1, format: "webp", quality: 88, transparent: false });
+  console.log(`recipes.webp          ${String(Date.now() - t).padStart(5)} ms`);
 }
 
 // A short clip for the video tile.
