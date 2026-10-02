@@ -1,6 +1,6 @@
 # What's new
 
-## Unreleased
+## 0.11.4 · 2 October 2026
 
 ### Fixes
 - The Templates panel's previews show in seconds with a new screenshot: they're drawn a few at a time, in the panel's order, instead of all sixteen sets at once (which showed nothing for about a minute, and could break some).
