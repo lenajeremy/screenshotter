@@ -6,22 +6,19 @@
     <description>Updates to Screenshotter.</description>
     <language>en</language>
     <item>
-      <title>Screenshotter 0.11.1</title>
-      <pubDate>Fri, 02 Oct 2026 11:40:27 GMT</pubDate>
-      <sparkle:version>0.11.1</sparkle:version>
-      <sparkle:shortVersionString>0.11.1</sparkle:shortVersionString>
+      <title>Screenshotter 0.11.2</title>
+      <pubDate>Fri, 02 Oct 2026 12:08:51 GMT</pubDate>
+      <sparkle:version>0.11.2</sparkle:version>
+      <sparkle:shortVersionString>0.11.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://screenshotter-umber.vercel.app/changelog.html</sparkle:fullReleaseNotesLink>
       <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Highlights</h4>
 <ul>
-<li><strong>Your app icon on the store page.</strong> In <strong>Preview the store page</strong>, click the icon (or drop a picture on it) to use your app&#39;s own: one of your pictures, or a file. It&#39;s kept with the design, so each app keeps its own. Until you choose one, an app icon already on the design is used, else the app&#39;s initial.</li>
-</ul>
-<h4>Fixes</h4>
-<ul>
-<li>The Illustrations in the Images panel fit the panel again: wide ones no longer push the grid past its edge or over Badges.</li>
+<li><strong>Screens without a screenshot.</strong> A screen can be just words, stickers and illustrations: it previews, exports as an image or video, and goes in a set like any other. <strong>Just words and doodles</strong> on the start screen begins one; a screen without a screenshot shows a small <strong>Add a screenshot</strong> button instead of asking for one.</li>
+<li><strong>Delete pictures you added.</strong> In Images › Your pictures, hover a picture and click its ×, right-click it, or select it and press Delete. If a design uses it you&#39;re told which; <strong>Undo</strong> brings it back.</li>
 </ul>
 ]]></description>
-      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.1.dmg" type="application/octet-stream" sparkle:edSignature="oTiihTCZfPrbnAo2LjCf1haD2M/TR9rXrgkwY2HoaWmsDi3eCvwIjvxIqHhBwwN6Vtij1SZIOxkEoyi/2i5RAA==" length="33091422" />
+      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.2.dmg" type="application/octet-stream" sparkle:edSignature="BjdMO70NJ5g3TfgMtkpyZjrfFQdjZqfLKKarzUrwbIpIHXjw8GL5s4yiy8VlcXqdSyLwIs6U2oay9JeBc9o6AQ==" length="33264009" />
     </item>
   </channel>
 </rss>
