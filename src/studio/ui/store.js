@@ -110,7 +110,7 @@ export const S = {
   render: null,
   renderStale: false,
   exportOpen: false,
-  exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4" }, set: { format: "png", folders: "size", sheets: true } },
+  exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4", screens: "all", picked: [], join: true }, set: { format: "png", folders: "size", sheets: true } },
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false },
   apps: { list: [], loading: false, for: "" },
   stillPick: null,

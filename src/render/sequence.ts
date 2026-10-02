@@ -63,6 +63,7 @@ export const SequenceInputShape = {
   format: z.enum(["mp4", "mov", "webm", "gif"]).optional().describe("Default mp4."),
   quality: z.enum(["preview", "final"]).optional().describe("preview renders at half resolution for a quick check."),
   output: z.string().optional().describe("Output file or directory. Default ./screenshots/videos/."),
+  name: z.string().max(120).optional().describe("What to call the file when `output` isn't a file: this, then the time. Default \"video-N-shots\"."),
   deliveryWidth: z.number().int().min(16).max(8192).optional().describe("Resize the video to this width."),
   preview: z.boolean().optional().describe("Return a strip of frames from the video. Default true."),
   versions: z.array(VersionSchema).max(9).optional().describe("Also make it at these sizes, each its own file (see create_video)."),
@@ -225,7 +226,7 @@ async function renderSequence(input: SequenceInput, o: { output?: string; appSto
   const appStore = o.appStore ?? size.appStore;
   const fps = appStore ? 30 : (input.fps ?? 30);
   const format = appStore ? "mp4" : formatFor(input.format, o.output ?? input.output, ["mp4", "mov", "webm", "gif"] as const, "mp4", { m4v: "mp4" });
-  const out = o.output ?? outputPathFor(input.output, "videos", `video-${input.shots.length}-shots`, format);
+  const out = o.output ?? outputPathFor(input.output, "videos", input.name || `video-${input.shots.length}-shots`, format);
   const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-sequence-"));
   const warnings: string[] = [];
   try {

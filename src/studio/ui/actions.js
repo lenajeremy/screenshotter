@@ -840,9 +840,41 @@ function videoShots() {
   return playing.length ? playing : shots;
 }
 
+/**
+ * The screens chosen to export as video: the whole set (as it plays), the screen being edited, or
+ * the ones picked, in set order. Null for a single design.
+ */
+export function exportScreens() {
+  // Each tagged with its place in the set (`at`), for naming the file.
+  const shots = allShots()?.map((x, i) => ({ ...x, at: i }));
+  if (!shots) return null;
+  const v = S.exportOpts.video;
+  const here = shots[S.shot] ?? shots[0];
+  if (v.screens === "this") return [here];
+  if (v.screens === "pick") {
+    const picked = shots.filter((_, i) => (v.picked ?? []).includes(i));
+    return picked.length ? picked : [here];
+  }
+  const playing = shots.filter((x) => x.video !== false);
+  return playing.length ? playing : shots;
+}
+
+/**
+ * What to call a video of these screens: the design's name, and for some of a set's screens their
+ * numbers (and, for one, its name), so "Mise 02 Recipes worth cooking" says which it is.
+ */
+function videoName(list) {
+  const design = S.sceneName || "Design";
+  const all = allShots();
+  if (!all || !list || list.length === all.length) return design;
+  const nums = list.map((x) => x.at + 1);
+  if (list.length === 1) return `${design} ${String(nums[0]).padStart(2, "0")} ${shotName(list[0], nums[0] - 1)}`;
+  return `${design} screens ${nums.map((n) => String(n).padStart(2, "0")).join(" ")}`;
+}
+
 /** Every shot as the engine renders them: its scene, video options, length and way in. */
-function sequenceShots() {
-  const shots = videoShots() ?? [{ scene: S.scene }];
+function sequenceShots(list) {
+  const shots = list ?? videoShots() ?? [{ scene: S.scene }];
   return shots.map((x, i) => {
     const length = x.length ?? (shots.length === 1 ? shotVideo(x.scene).duration : undefined);
     return tidy({ ...clone(x.scene), video: shotVideo(x.scene, length), length, transition: i ? (x.transition ?? { type: "fade", duration: 0.5 }) : undefined });
@@ -854,9 +886,11 @@ function sequenceShots() {
  * versions), each fitted, filled or laid out again for its shape.
  */
 export async function exportVideo() {
-  const shots = videoShots();
+  const shots = exportScreens();
   if (!(shots ? shots[0].scene : S.scene).devices.length) return toast({ kind: "warn", title: "Add a screenshot first" });
   if (S.rendering) return;
+  // Several screens, one video each: export them one after another.
+  if (shots && shots.length > 1 && S.exportOpts.video.join === false) return exportEachVideo(shots);
   const o = S.exportOpts.video;
   const sizes = o.sizes?.length ? o.sizes : ["design"];
   const fit = o.fit && o.fit !== "auto" ? o.fit : undefined;
@@ -871,17 +905,47 @@ export async function exportVideo() {
       const video = shotVideo(S.scene, S.exportOpts.video.duration && Math.max(S.exportOpts.video.duration, shotVideo(S.scene).duration));
       r = await api(`/api/video${historyQuery()}`, { ...clone(S.scene), video, format: o.format, preview: false, versions: versions.length ? versions : undefined });
     } else {
-      r = await api(`/api/sequence${historyQuery()}`, { shots: sequenceShots(), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
+      r = await api(`/api/sequence${historyQuery()}`, { shots: sequenceShots(shots ?? undefined), name: videoName(shots), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
     }
     renderResult(r, { preview: false, isVideo: o.format !== "gif", ms: performance.now() - started });
     touch("exported");
     refreshFiles();
     const extra = r.versions?.length ? ` + ${r.versions.map((v) => v.label.split(" · ")[0] === "App Store" ? v.label : v.label.split(" · ")[0]).join(", ")}` : "";
-    toast({ kind: "ok", title: shots ? `${shots.length}-shot video exported` : "Video exported", text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, actions: [{ label: "Show in Finder", run: () => reveal(r.path) }] });
+    toast({ kind: "ok", title: !shots ? "Video exported" : shots.length === 1 && allShots().length > 1 ? `Screen ${shots[0].at + 1}'s video exported` : `${shots.length}-shot video exported`, text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, actions: [{ label: "Show in Finder", run: () => reveal(r.path) }] });
     const notes = [...(r.warnings ?? []), ...(r.versions ?? []).flatMap((v) => (v.warnings ?? []).map((w) => `${v.label}: ${w}`))];
     if (notes.length) toast({ kind: "warn", title: "Worth knowing", text: notes.slice(0, 3).join(" "), timeout: 12000 });
   } catch (e) {
     fail(e, "Video export failed");
+  } finally {
+    set({ rendering: null });
+  }
+}
+
+/** A video for each chosen screen, one after another, each at every size chosen. */
+async function exportEachVideo(shots) {
+  const o = S.exportOpts.video;
+  const sizes = o.sizes?.length ? o.sizes : ["design"];
+  const fit = o.fit && o.fit !== "auto" ? o.fit : undefined;
+  const [main, ...rest] = sizes;
+  const versions = rest.map((size) => (fit ? { size, fit } : size));
+  const started = performance.now();
+  const done = [];
+  set({ view: "render", exportOpen: false });
+  try {
+    for (const [k, x] of shots.entries()) {
+      const n = x.at + 1;
+      set({ rendering: { label: `Rendering screen ${n} (${k + 1} of ${shots.length})… this takes a little while` } });
+      const r = await api(`/api/sequence${historyQuery()}`, { shots: sequenceShots([x]), name: videoName([x]), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
+      done.push(r);
+      renderResult(r, { preview: false, isVideo: o.format !== "gif", ms: performance.now() - started });
+    }
+    touch("exported");
+    refreshFiles();
+    const last = done[done.length - 1];
+    toast({ kind: "ok", title: `${done.length} videos exported`, text: `One for each screen${sizes.length > 1 ? `, at ${sizes.length} sizes` : ""}.`, actions: [{ label: "Show in Finder", run: () => reveal(last.path) }] });
+  } catch (e) {
+    fail(e, done.length ? `Video export stopped after ${done.length} of ${shots.length}` : "Video export failed");
+    if (done.length) refreshFiles();
   } finally {
     set({ rendering: null });
   }

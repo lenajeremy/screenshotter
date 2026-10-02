@@ -1478,3 +1478,11 @@ li.done .work-shot .scan { display: none; }
 .set-add:hover { border-color: var(--lime); background: var(--lime-soft); color: var(--text); }
 .artboard-label .link-btn { pointer-events: auto; border: 0; background: none; padding: 0; color: var(--lime); font: inherit; font-weight: 600; cursor: pointer; }
 .artboard-label .link-btn:hover { text-decoration: underline; }
+
+/* Export › Video: the screens to put in it. */
+.screen-picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 6px; }
+.screen-pick { position: relative; padding: 0; border: 0; border-radius: 7px; overflow: hidden; background: var(--panel-2); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line-2); opacity: 0.55; transition: opacity 0.15s, box-shadow 0.15s; }
+.screen-pick img, .screen-pick .ph { display: block; width: 100%; aspect-ratio: 9 / 19.5; object-fit: cover; }
+.screen-pick span { position: absolute; left: 4px; bottom: 3px; font: 600 10px var(--mono, ui-monospace); color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+.screen-pick:hover { opacity: 0.8; }
+.screen-pick.on { opacity: 1; box-shadow: 0 0 0 2px var(--lime); }

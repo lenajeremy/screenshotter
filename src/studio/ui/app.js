@@ -190,7 +190,7 @@ function ExportPopover({ anchor }) {
           <button class="btn primary lg block" onClick=${exportImage}><${Icon} n="export" s=${16} w=${2} />Export image<span class="kbd">⌘E</span></button>
         </div>`
       : html`<div class="body">
-          ${many && html`<div class="note shots-note"><${Icon} n="video" s=${13} /><span><b>${s.shots.length} shots</b>, joined by their transitions. Each shot's length is set on the timeline.</span></div>`}
+          ${many && html`<${VideoScreens} />`}
           <div class="lbl">Camera motion</div>
           <div class="motions">${MOTIONS.map((m) => html`<button class="motion ${o.video.motion === m.value ? "on" : ""}" onClick=${() => upv({ motion: m.value })}><i class="mini ${m.value}"></i>${m.label}</button>`)}</div>
           ${!many && html`<div class="row"><label>Length</label><${Slider} value=${o.video.duration} min=${2} max=${20} step=${0.5} format=${(v) => v + "s"} onChange=${(v) => upv({ duration: v ?? 6 })} /></div>`}
@@ -211,6 +211,39 @@ function ExportPopover({ anchor }) {
   <//>`;
 }
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
+
+/**
+ * Which screens of a set go into the video: all of them (as the set plays), the one being edited, or
+ * the ones picked; and, for several, one video joined by their transitions or one video each.
+ */
+function VideoScreens() {
+  const s = useStore();
+  const v = s.exportOpts.video;
+  const shots = s.shots;
+  const upv = (patch) => {
+    set({ exportOpts: { ...S.exportOpts, video: { ...S.exportOpts.video, ...patch } } });
+    persist();
+  };
+  const which = v.screens ?? "all";
+  const picked = (v.picked ?? []).filter((i) => i < shots.length);
+  const chosen = which === "this" ? [s.shot] : which === "pick" ? (picked.length ? picked : [s.shot]) : shots.map((_, i) => i).filter((i) => shots[i].video !== false);
+  const n = which === "all" && !chosen.length ? shots.length : chosen.length;
+  const toggle = (i) => upv({ picked: picked.includes(i) ? picked.filter((x) => x !== i) : [...picked, i].sort((a, b) => a - b) });
+  const thumbs = useStoreThumbs(which === "pick" ? shots.map((x) => x.scene) : [], 96);
+  return html`
+    <div class="row"><label>Screens</label><${Seg} value=${which} options=${[{ value: "all", label: "All" }, { value: "this", label: "This one" }, { value: "pick", label: "Choose" }]}
+      onChange=${(x) => upv({ screens: x, picked: x === "pick" && !picked.length ? [s.shot] : picked })} /></div>
+    ${which === "pick" &&
+    html`<div class="screen-picks">${shots.map((x, i) => html`<button key=${i} class="screen-pick ${picked.includes(i) ? "on" : ""}" title=${screenName(i)} onClick=${() => toggle(i)}>
+        ${thumbs[i] ? html`<img src=${thumbs[i]} />` : html`<i class="ph"></i>`}<span>${String(i + 1).padStart(2, "0")}</span>
+      </button>`)}</div>`}
+    ${n > 1 && html`<div class="row"><label>Make</label><${Seg} value=${v.join === false ? "each" : "one"} options=${[{ value: "one", label: "One video" }, { value: "each", label: "One each" }]} onChange=${(x) => upv({ join: x === "one" })} /></div>`}
+    <div class="note shots-note"><${Icon} n="video" s=${13} /><span>${n > 1
+      ? v.join === false
+        ? html`<b>${n} videos</b>, one for each screen.`
+        : html`<b>${n} screens</b> in one video, joined by their transitions. Each screen's length is set on the timeline.`
+      : html`<b>${which === "this" || n === 1 ? screenName(chosen[0] ?? s.shot) : "One screen"}</b> on its own.`}</span></div>`;
+}
 
 /** The Set tab: every screen of every size in one go, in store order. */
 function SetExport() {
