@@ -326,9 +326,11 @@ export function persist() {
 }
 
 /**
- * The space between screenshots on the App Store (about 10 pt beside a 230 pt screenshot), as a share
- * of a screen's width. A device or backdrop across the set runs on behind it, so it meets itself
- * across the gap where people see the set: the store, the Edit row, the store page preview.
+ * The space between screenshots on the App Store (about 10 pt beside a 230 pt screenshot; 56 px
+ * beside a 1290 px one), as a share of a screen's width. The Edit row and the previews leave it, so
+ * the set looks as the store shows it. A device or backdrop across the set doesn't run on behind it:
+ * each screen picks up exactly where the one before ends, so nothing is hidden in the gap (the store
+ * shifts the rest sideways by it).
  */
 export const STORE_GAP = 0.043;
 
@@ -362,14 +364,14 @@ export function syncSpans() {
     const sc = { ...x.scene };
     if (across) {
       sc.background = S.scene.background;
-      sc.backgroundSpan = { count: shots.length, index: i, gap: STORE_GAP };
+      sc.backgroundSpan = { count: shots.length, index: i };
     } else delete sc.backgroundSpan;
-    // A spanning device of the screen on the left is a screen and a gap to the left in this one's terms; of the one on the right, to the right.
+    // A spanning device of the screen on the left is one screen to the left in this one's terms; of the one on the right, to the right.
     const spill = [];
     for (const j of [i - 1, i + 1])
       shots[j]?.scene.devices.forEach((d, k) => {
         // In a set, a device you've placed carries on into the screen beside it unless it's told not to.
-        if (d.span !== false && typeof d.x === "number" && reaches(d)) spill.push(tidy({ ...d, x: r4(d.x + (j - i) * (1 + STORE_GAP)), span: undefined, spillOf: { shot: j, device: k } }));
+        if (d.span !== false && typeof d.x === "number" && reaches(d)) spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
       });
     if (spill.length) sc.spill = spill;
     else delete sc.spill;
