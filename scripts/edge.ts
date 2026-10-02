@@ -387,6 +387,36 @@ await check("an installed product bezel frames the screenshot (edge from the art
   }
 });
 
+await check("clay recolours Apple's art into one matte colour, keeping the screen as it is", async () => {
+  const { readBmp } = await import("../src/util/png.js");
+  const { run } = await import("../src/util/exec.js");
+  const { layoutScene } = await import("../src/render/mockup.js");
+  // The magenta stand-in art from the check above.
+  process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "bezels");
+  try {
+    const input = { devices: [{ screenshot: shot, device: "iPhone 17 Pro", color: "Silver", clay: "sage" }], canvas: "600x1000", layout: "floating", background: "#000000" };
+    const file = path.join(out, "clay.png");
+    await createMockup({ ...input, preview: false, output: file } as never);
+    await run("sips", ["-s", "format", "bmp", file, "--out", path.join(out, "clay.bmp")]);
+    const img = readBmp(readFileSync(path.join(out, "clay.bmp")));
+    const at = (fx: number, fy: number) => {
+      const i = (Math.round(fy * (img.height - 1)) * img.width + Math.round(fx * (img.width - 1))) * 4;
+      return [img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]];
+    };
+    const row = Array.from({ length: 60 }, (_, k) => at(0.05 + k * 0.004, 0.5));
+    assert(!row.some(([r, g, b]) => r > 200 && g < 60 && b > 200), "the art's own magenta still shows");
+    // Sage is #b8c6b0: green a touch above red and blue. Shading moves it, but not its hue.
+    const sage = row.find(([r, g, b]) => g > 70 && g >= r && g >= b && Math.max(r, g, b) - Math.min(r, g, b) < 60);
+    assert(sage, `no sage on the device's edge: ${JSON.stringify(row.slice(0, 12))}`);
+    const mid = at(0.5, 0.5);
+    assert(mid[0] > 200 && mid[1] > 200, `the screenshot isn't in the opening (${mid})`);
+    const layout = await layoutScene(input as never);
+    assert(layout.entities.find((e) => e.kind === "device")?.clay === "#b8c6b0", "the layout should tell the Studio the clay colour");
+  } finally {
+    delete process.env.SCREENSHOTTER_BEZELS_DIR;
+  }
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

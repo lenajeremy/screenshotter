@@ -14,7 +14,7 @@ import { edgeBlurHtml, esc, gradeFor, grainHtml, luminance, px, quickTone, resol
 import { SAFARI_MENUS, menuBarHtml, statusCentre, type MenuBarSpec } from "./menubar.js";
 import { newPage } from "./browser.js";
 import { finishBackground } from "./finish.js";
-import { FRAME_CSS, MAC_MENU_BAR, WATCH_BAND, defaultBand, measureFrame, renderFrame, screenRect, type FrameKind, type FrameOptions } from "./frame.js";
+import { FRAME_CSS, MAC_MENU_BAR, WATCH_BAND, clayColor, defaultBand, measureFrame, renderFrame, screenRect, type FrameKind, type FrameOptions } from "./frame.js";
 import { resolveHighlights } from "./highlights.js";
 import { findText } from "../native/ocr.js";
 import { isLine, renderShape, shapeHtml, shapeSpec, type ShapeSpec } from "./shapes.js";
@@ -308,10 +308,14 @@ async function prepare(input: DeviceInput, light = false): Promise<Prepared> {
     }
     if (input.side === "back" && !drawnFrames()) notes.push("Apple's art shows the front of the device, so that's what's shown.");
     scale = (resolved.model.screen.scale * Math.min(size.width, size.height)) / Math.min(resolved.model.screen.width, resolved.model.screen.height);
-  } else if (sidecar?.deviceTypeIdentifier) {
-    // A simulator capture shown without hardware: size chrome and highlights in its own points.
-    const r = await resolveDevice(undefined, { path: file, ...size }).catch(() => undefined);
-    if (r) scale = r.model.screen.scale;
+  } else if (sidecar?.deviceTypeIdentifier || kind === "card") {
+    // A capture shown without hardware: size chrome and highlights in its own points, and as the
+    // screen alone (a card), round its corners like the device's screen when the device is known.
+    const r = await resolveDevice(input.device, { path: file, ...size }).catch(() => undefined);
+    if (r && r.source !== "generic") {
+      scale = r.model.screen.scale;
+      if (kind === "card") resolved = r;
+    }
   }
 
   const facts = resolved && !light && !bare ? await analyzeScreenshot(file, resolved.model, size) : { hasIsland: false, topSide: "left" as const };
@@ -338,6 +342,9 @@ async function prepare(input: DeviceInput, light = false): Promise<Prepared> {
     back: input.side === "back" && drawnFrames(),
     bezel: drawnFrames() && kind === "device" && resolved && (input.bezel ?? sidecar?.kind !== "web") && !bezel ? await bezelRef(resolved.model, color, input.band) : bezel,
   };
+  // Clay recolours Apple's art, so it needs the art.
+  if (input.clay && options.bezel && !bare) options.clay = clayColor(input.clay);
+  else if (input.clay && kind === "device" && !bare) notes.push("clay recolours Apple's device art, and this device is drawn without it, so it keeps its finish.");
   const family: Family | "flat" = kind === "device" ? resolved!.model.family : "flat";
   return { input, file, size, kind: bare ? "card" : kind, family, resolved, color, options, notes };
 }
@@ -480,6 +487,8 @@ export interface SceneEntity {
   band?: { stub: number; width: number; color: string };
   /** The product bezel image this device is drawn with, when one is installed and used. */
   bezel?: string;
+  /** Clay: the colour Apple's art is recoloured into. */
+  clay?: string;
   /** Shapes: everything about it, settled (an `around` target resolved to a position). */
   shape?: ShapeSpec;
   text?: string;
@@ -693,6 +702,7 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       menuBarStyle: typeof d.options.menuBar === "object" ? d.options.menuBar.style : undefined,
       band: watchBand(d),
       bezel: d.kind === "device" && !d.options.back ? d.options.bezel?.file : undefined,
+      clay: d.options.clay,
     };
   };
   const entities: SceneEntity[] = [...plan.prepared.map((d, i) => deviceEntity(d, plan.placements[i], i)), ...plan.spill.flatMap((d, i) => (plan.spillSeen[i] ? [deviceEntity(d, plan.spillPlacements[i], i, true)] : []))];

@@ -209,7 +209,7 @@ export const DeviceInputSchema = z.object({
   frame: z
     .enum(["device", "browser", "window", "card", "none"])
     .optional()
-    .describe("device: hardware mockup (default). browser: Safari-style window with address bar. window: macOS window. card: rounded card. none: the bare screenshot."),
+    .describe("device: hardware mockup (default). browser: Safari-style window with address bar. window: macOS window. card: the screen only (UI-only), with the device's own screen corners when the capture's device is known, else gently rounded. none: the bare screenshot, square."),
   device: z
     .string()
     .optional()
@@ -271,6 +271,10 @@ export const DeviceInputSchema = z.object({
     .optional()
     .describe("Apple Watch: the band, as Apple's art names it for the finish, e.g. \"Sport Band Black\", \"Sport Loop Forest\", \"Milanese Loop\", \"Alpine Loop Light Blue\" (list_mockup_options lists each finish's bands; part of a name, like \"Milanese\", is enough). Default: a Sport Band if the finish has one."),
   bandColor: z.string().optional().describe("Apple Watch band colour, or \"none\" (drawn watches only, a development option)."),
+  clay: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .describe("Clay: Apple's device art recoloured into one matte colour, keeping its own light and shade (the screen is untouched; tilted, its side is clay too). true for porcelain, a tone (porcelain, sand, sage, sky, slate, ink) or any colour. Calm, and it puts the attention on the app."),
   span: z
     .boolean()
     .optional()

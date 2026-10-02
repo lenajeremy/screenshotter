@@ -11,6 +11,7 @@ import { captureWeb, WEB_VIEWPORTS } from "../capture/web.js";
 import { DEVICE_MODELS, GENERIC_COLORS, findModel } from "../devices/catalog.js";
 import { recognizeText, warmUpOcr } from "../native/ocr.js";
 import { getBrowser } from "../render/browser.js";
+import { CLAY_TONES } from "../render/frame.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
 import { createMockup, layoutScene } from "../render/mockup.js";
@@ -257,6 +258,7 @@ async function options() {
     grades: GRADES,
     webViewports: Object.keys(WEB_VIEWPORTS),
     bezels: bezelSummary(),
+    clayTones: CLAY_TONES,
     aiProviders: [
       process.env.OPENAI_API_KEY && "openai",
       (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) && "gemini",

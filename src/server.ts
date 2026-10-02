@@ -6,6 +6,7 @@ import * as sim from "./simulator/simctl.js";
 import { CANVAS_PRESETS } from "./render/layouts.js";
 import { bezelSummary } from "./render/bezels.js";
 import { createMockup, layoutScene } from "./render/mockup.js";
+import { CLAY_TONES } from "./render/frame.js";
 import { LAYOUTS, MockupInputShape, type MockupInput } from "./render/schema.js";
 import { createMockupSet, exportSet, MockupSetShape } from "./render/set.js";
 import { cropImage, CropInputShape, createGrid, GridInputShape } from "./render/compose.js";
@@ -937,6 +938,8 @@ export function createServer(): McpServer {
                 : "DEVICES: none yet. Devices are shown with Apple's product art, which the person gets in the Studio (Settings › Device art); until then a device is shown as its bare screen.",
               ...catalog,
               catalog.length ? "Another model is shown as an installed one of its family whose screen fits the screenshot (or as its bare screen), with a warning." : "",
+              catalog.length ? `CLAY (\`clay\` on a device: its Apple art in one matte colour): true (porcelain), ${Object.entries(CLAY_TONES).map(([n, h]) => `${n} ${h}`).join(", ")}, or any colour.` : "",
+              "SCREEN ONLY (UI-only): frame \"card\", the screen alone with the device's own corners.",
               "\nCANVAS PRESETS (or \"WIDTHxHEIGHT\" / {width,height}; landscape:true swaps):",
               ...presets,
               `\nLAYOUTS: ${LAYOUTS.join(", ")}`,

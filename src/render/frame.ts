@@ -69,6 +69,41 @@ export interface FrameOptions {
   back?: boolean;
   /** A photographic frame (an installed Apple product bezel) to use instead of the drawn one. */
   bezel?: BezelRef;
+  /** Clay: the art recoloured into this one matte colour, keeping its own light and shade. */
+  clay?: string;
+}
+
+/** Clay's tones: soft, matte colours a product model might be printed in. */
+export const CLAY_TONES: Record<string, string> = {
+  porcelain: "#ecebe6",
+  sand: "#dccbb0",
+  sage: "#b8c6b0",
+  sky: "#b8cadc",
+  slate: "#6d7480",
+  ink: "#2a2c31",
+};
+
+/** A device's clay colour: true for Porcelain, a tone's name, or any CSS colour. */
+export function clayColor(v: boolean | string | undefined): string | undefined {
+  if (!v) return undefined;
+  if (v === true) return CLAY_TONES.porcelain;
+  return CLAY_TONES[v.toLowerCase()] ?? v;
+}
+
+/**
+ * Apple's art in clay: one colour cut out by the art's own silhouette, shaded by the art's light and
+ * dark (greyed and softened), so its edges, buttons and screen border still read, in matte. Inside
+ * the screen's opening (`opening`, a CSS inset) the art stays as it is: the Dynamic Island or notch
+ * is part of the display, not the body, so it stays black.
+ */
+export function clayArt(url: string, clay: string, style: string, opening: string): string {
+  const mask = `url(&quot;${url}&quot;) 0 0 / 100% 100% no-repeat`;
+  return (
+    `<div class="bezel-art clay" style="${style};background:${esc(clay)};-webkit-mask:${mask};mask:${mask}">` +
+    `<img src="${url}" style="position:absolute;left:0;top:0;width:100%;height:100%;filter:grayscale(1) contrast(.68) brightness(1.1);mix-blend-mode:soft-light">` +
+    `</div>` +
+    `<img class="bezel-art" src="${url}" style="${style};clip-path:inset(${opening})">`
+  );
 }
 
 /** An installed product bezel: the image, and where its transparent screen opening is (image px). */
@@ -192,7 +227,7 @@ export function screenRect(o: FrameOptions): { x: number; y: number; width: numb
   const m = measureFrame(o);
   if (o.kind !== "device") {
     const bar = o.kind === "window" ? WINDOW_BAR : o.kind === "browser" ? BROWSER_BAR : 0;
-    const radius = o.kind === "none" ? 0 : o.kind === "card" ? 0.035 * Math.min(m.width, m.height) : 12;
+    const radius = o.kind === "none" ? 0 : o.kind === "card" ? (o.model ? o.model.screen.cornerRadius : 0.035 * Math.min(m.width, m.height)) : 12;
     return { x: 0, y: bar / m.height, width: 1, height: (m.height - bar) / m.height, radius: radius / m.width };
   }
   const model = o.model!;
@@ -874,11 +909,13 @@ function bezelFrame(o: FrameOptions, u: number, depth: boolean): FrameOutput {
     }
   }
   const html =
-    `<div class="device bezel fam-${m.family}${depth ? " d3" : ""}" style="--c:${esc(b.edge)};--u:${u};width:${f(W)};height:${f(H)}">` +
+    `<div class="device bezel fam-${m.family}${depth ? " d3" : ""}" style="--c:${esc(o.clay ?? b.edge)};--u:${u};width:${f(W)};height:${f(H)}">` +
     edge +
     `<div class="screen" style="left:${f(hx)};top:${f(hy)};width:${f(hw)};height:${f(hh)};border-radius:${f(hr)};corner-shape:superellipse(1.35)">${shot}${cutout}</div>` +
     (c.overlay ? `<div class="hl" style="left:${f(hx)};top:${f(hy + bar)};width:${f(hw)};height:${f(hh - bar)}">${c.overlay}</div>` : "") +
-    `<img class="bezel-art" src="${esc(b.url)}" style="left:0;top:0;width:${f(W)};height:${f(H)}">` +
+    (o.clay
+      ? clayArt(esc(b.url), o.clay, `left:0;top:0;width:${f(W)};height:${f(H)}`, `${f(b.hole.y * k)} ${f(W - (b.hole.x + b.hole.w) * k)} ${f(H - (b.hole.y + b.hole.h) * k)} ${f(b.hole.x * k)} round ${f(hr)}`)
+      : `<img class="bezel-art" src="${esc(b.url)}" style="left:0;top:0;width:${f(W)};height:${f(H)}">`) +
     (o.glare ? `<div class="glare" style="left:${f(hx)};top:${f(hy)};width:${f(hw)};height:${f(hh)};border-radius:${f(hr)}"></div>` : "") +
     `</div>`;
   return { html, width: W, height: H, turn };

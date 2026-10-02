@@ -1006,7 +1006,7 @@ export const STYLE_PARTS = [
   { key: "device", label: "Device look", hint: "Frame, model, colour, shadow and glare", sameSize: true },
   { key: "placement", label: "Device placement", hint: "Where each device sits, its size and tilt", sameSize: true },
 ];
-const DEVICE_LOOK = ["frame", "device", "color", "band", "buttons", "bezel", "side", "island", "shadow", "glare", "radius", "chrome", "bandColor"];
+const DEVICE_LOOK = ["frame", "device", "color", "band", "buttons", "bezel", "side", "island", "shadow", "glare", "radius", "chrome", "bandColor", "clay"];
 const DEVICE_PLACE = ["x", "y", "anchor", "height", "width", "rotate", "rotateX", "rotateY", "perspective", "z", "landscape"];
 
 /** A scene with the chosen parts of another's style. */

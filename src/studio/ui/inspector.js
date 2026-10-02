@@ -93,10 +93,29 @@ const FRAMES = [
   { value: "device", label: "Device", icon: "phone" },
   { value: "browser", label: "Browser", icon: "browser" },
   { value: "window", label: "Window", icon: "window" },
-  { value: "card", label: "Card", icon: "card" },
+  { value: "card", label: "Screen only", icon: "card" },
   { value: "none", label: "None", icon: "noframe" },
 ];
 const SHADOWS = ["none", "soft", "medium", "strong", "studio"];
+// A device's look: Apple's finishes as Apple drew them, or Clay (the same art in one matte colour).
+const STYLES = [
+  { value: "apple", label: "Apple" },
+  { value: "clay", label: "Clay" },
+];
+
+/** Clay's tones as swatches, and any colour of your own. */
+function ClayTones({ value, tones, onChange }) {
+  const name = value === true ? "porcelain" : String(value).toLowerCase();
+  const own = tones[name] ? undefined : value;
+  const label = tones[name] ? name[0].toUpperCase() + name.slice(1) : "Your colour";
+  return html`<div class="row top"><label>Colour</label><div class="vstack colour-groups">
+      <div class="swatches">
+        ${Object.entries(tones).map(([n, hex]) => html`<button class="swatch art ${n === name ? "on" : ""}" style=${{ background: hex }} title=${n[0].toUpperCase() + n.slice(1)} onClick=${() => onChange(n)}></button>`)}
+      </div>
+      <span class="swatch-name">${label}</span>
+    </div></div>
+    <div class="row"><label></label><${ColorButton} value=${own} auto="Your own colour" allowAuto=${false} onChange=${(v) => v && onChange(v)} /></div>`;
+}
 // Which edge of a device dissolves into the backdrop. Icons, as five words don't fit the row.
 const FADES = [
   { value: "none", label: "", icon: "fadeNone", title: "No fade" },
@@ -203,7 +222,12 @@ function DeviceInspector({ id }) {
             })} /></div>`
           : html`<div class="note">Devices are shown with Apple's own product art, which you get from Apple once (macOS asks you to accept Apple's licence). Until then, screens are shown without hardware.</div>
             <button class="btn block" onClick=${() => set({ modal: { kind: "settings", tab: "art" } })}>Get Apple's device art…</button>`}
-        ${appleColors.length > 0 &&
+        ${art && html`<div class="row"><label>Style</label><${Seg} value=${d.clay ? "clay" : "apple"} options=${STYLES} onChange=${(v) => upd((dev) => {
+            if (v === "clay") dev.clay = dev.clay || "porcelain";
+            else delete dev.clay;
+          })} /></div>`}
+        ${art && d.clay && html`<${ClayTones} value=${d.clay} tones=${s.opts?.clayTones ?? {}} onChange=${(v) => upd((dev) => (dev.clay = v), "clay")} />`}
+        ${appleColors.length > 0 && !d.clay &&
         html`<div class="row top"><label>Colour</label><div class="vstack colour-groups">
             <div class="swatches">${appleColors.map(
               (c) => html`<button class="swatch art ${current === c.name ? "on" : ""}" style=${{ background: c.hex }} title=${c.name} onClick=${() => upd((dev) => {

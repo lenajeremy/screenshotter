@@ -358,6 +358,9 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .ent-device .body { position: absolute; inset: 0; box-shadow: 0 10px 30px -6px rgba(0, 0, 0, 0.55); }
 .ent-device .body img, .ent-device .body video { position: absolute; object-fit: cover; pointer-events: none; }
 .ent-device .body img.bezel-art { inset: 0; width: 100%; height: 100%; object-fit: fill; }
+/* Clay: the render's recipe (frame.ts clayArt), so the canvas matches the export. */
+.ent-device .body .bezel-art.clay { position: absolute; inset: 0; pointer-events: none; }
+.ent-device .body .bezel-art.clay img { inset: 0; width: 100%; height: 100%; object-fit: fill; filter: grayscale(1) contrast(0.68) brightness(1.1); mix-blend-mode: soft-light; }
 /* Scenes: the switcher by the scene name, and the popover listing saved scenes. */
 .scene-switch { display: flex; align-items: center; border-radius: 8px; transition: background-color 150ms ease; }
 .scene-switch:hover, .scene-switch.open { background: rgba(255, 255, 255, 0.05); }

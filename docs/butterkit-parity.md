@@ -96,7 +96,7 @@ In dependency order. Each phase lists what "done" means.
 2. **Localization.** *Next: see "Phase 2 in detail" below.* Variant artboards with inheritance and overrides; translation through Claude Code, Codex or an API key, plus Apple's on-device translation through the Swift app; manual mode; Do Not Translate; translation instructions; delta translation; fit-to-one-line and reflowing text; per-language images; capturing each language by relaunching the app in the Simulator in that language.
 3. **App Store Connect.** The API key in the Keychain; apps and versions; screenshots uploaded into the right slots in order, plus app preview videos (ButterKit doesn't); a metadata editor with limits and validation; translating and uploading metadata.
 4. **Automation.** A floating Capture Tool that follows the Simulator; a linked Fastlane folder that's watched for changes; MCP tools for languages and App Store Connect; a command-line tool for CI.
-5. **Design parity.** Clay and UI-only styles; image blocks (logos, laurels, stickers); text stroke, decoration, padding, line height and pills; panoramic backgrounds; Device Overflow; more device models (Vision Pro, Apple TV, Pixel, generic); review and award templates. Real 3D devices is a separate decision: it needs 3D models we can license or build, and a WebGL renderer.
+5. **Design parity.** *Underway: see "Phase 5 in detail" below (moved ahead of 2–4 on 2 October 2026).* Clay and UI-only styles; image blocks (logos, laurels, stickers); text stroke, decoration, padding, line height and pills; panoramic backgrounds; Device Overflow; more device models (Vision Pro, Apple TV, Pixel, generic); review and award templates. Real 3D devices is a separate decision: it needs 3D models we can license or build, and a WebGL renderer.
 6. **Templates and business.** A template gallery; saving and sharing templates; a free tier with a watermark and a Pro licence; in-app updates; docs, changelog, roadmap and comparison pages.
 
 Motion's extras (music, narration, intro and outro presets, animated gradients, playback speed) can follow phase 3, building on Animate.
@@ -128,6 +128,19 @@ Steps, each shipped and tested on its own:
 4. **Screenshots in every language.** Capture each screen in each language by relaunching the app in the Simulator in that language (`-AppleLanguages`, `-AppleLocale`), filed under the language; a per-language screenshot, image or backdrop on any screen.
 5. **Export every language.** The set export's language folders filled for every language (by size, or fastlane's `screenshots/<language>/`), contact sheets per language, and the store page preview per language.
 6. **Agents.** MCP tools to list, add and translate a design's languages and read or write its words, and `export_scene_set` for any or every language.
+
+## Phase 5 in detail: Design parity
+
+Decided on 2 October 2026: phase 5 goes next, ahead of Localization, and everything stays within **Apple's art only**. Clay is Apple's own device art recoloured, not a drawn frame; laurels, ratings and image blocks are ours (they aren't devices). Devices Apple publishes no art for (Vision Pro, Apple TV, Pixel, generic phones) stay out: Vision Pro and Apple TV screenshots are frameless on the store anyway. Panoramic backgrounds and Device Overflow shipped with phase 1.
+
+Steps, each shipped and tested on its own:
+
+1. **Clay.** Any installed device in one matte colour: Apple's art recoloured, keeping its own light and shade (the screen is untouched); tilted, its side is clay too. A handful of tones (Porcelain, Sand, Sage, Sky, Slate, Ink) or any colour, in the device panel beside the finishes; `clay` for agents. **Screen only** (the UI with the device's own corners and a soft shadow, no device) made easy to find.
+2. **Image blocks.** Logos, the app icon, stickers or any picture placed on a screen like a shape: moved, sized, turned, layered; corner radius, opacity, shadow, soft focus, and **Sticker** (a die-cut white edge and a shadow). Added from an Images panel (your images, dropped or chosen) and kept with the design; `images` for agents.
+3. **Laurels and ratings.** An award wreath around your words ("App of the Day", "#1 in Food & Drink", "4.9 ★ · 12K ratings"), and a row of stars filled to a rating with a caption: shapes, so they move, recolour and animate like the rest. Words are yours; nothing claims an award for you.
+4. **Text styling.** Outline (stroke), underline, strike-through and a highlighter behind the words; pill padding and corner radius; line height in the inspector; and a mark for **accent** words (highlighter, underline or pill) so one phrase stands out.
+5. **Review and award templates.** Ready-made screens around a quote with stars and a name, and around laurels with the app's device, in the Templates panel, built from your screenshot and colours like the others.
+6. **Agents and docs.** The schema, design guide, skill and `list_mockup_options` (clay tones, badge kinds); edge and Studio tests; the changelog and the site.
 
 ## Open decisions
 

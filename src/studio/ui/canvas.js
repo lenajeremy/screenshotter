@@ -263,9 +263,22 @@ function DeviceEnt({ e, W, H }) {
     ${menuStrip && html`<div style=${menuStrip}></div>`}
     <img draggable=${false} src=${thumbUrl(e.screenshot, Math.min(900, Math.max(240, Math.round(bw * s.width * 2))))} style=${screen} />
     ${dev.video && !ghost && S.stillPick?.id !== e.id && html`<video key=${dev.video} src=${fileUrl(dev.video)} muted loop autoplay playsinline preload="auto" style=${{ ...screen, objectFit: "cover" }}></video>`}
-    ${e.bezel && html`<img class="bezel-art" draggable=${false} src=${fileUrl(e.bezel)} />`}
+    ${e.bezel && (e.clay ? html`<${ClayArt} e=${e} s=${s} bw=${bw} />` : html`<img class="bezel-art" draggable=${false} src=${fileUrl(e.bezel)} />`)}
   </div>
   ${tags.length > 0 && html`<span class="tag">${tags.join(" · ")}</span>`}`;
+}
+
+/**
+ * Apple's art in clay, as the render draws it: one colour cut out by the art's silhouette and shaded
+ * by its light and dark; inside the screen's opening the art stays as it is (the island stays black).
+ */
+function ClayArt({ e, s, bw }) {
+  const url = fileUrl(e.bezel);
+  const mask = `url("${url}") 0 0 / 100% 100% no-repeat`;
+  const pct = (v) => v * 100 + "%";
+  const opening = `inset(${pct(s.y)} ${pct(1 - s.x - s.width)} ${pct(1 - s.y - s.height)} ${pct(s.x)} round ${s.radius * bw}px)`;
+  return html`<div class="bezel-art clay" style=${{ background: e.clay, WebkitMask: mask, mask }}><img draggable=${false} src=${url} /></div>
+    <img class="bezel-art" draggable=${false} src=${url} style=${{ clipPath: opening }} />`;
 }
 
 /** A text's soft focus on the canvas, like the render; an animated one comes from --ablur. */
