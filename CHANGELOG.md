@@ -1,5 +1,15 @@
 # What's new
 
+## 0.10.0 · 2 October 2026
+
+### Highlights
+- **Whole sets in one click.** Templates › **Whole sets** makes five screens in one look (a hero, three features and a close) from your screenshots in order and your words, previewed with your own screens: Clean and bright, Bold colour (one backdrop across the set and a phone that runs from screen to screen), Dark premium, Playful (stickers and a NEW burst), Clay studio and In the gallery. Undo goes back.
+- **Your own templates.** **Save this design as a template…** keeps every screen's look (backdrops, layout, type, devices, badges, stickers and your logos) with its screenshots as slots, and its words as placeholders unless you keep them. Click it under **Your templates** to use it with any app's screenshots.
+- **Share templates.** Each of your templates exports as one `.screenshotter-template` file with its pictures and photos inside; **Import a template…** adds one someone sent you.
+
+### Agents
+- `apply_set_template` makes a whole set from a built-in template or one the person saved, from screenshots and words, and shows it as a contact sheet; `list_templates` lists them.
+
 ## 0.9.0 · 2 October 2026
 
 ### Highlights

@@ -193,6 +193,7 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 
 - **Arc**: 1 hero (the main outcome, plus any real proof) → 2 what makes it different → 3–N one feature each, most important first → last: everything else (a mosaic with layout "grid", or a short feature list).
 - **Consistent**: the same fonts, palette, backdrop family and device finish across the set; vary layout and composition.
+- **A fast start**: apply_set_template builds a whole set in one look (clean, bold, dark, playful, clay, gallery, or one the person saved: list_templates) from the screenshots and words; then refine each screen.
 - A backdrop or a device can cross from one image into the next for a panorama, but every image must still work alone.
 
 ## 14. Check your work

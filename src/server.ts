@@ -13,6 +13,8 @@ import { createMockupSet, exportSet, MockupSetShape } from "./render/set.js";
 import { cropImage, CropInputShape, createGrid, GridInputShape } from "./render/compose.js";
 import { houseStyle, updateHouseStyle } from "./util/style.js";
 import { DESIGN_GUIDE } from "./design/guide.js";
+import { SET_TEMPLATES, buildSetTemplate, withSpill } from "./design/sets.js";
+import { fillTemplate, listTemplates, loadTemplate } from "./studio/templates.js";
 import { RECIPES, buildRecipe } from "./design/recipes.js";
 import { adoptFiles, findScene, firstScreens, getScene, libraryFolder, listScenes, saveScene, sceneSizes, sceneThumb, useLibrary, withFirstSize, type SavedGroup } from "./studio/scenes.js";
 import { studioFolder } from "./util/studio.js";
@@ -31,7 +33,7 @@ import { createVideo, storyboard, VideoInputShape } from "./render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputShape, TRANSITIONS } from "./render/sequence.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.10.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
@@ -55,6 +57,7 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 - Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
 - Several shots in one video: create_sequence joins scenes (each with its own animations and length) with transitions (cut, crossfade, fade through black, push, wipe, iris, zoom, blur). preview_sequence shows its key moments first. For the App Store, \`size: "app-store-iphone"\` (or app-store-ipad, app-store-mac) follows Apple's app preview rules (15–30 s, 30 fps, H.264, a stereo track); \`versions\` on create_video or create_sequence also makes vertical, square, 4:5, widescreen or App Store copies, each design fitted (or laid out again) for that shape.
 - Layouts include grid (a mosaic of screens). \`camera\` zooms the scene in on a point for a crisp close-up.
+- Whole sets: apply_set_template makes a set of five screens in one look (clean, bold, dark, playful, clay, gallery, or a template the person saved; list_templates) from your screenshots and words.
 - Recipes: apply_recipe builds a complete, proven design (bold hero, art director, gallery painting, risograph, 3D tilt, depth of field, rising pair, staircase, mosaic, five-star review, award, feature call-out, how-to, dissolve) from your screenshots: a strong start to refine.
 - Finished images: crop_image crops or zooms into part of any image; create_grid lays images out as a contact sheet or mosaic. Use a grid to compare variants side by side, and a crop to check small details before you call something done.
 - Video: create_video renders the same scene with motion (float, drift, push-in), zooms that follow the action (video.zooms), a drawn cursor with clicks and drags (video.cursor) and timed reveals. Recordings to play inside a frame: record_simulator (iPhone, iPad, Watch), record_web (a rehearsed click-through of a page, with its cursor track) and record_mac (an app window).
@@ -507,6 +510,55 @@ export function createServer(): McpServer {
 
   // Scenes live in the Studio's library: the folder of the Studio last opened on this Mac.
   useLibrary(studioFolder);
+
+  server.registerTool(
+    "apply_set_template",
+    {
+      title: "Make a whole set from a template",
+      description: `Build a whole App Store set (several screens in one look) from your screenshots, in order (reused when there are fewer), each screen's words (placeholders where you give none) and the app's colours. Templates: ${SET_TEMPLATES.map((t) => `${t.id} (${t.description})`).join("; ")}; or one the person saved in the Studio (list_templates names them). Returns the screens, rendered side by side as a contact sheet unless render is false; save them as a Studio design with save_scene (as its shots), or render each with create_mockup.`,
+      inputSchema: {
+        template: z.string().describe("A set template's id (above), or the id or name of one saved in the Studio."),
+        screenshots: z.array(z.string()).min(1).max(20).describe("Screenshot paths, in store order."),
+        words: z.array(z.object({ headline: z.string().optional(), subheadline: z.string().optional() })).max(20).optional().describe("Each screen's words, in order (**accent** words allowed)."),
+        render: z.boolean().optional().describe("Also render the screens side by side. Default true."),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    (a) =>
+      guard(async () => {
+        const devices = a.screenshots.map((screenshot) => ({ screenshot }));
+        const builtIn = SET_TEMPLATES.find((t) => t.id === a.template);
+        const mine = builtIn ? undefined : listTemplates().find((t) => t.id === a.template || t.name.toLowerCase() === a.template.toLowerCase());
+        if (!builtIn && !mine) throw new Error(`No template "${a.template}". Set templates: ${SET_TEMPLATES.map((t) => t.id).join(", ")}${listTemplates().length ? `; saved: ${listTemplates().map((t) => t.name).join(", ")}` : ""}.`);
+        const screens = builtIn ? await buildSetTemplate(builtIn.id, devices, a.words ?? []) : fillTemplate(loadTemplate(mine!.id), devices, a.words ?? []);
+        if (a.render === false) return [text({ screens })];
+        const shown = withSpill(screens);
+        const paths: string[] = [];
+        for (const x of shown) paths.push((await createMockup({ ...x.scene, quality: "preview", deliveryWidth: 600, preview: false } as never)).path);
+        const sheet = await createGrid({ images: paths, columns: paths.length, width: 2400, labels: shown.map((x, i) => `${i + 1}. ${x.name || "Screen"}`) } as never);
+        const content: Content = [text({ screens, renders: paths, contactSheet: sheet.path })];
+        const img = await image(sheet.path, 1600);
+        if (img) content.push(img);
+        return content;
+      }),
+  );
+
+  server.registerTool(
+    "list_templates",
+    {
+      title: "List templates",
+      description: "The templates a whole set can be made from (apply_set_template): the built-in set templates, and the ones the person saved in the Studio (from a design of theirs: its look, with slots for screenshots).",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    () =>
+      guard(async () => [
+        text({
+          builtIn: SET_TEMPLATES.map(({ id, name, description }) => ({ id, name, description })),
+          saved: listTemplates().map(({ id, name, screens, slots, created }) => ({ id, name, screens, screenshots: slots, created })),
+        }),
+      ]),
+  );
 
   /** A screen's name when it wasn't given one: its headline, else its number. */
   const screenTitle = (scene: unknown, i: number) => {

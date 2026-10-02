@@ -1972,6 +1972,7 @@ async function boot() {
   try {
     const [opts] = await Promise.all([api("/api/options"), restore(), refreshFiles().catch(() => [])]);
     api("/api/recipes").then((recipes) => set({ recipes })).catch(() => undefined);
+    api("/api/set-templates").then((setTemplates) => set({ setTemplates })).catch(() => undefined);
     set({ opts, ready: true });
     // Drop scene devices whose files were deleted outside the app.
     const known = new Set(S.files.map((f) => f.path));

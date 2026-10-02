@@ -551,6 +551,40 @@ await check("badges hold their words, and built-in stickers resolve by name", as
   assert(layout.warnings.some((w) => /no sticker called nope/.test(w)), `an unknown sticker is left out with a warning: ${layout.warnings}`);
 });
 
+await check("whole-set templates make five screens from your screenshots and words; a spanning phone carries on next door", async () => {
+  const { SET_TEMPLATES, buildSetTemplate, withSpill } = await import("../src/design/sets.js");
+  const devices = [{ screenshot: shot }, { screenshot: shot }];
+  for (const t of SET_TEMPLATES) {
+    const screens = await buildSetTemplate(t.id, devices, [{ headline: "Mine, **first**" }]);
+    assert(screens.length === 5, `${t.id} makes five screens`);
+    assert(screens[0].scene.headline === "Mine, **first**", `${t.id} keeps the first screen's words`);
+    assert(screens.every((x) => x.scene.headline), `${t.id} gives every screen words`);
+  }
+  const bold = withSpill(await buildSetTemplate("bold", devices));
+  assert((bold[2].scene.spill ?? []).length === 1 && Math.abs((bold[2].scene.spill![0].x as number) - 0) < 0.001, "bold's phone carries on into the third screen");
+});
+
+await check("your templates: screenshots become slots, filled in order; shared files carry their pictures", async () => {
+  const { saveTemplate, fillTemplate, loadTemplate, exportTemplate, importTemplate, listTemplates, deleteTemplate } = await import("../src/studio/templates.js");
+  const logo = path.join(out, "tpl-logo.svg");
+  writeFileSync(logo, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 10"><rect width="30" height="10" fill="#0a84ff"/></svg>`);
+  const scene = (headline: string) => ({ canvas: "1000x2000", layout: "custom", background: "#000", headline, devices: [{ screenshot: shot, clay: "sage" }], images: [{ src: logo }, { src: "sticker:heart" }] });
+  const t = saveTemplate("Edge look", [{ name: "Hero", scene: scene("Old **words**") as never }, { scene: scene("More") as never }]);
+  assert(t.slots === 1 && t.screens.every((x) => x.scene.devices[0].screenshot === "slot:0"), "the same screenshot is one slot");
+  assert(t.screens[0].scene.headline !== "Old **words**", "words become placeholders unless kept");
+  const filled = fillTemplate(loadTemplate(t.id), [{ screenshot: "/tmp/a.png" }], [{ headline: "New" }]);
+  assert(filled[0].scene.devices[0].screenshot === "/tmp/a.png" && filled[0].scene.headline === "New" && filled[0].scene.devices[0].clay === "sage", "filled with the new screenshot and words, its look kept");
+  const file = exportTemplate(t.id);
+  const doc = JSON.parse(readFileSync(file, "utf8"));
+  assert(Object.keys(doc.assets).length === 1 && doc.template.screens[0].scene.images[1].src === "sticker:heart", "the logo goes inside the file; built-in stickers stay by name");
+  const back = importTemplate(readFileSync(file, "utf8"));
+  const pic = back.screens[0].scene.images![0].src;
+  assert(existsSync(pic) && readFileSync(pic, "utf8").includes("#0a84ff"), `an imported template's picture is in the library: ${pic}`);
+  assert(listTemplates().filter((x) => x.name === "Edge look").length === 2, "both are listed");
+  deleteTemplate(t.id);
+  deleteTemplate(back.id);
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

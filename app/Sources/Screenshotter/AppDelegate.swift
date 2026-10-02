@@ -149,7 +149,9 @@ import WebKit
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = StudioWebView.importableTypes
+        // The page's file pickers also open shared templates (.screenshotter-template, JSON inside).
+        let template = UTType(filenameExtension: "screenshotter-template", conformingTo: .json)
+        panel.allowedContentTypes = StudioWebView.importableTypes + [.json] + (template.map { [$0] } ?? [])
         panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
     }
 

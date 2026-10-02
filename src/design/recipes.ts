@@ -55,7 +55,7 @@ function hex([h, s, l]: [number, number, number]): string {
 }
 
 /** The app's accent at a given lightness and saturation (keeps its hue). */
-const tone = (accent: string, l: number, s?: number) => {
+export const tone = (accent: string, l: number, s?: number) => {
   const [h, sat] = hsl(accent);
   return hex([h, s ?? Math.max(0.25, sat), l]);
 };
@@ -67,7 +67,7 @@ const isWarm = (accent?: string) => {
 };
 
 /** A painting whose colours sit with the app's accent. */
-function paintingFor(accent?: string): string {
+export function paintingFor(accent?: string): string {
   if (!accent) return "misty-hills";
   const [h, s] = hsl(accent);
   if (s < 0.2) return "misty-hills";
@@ -81,9 +81,9 @@ function paintingFor(accent?: string): string {
 // ---------------------------------------------------------------------------------------------
 // Building blocks
 
-const CANVAS: Record<ShotKind, string> = { phone: "iphone-6.9", tablet: "ipad-13", mac: "16:9", web: "16:9", watch: "1080x1350", other: "4:5" };
+export const CANVAS: Record<ShotKind, string> = { phone: "iphone-6.9", tablet: "ipad-13", mac: "16:9", web: "16:9", watch: "1080x1350", other: "4:5" };
 
-function device(shot: RecipeContext["shots"][number], extra: Partial<DeviceInput> = {}): DeviceInput {
+export function device(shot: RecipeContext["shots"][number], extra: Partial<DeviceInput> = {}): DeviceInput {
   const d: DeviceInput = { screenshot: shot.path, ...extra };
   if (shot.video) d.video = shot.video;
   if (shot.kind === "web" && !extra.frame && !extra.device) d.device = "MacBook Pro 14-inch";
@@ -91,13 +91,13 @@ function device(shot: RecipeContext["shots"][number], extra: Partial<DeviceInput
 }
 
 /** The nth screen, reusing earlier ones when there are fewer. */
-const nth = (ctx: RecipeContext, i: number) => ctx.shots[i % ctx.shots.length];
+export const nth = (ctx: RecipeContext, i: number) => ctx.shots[i % ctx.shots.length];
 
 /** The caption: the person's words, or a placeholder that asks to be replaced. */
 const words = (ctx: RecipeContext, fallback: string) => ({ headline: ctx.headline ?? fallback, ...(ctx.subheadline ? { subheadline: ctx.subheadline } : {}) });
 
 /** Accent colour for text: the app's accent, lightened on dark grounds and deepened on light ones. */
-const textAccent = (ctx: RecipeContext, dark: boolean) => (ctx.palette?.accent ? tone(ctx.palette.accent, dark ? 0.68 : 0.42, 0.75) : dark ? "#d2ff4d" : "#e0662a");
+export const textAccent = (ctx: RecipeContext, dark: boolean) => (ctx.palette?.accent ? tone(ctx.palette.accent, dark ? 0.68 : 0.42, 0.75) : dark ? "#d2ff4d" : "#e0662a");
 
 /** A phone over a painting: huge when it has the image to itself, a little lower when there's a headline. */
 const overPainting = (ctx: RecipeContext): Partial<DeviceInput> =>
@@ -119,7 +119,7 @@ function focusLine(ctx: RecipeContext, offset = 0): string | undefined {
   return good[Math.min(good.length - 1, Math.floor(good.length * 0.35) + offset)]?.text.trim();
 }
 
-const darkUI = (ctx: RecipeContext) => ctx.palette?.tone !== "light";
+export const darkUI = (ctx: RecipeContext) => ctx.palette?.tone !== "light";
 
 // ---------------------------------------------------------------------------------------------
 // Recipes

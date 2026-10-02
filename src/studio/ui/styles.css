@@ -1492,3 +1492,22 @@ li.done .work-shot .scan { display: none; }
 .sticker-grid button { aspect-ratio: 1; padding: 6px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; display: grid; place-items: center; transition: background-color 0.15s, transform 0.15s; }
 .sticker-grid button:hover { background: var(--panel-2); transform: scale(1.08) rotate(-4deg); }
 .sticker-grid img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff); }
+
+/* Templates › Whole sets: each set as a strip of its five screens. */
+.set-templates { display: flex; flex-direction: column; gap: 10px; }
+.set-template { display: flex; flex-direction: column; gap: 3px; padding: 8px; border: 0; border-radius: 12px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); text-align: left; cursor: pointer; color: var(--text); transition: box-shadow 0.15s; }
+.set-template:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-3); }
+.set-template:disabled { opacity: 0.5; cursor: default; }
+.set-template .strip { aspect-ratio: 640 / 268; border-radius: 7px; overflow: hidden; background: var(--panel-3); margin-bottom: 4px; }
+.set-template .strip img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.set-template b { font-size: 12.5px; }
+.set-template span { font-size: 11.5px; color: var(--text-3); line-height: 1.35; }
+
+/* Templates › Your templates: the save form, and each card's name, size and actions. */
+.tpl-save { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+.tpl-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.set-template.mine { cursor: pointer; }
+.tpl-row { display: flex; align-items: center; gap: 6px; }
+.tpl-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpl-row .faint { font-size: 11px; color: var(--text-3); }
+.icon-btn.danger { color: var(--red, #ff453a); }

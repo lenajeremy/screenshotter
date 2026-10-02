@@ -48,6 +48,99 @@ export async function applyRecipe(id, { quiet = false, silent = false } = {}) {
   }
 }
 
+/** What a whole-set template is built from: every screen's screenshots, in order, and each screen's words. */
+export function setTemplateInput() {
+  const screens = activeScreens();
+  return {
+    devices: screens.flatMap((x) => (x.scene.devices ?? []).filter((d) => d.screenshot).map((d) => (d.video ? { screenshot: d.screenshot, video: d.video } : { screenshot: d.screenshot }))),
+    words: screens.map((x) => tidy({ headline: x.scene.headline, subheadline: x.scene.subheadline })),
+  };
+}
+
+/** Make the set (at the size on the canvas) a whole-set template, from its own screenshots and words: one undo step. */
+export async function applySetTemplate(id) {
+  const name = S.setTemplates?.find((t) => t.id === id)?.name ?? "the template";
+  return applyTemplateFrom("/api/set-template", id, name);
+}
+
+/** Apply one of your own templates to the set, from its screenshots and words. */
+export async function applyMyTemplate(id) {
+  const name = S.myTemplates?.find((t) => t.id === id)?.name ?? "your template";
+  return applyTemplateFrom("/api/my-template", id, name);
+}
+
+async function applyTemplateFrom(url, id, name) {
+  const body = setTemplateInput();
+  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Templates are made from your own screenshots." });
+  try {
+    const { screens } = await api(url, { id, ...body });
+    checkpoint();
+    const shots = screens.map((x, i) => ({ scene: x.scene, name: !x.name || x.name === "Feature" ? undefined : x.name, ...(i ? { transition: { type: "fade", duration: 0.5 } } : {}) }));
+    // One screen stays a single design; several make a set.
+    if (shots.length === 1) set({ shots: null, shot: 0, scene: shots[0].scene, selected: null, view: "canvas" });
+    else set({ shots, shot: 0, scene: shots[0].scene, selected: null, view: "canvas" });
+    scheduleLayout(0);
+    persist();
+    const fewer = new Set(body.devices.map((d) => d.screenshot)).size < screens.length;
+    toast({ kind: "ok", title: shots.length > 1 ? `Made a set of ${shots.length} with ${name}` : `Applied ${name}`, text: `${fewer ? "It reuses your screenshots: drop more on the screens. " : ""}Change any words in place; undo (⌘Z) goes back.`, timeout: 4200 });
+  } catch (e) {
+    fail(e, "Couldn't apply that template");
+  }
+}
+
+/** Your templates, newest first (the Templates panel lists them). */
+export async function refreshMyTemplates() {
+  try {
+    const { templates } = await api("/api/my-templates");
+    set({ myTemplates: templates });
+  } catch {
+    // The panel shows none.
+  }
+}
+
+/** Save the set (or the single design) at the size on the canvas as a template of your own. */
+export async function saveAsTemplate(name, keepWords) {
+  const screens = activeScreens().map((x) => tidy({ name: x.name, scene: withoutSpill(x.scene) }));
+  try {
+    const t = await api("/api/my-template/save", { name, screens, keepWords });
+    await refreshMyTemplates();
+    toast({ kind: "ok", title: `Saved “${t.name}”`, text: `${t.screens} screen${t.screens === 1 ? "" : "s"}, ready for any app's screenshots. Share it from its card.`, timeout: 4200 });
+    return t;
+  } catch (e) {
+    fail(e, "Couldn't save the template");
+  }
+}
+
+/** One of your templates as a file to send to someone, shown in Finder. */
+export async function shareTemplate(id) {
+  try {
+    const { path } = await api("/api/my-template/export", { id });
+    reveal(path);
+    toast({ kind: "ok", title: "Ready to share", text: `${base(path)}, with its pictures inside. Anyone with Screenshotter can import it in Templates.`, timeout: 5000 });
+  } catch (e) {
+    fail(e, "Couldn't make the file");
+  }
+}
+
+export async function importTemplateFile(file) {
+  try {
+    const t = await api("/api/my-template/import", file, true);
+    await refreshMyTemplates();
+    toast({ kind: "ok", title: `Added “${t.name}”`, text: `${t.screens} screen${t.screens === 1 ? "" : "s"}. Click it to use it with your screenshots.`, timeout: 4200 });
+  } catch (e) {
+    fail(e, "Couldn't import that template");
+  }
+}
+
+export async function deleteMyTemplate(id) {
+  try {
+    await api("/api/my-template/delete", { id });
+    await refreshMyTemplates();
+  } catch (e) {
+    fail(e, "Couldn't delete the template");
+  }
+}
+
 /** Ask Claude for three directions, each rendered, to pick from. */
 let directionsStop = null;
 export const stopDesignForMe = () => directionsStop?.abort();

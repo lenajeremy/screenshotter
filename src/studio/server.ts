@@ -15,10 +15,10 @@ import { stickerNames, svgSize } from "../render/images.js";
 import { CLAY_TONES } from "../render/frame.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
-import { createMockup, layoutScene } from "../render/mockup.js";
+import { createMockup, layoutScene, renderHtml } from "../render/mockup.js";
 import { exportSet } from "../render/set.js";
 import { cacheDir } from "../util/files.js";
-import { GRADES, LAYOUTS, MockupInputSchema, type BackgroundInput } from "../render/schema.js";
+import { GRADES, LAYOUTS, MockupInputSchema, type BackgroundInput, type MockupInput } from "../render/schema.js";
 import { madeBackdrop } from "../render/background.js";
 import { setImageQuality } from "../render/photos.js";
 import { STILL, isRecording, momentThumb, saveStill, stillMoments } from "./stills.js";
@@ -33,6 +33,8 @@ import { noteStudioFolder } from "../util/studio.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
+import { SET_TEMPLATES, buildSetTemplate, withSpill } from "../design/sets.js";
+import { deleteTemplate, exportTemplate, fillTemplate, importTemplate, listTemplates, loadTemplate, renameTemplate, saveTemplate } from "./templates.js";
 import { backgroundPreview, loadState, lookThumbnail, saveState, searchUnsplash, thumbnail } from "./assets.js";
 import { houseStyle, updateHouseStyle } from "../util/style.js";
 import { SUGGESTED_SETS, bezelJob, bezelSets, bezelSummary, bezelsDir, getAppleBezels, importBezels } from "../render/bezels.js";
@@ -181,6 +183,27 @@ function tagExport(file: string, url: URL) {
   } catch {
     // An export without history is still an export.
   }
+}
+
+/** A set template as a strip of its screens, side by side, for the Templates panel. */
+async function setTemplateStrip(id: string, body: { devices: Array<{ screenshot: string; video?: string }>; words?: Array<{ headline?: string; subheadline?: string }> }, w: number, file: string) {
+  await screensStrip(withSpill(await buildSetTemplate(id, body.devices, body.words ?? [])), w, file);
+}
+
+/** Screens side by side, small, as one picture. */
+async function screensStrip(screens: Array<{ scene: MockupInput }>, w: number, file: string) {
+  const each = Math.round((w - 4 * 6) / screens.length);
+  const tiles: string[] = [];
+  for (const [i, x] of screens.entries()) {
+    // Strips render side by side: each one's screens get names of their own.
+    const out = path.join(cacheDir("set-template-previews"), `tile-${path.basename(file, ".jpg")}-${i}.jpg`);
+    await createMockup({ ...x.scene, quality: "preview", format: "jpeg", jpegQuality: 80, deliveryWidth: each * 2, preview: false, output: out });
+    tiles.push(`<img src="data:image/jpeg;base64,${readFileSync(out).toString("base64")}" style="width:${each}px;display:block;border-radius:${Math.round(each * 0.05)}px">`);
+    rmSync(out, { force: true });
+    rmSync(`${out}.mockup.json`, { force: true });
+  }
+  const h = Math.round(each * 2.17);
+  await renderHtml(`<!doctype html><body style="margin:0;background:#16161a;display:flex;gap:6px;align-items:flex-start">${tiles.join("")}</body>`, file, w, h, { scale: 1, format: "jpeg", quality: 82, transparent: false });
 }
 
 /** The pictures added as image blocks (logos, icons, stickers), newest first. */
@@ -455,6 +478,45 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     createReadStream(file).pipe(res);
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/set-templates") return send(200, SET_TEMPLATES.map(({ id, name, description }) => ({ id, name, description })));
+  if (req.method === "GET" && url.pathname === "/api/my-templates") return send(200, { templates: listTemplates() });
+  if (req.method === "GET" && url.pathname === "/api/my-template-preview") {
+    // One of your templates as a strip, filled with the open design's screenshots (or the sample's).
+    let body: { devices?: Array<{ screenshot: string; video?: string }>; words?: Array<{ headline?: string; subheadline?: string }> } = {};
+    try {
+      body = JSON.parse(url.searchParams.get("body") ?? "{}");
+    } catch {
+      throw new HttpError(400, "body must be JSON");
+    }
+    const id = url.searchParams.get("id") ?? "";
+    const devices = body.devices?.length && body.devices.every((d) => allowedFile(d.screenshot)) ? body.devices : [{ screenshot: path.join(uiDir(), "sample", "mise-tonight.png") }];
+    const t = loadTemplate(id);
+    const w = Math.max(320, Math.min(1200, Number(url.searchParams.get("w") ?? 640)));
+    const stamp = devices.map((d) => (existsSync(d.screenshot) ? statSync(d.screenshot).mtimeMs : 0)).join(",");
+    const file = path.join(cacheDir("set-template-previews"), `${createHash("sha1").update(JSON.stringify(["mine", t, devices, body.words, w, stamp])).digest("hex").slice(0, 20)}.jpg`);
+    if (!existsSync(file)) await screensStrip(withSpill(fillTemplate(t, devices, body.words ?? [])), w, file);
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=600" });
+    createReadStream(file).pipe(res);
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/set-template-preview") {
+    // A whole set as one strip of small screens, made from the person's screenshots.
+    let body: { devices: Array<{ screenshot: string; video?: string }>; words?: Array<{ headline?: string; subheadline?: string }> };
+    try {
+      body = JSON.parse(url.searchParams.get("body") ?? "");
+    } catch {
+      throw new HttpError(400, "body must be JSON");
+    }
+    const id = url.searchParams.get("id") ?? "";
+    if (!body.devices?.length || body.devices.some((d) => !allowedFile(d.screenshot))) throw new HttpError(403, "Screenshots must be in the output folder");
+    const w = Math.max(320, Math.min(1200, Number(url.searchParams.get("w") ?? 640)));
+    const stamp = body.devices.map((d) => (existsSync(d.screenshot) ? statSync(d.screenshot).mtimeMs : 0)).join(",");
+    const file = path.join(cacheDir("set-template-previews"), `${createHash("sha1").update(JSON.stringify([id, body, w, stamp, 1])).digest("hex").slice(0, 20)}.jpg`);
+    if (!existsSync(file)) await setTemplateStrip(id, body, w, file);
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
+    createReadStream(file).pipe(res);
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/house-style") return send(200, { notes: houseStyle() });
   if (req.method === "GET" && url.pathname === "/api/images") return send(200, { images: imageLibrary() });
   if (req.method === "GET" && url.pathname === "/api/bezels") return send(200, { ...bezelSummary(), sets: bezelSets(), suggested: SUGGESTED_SETS, job: bezelJob() });
@@ -510,6 +572,44 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       }
       res.end();
       return;
+    }
+    case "/api/my-template/save": {
+      const { name, screens, keepWords } = await json<{ name: string; screens: Array<{ name?: string; scene: unknown }>; keepWords?: boolean }>(req);
+      if (!Array.isArray(screens) || !screens.length) throw new HttpError(400, "Nothing to save");
+      const t = saveTemplate(String(name ?? ""), screens.map((x) => ({ name: x.name, scene: MockupInputSchema.parse(x.scene) })), Boolean(keepWords));
+      return send(200, { id: t.id, name: t.name, screens: t.screens.length });
+    }
+    case "/api/my-template": {
+      const { id, devices, words } = await json<{ id: string; devices: Array<{ screenshot: string; video?: string }>; words?: Array<{ headline?: string; subheadline?: string }> }>(req);
+      if (!Array.isArray(devices) || !devices.length) throw new HttpError(400, "Add a screenshot first: templates use your screens.");
+      for (const d of devices) if (!allowedFile(d.screenshot)) throw new HttpError(403, "Screenshots must be in the output folder");
+      return send(200, { screens: fillTemplate(loadTemplate(id), devices, words ?? []) });
+    }
+    case "/api/my-template/rename": {
+      const { id, name } = await json<{ id: string; name: string }>(req);
+      renameTemplate(id, String(name ?? ""));
+      return send(200, { ok: true });
+    }
+    case "/api/my-template/delete": {
+      const { id } = await json<{ id: string }>(req);
+      deleteTemplate(id);
+      return send(200, { ok: true });
+    }
+    case "/api/my-template/export": {
+      const { id } = await json<{ id: string }>(req);
+      return send(200, { path: exportTemplate(id) });
+    }
+    case "/api/my-template/import": {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      const t = importTemplate(Buffer.concat(chunks).toString("utf8"));
+      return send(200, { id: t.id, name: t.name, screens: t.screens.length });
+    }
+    case "/api/set-template": {
+      const { id, devices, words } = await json<{ id: string; devices: Array<{ screenshot: string; video?: string }>; words?: Array<{ headline?: string; subheadline?: string }> }>(req);
+      if (!Array.isArray(devices) || !devices.length) throw new HttpError(400, "Add a screenshot first: templates use your screens.");
+      for (const d of devices) if (!allowedFile(d.screenshot)) throw new HttpError(403, "Screenshots must be in the output folder");
+      return send(200, { screens: await buildSetTemplate(id, devices, words ?? []) });
     }
     case "/api/recipe": {
       const { id, devices, headline, subheadline } = await json<{ id: string; devices: Array<{ screenshot: string; video?: string }>; headline?: string; subheadline?: string }>(req);

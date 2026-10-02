@@ -28,6 +28,14 @@ import {
   recordingFor,
   restoreVersion,
   applyRecipe,
+  applySetTemplate,
+  applyMyTemplate,
+  deleteMyTemplate,
+  importTemplateFile,
+  refreshMyTemplates,
+  saveAsTemplate,
+  setTemplateInput,
+  shareTemplate,
   applyDirection,
   designForMe,
   stopDesignForMe,
@@ -1029,17 +1037,78 @@ function Arrangement() {
 }
 
 /** Complete designs built from your own screens, headline and colours. */
+/** Your own templates: save the design as one, use one, share or delete it, import one. */
+function MyTemplates({ has, sq }) {
+  const s = useStore();
+  const list = s.myTemplates ?? [];
+  const [saving, setSaving] = useState(null);
+  const [sure, setSure] = useState(null);
+  const file = useRef();
+  useEffect(() => {
+    refreshMyTemplates();
+  }, []);
+  const designHas = (s.scene.devices ?? []).length > 0;
+  return html`<${Section} title="Your templates" count=${list.length || undefined}>
+    ${saving
+      ? html`<div class="tpl-save">
+          <${TextField} value=${saving.name} placeholder="Name it" onChange=${(v) => setSaving({ ...saving, name: v })} />
+          <${Switch} checked=${saving.keep} onChange=${(v) => setSaving({ ...saving, keep: v })} label="Keep the words" />
+          <div class="note">${saving.keep ? "Its words come along as they are." : "Its words become placeholders; screenshots always become slots for the next app's."}</div>
+          <div class="tpl-actions"><button class="btn sm ghost" onClick=${() => setSaving(null)}>Cancel</button>
+            <button class="btn sm primary" onClick=${async () => {
+              if (await saveAsTemplate(saving.name, saving.keep)) setSaving(null);
+            }}>Save template</button></div>
+        </div>`
+      : html`<button class="btn block" disabled=${!designHas} title=${designHas ? "Keep this design's look to use with any app's screenshots" : "Add a screenshot first"}
+          onClick=${() => setSaving({ name: s.sceneName && s.sceneName !== "Untitled" ? `${s.sceneName} look` : "My template", keep: false })}><${Icon} n="plus" s=${13} />Save this design as a template…</button>`}
+    ${list.length > 0 &&
+    html`<div class="set-templates">${list.map(
+      (t) => html`<div class="set-template mine" key=${t.id} role="button" tabindex="0" onClick=${() => has && applyMyTemplate(t.id)} title=${has ? "Use it with this design's screenshots" : "Add a screenshot first"}>
+        <div class="strip">${html`<img loading="lazy" src=${`/api/my-template-preview?id=${encodeURIComponent(t.id)}&w=640&body=${sq}`} />`}</div>
+        <div class="tpl-row"><b>${t.name}</b><span class="faint">${t.screens} screen${t.screens === 1 ? "" : "s"}</span>
+          <button class="icon-btn sm" title="Share: a file with its pictures inside" onClick=${(e) => (e.stopPropagation(), shareTemplate(t.id))}><${Icon} n="export" s=${13} /></button>
+          <button class="icon-btn sm ${sure === t.id ? "danger" : ""}" title=${sure === t.id ? "Click again to delete it" : "Delete"} onClick=${(e) => {
+            e.stopPropagation();
+            if (sure === t.id) {
+              setSure(null);
+              deleteMyTemplate(t.id);
+            } else setSure(t.id);
+          }}><${Icon} n="trash" s=${13} /></button></div>
+      </div>`,
+    )}</div>`}
+    <button class="btn sm ghost block" onClick=${() => file.current.click()}><${Icon} n="upload" s=${12} />Import a template…</button>
+    <input type="file" ref=${file} hidden accept=".screenshotter-template,application/json" onChange=${(e) => {
+      const f = e.target.files[0];
+      e.target.value = "";
+      if (f) importTemplateFile(f);
+    }} />
+  <//>`;
+}
+
 export function DesignsPanel() {
   const s = useStore();
   const body = recipeInput(s.scene);
   const has = body.devices.length > 0;
   const q = encodeURIComponent(JSON.stringify(body));
+  const setBody = setTemplateInput();
+  const sq = encodeURIComponent(JSON.stringify(setBody));
   return html`<div class="panel left">
     <div class="panel-head"><h2>Templates</h2><span class="sub">${s.recipes.length}</span></div>
     <div class="panel-body">
       <div class="intro">Finished designs made from your screenshot, your headline and your app's colours. One click to try one; undo goes back.</div>
       <${DesignForMe} />
-      <${Section} title="Templates" count=${s.recipes.length}>
+      <${Section} title="Whole sets" count=${s.setTemplates?.length}>
+        <div class="note">Five screens in one look, made from your screenshots in order and your words: a hero, three features and a close.</div>
+        ${!has && html`<div class="empty-note">Add a screenshot and each set shows a preview made from it.</div>`}
+        <div class="set-templates">${(s.setTemplates ?? []).map(
+          (t) => html`<button class="set-template" key=${t.id} disabled=${!has} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
+            <div class="strip">${has && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>
+            <b>${t.name}</b><span>${t.description}</span>
+          </button>`,
+        )}</div>
+      <//>
+      <${MyTemplates} has=${has} sq=${sq} />
+      <${Section} title="Single screens" count=${s.recipes.length}>
         ${!has && html`<div class="empty-note">Add a screenshot and each template shows a preview made from it.</div>`}
         <div class="recipes">${s.recipes.map(
           (r) => html`<button class="recipe" key=${r.id} disabled=${!has} onClick=${() => applyRecipe(r.id)} title=${r.description}>
