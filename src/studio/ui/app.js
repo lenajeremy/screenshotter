@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, STORE_GAP, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, STORE_GAP, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
   applyRecipe,
@@ -46,6 +46,8 @@ import {
   uploadFiles,
   addPicture,
   uploadImages,
+  setAppIcon,
+  appIconOf,
   useCapture,
   goToShot,
   STYLE_PARTS,
@@ -1424,6 +1426,60 @@ function useStoreThumbs(scenes, w) {
 }
 
 /**
+ * The app's icon on the store page: yours, or its initial until you choose one. Click it to pick
+ * one of your pictures or a file; drop a picture on it to use that.
+ */
+function StoreIcon({ name }) {
+  const s = useStore();
+  const icon = appIconOf();
+  const [open, setOpen] = useState(false);
+  const [over, setOver] = useState(false);
+  const [pics, setPics] = useState(null);
+  const file = useRef(null);
+  const wrap = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    api("/api/images")
+      .then((r) => setPics((r.images ?? []).filter((p) => !/\.svg$/i.test(p.path)).slice(0, 15)))
+      .catch(() => setPics([]));
+    const away = (e) => wrap.current && !wrap.current.contains(e.target) && setOpen(false);
+    addEventListener("pointerdown", away, true);
+    return () => removeEventListener("pointerdown", away, true);
+  }, [open, s.imagesStamp]);
+  const use = async (files) => {
+    const [p] = await uploadImages([...files].slice(0, 1));
+    if (p) {
+      setAppIcon(p);
+      setOpen(false);
+    }
+  };
+  const drop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOver(false);
+    if (e.dataTransfer?.files?.length) use(e.dataTransfer.files);
+  };
+  return html`<div class="sp-icon-wrap" ref=${wrap}>
+    <button class="sp-icon ${icon ? "mine" : ""} ${over ? "drop" : ""}" title="Your app's icon: click to choose one, or drop a picture here"
+      onClick=${() => setOpen(!open)}
+      onDragOver=${(e) => (e.preventDefault(), e.stopPropagation(), setOver(true))} onDragLeave=${() => setOver(false)} onDrop=${drop}>
+      ${icon ? html`<img src=${pictureUrl(icon)} alt="" />` : name.trim()[0]?.toUpperCase()}
+      <span class="sp-icon-hint">${icon ? "Change" : "Add icon"}</span>
+    </button>
+    <input ref=${file} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange=${(e) => (e.target.files?.length && use(e.target.files), (e.target.value = ""))} />
+    ${open && html`<div class="sp-icon-menu" onPointerDown=${(e) => e.stopPropagation()}>
+      <h4>App icon</h4>
+      ${pics?.length > 0 && html`<div class="pics">${pics.map((p) => html`<button key=${p.path} class=${p.path === icon ? "on" : ""} title=${p.path.split("/").pop()} onClick=${() => (setAppIcon(p.path), setOpen(false))}><img loading="lazy" src=${pictureUrl(p.path)} /></button>`)}</div>`}
+      <div class="acts">
+        <button class="btn sm primary" onClick=${() => file.current?.click()}><${Icon} n="upload" s=${13} />Choose a file…</button>
+        ${s.appIcon && html`<button class="btn sm" onClick=${() => (setAppIcon(null), setOpen(false))}>Remove</button>`}
+      </div>
+      <p class="note">${pics?.length ? "One of your pictures, or a new one. " : ""}A square PNG of your icon, at 1024 × 1024, looks best. It stays with this design.</p>
+    </div>`}
+  </div>`;
+}
+
+/**
  * The set on a store's product page: each size's screenshots in a row, in order, as people scroll
  * them. A sketch of the page (no store's marks or made-up ratings), sized like the device's.
  */
@@ -1463,7 +1519,7 @@ function StorePage() {
       <div class="sheet-body store-body">
         <div class="store-page ${platform}" style=${{ width: page + "px" }}>
           <div class="sp-head">
-            <div class="sp-icon">${name.trim()[0]?.toUpperCase()}</div>
+            <${StoreIcon} name=${name} />
             <div class="sp-meta"><b>${name}</b><span>${device} app</span><button class="sp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
           </div>
           <div class="sp-row" style=${{ "--tile-h": tileH + "px", gap: Math.round(tileW * STORE_GAP) + "px" }}>
@@ -1474,7 +1530,7 @@ function StorePage() {
           <div class="sp-device"><${Icon} n=${{ ipad: "tablet", mac: "laptop", watch: "watch" }[platform] ?? "phone"} s=${13} />${device}</div>
           <div class="sp-lines"><i></i><i></i><i style=${{ width: "62%" }}></i></div>
         </div>
-        <div class="note">${size.label}: ${size.screens.length} screenshot${size.screens.length === 1 ? "" : "s"} in store order. The first are the ones people see before they scroll.${sizes.length > 1 ? " ← and → switch sizes." : ""}</div>
+        <div class="note">${size.label}: ${size.screens.length} screenshot${size.screens.length === 1 ? "" : "s"} in store order. The first are the ones people see before they scroll.${sizes.length > 1 ? " ← and → switch sizes." : ""}${s.appIcon ? "" : " Click the icon to add your app's."}</div>
       </div>
     </div>
   </div>`;

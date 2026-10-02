@@ -52,6 +52,8 @@ export const S = {
   opts: null,
   scene: DEFAULT_SCENE,
   sceneName: "Untitled design",
+  /** The app's icon (a picture in the library), for the store page preview; null shows its initial. */
+  appIcon: null,
   /** The saved scene being edited (null until it has something in it). */
   sceneId: null,
   /**
@@ -329,6 +331,7 @@ let persistTimer = 0;
 const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
+  appIcon: S.appIcon,
   sceneId: S.sceneId,
   shots: S.shots,
   shot: S.shot,
@@ -482,6 +485,7 @@ export function saveBody() {
   return {
     id: S.sceneId ?? undefined,
     name: S.sceneName,
+    appIcon: S.appIcon ?? null,
     scene: first[0].scene,
     shots: shots ? shots.map((x, i) => (i === 0 ? { name: x.name, length: x.length, transition: x.transition } : x)) : null,
     groups,
@@ -551,6 +555,7 @@ export async function restore() {
   if (Array.isArray(saved.shots) && saved.shots.length > 1) Object.assign(patch, { shots: saved.shots, shot: Math.min(saved.shots.length - 1, Math.max(0, saved.shot ?? 0)) });
   if (Array.isArray(saved.groups) && saved.groups.length > 1) Object.assign(patch, { groups: saved.groups, group: Math.min(saved.groups.length - 1, Math.max(0, saved.group ?? 0)) });
   if (saved.sceneName) patch.sceneName = saved.sceneName;
+  if (typeof saved.appIcon === "string") patch.appIcon = saved.appIcon;
   if (saved.sceneId) patch.sceneId = saved.sceneId;
   // Tabs that were merged or moved: Shapes joined Text; Layers and Exports left the rail.
   // Text and Shapes were one panel for a while, with a switch between them (addTab).

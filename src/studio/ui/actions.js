@@ -589,6 +589,23 @@ export function guessLook(src) {
   });
 }
 
+/**
+ * The app's icon for the store page preview: a picture in the library, or null for its initial.
+ * Kept with the design, so each app's design keeps its own.
+ */
+export function setAppIcon(src) {
+  set({ appIcon: src || null });
+  persist();
+}
+
+/** The icon the store page shows: the one chosen, else an app icon already on the design. */
+export function appIconOf() {
+  if (S.appIcon) return S.appIcon;
+  const screens = (allGroups() ?? [{ shots: activeScreens() }]).flatMap((g) => g.shots);
+  for (const x of screens) for (const b of x.scene?.images ?? []) if (b.mask === "icon" && b.src && !/^(sticker|art):/.test(b.src)) return b.src;
+  return null;
+}
+
 /** Add a picture with the look chosen in the Images panel (Auto guesses it). */
 export async function addPicture(src, { at } = {}) {
   const as = S.imageAs ?? "auto";
@@ -1924,6 +1941,7 @@ export async function newScene() {
     animSel: null,
     animRows: [],
     sceneName: "Untitled design",
+    appIcon: null,
     past: [],
     future: [],
     selected: null,
@@ -1945,7 +1963,7 @@ export async function openScene(id) {
     // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
     const groups = saved.groups?.length > 1 ? saved.groups : null;
-    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, animRows: [], sceneName: saved.name, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {

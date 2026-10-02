@@ -708,7 +708,23 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .store-page { max-width: 100%; background: #fff; color: #1d1d1f; border-radius: 28px; padding: 22px 0 26px; box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08); font-family: -apple-system, system-ui, sans-serif; }
 .store-page.mac, .store-page.tv, .store-page.vision { border-radius: 14px; }
 .sp-head { display: flex; gap: 14px; padding: 0 20px 18px; }
-.sp-icon { flex: none; display: grid; place-items: center; width: 96px; height: 96px; border-radius: 22px; background: linear-gradient(145deg, #d4f560, #6fcf97); color: #10200a; font-size: 44px; font-weight: 700; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06); }
+/* The app's icon: yours (click or drop a picture on it to choose), or its initial until then. */
+.sp-icon-wrap { position: relative; flex: none; }
+.sp-icon { position: relative; display: grid; place-items: center; width: 96px; height: 96px; padding: 0; border: 0; border-radius: 22px; overflow: hidden; background: linear-gradient(145deg, #d4f560, #6fcf97); color: #10200a; font: 700 44px -apple-system, system-ui, sans-serif; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06); cursor: pointer; }
+.sp-icon.mine { background: #fff; }
+.sp-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sp-icon::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); pointer-events: none; }
+.sp-icon .sp-icon-hint { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 12px; font-weight: 600; opacity: 0; transition: opacity 0.15s; }
+.sp-icon:hover .sp-icon-hint, .sp-icon:focus-visible .sp-icon-hint, .sp-icon.drop .sp-icon-hint { opacity: 1; }
+.sp-icon.drop { outline: 2px solid #0071e3; outline-offset: 2px; }
+.sp-icon-menu { position: absolute; left: 0; top: calc(100% + 8px); z-index: 5; width: 264px; padding: 12px; border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--line); font-family: var(--sans, -apple-system, system-ui, sans-serif); }
+.sp-icon-menu h4 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.sp-icon-menu .pics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.sp-icon-menu .pics button { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 22%; overflow: hidden; background: var(--panel-2); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.sp-icon-menu .pics button.on { box-shadow: 0 0 0 2px var(--lime); }
+.sp-icon-menu .pics img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sp-icon-menu .acts { display: flex; gap: 6px; }
+.sp-icon-menu .note { margin: 8px 0 0; font-size: 11.5px; color: var(--text-3); line-height: 1.4; }
 .sp-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding-top: 4px; }
 .sp-meta b { color: #1d1d1f; font-size: 21px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.15; }
 .sp-meta span { font-size: 13px; color: #86868b; }
@@ -1488,10 +1504,10 @@ li.done .work-shot .scan { display: none; }
 .screen-pick.on { opacity: 1; box-shadow: 0 0 0 2px var(--lime); }
 
 /* Images › Stickers: Screenshotter's own, on the panel's ground. */
-.sticker-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
-.sticker-grid button { aspect-ratio: 1; padding: 6px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; display: grid; place-items: center; transition: background-color 0.15s, transform 0.15s; }
+.sticker-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.sticker-grid button { min-width: 0; min-height: 0; overflow: hidden; aspect-ratio: 1; padding: 6px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; display: grid; place-items: center; transition: background-color 0.15s, transform 0.15s; }
 .sticker-grid button:hover { background: var(--panel-2); transform: scale(1.08) rotate(-4deg); }
-.sticker-grid img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff); }
+.sticker-grid img { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff); }
 
 /* Templates › Whole sets: each set as a strip of its five screens. */
 .set-templates { display: flex; flex-direction: column; gap: 10px; }
@@ -1513,7 +1529,8 @@ li.done .work-shot .scan { display: none; }
 .icon-btn.danger { color: var(--red, #ff453a); }
 
 /* Images › Illustrations: one-ink art shows light on the dark panel. */
-.art-grid button { background: var(--panel-2); }
+.art-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.art-grid button { background: var(--panel-2); padding: 9px; }
 .art-grid img { filter: none; }
 .art-grid button.mono img { filter: invert(1) opacity(0.85); }
 

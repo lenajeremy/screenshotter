@@ -1,5 +1,13 @@
 # What's new
 
+## 0.11.1 · 2 October 2026
+
+### Highlights
+- **Your app icon on the store page.** In **Preview the store page**, click the icon (or drop a picture on it) to use your app's own: one of your pictures, or a file. It's kept with the design, so each app keeps its own. Until you choose one, an app icon already on the design is used, else the app's initial.
+
+### Fixes
+- The Illustrations in the Images panel fit the panel again: wide ones no longer push the grid past its edge or over Badges.
+
 ## 0.11.0 · 2 October 2026
 
 ### Highlights
