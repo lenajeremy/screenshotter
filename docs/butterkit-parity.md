@@ -4,6 +4,8 @@ What [ButterKit](https://www.butterkit.app) does, where Screenshotter stands on 
 
 Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as they ship, and note the version.
 
+**Where we are (2 October 2026, 0.11.3):** the design side is at parity or ahead (sets, every size, devices with clay, text emphasis, image blocks, stickers and illustrations, whole-set templates you can save and share, Animate, the store page preview, in-app updates). Still missing: localization (deferred for now), App Store Connect upload and metadata, a linked Fastlane folder and a floating capture tool, and the business side (free tier, Pro licence).
+
 ## 1. Projects and canvas
 
 - A project (`.butterkit` file) holds a whole screenshot set: many artboards side by side on one canvas, grouped by size ("iPhone 6.9" for App Store · 1290 × 2796 · 9 artboards") and numbered in store order ("01 · Introduction", "02 · Bottom"). **Have** (phase 1): a design's screens side by side, numbered and named, at one or several sizes.
@@ -23,9 +25,9 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 ## 3. Devices
 
 - Real-time 3D models (Metal and RealityKit): free X, Y and Z rotation, scale, X, Y and Z offset, HDR lighting. **Partly**: Apple's art tilted in perspective with an extruded body; real 3D models are an open decision.
-- Device styles: Realistic, Clay (any colour), UI only. **Partly**: Apple's art (realistic), browser, window, card and no frame; no clay.
+- Device styles: Realistic, Clay (any colour), UI only. **Have** (0.7.0): Apple's art, clay in any colour (Apple's art recoloured), browser, window, card and the bare screen.
 - Realistic materials and colours, a camera cutout (notch) toggle, iPhone Duo's hinge. **Partly**: colours and the Dynamic Island setting.
-- Models: iPhone 17 Pro Max, 18 Pro Max, Duo, 15 Pro Max; iPad Pro 11" and 12.9"; MacBook Pro 16"; Apple Watch Series 11 and Ultra; Vision Pro; Pixel 10 Pro; a generic device. **Partly**: no Vision Pro, Pixel or generic device.
+- Models: iPhone 17 Pro Max, 18 Pro Max, Duo, 15 Pro Max; iPad Pro 11" and 12.9"; MacBook Pro 16"; Apple Watch Series 11 and Ultra; Vision Pro; Pixel 10 Pro; a generic device. **Partly**, by choice: every model Apple publishes art for, iPhone Duo folded and open included; no Pixel or drawn generic device (Apple's art only).
 - 3D drop shadows. **Partly**: 2D shadows.
 - Device Overflow: one device spanning neighbouring artboards. **Have** (0.6.0): "Carry on into the next screens"; the neighbours draw its continuation behind their own devices.
 - Callouts: a region of the screenshot raised as its own 3D plane, with altitude, scale, corner radius and a border; different per language. **Have** in 2D (lift, breakout, loupe, outline, spotlight); **missing** per language.
@@ -33,10 +35,10 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 ## 4. Text and images
 
 - Text blocks with roles (title, subtitle), Markdown bold and italic. **Have.**
-- Fit on 1 line (auto-shrink), line height, ligatures, independent left and right padding, decoration (italic, underline, strikethrough), stroke colour and width, shadows, a character counter, drag to reposition. **Partly**: shadow, weight, tracking, uppercase, blur.
-- Text backgrounds (badges, pills, highlights) that resize and reflow for each translation. **Partly**: a badge preset.
+- Fit on 1 line (auto-shrink), line height, ligatures, independent left and right padding, decoration (italic, underline, strikethrough), stroke colour and width, shadows, a character counter, drag to reposition. **Mostly** (0.7.0): line height, decoration, stroke colour and width, a pill's padding and radius, shadow, weight, tracking, uppercase, blur, drag to reposition; accent marks (highlighter, underline, squiggle (0.11.0), pill). No fit-to-one-line or character counter.
+- Text backgrounds (badges, pills, highlights) that resize and reflow for each translation. **Have** (0.7.0): pills, highlights and badges with your words (0.8.0); reflowing per translation comes with localization.
 - "Do Not Translate" toggle per text block. **Missing.**
-- Image blocks: logos, award laurels, badges, stickers, with position, scale, opacity, rotation and order; a different image per language. **Missing.**
+- Image blocks: logos, award laurels, badges, stickers, with position, scale, opacity, rotation and order; a different image per language. **Have** (0.7.0): image blocks with all of these, 24 built-in stickers (0.8.0), 31 illustrations and a colour for any picture (0.11.0); a different image per language comes with localization.
 - Fonts: system fonts, bundled Google Fonts (Inter, Fraunces and others), and any font installed on the Mac. **Have.**
 
 ## 5. Backgrounds
@@ -47,7 +49,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 ## 6. Templates
 
-- Bundled templates; a gallery on the website filtered by platform, orientation and category; free downloadable templates (MIT licence, editable SVG backgrounds); device add-ons; saving your own templates. **Partly**: our templates are generated from the person's own screenshot (they don't do that), but there's no gallery, no save-as-template and no sharing.
+- Bundled templates; a gallery on the website filtered by platform, orientation and category; free downloadable templates (MIT licence, editable SVG backgrounds); device add-ons; saving your own templates. **Have** (0.10.0, 0.11.0): 16 whole-set templates built from your own screenshots, fitted to iPhone, iPad, iPhone Duo and Mac; saving, sharing (a `.screenshotter-template` file) and importing your own. No gallery on the website.
 
 ## 7. Localization (missing entirely)
 
@@ -67,7 +69,7 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 ## 10. AI agents (MCP)
 
-- 42 tools in 5 groups: Document (list, open, create, snapshot, save, close), Design (artboards, templates, size presets, background, text blocks, image blocks, devices, screenshot folder), Export (export artboards, preview render), Localization (languages, translation, metadata), App Store Connect (credentials, apps, versions, upload screenshots, upload metadata). An agent import folder for images; an `--auto-launch` flag. **Partly**: our 27 tools are strong on capture and design but have nothing for sets, languages or App Store Connect.
+- 42 tools in 5 groups: Document (list, open, create, snapshot, save, close), Design (artboards, templates, size presets, background, text blocks, image blocks, devices, screenshot folder), Export (export artboards, preview render), Localization (languages, translation, metadata), App Store Connect (credentials, apps, versions, upload screenshots, upload metadata). An agent import folder for images; an `--auto-launch` flag. **Partly**: 30 tools, strong on capture and design, with sets and templates (`save_scene` with shots, `apply_set_template`, `list_templates`); nothing for languages or App Store Connect.
 
 ## 11. Motion (a separate beta app)
 
@@ -75,8 +77,8 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 
 ## 12. Business and site
 
-- Free with a watermark; Pro $99 once (5 Macs) or $39 a year as a supporter; Mac App Store and direct sales; 14-day refund; education discount; affiliates and a free-licence programme; in-app updates; optional diagnostics.
-- Docs, a changelog with RSS, a public roadmap, comparison pages, guides (screenshot sizes, design cheatsheet), a reviews page, a press kit, Discord and a subreddit.
+- Free with a watermark; Pro $99 once (5 Macs) or $39 a year as a supporter; Mac App Store and direct sales; 14-day refund; education discount; affiliates and a free-licence programme; in-app updates; optional diagnostics. **Partly**: in-app updates (0.9.0, Sparkle); no free tier, licence or sales yet.
+- Docs, a changelog with RSS, a public roadmap, comparison pages, guides (screenshot sizes, design cheatsheet), a reviews page, a press kit, Discord and a subreddit. **Partly**: a landing page, a features page, docs and a changelog page on the site.
 
 ## Where Screenshotter is already ahead
 
@@ -87,13 +89,14 @@ Status: **have**, **partly** or **missing** in Screenshotter. Tick items off as 
 - Capture from websites and Mac apps, not just the Simulator.
 - App Store preview videos built into the same app.
 - A remembered house style.
+- Screens of just words and doodles; whole sets made for iPhone Duo, iPad and Mac as well as iPhone; your app's icon on the store page preview.
 
 ## The plan
 
 In dependency order. Each phase lists what "done" means.
 
 1. **Sets** (the foundation; everything below needs it). *Done on 1 October 2026.* A project of artboards on one canvas, grouped by size and numbered in store order; add, rename, reorder, duplicate and delete; copy style across artboards; the full App Store size matrix (landscape, Watch, Apple TV, Vision Pro, Google Play); batch export into Fastlane-style folders; the App Store page preview; MCP tools for sets.
-2. **Localization.** *Next: see "Phase 2 in detail" below.* Variant artboards with inheritance and overrides; translation through Claude Code, Codex or an API key, plus Apple's on-device translation through the Swift app; manual mode; Do Not Translate; translation instructions; delta translation; fit-to-one-line and reflowing text; per-language images; capturing each language by relaunching the app in the Simulator in that language.
+2. **Localization.** *Deferred on 2 October 2026: not a priority for now. The plan stands in "Phase 2 in detail" below.* Variant artboards with inheritance and overrides; translation through Claude Code, Codex or an API key, plus Apple's on-device translation through the Swift app; manual mode; Do Not Translate; translation instructions; delta translation; fit-to-one-line and reflowing text; per-language images; capturing each language by relaunching the app in the Simulator in that language.
 3. **App Store Connect.** The API key in the Keychain; apps and versions; screenshots uploaded into the right slots in order, plus app preview videos (ButterKit doesn't); a metadata editor with limits and validation; translating and uploading metadata.
 4. **Automation.** A floating Capture Tool that follows the Simulator; a linked Fastlane folder that's watched for changes; MCP tools for languages and App Store Connect; a command-line tool for CI.
 5. **Design parity.** *Done on 2 October 2026 (moved ahead of 2–4): see "Phase 5 in detail" below.* Clay and UI-only styles; image blocks (logos, laurels, stickers); text stroke, decoration, padding, line height and pills; panoramic backgrounds; Device Overflow; more device models (Vision Pro, Apple TV, Pixel, generic); review and award templates. Real 3D devices is a separate decision: it needs 3D models we can license or build, and a WebGL renderer.

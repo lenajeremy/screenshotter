@@ -374,8 +374,11 @@ npm run app:build    # build the desktop app into build/Screenshotter.app
 npm run app:test     # Swift tests for the app shell (shell environment, Node lookup, title bar)
 npm run app:check    # the app's bundled engine: UI, PNG, MP4, saved state, exits with the app
 npm run test:studio  # Studio server and Ask AI tests (fake Claude, no simulator or account)
+npm run test:ui      # the Studio as people use it, in Chromium and WebKit (npx playwright install chromium webkit once)
 npm run smoke        # end-to-end test of every tool through a real MCP client (uses the simulator)
 npm run test:edge    # rendering, format, lock and error-handling edge cases (no simulator needed)
 ```
+
+`npm run app:dmg` runs `test:studio` and `test:ui` against a throwaway library before it builds anything, and stops at a failure (`SCREENSHOTTER_SKIP_TESTS=1` skips them).
 
 The desktop app is a small AppKit window (`app/`) around the same web UI (`src/studio/ui`, plain ES modules with Preact and htm, no bundler). To run the app against your working copy instead of its bundled engine, start it from a terminal: `SCREENSHOTTER_ENGINE_DIR=$PWD build/Screenshotter.app/Contents/MacOS/Screenshotter`. Engine logs go to `~/Library/Logs/Screenshotter/engine.log`.

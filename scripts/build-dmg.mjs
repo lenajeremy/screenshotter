@@ -13,6 +13,10 @@
  *   xcrun notarytool store-credentials screenshotter --apple-id <you@example.com> --team-id <TEAMID>
  *
  * (it asks for an app-specific password from account.apple.com). See scripts/signing.mjs.
+ *
+ * Before anything is built, the Studio's checks run (npm run test:studio, then test:ui in Chromium
+ * and WebKit) against a throwaway library; a failure stops the release. SCREENSHOTTER_SKIP_TESTS=1
+ * skips them.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, cpSync } from "node:fs";
@@ -27,6 +31,27 @@ const run = (cmd, args) => {
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed (${r.status})`);
 };
 const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+
+// The Studio's checks first, against a library of their own (never yours): a failure stops here.
+if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
+  const scratch = mkdtempSync(path.join(tmpdir(), "screenshotter-release-checks-"));
+  mkdirSync(path.join(scratch, "library"), { recursive: true });
+  const env = {
+    ...process.env,
+    SCREENSHOTTER_STUDIO_FILE: path.join(scratch, "studio.json"),
+    SCREENSHOTTER_SEEN_FILE: path.join(scratch, "seen.json"),
+    SCREENSHOTTER_STYLE_FILE: path.join(scratch, "style.json"),
+    SCREENSHOTTER_OUTPUT_DIR: path.join(scratch, "library"),
+  };
+  try {
+    for (const script of ["build", "test:studio", "test:ui"]) {
+      const r = spawnSync("npm", ["run", script], { cwd: root, stdio: "inherit", env });
+      if (r.status !== 0) throw new Error(`npm run ${script} failed: the release stops here. Fix it, or set SCREENSHOTTER_SKIP_TESTS=1 to release anyway.`);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
 
 run("node", ["scripts/build-app.mjs", ...process.argv.slice(2)]);
 const app = path.join(root, "build", "Screenshotter.app");

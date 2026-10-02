@@ -185,6 +185,36 @@ function tagExport(file: string, url: URL) {
   }
 }
 
+/**
+ * Template previews are drawn three at a time, in the order they're asked for. The Templates panel asks
+ * for every one at once (sixteen sets of five screens, and the single screens); drawn all together,
+ * none finishes until the end and some time out. The same preview asked for twice is drawn once.
+ */
+const PREVIEW_SLOTS = 3;
+let previewsRunning = 0;
+const previewsWaiting: Array<() => void> = [];
+const previewsDrawing = new Map<string, Promise<void>>();
+function drawPreview(file: string, draw: () => Promise<void>): Promise<void> {
+  if (existsSync(file)) return Promise.resolve();
+  const busy = previewsDrawing.get(file);
+  if (busy) return busy;
+  const job = (async () => {
+    // A slot, or wait for one to be handed over.
+    if (previewsRunning < PREVIEW_SLOTS) previewsRunning++;
+    else await new Promise<void>((go) => previewsWaiting.push(go));
+    try {
+      if (!existsSync(file)) await draw();
+    } finally {
+      const next = previewsWaiting.shift();
+      if (next) next();
+      else previewsRunning--;
+      previewsDrawing.delete(file);
+    }
+  })();
+  previewsDrawing.set(file, job);
+  return job;
+}
+
 /** A set template as a strip of its screens, side by side, for the Templates panel. */
 async function setTemplateStrip(id: string, body: { devices: Array<{ screenshot: string; video?: string }>; words?: Array<{ headline?: string; subheadline?: string }> }, w: number, file: string) {
   await screensStrip(withSpill(await buildSetTemplate(id, body.devices, body.words ?? [])), w, file);
@@ -521,11 +551,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const w = Math.max(160, Math.min(800, Number(url.searchParams.get("w") ?? 360)));
     const stamp = body.devices.map((d) => (existsSync(d.screenshot) ? statSync(d.screenshot).mtimeMs : 0)).join(",");
     const file = path.join(cacheDir("recipe-previews"), `${createHash("sha1").update(JSON.stringify([id, body, w, stamp, 2])).digest("hex").slice(0, 20)}.jpg`);
-    if (!existsSync(file)) {
+    await drawPreview(file, async () => {
       const scene = await buildRecipe(id, body.devices, body);
       await createMockup({ ...scene, quality: "preview", format: "jpeg", jpegQuality: 82, deliveryWidth: w, preview: false, output: file });
       rmSync(`${file}.mockup.json`, { force: true });
-    }
+    });
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
     createReadStream(file).pipe(res);
     return;
@@ -552,7 +582,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const w = Math.max(320, Math.min(1200, Number(url.searchParams.get("w") ?? 640)));
     const stamp = devices.map((d) => (existsSync(d.screenshot) ? statSync(d.screenshot).mtimeMs : 0)).join(",");
     const file = path.join(cacheDir("set-template-previews"), `${createHash("sha1").update(JSON.stringify(["mine", t, devices, body.words, w, stamp])).digest("hex").slice(0, 20)}.jpg`);
-    if (!existsSync(file)) await screensStrip(withSpill(fillTemplate(t, devices, body.words ?? [])), w, file);
+    await drawPreview(file, () => screensStrip(withSpill(fillTemplate(t, devices, body.words ?? [])), w, file));
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=600" });
     createReadStream(file).pipe(res);
     return;
@@ -570,7 +600,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const w = Math.max(320, Math.min(1200, Number(url.searchParams.get("w") ?? 640)));
     const stamp = body.devices.map((d) => (existsSync(d.screenshot) ? statSync(d.screenshot).mtimeMs : 0)).join(",");
     const file = path.join(cacheDir("set-template-previews"), `${createHash("sha1").update(JSON.stringify([id, body, w, stamp, 1])).digest("hex").slice(0, 20)}.jpg`);
-    if (!existsSync(file)) await setTemplateStrip(id, body, w, file);
+    await drawPreview(file, () => setTemplateStrip(id, body, w, file));
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
     createReadStream(file).pipe(res);
     return;

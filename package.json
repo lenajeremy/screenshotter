@@ -31,6 +31,7 @@
     "app:start": "open build/Screenshotter.app",
     "app:test": "swift test --package-path app",
     "test:studio": "tsx scripts/studio-test.ts",
+    "test:ui": "tsx scripts/ui-test.ts",
     "app:check": "node scripts/app-check.mjs",
     "app:dmg": "node scripts/build-dmg.mjs",
     "release:feed": "node scripts/release-feed.mjs",
@@ -49,6 +50,7 @@
   "devDependencies": {
     "@types/node": "^22.20.4",
     "htm": "^3.1.1",
+    "playwright": "^1.63.0",
     "preact": "^10.29.8",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
