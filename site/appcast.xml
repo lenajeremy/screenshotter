@@ -6,24 +6,28 @@
     <description>Updates to Screenshotter.</description>
     <language>en</language>
     <item>
-      <title>Screenshotter 0.10.0</title>
-      <pubDate>Fri, 02 Oct 2026 09:39:27 GMT</pubDate>
-      <sparkle:version>0.10.0</sparkle:version>
-      <sparkle:shortVersionString>0.10.0</sparkle:shortVersionString>
+      <title>Screenshotter 0.11.0</title>
+      <pubDate>Fri, 02 Oct 2026 10:52:55 GMT</pubDate>
+      <sparkle:version>0.11.0</sparkle:version>
+      <sparkle:shortVersionString>0.11.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://screenshotter-umber.vercel.app/changelog.html</sparkle:fullReleaseNotesLink>
       <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Highlights</h4>
 <ul>
-<li><strong>Whole sets in one click.</strong> Templates › <strong>Whole sets</strong> makes five screens in one look (a hero, three features and a close) from your screenshots in order and your words, previewed with your own screens: Clean and bright, Bold colour (one backdrop across the set and a phone that runs from screen to screen), Dark premium, Playful (stickers and a NEW burst), Clay studio and In the gallery. Undo goes back.</li>
-<li><strong>Your own templates.</strong> <strong>Save this design as a template…</strong> keeps every screen&#39;s look (backdrops, layout, type, devices, badges, stickers and your logos) with its screenshots as slots, and its words as placeholders unless you keep them. Click it under <strong>Your templates</strong> to use it with any app&#39;s screenshots.</li>
-<li><strong>Share templates.</strong> Each of your templates exports as one <code>.screenshotter-template</code> file with its pictures and photos inside; <strong>Import a template…</strong> adds one someone sent you.</li>
+<li><strong>Squiggly underlines.</strong> Accent words can now have a wavy, hand-drawn underline: Text › Accent › <strong>Wavy</strong>, next to Under. It follows the words onto every line, takes the mark colour, and draws in from the left in Animate. Scrapbook uses it.</li>
+<li><strong>Ten more whole sets.</strong> Scrapbook (washi tape, handwriting, doodles), Memphis pop, Doodle notebook (squared paper and a marker), Garden (soft shapes and leafy sprigs), Confetti party (for a launch), Comic pop (halftone, outlined lettering, speech bubbles), Night sky (stars, a moon, a planet and a rocket), and three made for one kind of device: Desktop showcase for Mac apps, iPad spread, and iPhone Duo showcase (the open Duo held wide and upright, side by side).</li>
+<li><strong>Every set suits every device.</strong> Whole sets now fit iPhone, iPad, iPhone Duo (upright, or held open like a book) and Mac screenshots: each takes the App Store canvas for your first screenshot and places the devices to suit, and the sets made for your kind of device come first.</li>
+<li><strong>Illustrations.</strong> 31 drawings in Images › Illustrations to put behind or around your screens: blobs, squiggles, arrows, scribbles, stars, sparkles, washi tape, leaves, a moon, a planet, confetti and more. Most are line drawings that take your app&#39;s colour.</li>
+<li><strong>Colour any picture.</strong> Images › Colour repaints an illustration, sticker or logo in one colour (and animates like the rest).</li>
 </ul>
-<h4>Agents</h4>
+<h4>Fixes</h4>
 <ul>
-<li><code>apply_set_template</code> makes a whole set from a built-in template or one the person saved, from screenshots and words, and shows it as a contact sheet; <code>list_templates</code> lists them.</li>
+<li>Sets no longer flicker while their screens load or when you move between them, and a set whose screens were different sizes keeps them at one size.</li>
+<li>Applying a whole set for another shape of device (an iPad or Mac set on an iPhone design) takes that set&#39;s own canvas instead of squeezing it into the old one.</li>
+<li>Set previews in the Templates panel are the shape of their screens.</li>
 </ul>
 ]]></description>
-      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.10.0.dmg" type="application/octet-stream" sparkle:edSignature="92lAL1YUrsD8yous0r6SUtnem+65MguTcF9aEY3XxbahQBstIUwaYIJTqaccqYVURorUHW8hiuGZ6cQsLuvhDw==" length="32203390" />
+      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.0.dmg" type="application/octet-stream" sparkle:edSignature="1lz5KvKtG9KB/iwCPrVfwJRD0fycRFJkCn7gkSggUP4jyKH9wsMcZsQdEuhQW5rYFzNhHrJhXmOBIZ7wswXRDg==" length="27994511" />
     </item>
   </channel>
 </rss>
