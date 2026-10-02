@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -75,7 +75,16 @@ async function applyTemplateFrom(url, id, name) {
   try {
     const { screens } = await api(url, { id, ...body });
     checkpoint();
-    const shots = screens.map((x, i) => ({ scene: x.scene, name: !x.name || x.name === "Feature" ? undefined : x.name, ...(i ? { transition: { type: "fade", duration: 0.5 } } : {}) }));
+    // The set keeps its image size: every new screen takes it.
+    const size = tidy({ canvas: S.scene.canvas, landscape: S.scene.landscape || undefined });
+    const fit = (scene) => {
+      const sc = { ...scene };
+      if (size.canvas !== undefined) sc.canvas = size.canvas;
+      if (size.landscape) sc.landscape = true;
+      else delete sc.landscape;
+      return sc;
+    };
+    const shots = screens.map((x, i) => ({ scene: fit(x.scene), name: !x.name || x.name === "Feature" ? undefined : x.name, ...(i ? { transition: { type: "fade", duration: 0.5 } } : {}) }));
     // One screen stays a single design; several make a set.
     if (shots.length === 1) set({ shots: null, shot: 0, scene: shots[0].scene, selected: null, view: "canvas" });
     else set({ shots, shot: 0, scene: shots[0].scene, selected: null, view: "canvas" });
@@ -1394,7 +1403,10 @@ export function removeSize(i) {
 export function goToShot(i) {
   const shots = allShots();
   if (!shots || i === S.shot || !shots[i]) return;
-  set({ shots, shot: i, scene: shots[i].scene, selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  // The screen being left keeps its layout for the row; the one opened starts from the row's.
+  rememberLayout(S.scene, S.layout);
+  const known = knownLayout(shots[i].scene);
+  set({ shots, shot: i, scene: shots[i].scene, ...(known ? { layout: known } : {}), selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
   scheduleLayout(0);
   persist();
 }

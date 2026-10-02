@@ -289,6 +289,21 @@ export function scheduleLayout(delay = 40) {
   clearTimeout(layoutTimer);
   layoutTimer = setTimeout(fetchLayout, delay);
 }
+/**
+ * Every screen's layout, remembered by its contents (the newest few): the set row draws the other
+ * screens from it, and moving to one of them starts from the layout the row already had, so
+ * neither waits on the engine (or flashes) while a fresh one comes.
+ */
+export const layoutCache = new Map();
+export function rememberLayout(scene, layout) {
+  if (!scene || !layout) return;
+  const key = JSON.stringify(scene);
+  layoutCache.delete(key);
+  layoutCache.set(key, layout);
+  if (layoutCache.size > 80) layoutCache.delete(layoutCache.keys().next().value);
+}
+export const knownLayout = (scene) => layoutCache.get(JSON.stringify(scene)) ?? null;
+
 async function fetchLayout() {
   const mine = ++layoutSeq;
   // A design with nothing in it shows the start screen; a screen of a set with no device yet is
@@ -298,7 +313,9 @@ async function fetchLayout() {
     return;
   }
   try {
-    const layout = await api("/api/layout", S.scene);
+    const scene = S.scene;
+    const layout = await api("/api/layout", scene);
+    rememberLayout(scene, layout);
     if (mine === layoutSeq) set({ layout, layoutError: null });
   } catch (e) {
     if (mine === layoutSeq) set({ layoutError: e.message });
@@ -340,6 +357,19 @@ export const STORE_GAP = 0.043;
  * on into the neighbouring screens (drawn there, in their terms, as `spill`). Derived from the
  * screens, so it isn't an undo step of its own.
  */
+/** A scene's height ÷ width, from its canvas (a preset, "WxH" or {width,height}) and orientation. */
+export function canvasRatio(scene) {
+  const c = scene?.canvas;
+  let w = 0;
+  let h = 0;
+  if (c && typeof c === "object") [w, h] = [c.width, c.height];
+  else if (typeof c === "string" && /^\d+x\d+$/i.test(c)) [w, h] = c.toLowerCase().split("x").map(Number);
+  else if (typeof c === "string" && S.opts?.canvases?.[c]) [w, h] = [S.opts.canvases[c].width, S.opts.canvases[c].height];
+  else if (typeof c === "string" && /^\d+:\d+$/.test(c)) [w, h] = c.split(":").map(Number);
+  if (!w || !h) return S.layout ? S.layout.canvas.height / S.layout.canvas.width : 2.17;
+  return scene.landscape ? Math.min(w, h) / Math.max(w, h) : h / w;
+}
+
 export function syncSpans() {
   const shots = allShots();
   if (!shots) {
@@ -347,12 +377,15 @@ export function syncSpans() {
     return;
   }
   const across = shots.some((x) => x.scene.backgroundSpan);
-  // Whether a device reaches past a side edge, from its height, the canvas's shape and its kind's
+  // A set has one image size: screens that came in at another (from an agent, or a template) take
+  // the first screen's, so the row lines up and devices carry across the same way on every screen.
+  const size = { canvas: shots[0].scene.canvas, landscape: shots[0].scene.landscape };
+  // Whether a device reaches past a side edge, from its height, its screen's shape and its kind's
   // proportions, erring wide (a copy that turns out to miss is dropped by the render).
-  const ratio = S.layout ? S.layout.canvas.height / S.layout.canvas.width : 2.17;
   const wide = { mac: 1.55, ipad: 0.76, watch: 0.84 };
-  const reaches = (d) => {
+  const reaches = (d, scene) => {
     const fam = (S.opts?.devices ?? []).find((m) => m.name === d.device || m.aliases?.includes(d.device))?.family;
+    const ratio = canvasRatio(scene);
     // Its width and height as fractions of the canvas's width, then the box its rotation turns it into.
     const tall = (d.height ?? 0.7) * ratio;
     const a = (Math.abs(d.rotate ?? 0) * Math.PI) / 180;
@@ -362,6 +395,12 @@ export function syncSpans() {
   let changed = false;
   const next = shots.map((x, i) => {
     const sc = { ...x.scene };
+    if (JSON.stringify(sc.canvas) !== JSON.stringify(size.canvas) || Boolean(sc.landscape) !== Boolean(size.landscape)) {
+      if (size.canvas === undefined) delete sc.canvas;
+      else sc.canvas = size.canvas;
+      if (size.landscape) sc.landscape = true;
+      else delete sc.landscape;
+    }
     if (across) {
       sc.background = S.scene.background;
       sc.backgroundSpan = { count: shots.length, index: i };
@@ -371,7 +410,7 @@ export function syncSpans() {
     for (const j of [i - 1, i + 1])
       shots[j]?.scene.devices.forEach((d, k) => {
         // In a set, a device you've placed carries on into the screen beside it unless it's told not to.
-        if (d.span !== false && typeof d.x === "number" && reaches(d)) spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
+        if (d.span !== false && typeof d.x === "number" && reaches(d, shots[j].scene)) spill.push(tidy({ ...d, x: r4(d.x + (j - i)), span: undefined, spillOf: { shot: j, device: k } }));
       });
     if (spill.length) sc.spill = spill;
     else delete sc.spill;

@@ -6,7 +6,7 @@ import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
-import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl } from "./store.js";
+import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout } from "./store.js";
 import { addDevice, addShot, addSize, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
@@ -433,8 +433,11 @@ function TextEnt({ e, H, editing, onDone }) {
 // ---------------------------------------------------------------------------------------------
 // Other shots of a video, drawn read-only over the canvas while the video plays through them
 
-// Each shot's layout from the engine, remembered by its scene (the newest few).
-const shotLayouts = new Map();
+// Each shot's layout from the engine, from the store's cache (by its contents). While a changed
+// screen's new layout comes, the row keeps drawing the last one it had for that screen, rather
+// than leaving a gap that flashes back.
+const asking = new Set();
+const lastShown = new Map();
 function useShotLayouts(on) {
   const s = useStore();
   const [, bump] = useState(0);
@@ -444,21 +447,28 @@ function useShotLayouts(on) {
     (s.shots ?? []).forEach((x, i) => {
       if (i === s.shot || !x.scene?.devices) return;
       const key = JSON.stringify(x.scene);
-      if (shotLayouts.has(key)) return;
-      shotLayouts.set(key, null);
-      if (shotLayouts.size > 60) shotLayouts.delete(shotLayouts.keys().next().value);
+      if (layoutCache.has(key) || asking.has(key)) return;
+      asking.add(key);
       api("/api/layout", x.scene)
         .then((l) => {
-          shotLayouts.set(key, l);
+          rememberLayout(x.scene, l);
           if (alive) bump((n) => n + 1);
         })
-        .catch(() => shotLayouts.delete(key));
+        .catch(() => undefined)
+        .finally(() => asking.delete(key));
     });
     return () => {
       alive = false;
     };
   }, [on, s.shots, s.shot]);
-  return (scene) => shotLayouts.get(JSON.stringify(scene)) ?? null;
+  return (scene, i) => {
+    const l = knownLayout(scene);
+    if (l) {
+      lastShown.set(i, l);
+      return l;
+    }
+    return lastShown.get(i) ?? null;
+  };
 }
 
 /** Another shot, as it looks (fitted into the frame): click it to edit it. */
@@ -729,7 +739,7 @@ export function CanvasView() {
   if ((multi || setMode) && layout) {
     s.shots.forEach((x, i) => {
       if (i === s.shot) return;
-      const l = layoutOf(x.scene);
+      const l = layoutOf(x.scene, i);
       if (l) ghosts.set(i, { scene: x.scene, layout: l });
     });
   }
