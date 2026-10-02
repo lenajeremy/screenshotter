@@ -6,22 +6,18 @@
     <description>Updates to Screenshotter.</description>
     <language>en</language>
     <item>
-      <title>Screenshotter 0.11.3</title>
-      <pubDate>Fri, 02 Oct 2026 13:06:09 GMT</pubDate>
-      <sparkle:version>0.11.3</sparkle:version>
-      <sparkle:shortVersionString>0.11.3</sparkle:shortVersionString>
+      <title>Screenshotter 0.11.4</title>
+      <pubDate>Fri, 02 Oct 2026 14:08:14 GMT</pubDate>
+      <sparkle:version>0.11.4</sparkle:version>
+      <sparkle:shortVersionString>0.11.4</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://screenshotter-umber.vercel.app/changelog.html</sparkle:fullReleaseNotesLink>
       <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Fixes</h4>
 <ul>
-<li>Dragging stickers, illustrations and your pictures onto the design works in the app again: the Mac app&#39;s web view could take the drag as a system image drag, so nothing landed.</li>
-<li>Deleting a picture never breaks a design any more: one a design uses (saved, or the one open) only leaves Your pictures, and its file stays so the design keeps it. Only pictures nothing uses are deleted.</li>
-<li>Applying a whole-set template keeps a size you chose yourself (square, 4:5…), as before 0.11.0. Only a store size of another shape (iPad screenshots on an iPhone canvas, say) takes the template&#39;s.</li>
-<li>Built-in stickers and illustrations no longer show as broken for a moment while a screen is laid out again.</li>
-<li>The list of your designs can no longer fail to load while a thumbnail is being drawn.</li>
+<li>The Templates panel&#39;s previews show in seconds with a new screenshot: they&#39;re drawn a few at a time, in the panel&#39;s order, instead of all sixteen sets at once (which showed nothing for about a minute, and could break some).</li>
 </ul>
 ]]></description>
-      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.3.dmg" type="application/octet-stream" sparkle:edSignature="3AGZRCYTHihkn4Mn/7L31pOBIeSXUB4AMtxr78qWMXOcNBlxlr2WrUD9flwebCfgowlnJHUoaqXx2DA5wxCcDw==" length="34393881" />
+      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.4.dmg" type="application/octet-stream" sparkle:edSignature="FYumz7u5/wmjlwMIv+lcqC3ecluWkWoqWUocftn71PgbPwqA2ZsPAug99kmjZrOwcXUD8LO+EWaxKyhnERncAw==" length="33261896" />
     </item>
   </channel>
 </rss>
