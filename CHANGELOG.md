@@ -1,6 +1,6 @@
 # What's new
 
-## Unreleased
+## 0.11.6 · 3 October 2026
 
 ### Fixes
 - My designs' list view lines up in columns again (the Store page preview's styles had taken over its rows since 0.6.0), and the page's heading and cards lay out as they should.
