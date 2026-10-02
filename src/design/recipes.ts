@@ -302,6 +302,91 @@ export const RECIPES: Recipe[] = [
     },
   },
   {
+    id: "review",
+    name: "Five-star review",
+    description: "A review in big serif type under five stars, the reviewer's name beneath, your screen rising from the bottom. Put in a real review.",
+    screens: 1,
+    build(ctx) {
+      const s = nth(ctx, 0);
+      const dark = darkUI(ctx);
+      const a = ctx.palette?.accent;
+      const phone = s.kind === "phone";
+      const gold = dark ? "#f4c04e" : "#e39a17";
+      const background: BackgroundInput = a
+        ? dark
+          ? { type: "radial", colors: [tone(a, 0.2, 0.4), "#0a0a0c"], x: 0.5, y: 0.2 }
+          : { type: "radial", colors: [tone(a, 0.97, 0.35), tone(a, 0.9, 0.3)], x: 0.5, y: 0.2 }
+        : dark
+          ? "midnight"
+          : "cream-grain";
+      return {
+        canvas: CANVAS[s.kind],
+        layout: "custom",
+        background,
+        effects: { grain: 0.06 },
+        devices: [device(s, phone ? { x: 0.5, y: 0.84, anchor: "center", height: 0.7, shadow: dark ? "strong" : "studio" } : { x: 0.5, y: 0.76, anchor: "center", height: 0.52, shadow: "soft" })],
+        shapes: [{ type: "rating", x: 0.5, y: phone ? 0.075 : 0.09, size: phone ? 0.03 : 0.045, aspect: 3.6, value: 5, fill: gold }],
+        headline: ctx.headline ?? "“The only recipe app\nI **actually use**.”",
+        subheadline: ctx.subheadline ?? "— Your reviewer, App Store",
+        textStyle: {
+          font: "Fraunces",
+          headlineWeight: 600,
+          headlineSize: phone ? 0.044 : 0.06,
+          accentItalic: true,
+          accentColor: textAccent(ctx, dark),
+          color: dark ? "#ffffff" : "#15161a",
+          x: 0.5,
+          y: phone ? 0.115 : 0.15,
+          anchor: "top",
+          width: 0.84,
+        },
+      };
+    },
+  },
+  {
+    id: "award",
+    name: "Award",
+    description: "A laurel with your award and a row of stars above your headline and screen. Change the words to an award or rating you've really had.",
+    screens: 1,
+    build(ctx) {
+      const s = nth(ctx, 0);
+      const dark = darkUI(ctx);
+      const a = ctx.palette?.accent;
+      const phone = s.kind === "phone";
+      const gold = dark ? "#e9c46a" : "#b8861c";
+      const background: BackgroundInput = a
+        ? dark
+          ? { type: "radial", colors: [tone(a, 0.26, 0.5), tone(a, 0.08, 0.35), "#050506"], x: 0.5, y: 0.18 }
+          : { type: "radial", colors: [tone(a, 0.96, 0.45), tone(a, 0.88, 0.4)], x: 0.5, y: 0.18 }
+        : dark
+          ? "midnight"
+          : "cream-grain";
+      return {
+        canvas: CANVAS[s.kind],
+        layout: "custom",
+        background,
+        effects: { grain: 0.06 },
+        devices: [device(s, phone ? { x: 0.5, y: 0.81, anchor: "center", height: 0.66, shadow: dark ? "strong" : "studio" } : { x: 0.5, y: 0.75, anchor: "center", height: 0.5, shadow: "soft" })],
+        shapes: [
+          { type: "laurel", x: 0.5, y: phone ? 0.085 : 0.11, size: phone ? 0.075 : 0.11, aspect: 2.6, text: "App of the Day", fill: gold },
+          { type: "rating", x: 0.5, y: phone ? 0.165 : 0.24, size: phone ? 0.034 : 0.05, aspect: 4.4, value: 5, text: "4.9 · 2K ratings", fill: gold },
+        ],
+        ...words(ctx, "Say what it does,\n**in a few words**"),
+        textStyle: {
+          font: "Inter Tight",
+          headlineWeight: 700,
+          headlineSize: phone ? 0.046 : 0.065,
+          letterSpacing: -0.03,
+          accentColor: textAccent(ctx, dark),
+          color: dark ? "#ffffff" : "#101114",
+          x: 0.5,
+          y: phone ? 0.205 : 0.3,
+          anchor: "top",
+        },
+      };
+    },
+  },
+  {
     id: "callout",
     name: "Feature call-out",
     description: "One row lifted onto a card wider than the phone, with a headline that names it.",
