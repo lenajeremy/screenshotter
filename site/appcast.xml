@@ -6,19 +6,24 @@
     <description>Updates to Screenshotter.</description>
     <language>en</language>
     <item>
-      <title>Screenshotter 0.9.0</title>
-      <pubDate>Fri, 02 Oct 2026 09:17:34 GMT</pubDate>
-      <sparkle:version>0.9.0</sparkle:version>
-      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+      <title>Screenshotter 0.10.0</title>
+      <pubDate>Fri, 02 Oct 2026 09:39:27 GMT</pubDate>
+      <sparkle:version>0.10.0</sparkle:version>
+      <sparkle:shortVersionString>0.10.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://screenshotter-umber.vercel.app/changelog.html</sparkle:fullReleaseNotesLink>
       <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Highlights</h4>
 <ul>
-<li><strong>Updates, built in.</strong> Screenshotter now checks for a new version once a day and offers it with its notes: one click downloads it, installs it and relaunches. <strong>Screenshotter › Check for Updates…</strong> looks right away. Every update is signed by us and notarized by Apple, and is checked before it installs. This version is the last you need to download by hand.</li>
-<li><strong>Drag in stickers, badges and awards.</strong> Everything in the Images panel drags onto the design and lands where you let go (a click still adds it in its usual place).</li>
+<li><strong>Whole sets in one click.</strong> Templates › <strong>Whole sets</strong> makes five screens in one look (a hero, three features and a close) from your screenshots in order and your words, previewed with your own screens: Clean and bright, Bold colour (one backdrop across the set and a phone that runs from screen to screen), Dark premium, Playful (stickers and a NEW burst), Clay studio and In the gallery. Undo goes back.</li>
+<li><strong>Your own templates.</strong> <strong>Save this design as a template…</strong> keeps every screen&#39;s look (backdrops, layout, type, devices, badges, stickers and your logos) with its screenshots as slots, and its words as placeholders unless you keep them. Click it under <strong>Your templates</strong> to use it with any app&#39;s screenshots.</li>
+<li><strong>Share templates.</strong> Each of your templates exports as one <code>.screenshotter-template</code> file with its pictures and photos inside; <strong>Import a template…</strong> adds one someone sent you.</li>
+</ul>
+<h4>Agents</h4>
+<ul>
+<li><code>apply_set_template</code> makes a whole set from a built-in template or one the person saved, from screenshots and words, and shows it as a contact sheet; <code>list_templates</code> lists them.</li>
 </ul>
 ]]></description>
-      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.9.0.dmg" type="application/octet-stream" sparkle:edSignature="7bp6/T/KbbW8Bt9D6e3sMGk6My2sjxt95/HIZTug/GBRChtO95UyKDqV6/ZSqEhiT5Eyxcu41wzGty9hnRBIAw==" length="33259621" />
+      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.10.0.dmg" type="application/octet-stream" sparkle:edSignature="92lAL1YUrsD8yous0r6SUtnem+65MguTcF9aEY3XxbahQBstIUwaYIJTqaccqYVURorUHW8hiuGZ6cQsLuvhDw==" length="32203390" />
     </item>
   </channel>
 </rss>
