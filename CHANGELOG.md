@@ -1,5 +1,14 @@
 # What's new
 
+## 0.11.3 · 2 October 2026
+
+### Fixes
+- Dragging stickers, illustrations and your pictures onto the design works in the app again: the Mac app's web view could take the drag as a system image drag, so nothing landed.
+- Deleting a picture never breaks a design any more: one a design uses (saved, or the one open) only leaves Your pictures, and its file stays so the design keeps it. Only pictures nothing uses are deleted.
+- Applying a whole-set template keeps a size you chose yourself (square, 4:5…), as before 0.11.0. Only a store size of another shape (iPad screenshots on an iPhone canvas, say) takes the template's.
+- Built-in stickers and illustrations no longer show as broken for a moment while a screen is laid out again.
+- The list of your designs can no longer fail to load while a thumbnail is being drawn.
+
 ## 0.11.2 · 2 October 2026
 
 ### Highlights

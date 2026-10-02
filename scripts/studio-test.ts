@@ -634,16 +634,26 @@ try {
     assert.match(r.path, /backdrops\/linen-.*\.png$/);
     assert(!(await listed()).includes(r.path));
   });
-  await check("a picture you added can be deleted, named where it's used, and brought back; nothing else can", async () => {
+  await check("deleting a picture: an unused one goes (Undo brings it back); one a design uses only leaves the list; nothing else can go", async () => {
     const pictures = async () => ((await (await fetch(base + "/api/images")).json()).images as Array<{ path: string }>).map((f) => f.path);
-    const pic = (await (await raw("/api/upload?kind=image&name=Logo.png", await readFile(shot))).json()).path as string;
-    assert((await pictures()).includes(pic));
-    await post("/api/scenes/save", { name: "Uses the logo", scene: { devices: [], headline: "Hi", images: [{ src: pic }] } });
-    const del = await (await post("/api/images/delete", { path: pic })).json();
-    assert(!(await pictures()).includes(pic) && !existsSync(pic), "it leaves the library");
-    assert.deepEqual(del.usedIn, ["Uses the logo"], "the design using it is named");
-    assert.equal((await post("/api/images/restore", { path: pic })).status, 200);
-    assert((await pictures()).includes(pic) && existsSync(pic), "undo brings it back");
+    const upload = async (name: string) => (await (await raw(`/api/upload?kind=image&name=${name}`, await readFile(shot))).json()).path as string;
+    // Not used anywhere: it's deleted, and Undo brings it back.
+    const loose = await upload("Loose.png");
+    const gone = await (await post("/api/images/delete", { path: loose })).json();
+    assert(!gone.kept && !(await pictures()).includes(loose) && !existsSync(loose), "an unused picture is deleted");
+    assert.equal((await post("/api/images/restore", { path: loose })).status, 200);
+    assert((await pictures()).includes(loose) && existsSync(loose), "undo brings it back");
+    // Used by a saved design: it leaves the list but its file stays, so the design keeps it.
+    const logo = await upload("Logo.png");
+    await post("/api/scenes/save", { name: "Uses the logo", scene: { devices: [], headline: "Hi", images: [{ src: logo }] } });
+    const kept = await (await post("/api/images/delete", { path: logo })).json();
+    assert(kept.kept && existsSync(logo) && !(await pictures()).includes(logo), "a used picture leaves the list, its file stays");
+    assert.deepEqual(kept.usedIn, ["Uses the logo"], "the design using it is named");
+    // Used by the design open (not saved yet): kept too.
+    const open = await upload("Open.png");
+    assert((await (await post("/api/images/delete", { path: open, inUse: true })).json()).kept && existsSync(open));
+    assert.equal((await post("/api/images/restore", { path: logo })).status, 200);
+    assert((await pictures()).includes(logo), "undo puts it back in the list");
     assert.equal((await post("/api/images/delete", { path: shot })).status, 403, "only pictures in the library's images folder");
     assert(existsSync(shot));
   });

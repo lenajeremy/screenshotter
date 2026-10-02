@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -75,11 +75,16 @@ async function applyTemplateFrom(url, id, name) {
   try {
     const { screens } = await api(url, { id, ...body });
     checkpoint();
-    // The set keeps its image size (another iPhone size, say) when it's the template's shape; a
-    // template made for another shape (iPad, iPhone Duo held open, Mac) brings its own.
+    // The set keeps its image size when it suits the template: the same shape (another iPhone
+    // size), or a size of your own (square, 4:5…) the same way up. A template for another kind of
+    // device (iPad, iPhone Duo held open, Mac) on a store size of another shape brings its own.
     const size = tidy({ canvas: S.scene.canvas, landscape: S.scene.landscape || undefined });
     const want = canvasRatio(screens[0]?.scene);
-    const same = Math.abs(canvasRatio(S.scene) - want) < want * 0.12;
+    const have = canvasRatio(S.scene);
+    const preset = typeof S.scene.canvas === "string" ? S.opts?.canvases?.[S.scene.canvas] : null;
+    const storeSize = Boolean(preset?.store || preset?.platform);
+    const sameWayUp = have >= 0.95 === want >= 0.95;
+    const same = Math.abs(have - want) < want * 0.12 || (!storeSize && sameWayUp);
     const fit = (scene) => {
       if (!same) return scene;
       const sc = { ...scene };
@@ -598,21 +603,28 @@ export function guessLook(src) {
   });
 }
 
+/** Whether the design open uses a picture: any screen of any size, its pictures, backdrops or app icon. */
+function openDesignUses(p) {
+  if (S.appIcon === p) return true;
+  const screens = (allGroups() ?? [{ shots: activeScreens() }]).flatMap((g) => g.shots);
+  return screens.some((x) => JSON.stringify(x.scene ?? {}).includes(JSON.stringify(p).slice(1, -1)));
+}
+
 /**
- * Delete a picture you added: it leaves the library (and any design using it shows it missing), with
- * Undo to bring it back.
+ * Delete a picture you added, with Undo. One a design uses only leaves the list (its file stays, so
+ * the design keeps it); any other is deleted.
  */
 export async function deletePicture(p) {
   try {
-    const { usedIn = [] } = await api("/api/images/delete", { path: p });
+    const { usedIn = [], kept } = await api("/api/images/delete", { path: p, inUse: openDesignUses(p) });
     set({ imagesStamp: Date.now() });
-    const name = p.split("/").pop();
-    const where = usedIn.length ? `${usedIn.length === 1 ? `"${usedIn[0]}" uses` : `${usedIn.length} designs use`} it, and will show it missing.` : "";
+    const name = pictureName(p);
+    const who = usedIn.length === 1 ? `“${usedIn[0]}” uses it` : usedIn.length > 1 ? `${usedIn.length} designs use it` : "This design uses it";
     toast({
-      kind: usedIn.length ? "warn" : "ok",
+      kind: "ok",
       icon: "trash",
-      title: `Deleted ${name}`,
-      text: where || undefined,
+      title: kept ? `Removed ${name} from your pictures` : `Deleted ${name}`,
+      text: kept ? `${who}, so it stays there.` : undefined,
       timeout: 8000,
       actions: [
         {

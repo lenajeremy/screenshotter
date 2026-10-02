@@ -711,6 +711,7 @@ function dragOnto(ev, makeGhost, place) {
   const up = (e) => {
     removeEventListener("pointermove", move);
     removeEventListener("pointerup", up);
+    removeEventListener("pointercancel", cancel);
     removeEventListener("keydown", key, true);
     document.body.classList.remove("dragging-shape");
     if (!ghost) return e && place();
@@ -724,8 +725,15 @@ function dragOnto(ev, makeGhost, place) {
     e.stopPropagation();
     up(null);
   };
+  // The system took the pointer (a native drag, a gesture): let go without adding anything.
+  const cancel = () => {
+    ghost?.remove();
+    ghost = null;
+    up(null);
+  };
   addEventListener("pointermove", move);
   addEventListener("pointerup", up);
+  addEventListener("pointercancel", cancel);
   addEventListener("keydown", key, true);
 }
 
@@ -873,11 +881,11 @@ export function ImagesPanel() {
       }} />
       ${!replacing &&
       html`<${Section} title="Stickers" count=${s.opts?.stickers?.length}>
-        <div class="sticker-grid">${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: drag it onto the design, or click to add it`} onPointerDown=${(e) => dragOnto(e, pictureGhost(`sticker:${n}`, 0.11, true), (at) => addSticker(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addSticker(n))}><img loading="lazy" src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
+        <div class="sticker-grid" onDragStart=${(e) => e.preventDefault()}>${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: drag it onto the design, or click to add it`} onPointerDown=${(e) => dragOnto(e, pictureGhost(`sticker:${n}`, 0.11, true), (at) => addSticker(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addSticker(n))}><img loading="lazy" draggable=${false} src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
       <//>
       <${Section} title="Illustrations" count=${s.opts?.art?.length}>
-        <div class="sticker-grid art-grid">${(s.opts?.art ?? []).map((n) => html`<button key=${n} class=${(s.opts?.colouredArt ?? []).includes(n) ? "" : "mono"} title=${`${n.replace(/-/g, " ")}: drag it onto the design, or click to add it (it goes behind the devices)`}
-          onPointerDown=${(e) => dragOnto(e, pictureGhost(`art:${n}`, 0.14), (at) => addArt(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addArt(n))}><img loading="lazy" src=${`/ui/art/${n}.svg`} /></button>`)}</div>
+        <div class="sticker-grid art-grid" onDragStart=${(e) => e.preventDefault()}>${(s.opts?.art ?? []).map((n) => html`<button key=${n} class=${(s.opts?.colouredArt ?? []).includes(n) ? "" : "mono"} title=${`${n.replace(/-/g, " ")}: drag it onto the design, or click to add it (it goes behind the devices)`}
+          onPointerDown=${(e) => dragOnto(e, pictureGhost(`art:${n}`, 0.14), (at) => addArt(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addArt(n))}><img loading="lazy" draggable=${false} src=${`/ui/art/${n}.svg`} /></button>`)}</div>
       <//>
       <${Section} title="Badges">
         <div class="shape-tiles">${BADGE_PRESETS.map(preset)}</div>
@@ -889,14 +897,14 @@ export function ImagesPanel() {
       <//>`}
       ${lib?.length > 0 &&
       html`<${Section} title="Your pictures" count=${lib.length}>
-        <div class="image-grid">${lib.map((f) => html`<div class="image-tile" key=${f.path}>
+        <div class="image-grid" onDragStart=${(e) => e.preventDefault()}>${lib.map((f) => html`<div class="image-tile" key=${f.path}>
           <button title=${`${pictureName(f.path)}: ${replacing ? "click to use it" : "drag it onto the design, or click to add it"}`}
             onPointerDown=${(e) => (replacing || e.button !== 0 ? undefined : dragOnto(e, pictureGhost(f.path, 0.12), (at) => addPicture(f.path, { at })))} onClick=${() => replacing && use(f.path)}
             onContextMenu=${(e) => (e.preventDefault(), openMenu(e.clientX, e.clientY, [{ label: replacing ? "Use it" : "Add to the design", icon: "plus", run: () => use(f.path) }, "-", { label: "Delete", icon: "trash", danger: true, run: () => deletePicture(f.path) }]))}
             onKeyDown=${(e) => {
               if (e.key === "Enter" || e.key === " ") (e.preventDefault(), use(f.path));
               if (e.key === "Delete" || e.key === "Backspace") (e.preventDefault(), e.stopPropagation(), deletePicture(f.path));
-            }}><img loading="lazy" src=${fileUrl(f.path)} /></button>
+            }}><img loading="lazy" draggable=${false} src=${fileUrl(f.path)} /></button>
           <button class="tile-x" title="Delete this picture" aria-label=${`Delete ${pictureName(f.path)}`} onPointerDown=${(e) => e.stopPropagation()} onClick=${() => deletePicture(f.path)}><${Icon} n="x" s=${11} w=${2.4} /></button>
         </div>`)}</div>
       <//>`}

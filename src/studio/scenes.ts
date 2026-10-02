@@ -137,7 +137,13 @@ function summarize(s: SavedScene): SceneSummary {
     // An unknown preset: leave the size out.
   }
   const thumb = thumbFile(s.id);
-  const thumbAt = existsSync(thumb) ? statSync(thumb).mtimeMs : undefined;
+  // A thumbnail being drawn again can vanish between a check and a look: then there's none yet.
+  let thumbAt: number | undefined;
+  try {
+    thumbAt = statSync(thumb).mtimeMs;
+  } catch {
+    thumbAt = undefined;
+  }
   return {
     id: s.id,
     name: s.name,
@@ -165,7 +171,13 @@ export function listScenes(): SceneSummary[] {
     if (!f.endsWith(".json")) continue;
     const s = read(f.slice(0, -5));
     if (!s) continue;
-    const summary = summarize(s);
+    // One design that can't be summed up (an odd file, a thumbnail mid-change) never hides the rest.
+    let summary: SceneSummary;
+    try {
+      summary = summarize(s);
+    } catch {
+      continue;
+    }
     if (summary.devices && !summary.thumb && !thumbTried.has(s.id)) {
       thumbTried.add(s.id);
       scheduleThumb(s.id, 400);

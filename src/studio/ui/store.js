@@ -669,8 +669,13 @@ export function aiVia() {
 export const IMAGE_PROVIDERS = { openai: "OpenAI", gemini: "Gemini", replicate: "Replicate", fal: "fal" };
 
 /** Where the canvas finds a picture: a built-in sticker ("sticker:heart") or a file. */
-export const pictureUrl = (src) =>
-  /^sticker:/i.test(src ?? "") ? `/ui/stickers/${src.slice(8).toLowerCase()}.svg` : /^art:/i.test(src ?? "") ? `/ui/art/${src.slice(4).toLowerCase()}.svg` : fileUrl(src);
+export const pictureUrl = (src) => {
+  if (/^sticker:/i.test(src ?? "")) return `/ui/stickers/${src.slice(8).toLowerCase()}.svg`;
+  if (/^art:/i.test(src ?? "")) return `/ui/art/${src.slice(4).toLowerCase()}.svg`;
+  // A built-in by its file (as the engine's layout names it): served with the UI, not as a file.
+  const builtIn = /[\\/]studio[\\/]ui[\\/](stickers|art)[\\/]([\w-]+\.svg)$/i.exec(src ?? "");
+  return builtIn ? `/ui/${builtIn[1]}/${builtIn[2]}` : fileUrl(src);
+};
 
 /** A picture's own name, without the timestamp the library adds: "logo-20261002-082507-857.svg" is "Logo". */
 export function pictureName(src) {

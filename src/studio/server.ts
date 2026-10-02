@@ -210,38 +210,59 @@ async function screensStrip(screens: Array<{ scene: MockupInput }>, w: number, f
   await renderHtml(`<!doctype html><body style="margin:0;background:#16161a;display:flex;gap:6px;align-items:flex-start">${tiles.join("")}</body>`, file, w, h, { scale: 1, format: "jpeg", quality: 82, transparent: false });
 }
 
-/** The pictures added as image blocks (logos, icons, stickers), newest first. */
+/** The pictures added as image blocks (logos, icons, stickers), newest first; not ones taken out of the list. */
 function imageLibrary(): Array<{ path: string; mtime: number }> {
   const dir = path.join(outputRoot(), "images");
   if (!existsSync(dir)) return [];
+  const hidden = new Set(hiddenPictures());
   return readdirSync(dir)
-    .filter((f) => /\.(png|jpe?g|webp|gif|svg)$/i.test(f))
+    .filter((f) => /\.(png|jpe?g|webp|gif|svg)$/i.test(f) && !hidden.has(f))
     .map((f) => ({ path: path.join(dir, f), mtime: statSync(path.join(dir, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, 120);
 }
 
 /**
- * Deleting a picture you added: it moves aside (images/.deleted) so it can come back with Undo, and
- * goes for good after 30 days. Only pictures in the library's images folder.
+ * Deleting a picture you added. One that a design uses (a saved one, or the one open) only leaves
+ * the list (images/.hidden.json): its file stays, so no design loses it. Any other moves aside
+ * (images/.deleted) so Undo can bring it back, and goes for good after 30 days. Only pictures in
+ * the library's images folder.
  */
 const imagesDir = () => path.join(outputRoot(), "images");
 const deletedDir = () => ensureDir(path.join(imagesDir(), ".deleted"));
+const hiddenFile = () => path.join(imagesDir(), ".hidden.json");
+function hiddenPictures(): string[] {
+  try {
+    const list = JSON.parse(readFileSync(hiddenFile(), "utf8"));
+    return Array.isArray(list) ? list.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+const setHidden = (names: string[]) => writeFileSync(hiddenFile(), JSON.stringify([...new Set(names)], null, 1));
 function libraryPicture(p: unknown): string {
   if (typeof p !== "string" || path.dirname(path.resolve(p)) !== path.resolve(imagesDir()) || !/\.(png|jpe?g|webp|gif|svg)$/i.test(p)) throw new HttpError(403, "Only pictures you added can be deleted");
   return path.resolve(p);
 }
-function deletePicture(p: unknown): { usedIn: string[] } {
+function deletePicture(p: unknown, inUse = false): { usedIn: string[]; kept: boolean } {
   const file = libraryPicture(p);
   if (!existsSync(file)) throw new HttpError(404, "That picture isn't there any more");
+  const usedIn = scenesUsing(file);
+  if (usedIn.length || inUse) {
+    setHidden([...hiddenPictures(), path.basename(file)]);
+    return { usedIn, kept: true };
+  }
   const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
   for (const f of readdirSync(deletedDir())) if (statSync(path.join(deletedDir(), f)).mtimeMs < cutoff) rmSync(path.join(deletedDir(), f), { force: true });
   renameSync(file, path.join(deletedDir(), path.basename(file)));
-  return { usedIn: scenesUsing(file) };
+  return { usedIn, kept: false };
 }
 function restorePicture(p: unknown): void {
   const file = libraryPicture(p);
-  const kept = path.join(deletedDir(), path.basename(file));
+  const name = path.basename(file);
+  const hidden = hiddenPictures();
+  if (hidden.includes(name)) return setHidden(hidden.filter((x) => x !== name));
+  const kept = path.join(deletedDir(), name);
   if (!existsSync(kept)) throw new HttpError(404, "That picture can't be brought back");
   renameSync(kept, file);
 }
@@ -676,8 +697,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     }
     case "/api/scenes/save":
       return send(200, saveScene(await json(req)));
-    case "/api/images/delete":
-      return send(200, deletePicture((await json<{ path: string }>(req)).path));
+    case "/api/images/delete": {
+      const b = await json<{ path: string; inUse?: boolean }>(req);
+      return send(200, deletePicture(b.path, b.inUse === true));
+    }
     case "/api/images/restore":
       restorePicture((await json<{ path: string }>(req)).path);
       return send(200, { ok: true });

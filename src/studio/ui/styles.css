@@ -1515,6 +1515,7 @@ li.done .work-shot .scan { display: none; }
 .sticker-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
 .sticker-grid button { min-width: 0; min-height: 0; overflow: hidden; aspect-ratio: 1; padding: 6px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; display: grid; place-items: center; transition: background-color 0.15s, transform 0.15s; }
 .sticker-grid button:hover { background: var(--panel-2); transform: scale(1.08) rotate(-4deg); }
+.sticker-grid img, .image-grid img { -webkit-user-drag: none; user-select: none; }
 .sticker-grid img { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff) drop-shadow(0 -1.5px 0 #fff); }
 
 /* Templates › Whole sets: each set as a strip of its five screens. */
