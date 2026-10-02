@@ -47,8 +47,12 @@ export interface AnimProps {
   rotate?: number;
   rotateX?: number;
   rotateY?: number;
-  /** Text colour. */
+  /** Text colour; a clay device's clay colour. */
   color?: string;
+  /** Text: how much of its marks (highlighter, underline, pill) are drawn, 0 to 1. */
+  mark?: number;
+  /** Ratings: how many of the five stars are filled. */
+  value?: number;
   /** Shapes. */
   fill?: string;
   stroke?: string;
@@ -150,6 +154,8 @@ export interface AnimState {
   rotateX: number;
   rotateY: number;
   color?: string;
+  /** Text: how much of its marks are drawn (1 as designed). */
+  mark?: number;
   /** Soft focus, in pixels. */
   blur?: number;
   shape?: ShapeSpec;
@@ -611,6 +617,8 @@ interface Channels {
   start?: Point;
   end?: Point;
   bend?: number;
+  mark?: number;
+  value?: number;
   /** Soft focus, in pixels. */
   blur?: number;
 }
@@ -638,6 +646,8 @@ function baseChannels(e: AnimEntity): Channels {
     start: s?.from,
     end: s?.to,
     bend: s?.bend,
+    mark: 1,
+    value: s?.value,
     blur: e.blur ?? e.shape?.blur,
   };
 }
@@ -661,7 +671,7 @@ function target(props: AnimProps, e: AnimEntity, cur: Channels, W: number, H: nu
   if (props.rotateX !== undefined) out.rotateX = props.rotateX;
   if (props.rotateY !== undefined) out.rotateY = props.rotateY;
   for (const k of ["color", "fill", "stroke"] as const) if (props[k] !== undefined) out[k] = props[k];
-  for (const k of ["strokeWidth", "radius", "bend"] as const) if (props[k] !== undefined) out[k] = props[k];
+  for (const k of ["strokeWidth", "radius", "bend", "mark", "value"] as const) if (props[k] !== undefined) out[k] = props[k];
   if (props.start) out.start = props.start;
   if (props.end) out.end = props.end;
   if (props.blur !== undefined) out.blur = blurPx(props.blur, W);
@@ -724,7 +734,7 @@ export function evaluate(list: Animation[] | undefined, entities: AnimEntity[], 
   }
   for (const [id, ch] of state) {
     const e = byId.get(id)!;
-    const st: AnimState = { opacity: ch.opacity, dx: ch.dx, dy: ch.dy, sx: ch.sx, sy: ch.sy, rotate: ch.rotate, rotateX: ch.rotateX, rotateY: ch.rotateY, color: ch.color, blur: ch.blur };
+    const st: AnimState = { opacity: ch.opacity, dx: ch.dx, dy: ch.dy, sx: ch.sx, sy: ch.sy, rotate: ch.rotate, rotateX: ch.rotateX, rotateY: ch.rotateY, color: ch.color, blur: ch.blur, mark: ch.mark };
     if (e.shape) st.shape = animatedShape(e.shape, ch, W, H);
     if (e.kind === "caption" || e.kind === "text") st.units = unitStates(list, e, t, W, H);
     out.set(id, st);
@@ -870,6 +880,7 @@ function animatedShape(s: ShapeSpec, ch: Channels, W: number, H: number): ShapeS
     strokeWidth: Math.max(0, ch.strokeWidth ?? s.strokeWidth),
     radius: Math.max(0, ch.radius ?? s.radius),
     bend: Math.max(-1, Math.min(1, ch.bend ?? s.bend)),
+    value: Math.max(0, Math.min(5, ch.value ?? s.value)),
     opacity: Math.max(0, Math.min(1, s.opacity * ch.opacity)),
     blur: ch.blur !== undefined ? Math.max(0, ch.blur) / W : s.blur,
   };

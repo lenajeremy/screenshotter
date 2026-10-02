@@ -99,7 +99,7 @@ export function clayColor(v: boolean | string | undefined): string | undefined {
 export function clayArt(url: string, clay: string, style: string, opening: string): string {
   const mask = `url(&quot;${url}&quot;) 0 0 / 100% 100% no-repeat`;
   return (
-    `<div class="bezel-art clay" style="${style};background:${esc(clay)};-webkit-mask:${mask};mask:${mask}">` +
+    `<div class="bezel-art clay" style="${style};background:var(--acolor, ${esc(clay)});-webkit-mask:${mask};mask:${mask}">` +
     `<img src="${url}" style="position:absolute;left:0;top:0;width:100%;height:100%;filter:grayscale(1) contrast(.68) brightness(1.1);mix-blend-mode:soft-light">` +
     `</div>` +
     `<img class="bezel-art" src="${url}" style="${style};clip-path:inset(${opening})">`
@@ -909,7 +909,7 @@ function bezelFrame(o: FrameOptions, u: number, depth: boolean): FrameOutput {
     }
   }
   const html =
-    `<div class="device bezel fam-${m.family}${depth ? " d3" : ""}" style="--c:${esc(o.clay ?? b.edge)};--u:${u};width:${f(W)};height:${f(H)}">` +
+    `<div class="device bezel fam-${m.family}${depth ? " d3" : ""}" style="--c:${o.clay ? `var(--acolor, ${esc(o.clay)})` : esc(b.edge)};--u:${u};width:${f(W)};height:${f(H)}">` +
     edge +
     `<div class="screen" style="left:${f(hx)};top:${f(hy)};width:${f(hw)};height:${f(hh)};border-radius:${f(hr)};corner-shape:superellipse(1.35)">${shot}${cutout}</div>` +
     (c.overlay ? `<div class="hl" style="left:${f(hx)};top:${f(hy + bar)};width:${f(hw)};height:${f(hh - bar)}">${c.overlay}</div>` : "") +

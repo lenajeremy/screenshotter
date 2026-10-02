@@ -69,8 +69,13 @@ interface AccentStyle {
   base?: string;
 }
 
-/** The highlighter's band: a translucent stroke over the lower half of the line, like a marker. */
-const markerBand = (c: string) => `background:linear-gradient(transparent 50%, color-mix(in oklab, ${c} 58%, transparent) 50%, color-mix(in oklab, ${c} 58%, transparent) 92%, transparent 92%);-webkit-box-decoration-break:clone;box-decoration-break:clone;`;
+/**
+ * A mark drawn as a background, so a video can draw it in from the left (--amark, 0 to 1): the
+ * highlighter's translucent band over the lower half of the line, an underline, or a pill's fill.
+ */
+const sweep = "background-repeat:no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;";
+const markerBand = (c: string) =>
+  `background-image:linear-gradient(transparent 50%, color-mix(in oklab, ${c} 58%, transparent) 50%, color-mix(in oklab, ${c} 58%, transparent) 92%, transparent 92%);background-size:calc(var(--amark, 1) * 100%) 100%;${sweep}`;
 
 /**
  * Accent words with their mark: the mark on a span of its own round them (so a gradient accent
@@ -89,8 +94,8 @@ function markAccent(html: string, accent: AccentStyle, css: string | undefined):
     accent.mark === "highlight"
       ? `${markerBand(esc(c))}padding:0 .08em;margin:0 -.08em;`
       : accent.mark === "underline"
-        ? `text-decoration:underline ${esc(c)} .09em;text-underline-offset:.14em;text-decoration-skip-ink:none;`
-        : `background:${esc(c)};border-radius:.32em;padding:0 .24em;margin:0 .04em;-webkit-box-decoration-break:clone;box-decoration-break:clone;`;
+        ? `background-image:linear-gradient(${esc(c)}, ${esc(c)});background-position:0 100%;background-size:calc(var(--amark, 1) * 100%) .09em;${sweep}padding-bottom:.02em;`
+        : `background-image:linear-gradient(${esc(c)}, ${esc(c)});background-size:calc(var(--amark, 1) * 100%) 100%;${sweep}border-radius:.32em;padding:0 .24em;margin:0 .04em;`;
   return `<span class="mark" style="${mark}">${word}</span>`;
 }
 
@@ -748,7 +753,8 @@ function entitiesFor(input: MockupInput, plan: ScenePlan, textColor: string): Sc
       blur: d.input.blur,
       frame: d.kind,
       device: d.resolved?.model.name,
-      color: d.color?.hex,
+      // A clay device's colour is its clay: what a video's colour change starts from.
+      color: d.options.clay ?? d.color?.hex,
       screen: Object.fromEntries(Object.entries(screenRect(d.options)).map(([k, v]) => [k, round(v)])) as SceneEntity["screen"],
       menuBar: menuBarFraction(d),
       menuBarStyle: typeof d.options.menuBar === "object" ? d.options.menuBar.style : undefined,
@@ -1135,6 +1141,7 @@ html,body{margin:0;padding:0;background:transparent;}
 .uw{white-space:nowrap;}
 .text-block,.text{opacity:calc(var(--cap, 1) * var(--ao, 1));translate:var(--ax, 0px) calc((1 - var(--cap, 1)) * ${Math.round(H * 0.012)}px + var(--ay, 0px));scale:var(--asx, 1) var(--asy, 1);rotate:var(--ar, 0deg);}
 .grain{background-position:var(--gx, 0px) var(--gy, 0px);}
+.image-block{translate:var(--ax, 0px) var(--ay, 0px);scale:var(--asx, 1) var(--asy, 1);rotate:var(--ar, 0deg);}
 ${FRAME_CSS}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute"><defs>${bg.defs}${outer?.defs ?? ""}</defs></svg>

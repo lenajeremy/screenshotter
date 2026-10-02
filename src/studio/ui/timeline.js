@@ -311,7 +311,7 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
       if (el.dataset.anim) {
         delete el.dataset.anim;
         el.style.translate = el.style.scale = el.style.rotate = el.style.opacity = "";
-        for (const v of ["--acolor", "--arx", "--ary"]) el.style.removeProperty(v);
+        for (const v of ["--acolor", "--arx", "--ary", "--amark"]) el.style.removeProperty(v);
         for (const u of el.querySelectorAll(".u")) u.style.translate = u.style.scale = u.style.rotate = u.style.opacity = u.style.filter = "";
         if (e?.kind === "shape") drawShape(el, e.shape, art);
       }
@@ -356,6 +356,8 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
     el.style.opacity = String(clamp(st.opacity, 0, 1));
     if (st.color) el.style.setProperty("--acolor", st.color);
     else el.style.removeProperty("--acolor");
+    if (st.mark !== undefined && st.mark < 1) el.style.setProperty("--amark", String(clamp(st.mark, 0, 1)));
+    else el.style.removeProperty("--amark");
     // A device's 3D tilt and turn, on top of its own (its body adds them, as the render does).
     for (const [v, n] of [["--arx", st.rotateX], ["--ary", st.rotateY]]) {
       if (n) el.style.setProperty(v, `${n}deg`);
@@ -1297,7 +1299,23 @@ export function ClipInspector() {
   const texts = all((e) => e.kind === "caption" || e.kind === "text");
   const shapes = all((e) => e.kind === "shape");
   const lines = shapes && all((e) => e.shape.type === "arrow" || e.shape.type === "line");
+  const ratings = shapes && all((e) => e.shape.type === "rating");
+  const clays = devices && all((e) => e.clay);
+  // Text with marks to draw in: a highlighter, an accent underline or pill.
+  const marked = texts && ents.some((e) => {
+    const t = e.kind === "caption" ? s.scene.textStyle ?? {} : s.scene.texts?.[e.index] ?? {};
+    return Boolean(t.accentMark || t.decoration === "highlight");
+  });
   const first = ents[0];
+  // An entrance that also draws marks in or fills stars up, from nothing.
+  const fromZero = (key, on) =>
+    update(i, (x) => {
+      if (on) x.from = { ...(x.from ?? {}), [key]: 0 };
+      else if (x.from) {
+        delete x.from[key];
+        if (!Object.keys(x.from).length) delete x.from;
+      }
+    });
   // Its own soft focus, as a share of the canvas width (the slider's resting value).
   const W0 = s.layout?.canvas.width ?? 1000;
   const own = first?.blur ?? first?.shape?.blur ?? 0;
@@ -1404,6 +1422,8 @@ export function ClipInspector() {
               else x.by = v;
             })} /></div>
               ${a.by && html`<div class="row"><label>Gap</label><${Slider} value=${a.each} min=${0.01} max=${0.5} step=${0.01} fallback=${DEFAULT_EACH[a.by]} format=${(v) => v.toFixed(2) + " s"} onChange=${(v) => update(i, (x) => (x.each = v), "each")} /></div>`}`}
+            ${kind === "enter" && marked && html`<${Switch} checked=${a.from?.mark === 0} onChange=${(v) => fromZero("mark", v)} label="Marks draw in" />`}
+            ${kind === "enter" && ratings && html`<${Switch} checked=${a.from?.value === 0} onChange=${(v) => fromZero("value", v)} label="Stars fill in" />`}
           <//>`
         : html`<${Section} title="Changes to">
             <div class="note">Set what it becomes: drag, resize or turn it on the canvas${lines ? ", or pull the arrow's ends and middle," : ""} or use the controls here. Anything you leave alone stays as it is.</div>
@@ -1416,7 +1436,9 @@ export function ClipInspector() {
             ${devices && html`${row("3D tilt", "rotateX", html`<${Slider} value=${to.rotateX} min=${-60} max=${60} step=${1} centered fallback=${0} format=${(v) => v + "°"} onChange=${(v) => setTo("rotateX", v)} />`)}
               ${row("3D turn", "rotateY", html`<${Slider} value=${to.rotateY} min=${-75} max=${75} step=${1} centered fallback=${0} format=${(v) => v + "°"} onChange=${(v) => setTo("rotateY", v)} />`)}
               <div class="note">3D tilt and turn show in Preview and the exported video. To rack focus, give two devices a Change at the same moment: blur one, sharpen the other.</div>`}
-            ${texts && row("Colour", "color", html`<${ColorButton} value=${to.color} auto="No change" onChange=${(v) => setTo("color", v)} />`)}
+            ${(texts || clays) && row(clays ? "Clay colour" : "Colour", "color", html`<${ColorButton} value=${to.color} auto="No change" onChange=${(v) => setTo("color", v)} />`)}
+            ${marked && row("Marks drawn", "mark", html`<${Slider} value=${to.mark} min=${0} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setTo("mark", v)} />`)}
+            ${ratings && row("Stars", "value", html`<${Slider} value=${to.value} min=${0} max=${5} step=${0.1} fallback=${first.shape.value} format=${(v) => v.toFixed(1)} onChange=${(v) => setTo("value", v)} />`)}
             ${shapes && html`
               ${!lines && row("Fill", "fill", html`<${ColorButton} value=${to.fill} auto="No change" onChange=${(v) => setTo("fill", v)} />`)}
               ${row(lines ? "Colour" : "Stroke", "stroke", html`<${ColorButton} value=${to.stroke} auto="No change" onChange=${(v) => setTo("stroke", v)} />`)}

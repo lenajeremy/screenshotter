@@ -508,6 +508,29 @@ await check("text emphasis: a pill on the accent words, a marker behind a text, 
   assert(count(0.5, 0.58, (r, g, b) => g > 90 && r < 40 && b < 40) < 50, "the marker band shouldn't cover the top of the line");
 });
 
+await check("marks draw in, stars fill up, clay changes colour and images animate", async () => {
+  const { evaluate } = await import("../src/render/animate.js");
+  const { shapeSpec } = await import("../src/render/shapes.js");
+  const ents = [
+    { id: "caption", kind: "caption" as const, x: 0.5, y: 0.1, width: 0.8, size: 0.05 },
+    { id: "shape-1", kind: "shape" as const, x: 0.5, y: 0.5, width: 0.3, height: 0.06, shape: shapeSpec({ type: "rating", value: 4.8 }) },
+    { id: "device-1", kind: "device" as const, x: 0.5, y: 0.7, width: 0.4, height: 0.5, color: "#dccbb0" },
+    { id: "image-1", kind: "image" as const, x: 0.2, y: 0.3, width: 0.1, height: 0.05 },
+  ];
+  const anims = [
+    { targets: "caption", at: 0, duration: 1, ease: "linear" as const, from: { mark: 0 } },
+    { targets: "shape-1", at: 0, duration: 1, ease: "linear" as const, from: { value: 0 } },
+    { targets: "device-1", at: 0, duration: 1, ease: "linear" as const, to: { color: "#000000" } },
+    { targets: "image-1", at: 0, duration: 1, ease: "linear" as const, to: { x: 0.4, scale: 2 } },
+  ];
+  const mid = evaluate(anims as never, ents, 0.5, 1000, 1000);
+  assert(Math.abs((mid.get("caption")?.mark ?? -1) - 0.5) < 0.01, `half way, half the marks are drawn: ${mid.get("caption")?.mark}`);
+  assert(Math.abs((mid.get("shape-1")?.shape?.value ?? -1) - 2.4) < 0.01, `half way to 4.8 stars: ${mid.get("shape-1")?.shape?.value}`);
+  assert(mid.get("device-1")?.color && mid.get("device-1")?.color !== "#dccbb0", "the clay colour moves");
+  const img = mid.get("image-1");
+  assert(img && Math.abs(img.dx - 100) < 1 && Math.abs(img.sx - 1.5) < 0.01, `an image moves and grows: ${JSON.stringify(img)}`);
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

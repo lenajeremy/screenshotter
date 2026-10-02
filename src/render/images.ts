@@ -124,7 +124,8 @@ export function imageLook(b: Pick<ImageBlock, "radius" | "mask" | "shadow" | "st
   }
   if (b.shadow || b.sticker) filters.push(`drop-shadow(0 ${f(short * 0.03)}px ${f(short * 0.06)}px rgba(0,0,0,${b.sticker ? 0.28 : 0.35}))`);
   const soft = !b.blur ? 0 : b.blur <= 0.5 ? b.blur * W : b.blur;
-  if (soft > 0.05) filters.push(`blur(${f(soft)}px)`);
+  // A video's animated focus comes from --ablur; otherwise it's the block's own.
+  filters.push(`blur(var(--ablur, ${f(soft)}px))`);
   return { corners, filter: filters.join(" ") };
 }
 
@@ -141,7 +142,7 @@ export function imageBlockHtml(b: ImageBlock, W: number, H: number, id: string):
     `height:${f(h)}px`,
     `z-index:${b.z}`,
     b.rotate ? `transform:rotate(${b.rotate}deg)` : "",
-    b.opacity < 1 ? `opacity:${b.opacity}` : "",
+    `opacity:calc(${b.opacity} * var(--ao, 1))`,
     look.filter ? `filter:${look.filter}` : "",
   ]
     .filter(Boolean)

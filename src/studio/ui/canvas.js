@@ -146,11 +146,13 @@ const accentStyle = (accent) => ({
   fontStyle: accent.italic ? "italic" : undefined,
 });
 
+/** A mark as a background that Animate can draw in (--amark), as the render's are. */
+const sweep = { backgroundRepeat: "no-repeat", WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" };
 /** A highlighter's band: a translucent stroke over the lower half of the line (as the render's markerBand). */
 const markerBand = (c) => ({
   backgroundImage: `linear-gradient(transparent 50%, color-mix(in oklab, ${c} 58%, transparent) 50%, color-mix(in oklab, ${c} 58%, transparent) 92%, transparent 92%)`,
-  WebkitBoxDecorationBreak: "clone",
-  boxDecorationBreak: "clone",
+  backgroundSize: "calc(var(--amark, 1) * 100%) 100%",
+  ...sweep,
 });
 
 /** Accent words with their mark (highlighter, underline or pill), as the render's markAccent draws them. */
@@ -165,8 +167,8 @@ function marked(nodes, accent) {
     accent.mark === "highlight"
       ? { ...markerBand(c), padding: "0 .08em", margin: "0 -.08em" }
       : accent.mark === "underline"
-        ? { textDecoration: `underline ${c} .09em`, textUnderlineOffset: ".14em", textDecorationSkipInk: "none" }
-        : { background: c, borderRadius: ".32em", padding: "0 .24em", margin: "0 .04em", WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" };
+        ? { backgroundImage: `linear-gradient(${c}, ${c})`, backgroundPosition: "0 100%", backgroundSize: "calc(var(--amark, 1) * 100%) .09em", ...sweep, paddingBottom: ".02em" }
+        : { backgroundImage: `linear-gradient(${c}, ${c})`, backgroundSize: "calc(var(--amark, 1) * 100%) 100%", ...sweep, borderRadius: ".32em", padding: "0 .24em", margin: "0 .04em" };
   return html`<span class="mark" style=${st}>${word}</span>`;
 }
 
@@ -329,7 +331,7 @@ function ClayArt({ e, s, bw }) {
   const mask = `url("${url}") 0 0 / 100% 100% no-repeat`;
   const pct = (v) => v * 100 + "%";
   const opening = `inset(${pct(s.y)} ${pct(1 - s.x - s.width)} ${pct(1 - s.y - s.height)} ${pct(s.x)} round ${s.radius * bw}px)`;
-  return html`<div class="bezel-art clay" style=${{ background: e.clay, WebkitMask: mask, mask }}><img draggable=${false} src=${url} /></div>
+  return html`<div class="bezel-art clay" style=${{ background: `var(--acolor, ${e.clay})`, WebkitMask: mask, mask }}><img draggable=${false} src=${url} /></div>
     <img class="bezel-art" draggable=${false} src=${url} style=${{ clipPath: opening }} />`;
 }
 

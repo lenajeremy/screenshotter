@@ -204,7 +204,7 @@ export function cameraKeys(zooms: Array<{ start: number; end: number; scale: num
 /** One frame of the scene's animations: values for devices and text, and animated shapes redrawn. */
 interface AnimFrame {
   /** `units`: a text's words or letters in reading order, each [opacity, dx, dy, scaleX, scaleY, turn, blur]. */
-  els: Array<{ id: string; dx: number; dy: number; sx: number; sy: number; r: number; rx: number; ry: number; o: number; color?: string; blur?: number; units?: number[][] }>;
+  els: Array<{ id: string; dx: number; dy: number; sx: number; sy: number; r: number; rx: number; ry: number; o: number; color?: string; blur?: number; mark?: number; units?: number[][] }>;
   /** Call-outs with their own timing: how far each is shown (0–1), by device and index from 0. */
   callouts: Array<{ device: string; index: number; v: number }>;
   /** Where the camera is, when the animations move it. */
@@ -227,7 +227,7 @@ function animFrame(animations: MockupInput["animations"], entities: AnimEntity[]
       frame.shapes.push({ id, left: r.left, top: r.top, width: r.width, height: r.height, rotate: r.rotate, filter: r.filter, svg: r.svg });
     } else {
       const units = st.units?.map((u) => [u.opacity, u.dx, u.dy, u.sx, u.sy, u.rotate, u.blur]);
-      frame.els.push({ id, dx: st.dx, dy: st.dy, sx: st.sx, sy: st.sy, r: st.rotate, rx: st.rotateX, ry: st.rotateY, o: st.opacity, color: st.color, blur: st.blur, units });
+      frame.els.push({ id, dx: st.dx, dy: st.dy, sx: st.sx, sy: st.sy, r: st.rotate, rx: st.rotateX, ry: st.rotateY, o: st.opacity, color: st.color, blur: st.blur, mark: st.mark, units });
     }
   }
   for (const [id, v] of evaluateCallouts(animations, t)) {
@@ -336,6 +336,7 @@ function installTimeline(cfg: {
       st.setProperty("--ao", String(Math.max(0, Math.min(1, f.o))));
       if (f.color) st.setProperty("--acolor", f.color);
       if (f.blur !== undefined) st.setProperty("--ablur", `${Math.max(0, f.blur)}px`);
+      if (f.mark !== undefined) st.setProperty("--amark", String(Math.max(0, Math.min(1, f.mark))));
       // Words or letters, each about its own middle.
       f.units?.forEach((u, i) => {
         const piece = it.units[i]?.style;
