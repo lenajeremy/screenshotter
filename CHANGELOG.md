@@ -1,6 +1,6 @@
 # What's new
 
-## Unreleased
+## 0.11.5 · 2 October 2026
 
 ### Highlights
 - **A set is one canvas.** Drag a device onto the gap between two screens and it's pulled to sit exactly across both: the seam lights up and says "Across 2 & 3", either way along the set. Drag it mostly onto the screen beside it and it moves there. No settings needed (hold ⌥ to place it freely); a device's **More options › Keep inside this screen** cuts it off at its own screen's edges instead.
