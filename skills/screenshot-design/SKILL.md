@@ -91,6 +91,8 @@ Then decide, in this order: **the one idea → the hero → the words → the co
   - Colour: `textStyle.accentColor` (the app's accent, adjusted for contrast), or a CSS gradient.
   - Weight contrast: `headlineWeight` 400 with `accentWeight` 800 (and no accent colour).
   - Serif italic in a sans headline: `accentFont` "Instrument Serif", `accentItalic` true, `accentWeight` 400: elegant and very current.
+  - A mark: `accentMark` "highlight" (a marker band behind the words, friendly and confident), "underline" (quiet), or "pill" (the words on a chip of colour, punchy). It takes the accent colour, its words then the text's own; `accentMarkColor` picks another. One mark per image.
+- **Outline** (`stroke`, `strokeWidth` 0.06–0.12) holds a headline over a busy photo, or gives a loud, sticker-like look; with `color` "transparent" the letters are outlines alone (bold display faces only). `decoration` underlines, strikes ("no more takeaway") or highlights a whole line.
 - **At most two families** (plus a mono for tiny labels). `subheadlineFont` pairs a different face under the headline.
 
 ## 6. Colour
@@ -163,8 +165,17 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 - **Decoration** (a star or a few small circles near a headline, a pill behind a word) is rare: one to three small shapes in the palette, never competing with the device. When in doubt, leave it out.
 - Callouts or shapes? Callouts change the screen itself (lift a card, magnify, dim the rest). Shapes sit on top and can go anywhere, including outside the device. Use whichever says it with less.
 
+### Logos, icons, stickers, awards and ratings
+
+- **Logo**: an image block (`images`, `height` 0.03–0.05) at the top of the first screenshot, or none: the store shows the app's name already.
+- **App icon**: `mask: "icon"` (Apple's icon outline) with `shadow`, 0.08–0.12 high, beside or above the headline on the first or last screen.
+- **Sticker**: `sticker: true` gives a die-cut white edge and a shadow; tilt it 6–15°. One per image at most, for a playful set.
+- **Laurel** (a shape: `type: "laurel"`, `text`, `caption`) and **rating** (`type: "rating"`, `value`, `text`): social proof, best on the first screen or a review screen, in gold, white or the accent. **Only what's true**: a real award, a real rating and count, a real review. If the person hasn't given you one, ask, or leave it out.
+
 ## 11. Devices and special shots
 
+- **Clay** (`clay`: porcelain, sand, sage, sky, slate, ink, or a colour): the same Apple art in one matte colour. Calm and design-led, it puts all the attention on the UI and suits soft, pastel or editorial sets; take the tone from the palette (a light clay on a light ground, slate or ink on dark), and use the same clay across a set.
+- **Screen only** (`frame: "card"`): the UI alone with the device's own corners and a soft shadow, for flat, modern sets, or several screens in a row.
 - Pick the newest installed hardware that matches the capture unless the person asks otherwise. For an Apple Watch, `band` picks the band from the finish's list (a Sport Band by default): match it to the app's palette.
 - Web pages: a browser frame (`frame: "browser"`, `chrome` light or dark) or a MacBook. Mac apps: a MacBook, whose screen draws the macOS menu bar with the app's name and menus, or a window frame.
 - Menu bar apps: scene `menuBar` { status, size } and the captured menu with `frame: "none"`; `size` 0.06–0.1 for a close, readable shot.
@@ -173,6 +184,7 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 ## 12. Animation (videos)
 
 `animations` on a scene say when and how each item appears, changes and leaves in a video (create_video, and the Studio's video export). Still images ignore them. Items not animated are there from the start.
+- Image blocks animate like devices. A headline's marker drawing in (`from: { mark: 0 }`, 0.6–1 s, just after the words land) and a rating's stars filling up (`from: { value: 0 }`) are small touches that make a video feel made.
 
 - **Targets** are item ids as the layout lists them: `"device-1"`, `"caption"`, `"text-2"`, `"shape-1"`. Several in one animation move as a group: `{ targets: ["device-1", "device-2"], at: 2.5, enter: "zoom" }` zooms a laptop and phone in together from their shared centre. `stagger` starts them one after another.
 - **Entrances** (`enter`): fade, zoom, scale-x, scale-y, slide-up, slide-down, slide-left, slide-right (the way it moves), none. `amount` sets zoom's starting size or a slide's distance. `exit` plays the same effects out.

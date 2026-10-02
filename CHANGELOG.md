@@ -1,5 +1,23 @@
 # What's new
 
+## 0.7.0 · 2 October 2026
+
+### Highlights
+- **Clay.** Any installed device in one matte colour: Apple's own art recoloured (Porcelain, Sand, Sage, Sky, Slate, Ink or any colour), keeping its light and shade, with the screen and Dynamic Island untouched. Device › Style › Clay.
+- **Image blocks.** Put logos, your app icon, stickers or any picture on a screen, from the new Images panel: drop them on the design, then move, size, turn and layer them. Round their corners, give them Apple's app-icon outline or a circle, a soft shadow, a sticker's die-cut white edge, soft focus or opacity. Every picture you add stays in the panel to use again.
+- **Laurels and ratings.** An award wreath round your words, and a row of stars filled to your rating with a line under it, under Shapes › Awards and ratings. They recolour and animate like any shape.
+- **Text emphasis.** Mark the **accent** words with a highlighter, an underline or a pill; underline, strike through or highlight a whole text; outline the letters; set the line height; and give a text's pill its own padding and corners. Under Emphasis in the text's panel.
+- **Review and award templates.** A five-star review over your screen, and a laurel with stars above your headline, made from your screenshot and colours.
+- **Export one screen's video.** Export › Video in a set exports all its screens, the one you're on, or the ones you pick, joined into one video or one video each.
+- **It all animates.** Images move, scale, turn, fade and blur in videos; marks draw themselves in; a rating's stars fill up; a clay device can change colour part way.
+
+### Devices
+- **Screen only** (the card frame) has the device's own screen corners whenever the screenshot's device is known, in the render and on the canvas.
+
+### Agents
+- \`clay\` on a device; \`images\` on a scene; shapes of type \`laurel\` and \`rating\` (\`text\`, \`caption\`, \`value\`); text \`accentMark\`, \`decoration\`, \`stroke\`, \`lineHeight\`, \`padding\` and \`radius\`; animation values \`mark\` and \`value\`, and \`color\` for a clay device. \`list_mockup_options\` lists the clay tones; the design guide says when to use each (and to claim only real awards and ratings).
+- \`apply_recipe\` has \`review\` and \`award\`. Sequences take a \`name\` for their file.
+
 ## 0.6.0 · 1 October 2026
 
 ### Highlights
