@@ -1,5 +1,10 @@
 # What's new
 
+## Unreleased
+
+### Highlights
+- **Carry into the previous screen.** A device's Size & tilt has **‹ Previous screen** and **Next screen ›**: one click puts it across that edge, half on each screen, so the set reads as one picture. Dragging it past either edge does the same, and the switch now says so: **Carry on into the screens beside it**.
+
 ## 0.11.4 · 2 October 2026
 
 ### Fixes

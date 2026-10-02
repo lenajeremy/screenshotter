@@ -189,6 +189,16 @@ function DeviceInspector({ id }) {
       Object.assign(dev, patch);
       if (patch.height !== undefined) delete dev.width;
     }, key);
+  /** Put it across a side edge, half on this screen and half on the one beside it, where it carries on. */
+  const across = (side) =>
+    upd((dev) => {
+      dev.y ??= r4(e?.y ?? 0.5);
+      dev.height ??= r4(e?.height ?? 0.7);
+      dev.anchor = "center";
+      dev.x = side < 0 ? 0 : 1;
+      delete dev.span;
+      delete dev.width;
+    });
   const custom = d.x !== undefined || d.y !== undefined || d.height !== undefined || d.rotate;
   // The frame chooser and its extras. Everyday for a browser, window or card; an extra for a device.
   const frameSection = html`<${Section} title="Frame style">
@@ -258,7 +268,7 @@ function DeviceInspector({ id }) {
           dev.rotateY = ry || undefined;
         }, "3d")} />
         ${s.shots &&
-        html`<${Switch} checked=${d.span !== false && d.x !== undefined} label="Carry on into the next screens" onChange=${(v) => upd((dev) => {
+        html`<${Switch} checked=${d.span !== false && d.x !== undefined} label="Carry on into the screens beside it" onChange=${(v) => upd((dev) => {
           // It needs a place of its own: where the layout put it, from now on.
           dev.x ??= r4(e?.x ?? 0.5);
           dev.y ??= r4(e?.y ?? 0.5);
@@ -266,7 +276,11 @@ function DeviceInspector({ id }) {
           dev.anchor = "center";
           dev.span = v ? undefined : false;
         })} />
-          <div class="note">${d.span === false ? "It stops at this screen's edges." : "Drag it past an edge: the part beyond shows on the screen beside it, so the set reads as one picture."}</div>`}
+          <div class="carry-btns">
+            <button class="btn sm" disabled=${s.shot === 0} title=${s.shot === 0 ? "This is the first screen: there's none before it" : `Put it across the left edge, half on screen ${s.shot} and half on this one`} onClick=${() => across(-1)}><${Icon} n="left" s=${13} /><span>Previous screen</span></button>
+            <button class="btn sm" disabled=${s.shot >= s.shots.length - 1} title=${s.shot >= s.shots.length - 1 ? "This is the last screen: add one after it first" : `Put it across the right edge, half on this screen and half on screen ${s.shot + 2}`} onClick=${() => across(1)}><span>Next screen</span><${Icon} n="right" s=${13} /></button>
+          </div>
+          <div class="note">${d.span === false ? "It stops at this screen's edges." : "Drag it past either edge, or use the buttons: the part beyond shows on the screen beside it, so the set reads as one picture."}</div>`}
       <//>
 
       <${More} id="device">

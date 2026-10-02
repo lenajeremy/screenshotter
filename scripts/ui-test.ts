@@ -1,7 +1,8 @@
 /**
  * The Studio as people use it, in Chromium and in WebKit (the engine of the Mac app's web view):
  * adding and dragging pictures, colour, accent marks, the store page icon, deleting pictures,
- * designs without a screenshot, exports, templates and moving through a set. Each check watches
+ * designs without a screenshot, exports, templates, devices carrying on across screens and moving
+ * through a set. Each check watches
  * for page errors and failed requests too. It starts its own Studio on a free port with a
  * throwaway library, so it never touches yours.
  *
@@ -285,6 +286,37 @@ const CHECKS: Record<string, Check> = {
     }
     if (process.env.UI_TEST_TIMES) console.log(`    (previews: ${Math.round((Date.now() - t0) / 1000)} s)`);
     return /iPad spread/.test(first) && loaded >= 2 ? "ok" : `first "${first}", ${loaded} previews loaded in ${Math.round((Date.now() - t0) / 1000)} s`;
+  },
+  async "a device carries on into the previous screen and the next, by drag or by its buttons"(page) {
+    const scenes = [0, 1, 2].map((i) => ({ devices: i === 1 ? [{ screenshot: shot, x: 0.5, y: 0.55, height: 0.7, anchor: "center" }] : [], background: "cream-grain", canvas: "iphone-6.9", layout: "custom", headline: `Screen ${i + 1}` }));
+    await setDesign(page, { shots: scenes.map((scene) => ({ scene })), shot: 1, groups: null, scene: scenes[1], leftOpen: false, rightOpen: true, selected: "device-1" });
+    await page.waitForTimeout(2000);
+    const spills = () => S(page, async () => ((await import("/ui/store.js" as string)).allShots() as Array<{ scene: { spill?: Array<{ x: number }> } }>).map((x) => (x.scene.spill ?? []).map((d) => d.x)));
+    const ghostDevices = (i: number) => S(page, (i: number) => document.querySelector(`.ghost-wrap.set[data-shot="${i}"]`)?.querySelectorAll("img").length ?? 0, i);
+    // Dragged past the left edge: the screen before picks up the part beyond.
+    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+    const board = (await page.locator(".stage .artboard").first().boundingBox())!;
+    await page.mouse.move(dev.x + dev.width / 2, dev.y + dev.height / 2);
+    await page.mouse.down();
+    for (let k = 1; k <= 12; k++) await page.mouse.move(dev.x + dev.width / 2 - board.width * 0.45 * (k / 12), dev.y + dev.height / 2);
+    await page.mouse.up();
+    await page.waitForTimeout(2000);
+    const dragged = await spills();
+    const draggedShown = await ghostDevices(0);
+    // The buttons put it across either edge.
+    await page.locator(".carry-btns button", { hasText: "Next screen" }).click();
+    await page.waitForTimeout(1800);
+    const next = await spills();
+    const nextShown = await ghostDevices(2);
+    await page.locator(".carry-btns button", { hasText: "Previous screen" }).click();
+    await page.waitForTimeout(1800);
+    const prev = await spills();
+    const near = (list: number[], v: number) => list.some((x) => Math.abs(x - v) < 0.2);
+    const ok = near(dragged[0], 1) && draggedShown > 0 && near(next[2], 0) && nextShown > 0 && near(prev[0], 1);
+    // On the first screen there's no screen before it.
+    await S(page, async () => (await import("/ui/actions.js" as string)).goToShot(0));
+    await page.waitForTimeout(800);
+    return ok ? "ok" : `dragged left → screen 1 ${dragged[0]} (drawn ${draggedShown}); next button → screen 3 ${next[2]} (drawn ${nextShown}); previous button → screen 1 ${prev[0]}`;
   },
   async "moving between the screens of a set, every screen keeps its device"(page) {
     const sc = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `S${i}` });

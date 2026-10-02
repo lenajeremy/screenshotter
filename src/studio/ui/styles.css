@@ -1544,3 +1544,8 @@ li.done .work-shot .scan { display: none; }
 .art-grid button.mono img { filter: invert(1) opacity(0.85); }
 
 .set-template .made-for { font-style: normal; font-weight: 600; font-size: 10px; letter-spacing: .02em; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 6px; border-radius: 999px; margin-left: 4px; vertical-align: 1px; }
+
+/* A device's quick ways across a set's screens: half on this one, half on the one before or after. */
+.carry-btns { display: flex; gap: 6px; margin-top: 8px; }
+.carry-btns .btn { flex: 1 1 0; min-width: 0; justify-content: center; gap: 3px; padding: 0 6px; }
+.carry-btns .btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
