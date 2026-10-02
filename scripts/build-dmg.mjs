@@ -19,7 +19,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { notaryProfile, signingIdentity } from "./signing.mjs";
+import { notaryAuth, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = (cmd, args) => {
@@ -48,10 +48,10 @@ let state = "ad-hoc signed";
 if (identity) {
   run("codesign", ["--force", "--timestamp", "--sign", identity, dmg]);
   state = "signed";
-  const profile = notaryProfile();
-  if (profile) {
+  const auth = notaryAuth();
+  if (auth) {
     console.log("\n▸ Notarizing with Apple (a few minutes)");
-    run("xcrun", ["notarytool", "submit", dmg, "--keychain-profile", profile, "--wait"]);
+    run("xcrun", ["notarytool", "submit", dmg, ...auth, "--wait"]);
     run("xcrun", ["stapler", "staple", dmg]);
     state = "signed and notarized";
   }
@@ -63,7 +63,8 @@ copyFileSync(dmg, path.join(site, "Screenshotter.dmg"));
 const mb = (statSync(dmg).size / 1024 / 1024).toFixed(1);
 console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB, ${state}), copied to site/downloads/Screenshotter.dmg`);
 if (identity && state === "signed") {
-  console.log("  Not notarized: macOS will still warn people who download it. To notarize, save credentials once:");
-  console.log("    xcrun notarytool store-credentials screenshotter --apple-id <your Apple ID> --team-id " + (/\(([A-Z0-9]{10})\)$/.exec(identity)?.[1] ?? "<TEAMID>"));
-  console.log("  then run npm run app:dmg again.");
+  console.log("  Not notarized: macOS will still warn people who download it. To notarize, either:");
+  console.log("    name a notarytool profile you've already saved: SCREENSHOTTER_NOTARY_PROFILE=<name> npm run app:dmg");
+  console.log("    use an App Store Connect API key: SCREENSHOTTER_NOTARY_KEY=<AuthKey_….p8> SCREENSHOTTER_NOTARY_KEY_ID=<id> SCREENSHOTTER_NOTARY_ISSUER=<issuer> npm run app:dmg");
+  console.log("    or save a profile: xcrun notarytool store-credentials screenshotter --apple-id <your Apple ID> --team-id " + (/\(([A-Z0-9]{10})\)$/.exec(identity)?.[1] ?? "<TEAMID>"));
 }

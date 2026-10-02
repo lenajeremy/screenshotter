@@ -7,6 +7,9 @@
 //
 //   SCREENSHOTTER_SIGN_IDENTITY   part of an identity's name to use instead, or "-" for ad hoc
 //   SCREENSHOTTER_NOTARY_PROFILE  notarytool keychain profile (default "screenshotter")
+//   SCREENSHOTTER_NOTARY_KEY      or an App Store Connect API key instead: the AuthKey_….p8 file,
+//   SCREENSHOTTER_NOTARY_KEY_ID   its key ID,
+//   SCREENSHOTTER_NOTARY_ISSUER   and its issuer ID (team keys only)
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,9 +43,10 @@ export function entitlements() {
   return { app, node };
 }
 
-/** True when notarytool has credentials saved under this profile. */
-export function notaryProfile() {
-  const profile = process.env.SCREENSHOTTER_NOTARY_PROFILE || "screenshotter";
-  const r = spawnSync("xcrun", ["notarytool", "history", "--keychain-profile", profile], { encoding: "utf8" });
-  return r.status === 0 ? profile : null;
+/** notarytool's credentials (an App Store Connect API key, or a saved keychain profile that works), or null. */
+export function notaryAuth() {
+  const { SCREENSHOTTER_NOTARY_KEY: key, SCREENSHOTTER_NOTARY_KEY_ID: keyId, SCREENSHOTTER_NOTARY_ISSUER: issuer } = process.env;
+  const args = key && keyId ? ["--key", key, "--key-id", keyId, ...(issuer ? ["--issuer", issuer] : [])] : ["--keychain-profile", process.env.SCREENSHOTTER_NOTARY_PROFILE || "screenshotter"];
+  const r = spawnSync("xcrun", ["notarytool", "history", ...args], { encoding: "utf8" });
+  return r.status === 0 ? args : null;
 }
