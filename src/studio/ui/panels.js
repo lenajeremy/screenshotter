@@ -643,13 +643,37 @@ function ShapePreview({ kind, tint }) {
  * it's dropped on the design. A press without a drag adds it in the middle.
  */
 function dragShape(ev, kind, tint) {
+  const made = kind.make(tint);
+  dragOnto(ev, shapeGhost(made), (at) => addShape(kind.id, { tint, at }));
+}
+
+/** A shape's ghost, drawn for the design's size on screen, so what you drag is what you get. */
+const shapeGhost = (made) => (W, H) => {
+  const line = made.type === "arrow" || made.type === "line";
+  const r = renderShape(shapeSpec({ ...made, x: 0.5, y: 0.5, from: line ? { x: 0.38, y: 0.56 } : undefined, to: line ? { x: 0.62, y: 0.44 } : undefined }), W, H);
+  return { html: r.svg, width: r.width, height: r.height, rotate: r.rotate };
+};
+
+/**
+ * A picture's ghost at the height it goes on (a share of the design's), as wide as its own shape;
+ * a sticker with its white edge.
+ */
+const pictureGhost = (src, height, sticker = false) => (W, H) => {
+  const h = height * H;
+  const edge = sticker ? `filter:drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff) drop-shadow(0 2px 0 #fff) drop-shadow(0 -2px 0 #fff)` : "";
+  return { html: `<img src="${pictureUrl(src)}" style="display:block;height:${h}px;width:auto;max-width:${W}px;${edge}">`, width: undefined, height: h };
+};
+
+/**
+ * Drag something from a panel onto the design: a ghost follows the pointer at the size it will be,
+ * and letting go over the design puts it there (`place(at)`, canvas fractions). A click without a
+ * drag puts it in its usual place (`place()`); Esc lets go without adding anything.
+ */
+function dragOnto(ev, makeGhost, place) {
   if (ev.button !== 0) return;
   ev.preventDefault();
   const start = { x: ev.clientX, y: ev.clientY };
-  const made = kind.make(tint);
-  const line = made.type === "arrow" || made.type === "line";
   let ghost = null;
-  let off = { x: 0, y: 0 };
   const board = () => document.querySelector(".stage .artboard")?.getBoundingClientRect();
   const over = (e) => {
     const v = document.querySelector(".stage .viewport")?.getBoundingClientRect();
@@ -658,21 +682,19 @@ function dragShape(ev, kind, tint) {
   const move = (e) => {
     if (!ghost) {
       if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
-      // Drawn for the design's size on screen, so what you drag is what you get.
       const a = board();
-      const W = a?.width ?? 640;
-      const H = a?.height ?? 480;
-      const r = renderShape(shapeSpec({ ...made, x: 0.5, y: 0.5, from: line ? { x: 0.38, y: 0.56 } : undefined, to: line ? { x: 0.62, y: 0.44 } : undefined }), W, H);
-      off = { x: r.left - W / 2, y: r.top - H / 2 };
+      const g = makeGhost(a?.width ?? 640, a?.height ?? 480);
       ghost = document.createElement("div");
       ghost.className = "shape-ghost";
-      ghost.style.width = r.width + "px";
-      ghost.style.height = r.height + "px";
-      ghost.innerHTML = r.svg;
+      if (g.width) ghost.style.width = g.width + "px";
+      ghost.style.height = g.height + "px";
+      if (g.rotate) ghost.style.rotate = `${g.rotate}deg`;
+      ghost.innerHTML = g.html;
       document.body.append(ghost);
       document.body.classList.add("dragging-shape");
     }
-    ghost.style.transform = `translate(${e.clientX + off.x}px, ${e.clientY + off.y}px)`;
+    // Centred on the pointer, as it lands.
+    ghost.style.transform = `translate(${e.clientX - ghost.offsetWidth / 2}px, ${e.clientY - ghost.offsetHeight / 2}px)`;
     ghost.classList.toggle("over", over(e));
   };
   const up = (e) => {
@@ -680,10 +702,10 @@ function dragShape(ev, kind, tint) {
     removeEventListener("pointerup", up);
     removeEventListener("keydown", key, true);
     document.body.classList.remove("dragging-shape");
-    if (!ghost) return e && addShape(kind.id, { tint });
+    if (!ghost) return e && place();
     ghost.remove();
     const a = board();
-    if (e && a && over(e)) addShape(kind.id, { tint, at: { x: (e.clientX - a.left) / a.width, y: (e.clientY - a.top) / a.height } });
+    if (e && a && over(e)) place({ x: (e.clientX - a.left) / a.width, y: (e.clientY - a.top) / a.height });
   };
   // Esc lets go without adding anything.
   const key = (e) => {
@@ -801,8 +823,8 @@ export function ImagesPanel() {
       set({ replacingImage: null, selected: replacing });
     } else addPicture(p);
   };
-  const preset = (p) => html`<div class="shape-tile" role="button" tabindex="0" title=${`Add ${p.label.toLowerCase()}, then change its words`}
-      onClick=${() => addPresetShape(p.shape)} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addPresetShape(p.shape))}>
+  const preset = (p) => html`<div class="shape-tile" role="button" tabindex="0" title=${`Drag ${p.label.toLowerCase()} onto the design (or click to add it), then change its words`}
+      onPointerDown=${(e) => dragOnto(e, shapeGhost(p.shape), (at) => addPresetShape(p.shape, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addPresetShape(p.shape))}>
     <${ShapePreview} kind=${{ make: () => p.shape }} tint=${p.shape.fill} /><span class="nm">${p.label}</span>
   </div>`;
   const add = async (files) => {
@@ -840,7 +862,7 @@ export function ImagesPanel() {
       }} />
       ${!replacing &&
       html`<${Section} title="Stickers" count=${s.opts?.stickers?.length}>
-        <div class="sticker-grid">${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: click to add it`} onClick=${() => addSticker(n)}><img loading="lazy" src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
+        <div class="sticker-grid">${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: drag it onto the design, or click to add it`} onPointerDown=${(e) => dragOnto(e, pictureGhost(`sticker:${n}`, 0.11, true), (at) => addSticker(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addSticker(n))}><img loading="lazy" src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
       <//>
       <${Section} title="Badges">
         <div class="shape-tiles">${BADGE_PRESETS.map(preset)}</div>
@@ -852,7 +874,9 @@ export function ImagesPanel() {
       <//>`}
       ${lib?.length > 0 &&
       html`<${Section} title="Your pictures" count=${lib.length}>
-        <div class="image-grid">${lib.map((f) => html`<button key=${f.path} title=${`${pictureName(f.path)}: click to ${replacing ? "use it" : "add it"}`} onClick=${() => use(f.path)}><img loading="lazy" src=${fileUrl(f.path)} /></button>`)}</div>
+        <div class="image-grid">${lib.map((f) => html`<button key=${f.path} title=${`${pictureName(f.path)}: ${replacing ? "click to use it" : "drag it onto the design, or click to add it"}`}
+          onPointerDown=${(e) => (replacing ? undefined : dragOnto(e, pictureGhost(f.path, 0.12), (at) => addPicture(f.path, { at })))} onClick=${() => replacing && use(f.path)}
+          onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), use(f.path))}><img loading="lazy" src=${fileUrl(f.path)} /></button>`)}</div>
       <//>`}
       ${images.length > 0 &&
       html`<${Section} title="In this design" count=${images.length}>

@@ -491,9 +491,9 @@ export async function addPicture(src, { at } = {}) {
 }
 
 /** A built-in sticker, its die-cut edge on, tilted a little one way or the other. */
-export function addSticker(name) {
+export function addSticker(name, { at } = {}) {
   const n = (S.scene.images ?? []).length;
-  addImage(`sticker:${name}`, { look: { sticker: true, height: 0.11, rotate: n % 2 ? -8 : 8 } });
+  addImage(`sticker:${name}`, { at, look: { sticker: true, height: 0.11, rotate: n % 2 ? -8 : 8 } });
 }
 
 /**
@@ -504,8 +504,9 @@ export function addImage(src, { at, look = {} } = {}) {
   const images = S.scene.images ?? [];
   if (images.length >= 24) return toast({ kind: "warn", title: "Twenty-four images is the limit" });
   const off = (images.length % 5) * 0.035;
-  const c = at ?? { x: 0.5 + off, y: 0.2 + off };
-  edit((d) => (d.images = [...(d.images ?? []), { src, x: r4(c.x), y: r4(c.y), height: 0.1, ...look }]));
+  // Dropped somewhere, it goes there; otherwise where its look puts it (a logo at the top), else near the middle.
+  const c = at ?? { x: look.x ?? 0.5 + off, y: look.y ?? 0.2 + off };
+  edit((d) => (d.images = [...(d.images ?? []), { src, height: 0.1, ...look, x: r4(c.x), y: r4(c.y) }]));
   touch("image");
   set({ selected: `image-${images.length + 1}`, view: "canvas" });
 }
