@@ -11,7 +11,7 @@ import { captureWeb, WEB_VIEWPORTS } from "../capture/web.js";
 import { DEVICE_MODELS, GENERIC_COLORS, findModel } from "../devices/catalog.js";
 import { recognizeText, warmUpOcr } from "../native/ocr.js";
 import { getBrowser } from "../render/browser.js";
-import { stickerNames, svgSize } from "../render/images.js";
+import { COLOURED_ART, artNames, stickerNames, svgSize } from "../render/images.js";
 import { CLAY_TONES } from "../render/frame.js";
 import { CANVAS_PRESETS } from "../render/layouts.js";
 import { LOOKS } from "../render/looks.js";
@@ -33,7 +33,7 @@ import { noteStudioFolder } from "../util/studio.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
-import { SET_TEMPLATES, buildSetTemplate, withSpill } from "../design/sets.js";
+import { SET_TEMPLATES, buildSetTemplate, formOfShots, withSpill } from "../design/sets.js";
 import { deleteTemplate, exportTemplate, fillTemplate, importTemplate, listTemplates, loadTemplate, renameTemplate, saveTemplate } from "./templates.js";
 import { backgroundPreview, loadState, lookThumbnail, saveState, searchUnsplash, thumbnail } from "./assets.js";
 import { houseStyle, updateHouseStyle } from "../util/style.js";
@@ -194,15 +194,19 @@ async function setTemplateStrip(id: string, body: { devices: Array<{ screenshot:
 async function screensStrip(screens: Array<{ scene: MockupInput }>, w: number, file: string) {
   const each = Math.round((w - 4 * 6) / screens.length);
   const tiles: string[] = [];
+  let ratio = 0;
   for (const [i, x] of screens.entries()) {
     // Strips render side by side: each one's screens get names of their own.
     const out = path.join(cacheDir("set-template-previews"), `tile-${path.basename(file, ".jpg")}-${i}.jpg`);
     await createMockup({ ...x.scene, quality: "preview", format: "jpeg", jpegQuality: 80, deliveryWidth: each * 2, preview: false, output: out });
+    // As tall as the tallest screen (iPhone, iPad, iPhone Duo held open, Mac).
+    const size = await imageSize(out).catch(() => undefined);
+    if (size) ratio = Math.max(ratio, size.height / size.width);
     tiles.push(`<img src="data:image/jpeg;base64,${readFileSync(out).toString("base64")}" style="width:${each}px;display:block;border-radius:${Math.round(each * 0.05)}px">`);
     rmSync(out, { force: true });
     rmSync(`${out}.mockup.json`, { force: true });
   }
-  const h = Math.round(each * 2.17);
+  const h = Math.round(each * (ratio || 2.17));
   await renderHtml(`<!doctype html><body style="margin:0;background:#16161a;display:flex;gap:6px;align-items:flex-start">${tiles.join("")}</body>`, file, w, h, { scale: 1, format: "jpeg", quality: 82, transparent: false });
 }
 
@@ -295,6 +299,8 @@ async function options() {
     bezels: bezelSummary(),
     clayTones: CLAY_TONES,
     stickers: stickerNames(),
+    art: artNames(),
+    colouredArt: COLOURED_ART,
     aiProviders: [
       process.env.OPENAI_API_KEY && "openai",
       (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) && "gemini",
@@ -478,7 +484,13 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     createReadStream(file).pipe(res);
     return;
   }
-  if (req.method === "GET" && url.pathname === "/api/set-templates") return send(200, SET_TEMPLATES.map(({ id, name, description }) => ({ id, name, description })));
+  if (req.method === "GET" && url.pathname === "/api/set-templates") return send(200, SET_TEMPLATES.map(({ id, name, description, forms }) => ({ id, name, description, ...(forms ? { forms } : {}) })));
+  if (req.method === "GET" && url.pathname === "/api/set-form") {
+    // What the first screenshot is (iPhone, iPad, iPhone Duo open either way, Mac), so the sets made for it come first.
+    const shot = url.searchParams.get("shot") ?? "";
+    if (!allowedFile(shot)) throw new HttpError(403, "Screenshots must be in the output folder");
+    return send(200, { form: await formOfShots([{ screenshot: shot }]) });
+  }
   if (req.method === "GET" && url.pathname === "/api/my-templates") return send(200, { templates: listTemplates() });
   if (req.method === "GET" && url.pathname === "/api/my-template-preview") {
     // One of your templates as a strip, filled with the open design's screenshots (or the sample's).

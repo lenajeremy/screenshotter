@@ -75,7 +75,7 @@ Then decide, in this order: **the one idea → the hero → the words → the co
   - Colour: \`textStyle.accentColor\` (the app's accent, adjusted for contrast), or a CSS gradient.
   - Weight contrast: \`headlineWeight\` 400 with \`accentWeight\` 800 (and no accent colour).
   - Serif italic in a sans headline: \`accentFont\` "Instrument Serif", \`accentItalic\` true, \`accentWeight\` 400: elegant and very current.
-  - A mark: \`accentMark\` "highlight" (a marker band behind the words, friendly and confident), "underline" (quiet), or "pill" (the words on a chip of colour, punchy). It takes the accent colour, its words then the text's own; \`accentMarkColor\` picks another. One mark per image.
+  - A mark: \`accentMark\` "highlight" (a marker band behind the words, friendly and confident), "underline" (quiet), "squiggle" (a wavy, hand-drawn underline: playful, great with handwriting or rounded type), or "pill" (the words on a chip of colour, punchy). It takes the accent colour, its words then the text's own; \`accentMarkColor\` picks another. One mark per image.
 - **Outline** (\`stroke\`, \`strokeWidth\` 0.06–0.12) holds a headline over a busy photo, or gives a loud, sticker-like look; with \`color\` "transparent" the letters are outlines alone (bold display faces only). \`decoration\` underlines, strikes ("no more takeaway") or highlights a whole line.
 - **At most two families** (plus a mono for tiny labels). \`subheadlineFont\` pairs a different face under the headline.
 
@@ -154,6 +154,7 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 - **Logo**: an image block (\`images\`, \`height\` 0.03–0.05) at the top of the first screenshot, or none: the store shows the app's name already.
 - **App icon**: \`mask: "icon"\` (Apple's icon outline) with \`shadow\`, 0.08–0.12 high, beside or above the headline on the first or last screen.
 - **Sticker**: \`sticker: true\` gives a die-cut white edge and a shadow; tilt it 6–15°. One per image at most, for a playful set. Built-in ones: \`src: "sticker:<name>"\` (heart, star, sparkles, bolt, flame, crown, trophy, rocket, check and more: list_mockup_options lists them), placed near the headline or a corner of the device, never over the UI.
+- **Illustrations**: \`src: "art:<name>"\` (blobs, squiggles, arrows, scribbles, washi tape, leaves, stars, a moon, a planet, confetti: list_mockup_options lists them) with \`z: 5\` to sit behind the devices and words. Most are line drawings in ink: \`tint\` them from the palette. A soft blob behind the device, a doodled arrow pointing at it, tape on its corners, leaves peeking from behind. Two or three per image, around the device, never over the UI or the words.
 - **Badges** (shapes with your words): \`burst\` ("NEW", "50% off") at a jaunty angle by the device's corner; \`tag\` ("FREE", "No ads") or \`ribbon\` ("Try it free") under the headline; \`bubble\` for a short quote or reaction ("So easy!"). One per image, two or three words, colours from the palette with strong contrast.
 - **Laurel** (a shape: \`type: "laurel"\`, \`text\`, \`caption\`) and **rating** (\`type: "rating"\`, \`value\`, \`text\`): social proof, best on the first screen or a review screen, in gold, white or the accent. **Only what's true**: a real award, a real rating and count, a real review. If the person hasn't given you one, ask, or leave it out.
 
@@ -193,7 +194,7 @@ Marketing images: one or two callouts. How-to images: up to three steps and an a
 
 - **Arc**: 1 hero (the main outcome, plus any real proof) → 2 what makes it different → 3–N one feature each, most important first → last: everything else (a mosaic with layout "grid", or a short feature list).
 - **Consistent**: the same fonts, palette, backdrop family and device finish across the set; vary layout and composition.
-- **A fast start**: apply_set_template builds a whole set in one look (clean, bold, dark, playful, clay, gallery, or one the person saved: list_templates) from the screenshots and words; then refine each screen.
+- **A fast start**: apply_set_template builds a whole set in one look (clean, bold, dark, playful, clay, gallery, scrapbook, memphis, notebook, garden, party, comic, night; desktop for Mac apps, tablet for iPad, duo for iPhone Duo; or one the person saved: list_templates) from the screenshots and words, on the App Store canvas for the first screenshot's kind; then refine each screen.
 - A backdrop or a device can cross from one image into the next for a panorama, but every image must still work alone.
 
 ## 14. Check your work

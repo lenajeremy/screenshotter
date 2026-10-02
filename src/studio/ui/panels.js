@@ -12,6 +12,7 @@ import {
   addPicture,
   addPresetShape,
   addSticker,
+  addArt,
   replaceImage,
   uploadImages,
   addShape,
@@ -872,6 +873,10 @@ export function ImagesPanel() {
       html`<${Section} title="Stickers" count=${s.opts?.stickers?.length}>
         <div class="sticker-grid">${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: drag it onto the design, or click to add it`} onPointerDown=${(e) => dragOnto(e, pictureGhost(`sticker:${n}`, 0.11, true), (at) => addSticker(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addSticker(n))}><img loading="lazy" src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
       <//>
+      <${Section} title="Illustrations" count=${s.opts?.art?.length}>
+        <div class="sticker-grid art-grid">${(s.opts?.art ?? []).map((n) => html`<button key=${n} class=${(s.opts?.colouredArt ?? []).includes(n) ? "" : "mono"} title=${`${n.replace(/-/g, " ")}: drag it onto the design, or click to add it (it goes behind the devices)`}
+          onPointerDown=${(e) => dragOnto(e, pictureGhost(`art:${n}`, 0.14), (at) => addArt(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addArt(n))}><img loading="lazy" src=${`/ui/art/${n}.svg`} /></button>`)}</div>
+      <//>
       <${Section} title="Badges">
         <div class="shape-tiles">${BADGE_PRESETS.map(preset)}</div>
         <div class="note">Select one to change its words in the panel on the right.</div>
@@ -1085,10 +1090,35 @@ function MyTemplates({ has, sq }) {
   <//>`;
 }
 
+const FORM_NAME = { phone: "iPhone", tablet: "iPad", duoTall: "iPhone Duo", duoWide: "iPhone Duo", mac: "Mac" };
+// A preview strip's shape: five screens side by side at the canvas each kind of screenshot gets.
+const STRIP_SHAPE = { phone: "640 / 268", tablet: "640 / 165", duoTall: "640 / 165", duoWide: "640 / 93", mac: "640 / 78" };
+
+/** The sets made for this kind of screenshot first, then the ones for every kind, then those made for another. */
+function setsFor(list, form) {
+  const rank = (t) => (!t.forms ? 1 : t.forms.includes(form) ? 0 : 2);
+  return [...list].sort((a, b) => rank(a) - rank(b));
+}
+
+/** What the first screenshot is: iPhone, iPad, iPhone Duo (upright or held open), or Mac. */
+function useShotForm(shot) {
+  const [form, setForm] = useState(null);
+  useEffect(() => {
+    if (!shot) return setForm(null);
+    let live = true;
+    api(`/api/set-form?shot=${encodeURIComponent(shot)}`).then((r) => live && setForm(r.form ?? null)).catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [shot]);
+  return form;
+}
+
 export function DesignsPanel() {
   const s = useStore();
   const body = recipeInput(s.scene);
   const has = body.devices.length > 0;
+  const form = useShotForm(body.devices[0]?.screenshot);
   const q = encodeURIComponent(JSON.stringify(body));
   const setBody = setTemplateInput();
   const sq = encodeURIComponent(JSON.stringify(setBody));
@@ -1100,10 +1130,10 @@ export function DesignsPanel() {
       <${Section} title="Whole sets" count=${s.setTemplates?.length}>
         <div class="note">Five screens in one look, made from your screenshots in order and your words: a hero, three features and a close.</div>
         ${!has && html`<div class="empty-note">Add a screenshot and each set shows a preview made from it.</div>`}
-        <div class="set-templates">${(s.setTemplates ?? []).map(
+        <div class="set-templates">${setsFor(s.setTemplates ?? [], form).map(
           (t) => html`<button class="set-template" key=${t.id} disabled=${!has} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
-            <div class="strip">${has && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>
-            <b>${t.name}</b><span>${t.description}</span>
+            <div class="strip" style=${{ aspectRatio: STRIP_SHAPE[form] ?? STRIP_SHAPE.phone }}>${has && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>
+            <b>${t.name}${t.forms?.includes(form) ? html` <em class="made-for">For ${FORM_NAME[form]}</em>` : ""}</b><span>${t.description}</span>
           </button>`,
         )}</div>
       <//>

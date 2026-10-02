@@ -1,6 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout } from "./store.js";
+import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -75,9 +75,13 @@ async function applyTemplateFrom(url, id, name) {
   try {
     const { screens } = await api(url, { id, ...body });
     checkpoint();
-    // The set keeps its image size: every new screen takes it.
+    // The set keeps its image size (another iPhone size, say) when it's the template's shape; a
+    // template made for another shape (iPad, iPhone Duo held open, Mac) brings its own.
     const size = tidy({ canvas: S.scene.canvas, landscape: S.scene.landscape || undefined });
+    const want = canvasRatio(screens[0]?.scene);
+    const same = Math.abs(canvasRatio(S.scene) - want) < want * 0.12;
     const fit = (scene) => {
+      if (!same) return scene;
       const sc = { ...scene };
       if (size.canvas !== undefined) sc.canvas = size.canvas;
       if (size.landscape) sc.landscape = true;
@@ -590,6 +594,17 @@ export async function addPicture(src, { at } = {}) {
   const as = S.imageAs ?? "auto";
   const look = as === "auto" ? await guessLook(src) : (IMAGE_LOOKS[as] ?? {});
   addImage(src, { at, look });
+}
+
+/**
+ * A built-in illustration, behind the devices and text (decoration): a one-ink one in the headline's
+ * accent colour when there is one.
+ */
+export function addArt(name, { at } = {}) {
+  const coloured = (S.opts?.colouredArt ?? []).includes(name);
+  const accent = S.scene.textStyle?.accentColor;
+  const tint = !coloured && accent && !/gradient\(/.test(accent) ? accent : undefined;
+  addImage(`art:${name}`, { at, look: { height: 0.14, z: 5, ...(tint ? { tint } : {}) } });
 }
 
 /** A built-in sticker, its die-cut edge on, tilted a little one way or the other. */

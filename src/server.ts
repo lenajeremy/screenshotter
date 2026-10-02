@@ -6,7 +6,7 @@ import * as sim from "./simulator/simctl.js";
 import { CANVAS_PRESETS } from "./render/layouts.js";
 import { bezelSummary } from "./render/bezels.js";
 import { createMockup, layoutScene } from "./render/mockup.js";
-import { stickerNames } from "./render/images.js";
+import { COLOURED_ART, artNames, stickerNames } from "./render/images.js";
 import { CLAY_TONES } from "./render/frame.js";
 import { LAYOUTS, MockupInputShape, type MockupInput } from "./render/schema.js";
 import { createMockupSet, exportSet, MockupSetShape } from "./render/set.js";
@@ -33,7 +33,7 @@ import { createVideo, storyboard, VideoInputShape } from "./render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputShape, TRANSITIONS } from "./render/sequence.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
@@ -53,7 +53,7 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 - Shapes: arrows, lines, circles, boxes, triangles, stars and number badges drawn over the scene, each with a fill and a stroke, clean or hand-drawn (sketch). Aim one at text on a screen with \`around\` (an ellipse goes around it, a badge beside it, an arrow to its edge), or place it freely with x/y, or from/to.
 - Animation: a scene's \`animations\` time each item's entrance, changes and exit in a video (create_video): \`{ targets: "caption", at: 0.5, enter: "slide-up" }\`, \`{ targets: ["device-1", "device-2"], at: 2, enter: "zoom", ease: "back-out" }\` (a group, zooming from its shared centre), \`{ targets: "shape-1", at: 3.5, to: { fill: "#ff3b30", scale: 1.3 } }\`, \`{ targets: "shape-2", at: 4, to: { end: { x: 0.6, y: 0.4 }, bend: 0.4 } }\` (an arrow's end and curve), \`{ targets: "camera", at: 5, to: { zoom: 2.5, x: 0.8, y: 0.6 } }\` (the camera pushes in on a point; \`zoom: 1\` pulls back), \`{ targets: "caption", at: 0.3, enter: "blur", by: "word" }\` (text a word or letter at a time, here coming into focus), \`{ targets: "shape-1", at: 0, duration: 3, path: { shape: "circle", size: 0.03 }, repeat: true }\` (a loop round a circle for the whole video; \`path: { points: [...] }\` is a route of your own), \`{ targets: "device-1", at: 1, duration: 1.6, to: { dy: -0.015 }, repeat: true, yoyo: true }\` (a float), \`{ targets: "backdrop", at: 0, duration: 6, to: { zoom: 1.15, hue: 30 } }\` (only the backdrop pushes in and shifts colour). Anything can blur (\`blur\` on texts, shapes, devices, images, textStyle; animate \`to: { blur }\`). \`{ targets: "caption", at: 0.4, duration: 0.8, from: { mark: 0 } }\` draws a headline's highlighter in; \`{ targets: "shape-1", at: 1, enter: "fade", from: { value: 0 } }\` fills a rating's stars up. Item ids come from layout_mockup. The design guide has the pacing. preview_video shows the frames at the key moments in a second or so: check the timing there before create_video.
 - Studio scenes: list_scenes and get_scene open the designs the person saved in the Studio; save_scene puts a design into it (a new scene by default; replace an existing one only when asked). Every element stays editable there. A design can be a set: screens in store order (shots), each an App Store screenshot that also plays as a shot of its preview video, made at one or several sizes (sizes: iPhone, iPad, Apple Watch…). export_scene_set exports a saved set's every screen of every size, by size or ready for fastlane deliver.
-- Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic, and a mark: \`accentMark\` highlight, underline or pill), fonts from Google Fonts, top/bottom/left/right. Text (headline or extra) can have an outline (\`stroke\`), a \`decoration\` (underline, strike, highlight), a line height; a text's pill its padding and corner radius.
+- Caption: headline/subheadline with **accent** words (their own colour, font, weight or italic, and a mark: \`accentMark\` highlight, underline, squiggle or pill), fonts from Google Fonts, top/bottom/left/right. Text (headline or extra) can have an outline (\`stroke\`), a \`decoration\` (underline, strike, highlight), a line height; a text's pill its padding and corner radius.
 - Mac: MacBook screens draw the macOS menu bar with the app's name and menus; a scene \`menuBar\` draws one across the top of the canvas for menu bar app shots, with the app's menu hung under its status item.
 - Several shots in one video: create_sequence joins scenes (each with its own animations and length) with transitions (cut, crossfade, fade through black, push, wipe, iris, zoom, blur). preview_sequence shows its key moments first. For the App Store, \`size: "app-store-iphone"\` (or app-store-ipad, app-store-mac) follows Apple's app preview rules (15–30 s, 30 fps, H.264, a stereo track); \`versions\` on create_video or create_sequence also makes vertical, square, 4:5, widescreen or App Store copies, each design fitted (or laid out again) for that shape.
 - Layouts include grid (a mosaic of screens). \`camera\` zooms the scene in on a point for a crisp close-up.
@@ -515,7 +515,7 @@ export function createServer(): McpServer {
     "apply_set_template",
     {
       title: "Make a whole set from a template",
-      description: `Build a whole App Store set (several screens in one look) from your screenshots, in order (reused when there are fewer), each screen's words (placeholders where you give none) and the app's colours. Templates: ${SET_TEMPLATES.map((t) => `${t.id} (${t.description})`).join("; ")}; or one the person saved in the Studio (list_templates names them). Returns the screens, rendered side by side as a contact sheet unless render is false; save them as a Studio design with save_scene (as its shots), or render each with create_mockup.`,
+      description: `Build a whole App Store set (several screens in one look) from your screenshots, in order (reused when there are fewer), each screen's words (placeholders where you give none) and the app's colours. Every template fits iPhone, iPad, iPhone Duo (open, upright or held like a book) and Mac screenshots, taking the App Store canvas for the first screenshot's kind; some are made for one kind. Templates: ${SET_TEMPLATES.map((t) => `${t.id} (${t.description}${t.forms ? ` Made for: ${t.forms.join(", ")}.` : ""})`).join("; ")}; or one the person saved in the Studio (list_templates names them). Returns the screens, rendered side by side as a contact sheet unless render is false; save them as a Studio design with save_scene (as its shots), or render each with create_mockup.`,
       inputSchema: {
         template: z.string().describe("A set template's id (above), or the id or name of one saved in the Studio."),
         screenshots: z.array(z.string()).min(1).max(20).describe("Screenshot paths, in store order."),
@@ -554,7 +554,7 @@ export function createServer(): McpServer {
     () =>
       guard(async () => [
         text({
-          builtIn: SET_TEMPLATES.map(({ id, name, description }) => ({ id, name, description })),
+          builtIn: SET_TEMPLATES.map(({ id, name, description, forms }) => ({ id, name, description, ...(forms ? { madeFor: forms } : {}) })),
           saved: listTemplates().map(({ id, name, screens, slots, created }) => ({ id, name, screens, screenshots: slots, created })),
         }),
       ]),
@@ -1009,11 +1009,12 @@ export function createServer(): McpServer {
               "FRAMES: device, browser (url), window (title), card (the screen only, with the device's corners), none. chrome: light|dark.",
               "IMAGES (scene `images`): {src, x, y, height, rotate, radius, mask: icon|circle, shadow, sticker, opacity, blur, flip, z}. Ids image-1, image-2… for animations.",
               `STICKERS (src "sticker:<name>", with sticker: true): ${stickerNames().join(", ")}.`,
+              `ILLUSTRATIONS (src "art:<name>"; tint recolours the one-ink ones; z 5 puts one behind the devices): ${artNames().join(", ")}. In their own colours: ${COLOURED_ART.join(", ")}.`,
               "BADGES (shapes, your words in `text`, coloured by fill and labelColor): burst (a starburst, \"NEW\"), ribbon (\"Try it free\"), bubble (a speech bubble), tag (a price tag, \"FREE\").",
               "AWARDS AND RATINGS (shapes): {type:\"laurel\", text, caption, fill} and {type:\"rating\", value, text, fill}. Only claim what's true.",
               "\nFONTS: sf-pro (default), sf-rounded, new-york, sf-mono, any installed font, or any Google Fonts family (fetched automatically). Local files via `fonts`.",
               "\nTEXT MARKUP: **word** uses accentColor (a colour or a CSS gradient). \\n breaks lines.",
-              "TEXT EMPHASIS (textStyle and texts): accentMark (highlight, underline, pill) + accentMarkColor; decoration (underline, strike, highlight) + decorationColor; stroke + strokeWidth (outline); lineHeight; a text's pill: background, padding, radius.",
+              "TEXT EMPHASIS (textStyle and texts): accentMark (highlight, underline, squiggle, pill) + accentMarkColor; decoration (underline, strike, highlight) + decorationColor; stroke + strokeWidth (outline); lineHeight; a text's pill: background, padding, radius.",
               "ANIMATING THEM: images move, scale, turn, fade and blur like devices; to/from { mark } draws marks in (0–1); { value } fills a rating's stars; { color } changes a clay device's colour.",
               `\nOUTPUT FOLDER: ${outputRoot()}`,
             ].join("\n"),

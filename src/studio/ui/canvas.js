@@ -155,7 +155,12 @@ const markerBand = (c) => ({
   ...sweep,
 });
 
-/** Accent words with their mark (highlighter, underline or pill), as the render's markAccent draws them. */
+/** A squiggly underline: one long wave pinned left and cropped to the words, as the render's squiggleImage. */
+const WAVE = `M0 5Q4 0 8 5${Array.from({ length: 299 }, (_, k) => `T${(k + 2) * 8} 5`).join("")}`;
+const squiggleImage = (c) =>
+  `url("data:image/svg+xml,${`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2400 10' preserveAspectRatio='xMinYMid slice'><path d='${WAVE}' fill='none' stroke='${String(c).replace(/['"<>&]/g, "")}' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/></svg>`.replace(/%/g, "%25").replace(/#/g, "%23").replace(/</g, "%3C").replace(/>/g, "%3E")}")`;
+
+/** Accent words with their mark (highlighter, underline, squiggle or pill), as the render's markAccent draws them. */
 function marked(nodes, accent) {
   const solid = accent.color && !/gradient\(/.test(accent.color) ? accent.color : undefined;
   const c = accent.markColor ?? solid ?? "#ffd60a";
@@ -168,7 +173,9 @@ function marked(nodes, accent) {
       ? { ...markerBand(c), padding: "0 .08em", margin: "0 -.08em" }
       : accent.mark === "underline"
         ? { backgroundImage: `linear-gradient(${c}, ${c})`, backgroundPosition: "0 100%", backgroundSize: "calc(var(--amark, 1) * 100%) .09em", ...sweep, paddingBottom: ".02em" }
-        : { backgroundImage: `linear-gradient(${c}, ${c})`, backgroundSize: "calc(var(--amark, 1) * 100%) 100%", ...sweep, borderRadius: ".32em", padding: "0 .24em", margin: "0 .04em" };
+        : accent.mark === "squiggle"
+          ? { backgroundImage: squiggleImage(c), backgroundPosition: "0 100%", backgroundSize: "calc(var(--amark, 1) * 100%) .27em", ...sweep, paddingBottom: ".07em" }
+          : { backgroundImage: `linear-gradient(${c}, ${c})`, backgroundSize: "calc(var(--amark, 1) * 100%) 100%", ...sweep, borderRadius: ".32em", padding: "0 .24em", margin: "0 .04em" };
   return html`<span class="mark" style=${st}>${word}</span>`;
 }
 
@@ -317,8 +324,12 @@ function ImageEnt({ e, W, H }) {
   if (blurAnimated(e.id, scene)) filters.push(`blur(var(--ablur, ${soft}px))`);
   else if (soft > 0.05) filters.push(`blur(${soft}px)`);
   const corners = b.mask === "icon" ? { borderRadius: "22.4%", cornerShape: "superellipse(1.35)" } : b.mask === "circle" ? { borderRadius: "50%" } : b.radius ? { borderRadius: b.radius * short + "px" } : {};
+  const url = pictureUrl(b.src ?? e.src);
+  const mask = `url("${url}") 0 0 / 100% 100% no-repeat`;
   return html`<div class="image-body" style=${{ filter: filters.join(" ") || undefined, opacity: b.opacity ?? undefined }}>
-    <img draggable=${false} src=${pictureUrl(b.src ?? e.src)} style=${{ ...corners, transform: b.flip ? "scaleX(-1)" : undefined }} />
+    ${b.tint
+      ? html`<div class="tinted" style=${{ ...corners, background: b.tint, WebkitMask: mask, mask, transform: b.flip ? "scaleX(-1)" : undefined }}></div>`
+      : html`<img draggable=${false} src=${url} style=${{ ...corners, transform: b.flip ? "scaleX(-1)" : undefined }} />`}
   </div>`;
 }
 

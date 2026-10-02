@@ -433,6 +433,7 @@ const ACCENT_MARKS = [
   { value: "", label: "None" },
   { value: "highlight", label: "Marker" },
   { value: "underline", label: "Under" },
+  { value: "squiggle", label: "Wavy" },
   { value: "pill", label: "Pill" },
 ];
 const LINE_MARKS = [
@@ -767,6 +768,7 @@ function ImageInspector({ id }) {
       <${Section} title="Look">
         <${Switch} checked=${Boolean(b.sticker)} onChange=${(v) => upd((x) => (x.sticker = v || undefined))} label="Sticker: a white edge and a shadow" />
         ${!b.sticker && html`<${Switch} checked=${Boolean(b.shadow)} onChange=${(v) => upd((x) => (x.shadow = v || undefined))} label="Soft shadow" />`}
+        <div class="row"><label>Colour</label><${ColorButton} value=${b.tint} auto="Its own colours" onChange=${(v) => upd((x) => (x.tint = v), "tint")} /></div>
         <div class="row"><label>Opacity</label><${Slider} value=${b.opacity ?? 1} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
       <//>
       <${More} id="image">

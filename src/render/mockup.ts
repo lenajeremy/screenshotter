@@ -63,7 +63,7 @@ interface AccentStyle {
   weight?: number;
   italic?: boolean;
   /** A mark behind or under them: a highlighter, an underline or a pill. */
-  mark?: "highlight" | "underline" | "pill";
+  mark?: "highlight" | "underline" | "squiggle" | "pill";
   markColor?: string;
   /** The text's own colour: a pill made in the accent colour sets its words in this. */
   base?: string;
@@ -76,6 +76,15 @@ interface AccentStyle {
 const sweep = "background-repeat:no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;";
 const markerBand = (c: string) =>
   `background-image:linear-gradient(transparent 50%, color-mix(in oklab, ${c} 58%, transparent) 50%, color-mix(in oklab, ${c} 58%, transparent) 92%, transparent 92%);background-size:calc(var(--amark, 1) * 100%) 100%;${sweep}`;
+
+/**
+ * A squiggly underline: one long wave, pinned to the left and cropped to the words (the SVG
+ * slices to the mark's height), so its waves keep their size on any word and it draws in from
+ * the left like the rest. Its colour goes in the SVG; the CSS url() is in &quot; for an attribute.
+ */
+const WAVE = `M0 5Q4 0 8 5${Array.from({ length: 299 }, (_, k) => `T${(k + 2) * 8} 5`).join("")}`;
+export const squiggleImage = (c: string) =>
+  `url(&quot;data:image/svg+xml,${`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 2400 10' preserveAspectRatio='xMinYMid slice'><path d='${WAVE}' fill='none' stroke='${c.replace(/['"<>&]/g, "")}' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/></svg>`.replace(/%/g, "%25").replace(/#/g, "%23").replace(/</g, "%3C").replace(/>/g, "%3E")}&quot;)`;
 
 /**
  * Accent words with their mark: the mark on a span of its own round them (so a gradient accent
@@ -95,7 +104,9 @@ function markAccent(html: string, accent: AccentStyle, css: string | undefined):
       ? `${markerBand(esc(c))}padding:0 .08em;margin:0 -.08em;`
       : accent.mark === "underline"
         ? `background-image:linear-gradient(${esc(c)}, ${esc(c)});background-position:0 100%;background-size:calc(var(--amark, 1) * 100%) .09em;${sweep}padding-bottom:.02em;`
-        : `background-image:linear-gradient(${esc(c)}, ${esc(c)});background-size:calc(var(--amark, 1) * 100%) 100%;${sweep}border-radius:.32em;padding:0 .24em;margin:0 .04em;`;
+        : accent.mark === "squiggle"
+          ? `background-image:${squiggleImage(c)};background-position:0 100%;background-size:calc(var(--amark, 1) * 100%) .27em;${sweep}padding-bottom:.07em;`
+          : `background-image:linear-gradient(${esc(c)}, ${esc(c)});background-size:calc(var(--amark, 1) * 100%) 100%;${sweep}border-radius:.32em;padding:0 .24em;margin:0 .04em;`;
   return `<span class="mark" style="${mark}">${word}</span>`;
 }
 

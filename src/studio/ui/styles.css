@@ -360,7 +360,7 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .ent-device .body img.bezel-art { inset: 0; width: 100%; height: 100%; object-fit: fill; }
 /* Image blocks: the picture fills its box, as the render's does. */
 .ent-image .image-body { position: absolute; inset: 0; }
-.ent-image .image-body img { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; user-select: none; }
+.ent-image .image-body img, .ent-image .image-body .tinted { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; user-select: none; }
 /* Clay: the render's recipe (frame.ts clayArt), so the canvas matches the export. */
 .ent-device .body .bezel-art.clay { position: absolute; inset: 0; pointer-events: none; }
 .ent-device .body .bezel-art.clay img { inset: 0; width: 100%; height: 100%; object-fit: fill; filter: grayscale(1) contrast(0.68) brightness(1.1); mix-blend-mode: soft-light; }
@@ -1511,3 +1511,10 @@ li.done .work-shot .scan { display: none; }
 .tpl-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tpl-row .faint { font-size: 11px; color: var(--text-3); }
 .icon-btn.danger { color: var(--red, #ff453a); }
+
+/* Images › Illustrations: one-ink art shows light on the dark panel. */
+.art-grid button { background: var(--panel-2); }
+.art-grid img { filter: none; }
+.art-grid button.mono img { filter: invert(1) opacity(0.85); }
+
+.set-template .made-for { font-style: normal; font-weight: 600; font-size: 10px; letter-spacing: .02em; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 6px; border-radius: 999px; margin-left: 4px; vertical-align: 1px; }

@@ -487,6 +487,7 @@ await check("text emphasis: a pill on the accent words, a marker behind a text, 
     texts: [
       { text: "**WWWW**", x: 0.5, y: 0.25, anchor: "middle", size: 0.12, color: "#000000", accentMark: "pill", accentMarkColor: "#ff0000" },
       { text: "WWWW", x: 0.5, y: 0.6, anchor: "middle", size: 0.12, color: "#000000", decoration: "highlight", decorationColor: "#00ff00" },
+      { text: "**WWWW**", x: 0.5, y: 0.82, anchor: "middle", size: 0.1, color: "#000000", accentMark: "squiggle", accentMarkColor: "#0000ff" },
     ],
     preview: false,
     output: file,
@@ -506,6 +507,15 @@ await check("text emphasis: a pill on the accent words, a marker behind a text, 
   // The marker sits on the lower half of the line, translucent over black: a dark green.
   assert(count(0.6, 0.7, (r, g, b) => g > 90 && r < 40 && b < 40) > 300, "the marker band isn't drawn on the lower half of the line");
   assert(count(0.5, 0.58, (r, g, b) => g > 90 && r < 40 && b < 40) < 50, "the marker band shouldn't cover the top of the line");
+  // The squiggle runs under the words, as wide as them, and goes up and down.
+  const blue = (r: number, g: number, b: number) => b > 150 && r < 80 && g < 80;
+  assert(count(0.82, 0.95, blue) > 150, "the squiggly underline isn't drawn");
+  const rows = new Set<number>();
+  for (let y = Math.round(0.82 * img.height); y < 0.95 * img.height; y++) for (let x = 0; x < img.width; x += 2) {
+    const i = (y * img.width + x) * 4;
+    if (blue(img.rgba[i], img.rgba[i + 1], img.rgba[i + 2])) rows.add(y);
+  }
+  assert(rows.size > 0.012 * img.height, `the underline should wave, not be a straight line: ${rows.size} rows`);
 });
 
 await check("marks draw in, stars fill up, clay changes colour and images animate", async () => {
@@ -562,6 +572,48 @@ await check("whole-set templates make five screens from your screenshots and wor
   }
   const bold = withSpill(await buildSetTemplate("bold", devices));
   assert((bold[2].scene.spill ?? []).length === 1 && Math.abs((bold[2].scene.spill![0].x as number) - 0) < 0.001, "bold's phone carries on into the third screen");
+});
+
+await check("set templates fit iPad, iPhone Duo (either way up) and Mac screenshots, each on its own canvas", async () => {
+  const { buildSetTemplate } = await import("../src/design/sets.js");
+  const blank = async (w: number, h: number) => {
+    const f = path.join(out, `blank-${w}x${h}.png`);
+    if (!existsSync(f)) await renderHtml(`<!doctype html><body style="margin:0;background:#e8e4dc">`, f, w / 2, h / 2, { scale: 2, format: "png", transparent: false, outWidth: w, outHeight: h });
+    return { screenshot: f };
+  };
+  const [duoWide, duoTall, ipad, mac] = await Promise.all([blank(2670, 1878), blank(1878, 2670), blank(2064, 2752), blank(3024, 1964)]);
+  const canvasOf = async (id: string, devices: Array<{ screenshot: string }>) => {
+    const s = (await buildSetTemplate(id, devices))[0].scene;
+    return `${s.canvas}${s.landscape ? " landscape" : ""}`;
+  };
+  assert((await canvasOf("clean", [duoWide, duoTall])) === "ipad-13 landscape", "an iPhone Duo held open makes a landscape set");
+  assert((await canvasOf("clean", [duoTall, duoWide])) === "ipad-13", "an upright iPhone Duo makes a portrait set");
+  assert((await canvasOf("scrapbook", [ipad])) === "ipad-13", "an iPad makes an iPad set");
+  assert((await canvasOf("night", [mac])) === "mac", "a Mac makes a Mac set");
+  // Screens take the screenshots of the set's own kind, in order.
+  const wide = await buildSetTemplate("clean", [duoWide, duoTall]);
+  assert(wide.every((x) => x.scene.devices![0].screenshot === duoWide.screenshot), "a landscape Duo set uses the landscape screenshots");
+  const duo = await buildSetTemplate("duo", [duoWide, duoTall]);
+  assert(duo[2].scene.devices!.length === 2 && duo[2].scene.devices!.every((d) => d.device === "iPhone Duo (open)"), "the Duo showcase shows it both ways at once");
+  const onMac = await buildSetTemplate("duo", [mac]);
+  assert(onMac.every((x) => x.scene.devices!.every((d) => !d.device)), "a Mac screenshot keeps its own device, even in the Duo showcase");
+});
+
+await check("illustrations resolve by name, and a picture's colour repaints it", async () => {
+  const { layoutScene } = await import("../src/render/mockup.js");
+  const { artNames } = await import("../src/render/images.js");
+  const { run } = await import("../src/util/exec.js");
+  const { readBmp } = await import("../src/util/png.js");
+  const names = artNames();
+  assert(names.length >= 30 && names.includes("blob-1") && names.includes("tape") && names.includes("confetti-colour"), `the illustrations are there: ${names.join(", ")}`);
+  const layout = await layoutScene({ devices: [], canvas: "1000x1000", layout: "custom", images: [{ src: "art:blob-1", height: 0.4 }] } as never);
+  assert(/art[\\/]blob-1\.svg$/.test(layout.entities.find((e) => e.id === "image-1")?.src ?? ""), "art:blob-1 is the blob");
+  const file = path.join(out, "tint.png");
+  await createMockup({ devices: [], canvas: "400x400", layout: "custom", background: "#000000", images: [{ src: "art:blob-1", x: 0.5, y: 0.5, height: 0.8, tint: "#00ff00" }], preview: false, output: file } as never);
+  await run("sips", ["-s", "format", "bmp", file, "--out", path.join(out, "tint.bmp")]);
+  const img = readBmp(readFileSync(path.join(out, "tint.bmp")));
+  const i = ((img.height >> 1) * img.width + (img.width >> 1)) * 4;
+  assert(img.rgba[i + 1] > 200 && img.rgba[i] < 60 && img.rgba[i + 2] < 60, `the blob is painted green: ${img.rgba.slice(i, i + 3).join(",")}`);
 });
 
 await check("your templates: screenshots become slots, filled in order; shared files carry their pictures", async () => {

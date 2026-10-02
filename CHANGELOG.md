@@ -1,5 +1,19 @@
 # What's new
 
+## 0.11.0 · 2 October 2026
+
+### Highlights
+- **Squiggly underlines.** Accent words can now have a wavy, hand-drawn underline: Text › Accent › **Wavy**, next to Under. It follows the words onto every line, takes the mark colour, and draws in from the left in Animate. Scrapbook uses it.
+- **Ten more whole sets.** Scrapbook (washi tape, handwriting, doodles), Memphis pop, Doodle notebook (squared paper and a marker), Garden (soft shapes and leafy sprigs), Confetti party (for a launch), Comic pop (halftone, outlined lettering, speech bubbles), Night sky (stars, a moon, a planet and a rocket), and three made for one kind of device: Desktop showcase for Mac apps, iPad spread, and iPhone Duo showcase (the open Duo held wide and upright, side by side).
+- **Every set suits every device.** Whole sets now fit iPhone, iPad, iPhone Duo (upright, or held open like a book) and Mac screenshots: each takes the App Store canvas for your first screenshot and places the devices to suit, and the sets made for your kind of device come first.
+- **Illustrations.** 31 drawings in Images › Illustrations to put behind or around your screens: blobs, squiggles, arrows, scribbles, stars, sparkles, washi tape, leaves, a moon, a planet, confetti and more. Most are line drawings that take your app's colour.
+- **Colour any picture.** Images › Colour repaints an illustration, sticker or logo in one colour (and animates like the rest).
+
+### Fixes
+- Sets no longer flicker while their screens load or when you move between them, and a set whose screens were different sizes keeps them at one size.
+- Applying a whole set for another shape of device (an iPad or Mac set on an iPhone design) takes that set's own canvas instead of squeezing it into the old one.
+- Set previews in the Templates panel are the shape of their screens.
+
 ## 0.10.0 · 2 October 2026
 
 ### Highlights

@@ -11,7 +11,7 @@ import { resolveUserPath } from "../util/files.js";
 import { screenshotPalette, type Palette } from "../render/analyze.js";
 import type { BackgroundInput, DeviceInput, MockupInput } from "../render/schema.js";
 
-type ShotKind = "phone" | "tablet" | "mac" | "web" | "watch" | "other";
+export type ShotKind = "phone" | "tablet" | "duo" | "mac" | "web" | "watch" | "other";
 
 export interface RecipeContext {
   shots: Array<{ path: string; video?: string; kind: ShotKind; width: number; height: number }>;
@@ -81,7 +81,7 @@ export function paintingFor(accent?: string): string {
 // ---------------------------------------------------------------------------------------------
 // Building blocks
 
-export const CANVAS: Record<ShotKind, string> = { phone: "iphone-6.9", tablet: "ipad-13", mac: "16:9", web: "16:9", watch: "1080x1350", other: "4:5" };
+export const CANVAS: Record<ShotKind, string> = { phone: "iphone-6.9", tablet: "ipad-13", duo: "ipad-13", mac: "16:9", web: "16:9", watch: "1080x1350", other: "4:5" };
 
 export function device(shot: RecipeContext["shots"][number], extra: Partial<DeviceInput> = {}): DeviceInput {
   const d: DeviceInput = { screenshot: shot.path, ...extra };
@@ -455,6 +455,9 @@ export const RECIPES: Recipe[] = [
 function kindOf(file: string, size: { width: number; height: number }): ShotKind {
   const sidecar = readSidecar(file);
   const r = size.width / size.height;
+  // iPhone Duo open: its 1878 × 2670 inner screen, upright or held like a book.
+  const [a, b] = [Math.min(size.width, size.height), Math.max(size.width, size.height)];
+  if (Math.abs(a / b - 1878 / 2670) < 0.012 && b >= 1300) return "duo";
   if (sidecar?.kind === "web" && r > 1.1) return "web";
   if (sidecar?.kind === "mac") return "mac";
   if (r > 1.1) return "mac";

@@ -659,11 +659,13 @@ export function aiVia() {
 export const IMAGE_PROVIDERS = { openai: "OpenAI", gemini: "Gemini", replicate: "Replicate", fal: "fal" };
 
 /** Where the canvas finds a picture: a built-in sticker ("sticker:heart") or a file. */
-export const pictureUrl = (src) => (/^sticker:/i.test(src ?? "") ? `/ui/stickers/${src.slice(8).toLowerCase()}.svg` : fileUrl(src));
+export const pictureUrl = (src) =>
+  /^sticker:/i.test(src ?? "") ? `/ui/stickers/${src.slice(8).toLowerCase()}.svg` : /^art:/i.test(src ?? "") ? `/ui/art/${src.slice(4).toLowerCase()}.svg` : fileUrl(src);
 
 /** A picture's own name, without the timestamp the library adds: "logo-20261002-082507-857.svg" is "Logo". */
 export function pictureName(src) {
   if (/^sticker:/i.test(src ?? "")) return `${src[8].toUpperCase()}${src.slice(9)} sticker`;
+  if (/^art:/i.test(src ?? "")) return `${src[4].toUpperCase()}${src.slice(5).replace(/-/g, " ")}`;
   const name = String(src ?? "").split("/").pop().replace(/\.[a-z0-9]+$/i, "").replace(/-\d{8}-\d{6}(-\d{3})?$/, "").replace(/[-_]+/g, " ").trim();
   return name ? name[0].toUpperCase() + name.slice(1, 28) : "Image";
 }

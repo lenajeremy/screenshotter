@@ -12,25 +12,31 @@ import type { ImageBlockInput } from "./schema.js";
 
 const fileUrl = (p: string) => pathToFileURL(p).href;
 
-/** Screenshotter's own stickers ("sticker:heart"), shipped with the Studio's UI. */
+/** Screenshotter's own stickers ("sticker:heart") and illustrations ("art:squiggle"), shipped with the Studio's UI. */
 const STICKER_DIR = fileURLToPath(new URL("../studio/ui/stickers/", import.meta.url));
+const ART_DIR = fileURLToPath(new URL("../studio/ui/art/", import.meta.url));
 
-/** The names of the built-in stickers. */
-export function stickerNames(): string[] {
+const namesIn = (dir: string) => {
   try {
-    return readdirSync(STICKER_DIR)
+    return readdirSync(dir)
       .filter((f) => f.endsWith(".svg"))
       .map((f) => f.slice(0, -4))
       .sort();
   } catch {
     return [];
   }
-}
+};
+/** The names of the built-in stickers. */
+export const stickerNames = () => namesIn(STICKER_DIR);
+/** The names of the built-in illustrations. */
+export const artNames = () => namesIn(ART_DIR);
+/** Illustrations in their own colours; every other one is drawn in one ink, to tint. */
+export const COLOURED_ART = ["confetti-colour", "memphis", "plant", "stars-night"];
 
-/** Where a block's picture is: a built-in sticker, or a path. */
+/** Where a block's picture is: a built-in sticker or illustration, or a path. */
 function pictureFile(src: string): string {
-  const m = /^sticker:([a-z0-9-]+)$/i.exec(src);
-  return m ? path.join(STICKER_DIR, `${m[1].toLowerCase()}.svg`) : resolveUserPath(src);
+  const m = /^(sticker|art):([a-z0-9-]+)$/i.exec(src);
+  return m ? path.join(m[1].toLowerCase() === "art" ? ART_DIR : STICKER_DIR, `${m[2].toLowerCase()}.svg`) : resolveUserPath(src);
 }
 
 /** An image block with everything settled. Positions and sizes are canvas fractions. */
@@ -51,6 +57,8 @@ export interface ImageBlock {
   shadow: boolean;
   sticker: boolean;
   flip: boolean;
+  /** A one-colour silhouette in this colour, instead of the picture's own colours. */
+  tint?: string;
   /** Soft focus: a fraction of the canvas width up to 0.5, or px. */
   blur: number;
   z: number;
@@ -88,7 +96,11 @@ export async function resolveImages(input: { images?: ImageBlockInput[] }, W: nu
     const file = remote ? b.src : pictureFile(b.src);
     if (!remote && !existsSync(file)) {
       warnings.push(
-        /^sticker:/i.test(b.src) ? `there's no sticker called ${b.src.slice(8)}, so image ${i + 1} is left out. Stickers: ${stickerNames().join(", ")}.` : `image ${i + 1} wasn't found (${b.src}), so it's left out.`,
+        /^sticker:/i.test(b.src)
+          ? `there's no sticker called ${b.src.slice(8)}, so image ${i + 1} is left out. Stickers: ${stickerNames().join(", ")}.`
+          : /^art:/i.test(b.src)
+            ? `there's no illustration called ${b.src.slice(4)}, so image ${i + 1} is left out. Illustrations: ${artNames().join(", ")}.`
+            : `image ${i + 1} wasn't found (${b.src}), so it's left out.`,
       );
       continue;
     }
@@ -121,6 +133,7 @@ export async function resolveImages(input: { images?: ImageBlockInput[] }, W: nu
       shadow: b.shadow ?? false,
       sticker: b.sticker ?? false,
       flip: b.flip ?? false,
+      tint: b.tint,
       blur: Math.max(0, b.blur ?? 0),
       z: b.z ?? IMAGE_Z,
     });
@@ -171,7 +184,10 @@ export function imageBlockHtml(b: ImageBlock, W: number, H: number, id: string):
     .filter(Boolean)
     .join(";");
   const img = ["display:block", "width:100%", "height:100%", "object-fit:fill", look.corners, b.flip ? "transform:scaleX(-1)" : ""].filter(Boolean).join(";");
-  return `<div class="image-block" data-ent="${esc(id)}" style="${wrap}"><img src="${esc(b.url)}" style="${img}"></div>`;
+  // Tinted: the picture's shape filled with one colour (its outline as a mask).
+  const mask = `url(&quot;${esc(b.url)}&quot;) 0 0 / 100% 100% no-repeat`;
+  const body = b.tint ? `<div style="${img};background:${esc(b.tint)};-webkit-mask:${mask};mask:${mask}"></div>` : `<img src="${esc(b.url)}" style="${img}">`;
+  return `<div class="image-block" data-ent="${esc(id)}" style="${wrap}">${body}</div>`;
 }
 
 /** Whether a file looks like a picture an image block can show. */

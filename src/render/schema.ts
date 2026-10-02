@@ -313,7 +313,7 @@ export const TextInputSchema = z.object({
   strokeWidth: z.number().min(0).max(0.5).optional().describe("Outline width as a share of the font size. Default 0.1."),
   decoration: z.enum(["underline", "strike", "highlight"]).optional().describe("underline, strike (through), or highlight: a marker band behind the lines."),
   decorationColor: z.string().optional().describe("The decoration's colour. Default the text's (highlight: yellow)."),
-  accentMark: z.enum(["highlight", "underline", "pill"]).optional().describe("A mark on the **accent** words: a highlighter behind them, an underline, or a pill (in the accent colour, the words then in the text's)."),
+  accentMark: z.enum(["highlight", "underline", "squiggle", "pill"]).optional().describe("A mark on the **accent** words: a highlighter behind them, an underline, a squiggly (wavy) underline, or a pill (in the accent colour, the words then in the text's)."),
   accentMarkColor: z.string().optional().describe("The accent mark's colour. Default the accent colour, else yellow."),
 
   z: z.number().optional(),
@@ -323,7 +323,7 @@ export const TextInputSchema = z.object({
 // Image blocks
 
 export const ImageBlockSchema = z.object({
-  src: z.string().describe('A PNG, JPEG, WebP, GIF or SVG: a path, or an https URL. A logo, the app icon, a photo. Or a built-in sticker, "sticker:<name>" (list_mockup_options lists them, e.g. "sticker:heart"), best with sticker: true.'),
+  src: z.string().describe('A PNG, JPEG, WebP, GIF or SVG: a path, or an https URL. A logo, the app icon, a photo. Or a built-in sticker, "sticker:<name>" (e.g. "sticker:heart", best with sticker: true), or illustration, "art:<name>" (e.g. "art:squiggle", most in one ink to tint): list_mockup_options lists them.'),
   x: z.number().optional().describe("Centre x as a fraction of the canvas width. Default 0.5."),
   y: z.number().optional().describe("Centre y as a fraction of the canvas height. Default 0.5."),
   height: z.number().positive().max(5).optional().describe("Height as a fraction of the canvas height (the width follows the picture's shape). Default 0.12."),
@@ -335,6 +335,7 @@ export const ImageBlockSchema = z.object({
   shadow: z.boolean().optional().describe("A soft shadow that follows the picture's outline."),
   sticker: z.boolean().optional().describe("A sticker: a die-cut white edge round the picture's outline, and a shadow."),
   flip: z.boolean().optional().describe("Mirror it left to right."),
+  tint: z.string().optional().describe("Show it as a one-colour silhouette in this colour: a white logo, or an illustration in the app's colour."),
   blur: z.number().min(0).optional().describe("Soft focus: a fraction of the canvas width up to 0.5 (0.004 soft), or px."),
   z: z.number().optional().describe("Stacking order; higher is in front. Default 35: in front of devices and text, behind shapes."),
 });
@@ -416,7 +417,7 @@ export const TextStyleSchema = z
     strokeWidth: z.number().min(0).max(0.5).optional().describe("Outline width as a share of the font size. Default 0.1."),
     decoration: z.enum(["underline", "strike", "highlight"]).optional().describe("underline, strike (through), or highlight: a marker band behind the lines."),
     decorationColor: z.string().optional().describe("The decoration's colour. Default the text's (highlight: yellow)."),
-    accentMark: z.enum(["highlight", "underline", "pill"]).optional().describe("A mark on the **accent** words: a highlighter behind them, an underline, or a pill (in the accent colour, the words then in the text's)."),
+    accentMark: z.enum(["highlight", "underline", "squiggle", "pill"]).optional().describe("A mark on the **accent** words: a highlighter behind them, an underline, a squiggly (wavy) underline, or a pill (in the accent colour, the words then in the text's)."),
     accentMarkColor: z.string().optional().describe("The accent mark's colour. Default the accent colour, else yellow."),
     blur: z.number().min(0).optional().describe("Soft focus on the headline and subheadline: a fraction of the canvas width up to 0.5, or px."),
   })
