@@ -644,6 +644,8 @@ export function entityLabel(id, scene = S.scene, layout = S.layout) {
     if (sh.type === "badge") return `Number ${e?.label ?? sh.label ?? ""}`.trim();
     if (sh.type === "ellipse") return (e?.sketch ?? sh.sketch) && (e?.fill ?? sh.fill ?? "none") === "none" ? "Circled" : (e?.aspect ?? sh.aspect ?? 1.5) === 1 ? "Circle" : "Ellipse";
     if (sh.type === "rect") return (e?.fill ?? sh.fill ?? "none") === "none" ? "Box" : (e?.radius ?? sh.radius) >= 0.5 ? "Pill" : "Rectangle";
+    if (sh.type === "laurel") return (sh.text ?? "Laurel").replace(/\\n|\n/g, " ").slice(0, 28) || "Laurel";
+    if (sh.type === "rating") return `Rating ${sh.value ?? 5}`;
     return { arrow: "Arrow", line: "Line", triangle: "Triangle", star: "Star" }[sh.type] ?? "Shape";
   }
   if (kind === "device") {

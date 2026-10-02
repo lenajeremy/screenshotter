@@ -461,6 +461,20 @@ await check("image blocks: placed by their centre, sized by height with their ow
   assert(edge[0] > 220 && edge[1] > 220 && edge[2] > 220, `a sticker has a white edge: ${edge}`);
 });
 
+await check("laurels wreath your words (wrapped to fit); ratings fill their stars to the value", async () => {
+  const { renderShape, shapeSpec } = await import("../src/render/shapes.js");
+  const laurel = renderShape(shapeSpec({ type: "laurel", text: "Editors' Choice", caption: "App Store" }), 1000, 1000).svg;
+  const words = [...laurel.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+  assert(JSON.stringify(words) === JSON.stringify(["Editors'", "Choice", "App Store"]), `a short two-word award goes on two lines, its caption under: ${JSON.stringify(words)}`);
+  assert((laurel.match(/scale\(-1 1\)/g) ?? []).length === 1, "the right branch mirrors the left");
+  const rating = renderShape(shapeSpec({ type: "rating", value: 3.5, text: "3.5 · 80 ratings" }), 1000, 1000).svg;
+  assert((rating.match(/clip-path=/g) ?? []).length === 1, "a half star is clipped");
+  assert((rating.match(/opacity="0.28"/g) ?? []).length === 2, "the stars not reached are faint (the half one behind its fill, the last one alone)");
+  assert(/3\.5 · 80 ratings/.test(rating), "the line under the stars is drawn");
+  const r5 = renderShape(shapeSpec({ type: "rating" }), 1000, 1000).svg;
+  assert(!/opacity="0.28"/.test(r5) && (r5.match(/<path/g) ?? []).length === 5, "five stars by default, all filled");
+});
+
 await check("with no Apple art installed, a device is its bare screen (rounded like the device), never drawn", async () => {
   process.env.SCREENSHOTTER_BEZELS_DIR = path.join(out, "no-bezels");
   try {

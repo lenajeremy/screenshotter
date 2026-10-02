@@ -624,7 +624,7 @@ function ShapePreview({ kind, tint }) {
     ...made,
     x: 0.5,
     y: 0.5,
-    size: made.type === "badge" ? 0.62 : Math.min(0.66, (0.8 * W) / H / (made.aspect ?? 1)),
+    size: made.type === "badge" ? 0.62 : Math.min(0.66, (0.9 * W) / H / (made.aspect ?? 1)),
     strokeWidth: made.strokeWidth ? 0.045 : 0,
     from: line ? { x: 0.16, y: 0.76 } : undefined,
     to: line ? { x: 0.84, y: 0.24 } : undefined,
@@ -736,11 +736,15 @@ export function ShapesPanel() {
       <${Section} title="Shapes">
         <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "solid").map(tile)}</div>
       <//>
+      <${Section} title="Awards and ratings">
+        <div class="shape-tiles wide">${SHAPE_KINDS.filter((k) => k.group === "award").map(tile)}</div>
+        <div class="note">Your words go in the wreath or under the stars. Only claim what's true.</div>
+      <//>
       ${shapes.length > 0 &&
       html`<${Section} title="In this design" count=${shapes.length}>
         ${shapes.map((sh, i) => {
           const id = `shape-${i + 1}`;
-          const icon = { arrow: "arrow", line: "line", ellipse: sh.sketch ? "circled" : "ellipse", rect: "square", triangle: "triangle", star: "star", badge: "badge" }[sh.type];
+          const icon = { arrow: "arrow", line: "line", ellipse: sh.sketch ? "circled" : "ellipse", rect: "square", triangle: "triangle", star: "star", badge: "badge", laurel: "star", rating: "star" }[sh.type];
           return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
             <span class="thumb" style=${{ color: sh.stroke && sh.stroke !== "none" ? sh.stroke : sh.fill && sh.fill !== "none" ? sh.fill : undefined }}><${Icon} n=${icon} s=${13} /></span>
             <span class="nm">${entityLabel(id)}${sh.around ? html` <span class="faint">on “${sh.around.text}”</span>` : ""}</span>

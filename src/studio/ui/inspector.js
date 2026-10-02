@@ -573,6 +573,15 @@ const LINE_TYPES = [
   { value: "line", label: "Line", icon: "line" },
 ];
 
+/** A laurel's words and caption; a rating's stars and the line under them. */
+function AwardFields({ g, upd }) {
+  return g.type === "laurel"
+    ? html`<div class="row"><label>Words</label><${TextField} value=${g.text} placeholder="App of the Day" onChange=${(v) => upd((x) => (x.text = (v ?? "").slice(0, 60) || undefined), "text")} /></div>
+        <div class="row"><label>Under them</label><${TextField} value=${g.caption} placeholder="App Store" onChange=${(v) => upd((x) => (x.caption = (v ?? "").slice(0, 60) || undefined), "caption")} /></div>`
+    : html`<div class="row"><label>Stars</label><${Slider} value=${g.value} min=${0} max=${5} step=${0.1} format=${(v) => (Math.round(v * 10) / 10).toFixed(1)} onChange=${(v) => upd((x) => (x.value = v ?? 5), "value")} /></div>
+        <div class="row"><label>Under them</label><${TextField} value=${g.text} placeholder="4.9 · 2K ratings" onChange=${(v) => upd((x) => (x.text = (v ?? "").slice(0, 60) || undefined), "text")} /></div>`;
+}
+
 function ShapeInspector({ id }) {
   const s = useStore();
   const i = Number(id.split("-")[1]) - 1;
@@ -585,6 +594,7 @@ function ShapeInspector({ id }) {
   const upd = (fn, key) => edit((d) => fn(d.shapes[i]), key && `s${i}.${key}`);
   const line = g.type === "arrow" || g.type === "line";
   const badge = g.type === "badge";
+  const award = g.type === "laurel" || g.type === "rating";
   // Setting the geometry by hand places it, so it stops following its target.
   const place = (fn, key) =>
     upd((x) => {
@@ -605,7 +615,8 @@ function ShapeInspector({ id }) {
       ${sh.around &&
       html`<div class="follow-note"><${Icon} n="link" s=${13} /><span>Follows <b>“${sh.around.text}”</b> on the screen. Drag it to place it yourself.</span></div>`}
       <${Section} title="Shape">
-        ${!badge && html`<${Seg} value=${g.type} options=${line ? LINE_TYPES : BOX_TYPES} onChange=${(v) => upd((x) => {
+        ${award && html`<${AwardFields} g=${g} upd=${upd} />`}
+        ${!badge && !award && html`<${Seg} value=${g.type} options=${line ? LINE_TYPES : BOX_TYPES} onChange=${(v) => upd((x) => {
           x.type = v;
           if (v === "line") x.head ??= g.head === "end" ? "none" : g.head;
           else if (v === "arrow" && (x.head ?? "none") === "none") delete x.head;
@@ -616,15 +627,15 @@ function ShapeInspector({ id }) {
           <div class="row"><label>Curve</label><${Slider} value=${g.bend} min=${-1} max=${1} step=${0.01} centered reset=${0} format=${(v) => (v ? Math.round(v * 100) + "%" : "Straight")} onChange=${(v) => place((x) => (x.bend = v ?? 0), "bend")} /></div>`}
         ${g.type === "rect" && html`<div class="row"><label>Corners</label><${Slider} value=${g.radius} min=${0} max=${0.5} step=${0.01} format=${(v) => (v >= 0.5 ? "Pill" : v ? Math.round(v * 200) + "%" : "Square")} onChange=${(v) => upd((x) => (x.radius = v ?? 0), "radius")} /></div>`}
         ${g.type === "star" && html`<div class="row"><label>Points</label><${Slider} value=${g.points} min=${3} max=${12} step=${1} format=${(v) => String(v)} onChange=${(v) => upd((x) => (x.points = v ?? 5), "points")} /></div>`}
-        <${Switch} checked=${g.sketch} onChange=${(v) => upd((x) => (x.sketch = v || undefined))} label="Hand-drawn" />
-        ${g.sketch && html`<button class="btn sm ghost" onClick=${() => upd((x) => (x.seed = (g.seed % 97) + 1))}><${Icon} n="refresh" s=${12} />Redraw it</button>`}
+        ${!award && html`<${Switch} checked=${g.sketch} onChange=${(v) => upd((x) => (x.sketch = v || undefined))} label="Hand-drawn" />`}
+        ${g.sketch && !award && html`<button class="btn sm ghost" onClick=${() => upd((x) => (x.seed = (g.seed % 97) + 1))}><${Icon} n="refresh" s=${12} />Redraw it</button>`}
       <//>
       ${!line &&
       html`<${Section} title="Fill">
         <div class="row"><label>Colour</label><${ColorButton} value=${colour(g.fill)} auto="None" onChange=${(v) => upd((x) => (x.fill = v ?? "none"), "fill")} /></div>
-        ${badge && html`<div class="row"><label>Label colour</label><${ColorButton} value=${g.labelColor} allowAuto=${false} onChange=${(v) => upd((x) => (x.labelColor = v), "labelColor")} /></div>`}
+        ${(badge || award) && html`<div class="row"><label>${award ? "Words" : "Label colour"}</label><${ColorButton} value=${award ? (sh.labelColor ?? undefined) : g.labelColor} allowAuto=${award} auto="Same as the fill" autoColor=${award ? g.fill : undefined} onChange=${(v) => upd((x) => (x.labelColor = v), "labelColor")} /></div>`}
       <//>`}
-      <${Section} title=${badge ? "Ring" : "Stroke"}>
+      ${!award && html`<${Section} title=${badge ? "Ring" : "Stroke"}>
         <div class="row"><label>Colour</label><${ColorButton} value=${colour(g.stroke)} auto="None" allowAuto=${!line}
           onChange=${(v) => upd((x) => {
             x.stroke = v ?? "none";
@@ -632,7 +643,7 @@ function ShapeInspector({ id }) {
           }, "stroke")} /></div>
         ${strokeOn &&
         html`<div class="row"><label>Width</label><${Slider} value=${widthFrac} min=${0.001} max=${0.03} step=${0.0005} format=${(v) => Math.max(1, Math.round(v * H0)) + " px"} onChange=${(v) => upd((x) => (x.strokeWidth = v ?? 0.005), "sw")} /></div>`}
-      <//>
+      <//>`}
       <${More} id="shape">
       ${strokeOn && html`<${Section} title="Line style">
         <${Seg} value=${g.dash} options=${DASH_OPTIONS} onChange=${(v) => upd((x) => (x.dash = v === "solid" ? undefined : v))} />

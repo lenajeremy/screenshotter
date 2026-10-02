@@ -345,7 +345,14 @@ export const SHAPE_KINDS = [
   { id: "pill", label: "Pill", icon: "square", group: "solid", make: (tint) => ({ type: "rect", fill: tint, stroke: "none", size: 0.06, aspect: 3.2, radius: 0.5 }) },
   { id: "triangle", label: "Triangle", icon: "triangle", group: "solid", make: (tint) => ({ type: "triangle", fill: tint, stroke: "none", size: 0.08, aspect: 1.1 }) },
   { id: "star", label: "Star", icon: "star", group: "solid", make: (tint) => ({ type: "star", fill: tint, stroke: "none", size: 0.08, aspect: 1 }) },
+  // Awards and ratings start gold unless another colour is picked: red reads as a warning.
+  { id: "laurel", label: "Laurel", icon: "star", group: "award", make: (tint) => ({ type: "laurel", fill: awardTint(tint, "#e9c46a"), text: "App of the Day", size: 0.085, aspect: 2.5 }) },
+  { id: "rating", label: "Rating", icon: "star", group: "award", make: (tint) => ({ type: "rating", fill: awardTint(tint, "#ffd60a"), value: 5, text: "4.9 · 2K ratings", size: 0.06, aspect: 3.4 }) },
 ];
+
+function awardTint(tint, gold) {
+  return !tint || tint.toLowerCase() === "#ff3b30" ? gold : tint;
+}
 
 const lineKind = (t) => t === "arrow" || t === "line";
 

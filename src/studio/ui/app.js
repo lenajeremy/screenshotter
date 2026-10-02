@@ -1766,7 +1766,7 @@ function entityMenu(id) {
     return [
       { label: `Ask AI about this ${entityLabel(id).toLowerCase()}…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
       "-",
-      { label: sh.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => editScene((sc) => (sc.shapes[i].sketch = sh.sketch ? undefined : true)) },
+      sh.type !== "laurel" && sh.type !== "rating" && { label: sh.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => editScene((sc) => (sc.shapes[i].sketch = sh.sketch ? undefined : true)) },
       { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },
       { label: "Bring forward", icon: "front", run: () => moveZ(id, 1) },
       { label: "Send backward", icon: "back", run: () => moveZ(id, -1) },

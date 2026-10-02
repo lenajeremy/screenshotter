@@ -1313,7 +1313,7 @@ function ContextBar({ sel, box, vp }) {
     const r = e.currentTarget.getBoundingClientRect();
     const z = sel.id !== "caption";
     openMenu(r.left, r.bottom + 6, [
-      sel.kind === "shape" && { label: sh?.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => shapeUpd((x) => (x.sketch = sh?.sketch ? undefined : true)) },
+      sel.kind === "shape" && sh?.type !== "laurel" && sh?.type !== "rating" && { label: sh?.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => shapeUpd((x) => (x.sketch = sh?.sketch ? undefined : true)) },
       z && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(sel.id) },
       z && { label: "Bring forward", icon: "front", run: () => moveZ(sel.id, 1) },
       z && { label: "Send backward", icon: "back", run: () => moveZ(sel.id, -1) },

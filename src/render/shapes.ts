@@ -1,10 +1,10 @@
 /**
- * Shapes: arrows, lines, ellipses, rectangles, triangles, stars and number badges drawn over the
- * scene, clean or hand-drawn. Pure geometry and SVG with no imports, so the Studio canvas draws them
+ * Shapes: arrows, lines, ellipses, rectangles, triangles, stars, number badges, award laurels and
+ * star ratings drawn over the scene, clean or hand-drawn. Pure geometry and SVG with no imports, so the Studio canvas draws them
  * with this same code (the server hands the compiled file to the browser as /ui/shapes.js).
  */
 
-export const SHAPE_TYPES = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge"] as const;
+export const SHAPE_TYPES = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge", "laurel", "rating"] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
 export const ARROW_HEADS = ["end", "start", "both", "none"] as const;
 export const DASHES = ["solid", "dashed", "dotted"] as const;
@@ -37,9 +37,15 @@ export interface ShapeSpec {
   radius: number;
   /** Stars: how many points. */
   points: number;
-  /** Badges: the number or letter, and its colour. */
+  /** Badges: the number or letter, and its colour (a laurel's and a rating's words too). */
   label: string;
   labelColor: string;
+  /** Laurels: the words inside the wreath (\n breaks a line). Ratings: the line under the stars. */
+  text: string;
+  /** Laurels: a smaller line under the words. */
+  caption: string;
+  /** Ratings: how many of the five stars are filled, e.g. 4.8. */
+  value: number;
   /** Hand-drawn: a marker's wobble, overshoot and open ends. `seed` picks the wobble. */
   sketch: boolean;
   seed: number;
@@ -58,6 +64,8 @@ export const SHAPE_DEFAULTS: Record<ShapeType, Partial<ShapeSpec>> = {
   triangle: { fill: "#ffd60a", stroke: "none", strokeWidth: 0.005, size: 0.07, aspect: 1.1 },
   star: { fill: "#ffd60a", stroke: "none", strokeWidth: 0.005, size: 0.07, aspect: 1, points: 5 },
   badge: { fill: "#ff3b30", stroke: "#ffffff", strokeWidth: 0.0035, size: 0.045, aspect: 1, label: "1", labelColor: "#ffffff" },
+  laurel: { fill: "#e9c46a", stroke: "none", size: 0.085, aspect: 2.5, text: "App of the Day" },
+  rating: { fill: "#ffd60a", stroke: "none", size: 0.06, aspect: 3.4, value: 5 },
 };
 
 export const isLine = (t: ShapeType) => t === "arrow" || t === "line";
@@ -91,7 +99,11 @@ export function shapeSpec(input: Loose, index = 0): ShapeSpec {
     radius: Math.max(0, Math.min(0.5, pick("radius", 0))),
     points: Math.max(3, Math.min(12, Math.round(pick("points", 5)))),
     label: input.label ?? d.label ?? String(index + 1),
-    labelColor: pick("labelColor", "#ffffff"),
+    // A laurel's and a rating's words are the wreath's or the stars' colour unless set.
+    labelColor: input.labelColor ?? (input.type === "laurel" || input.type === "rating" ? (input.fill ?? d.fill ?? "#ffffff") : (d.labelColor ?? "#ffffff")),
+    text: input.text ?? d.text ?? "",
+    caption: input.caption ?? "",
+    value: Math.max(0, Math.min(5, pick("value", 5))),
     sketch: pick("sketch", false),
     seed: pick("seed", index + 1),
     opacity: pick("opacity", 1),
@@ -193,6 +205,121 @@ function sketchPolygon(v: Point[], rnd: () => number, scale: number): string {
     d += `M${f(p.x)} ${f(p.y)}Q${f(c.x)} ${f(c.y)} ${f(q.x)} ${f(q.y)}`;
   }
   return d;
+}
+
+/** A leaf: an almond from `base`, `len` long and `wid` wide, pointing along the angle `a` (radians). */
+function leaf(base: Point, a: number, len: number, wid: number): string {
+  const ux = Math.cos(a);
+  const uy = Math.sin(a);
+  const tip = { x: base.x + ux * len, y: base.y + uy * len };
+  const mid = { x: base.x + ux * len * 0.5, y: base.y + uy * len * 0.5 };
+  const nx = -uy * wid;
+  const ny = ux * wid;
+  return `M${f(base.x)} ${f(base.y)}Q${f(mid.x + nx)} ${f(mid.y + ny)} ${f(tip.x)} ${f(tip.y)}Q${f(mid.x - nx)} ${f(mid.y - ny)} ${f(base.x)} ${f(base.y)}Z`;
+}
+
+/**
+ * One branch of a laurel, the left one, in a bw×h box: a stem curving up from the bottom middle, with
+ * leaves along it, the outer ones larger, all getting smaller towards the top.
+ */
+function laurelBranch(bw: number, h: number): string {
+  const A = { x: bw * 0.95, y: h * 0.97 };
+  const C = { x: -bw * 0.12, y: h * 0.6 };
+  const B = { x: bw * 0.45, y: h * 0.04 };
+  const at = (t: number) => ({ x: (1 - t) ** 2 * A.x + 2 * (1 - t) * t * C.x + t * t * B.x, y: (1 - t) ** 2 * A.y + 2 * (1 - t) * t * C.y + t * t * B.y });
+  const dir = (t: number) => Math.atan2(2 * (1 - t) * (C.y - A.y) + 2 * t * (B.y - C.y), 2 * (1 - t) * (C.x - A.x) + 2 * t * (B.x - C.x));
+  let d = `M${f(A.x)} ${f(A.y)}Q${f(C.x)} ${f(C.y)} ${f(B.x)} ${f(B.y)}`;
+  const stem = d;
+  d = "";
+  const n = 7;
+  for (let i = 0; i < n; i++) {
+    const t = 0.1 + (i * 0.84) / (n - 1);
+    const p = at(t);
+    const a = dir(t);
+    const len = h * (0.21 - 0.07 * t);
+    // The outer leaf leans away from the wreath's middle, the inner one towards it.
+    d += leaf(p, a - 0.62, len, len * 0.3);
+    if (i > 0) d += leaf(p, a + 0.6, len * 0.78, len * 0.78 * 0.3);
+  }
+  // The tip: one leaf carrying on along the stem.
+  d += leaf(B, dir(1), h * 0.13, h * 0.13 * 0.3);
+  return `<path d="${stem}" fill="none" stroke="currentColor" stroke-width="${f(h * 0.016)}" stroke-linecap="round"/><path d="${d}"/>`;
+}
+
+/** Words as given with \n, else every way to set them in one or two lines (split nearest the middle). */
+function lineChoices(text: string): string[][] {
+  const given = text.split(/\\n|\n/).map((l) => l.trim()).filter(Boolean);
+  if (given.length !== 1) return [given.slice(0, 3)];
+  const words = given[0].split(/\s+/).filter(Boolean);
+  if (words.length < 2) return [given];
+  // The break nearest the middle of the characters.
+  const total = words.join(" ").length;
+  let best = 1;
+  let bestGap = Infinity;
+  for (let k = 1; k < words.length; k++) {
+    const gap = Math.abs(words.slice(0, k).join(" ").length - total / 2);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = k;
+    }
+  }
+  return [given, [words.slice(0, best).join(" "), words.slice(best).join(" ")]];
+}
+
+const TEXT_FONT = "'SF Pro Display','SF Pro Text',-apple-system,system-ui,'Helvetica Neue',sans-serif";
+/** Roughly how wide text is, in ems per character, for fitting it in a space. */
+const EM_PER_CHAR = 0.56;
+
+/** A laurel: the two branches, and the words (and caption) between them, fitted to the space. */
+function laurelSvg(s: ShapeSpec, w: number, h: number): string {
+  const bw = Math.min(h * 0.62, w * 0.3);
+  const branch = laurelBranch(bw, h);
+  const room = w - bw * 1.9;
+  // One line or two, whichever lets the words be bigger.
+  const fit = (ls: string[]) => Math.min(h * (ls.length > 2 ? 0.17 : ls.length > 1 ? 0.22 : 0.27), room / (Math.max(1, ...ls.map((l) => l.length)) * EM_PER_CHAR));
+  const ls = lineChoices(s.text).reduce((a, b) => (fit(b) > fit(a) * 1.08 ? b : a));
+  const size = fit(ls);
+  const capLong = Math.max(1, s.caption.length);
+  const cap = s.caption ? Math.min(h * 0.13, room / (capLong * EM_PER_CHAR * 0.9)) : 0;
+  const block = ls.length * size * 1.08 + (cap ? cap * 1.45 : 0);
+  let y = h / 2 - block / 2;
+  let words = "";
+  for (const l of ls) {
+    words += `<text x="${f(w / 2)}" y="${f(y + size * 0.84)}" text-anchor="middle" font-family="${TEXT_FONT}" font-weight="700" font-size="${f(size)}" letter-spacing="-0.01em" fill="${esc(s.labelColor)}">${esc(l)}</text>`;
+    y += size * 1.08;
+  }
+  if (cap) words += `<text x="${f(w / 2)}" y="${f(y + cap * 1.2)}" text-anchor="middle" font-family="${TEXT_FONT}" font-weight="500" font-size="${f(cap)}" letter-spacing="0.02em" fill="${esc(s.labelColor)}" opacity="0.85">${esc(s.caption)}</text>`;
+  return `<g fill="${esc(s.fill)}" color="${esc(s.fill)}">${branch}<g transform="translate(${f(w)} 0) scale(-1 1)">${branch}</g></g>${words}`;
+}
+
+let clips = 0;
+
+/** A rating: five stars filled to `value`, the rest faint, and a line of words under them. */
+function ratingSvg(s: ShapeSpec, w: number, h: number): string {
+  const hasText = Boolean(s.text);
+  const star = Math.min(h * (hasText ? 0.58 : 0.92), w / 5.6);
+  const gap = star * 0.14;
+  const row = star * 5 + gap * 4;
+  const x0 = (w - row) / 2;
+  const y0 = hasText ? h * 0.04 : (h - star) / 2;
+  const pts = starPoints(star, star, 5);
+  let body = "";
+  for (let i = 0; i < 5; i++) {
+    const x = x0 + i * (star + gap);
+    const d = pathOf(pts.map((p) => ({ x: p.x + x, y: p.y + y0 })), true);
+    const full = Math.max(0, Math.min(1, s.value - i));
+    if (full < 1) body += `<path d="${d}" fill="${esc(s.fill)}" opacity="0.28"/>`;
+    if (full >= 1) body += `<path d="${d}" fill="${esc(s.fill)}"/>`;
+    else if (full > 0) {
+      const id = `rate${++clips}`;
+      body += `<clipPath id="${id}"><rect x="${f(x)}" y="${f(y0 - 1)}" width="${f(star * full)}" height="${f(star + 2)}"/></clipPath><path d="${d}" fill="${esc(s.fill)}" clip-path="url(#${id})"/>`;
+    }
+  }
+  if (hasText) {
+    const size = Math.min(h * 0.27, w / (Math.max(1, s.text.length) * EM_PER_CHAR * 0.95));
+    body += `<text x="${f(w / 2)}" y="${f(y0 + star + (h - y0 - star) * 0.5 + size * 0.36)}" text-anchor="middle" font-family="${TEXT_FONT}" font-weight="600" font-size="${f(size)}" fill="${esc(s.labelColor)}">${esc(s.text)}</text>`;
+  }
+  return body;
 }
 
 function starPoints(w: number, h: number, n: number): Point[] {
@@ -334,6 +461,14 @@ export function renderShape(s: ShapeSpec, W: number, H: number, opts: { hit?: nu
       fillShape = `<path d="${pathOf(v, true)}"`;
       outline = s.sketch ? `<path d="${sketchPolygon(v, rnd, scale * 0.6)}"` : fillShape;
       break;
+    }
+    case "laurel":
+    case "rating": {
+      // Drawn whole: the wreath or stars, and their words, in the fill colour.
+      body = s.type === "laurel" ? laurelSvg(s, w, h) : ratingSvg(s, w, h);
+      if (opts.hit) body += `<rect class="hit" x="0" y="0" width="${f(w)}" height="${f(h)}" fill="transparent" stroke="none" pointer-events="all"/>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${f(w)}" height="${f(h)}" viewBox="0 0 ${f(w)} ${f(h)}" style="display:block;overflow:visible"><g opacity="${s.opacity}">${body}</g></svg>`;
+      return { left: s.x * W - w / 2, top: s.y * H - h / 2, width: w, height: h, rotate: s.rotate, filter, svg };
     }
   }
   // Hand-drawn: the fill sits a touch off the outline, like a marker's colour inside a pen line.

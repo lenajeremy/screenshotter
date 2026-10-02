@@ -339,7 +339,7 @@ const PointSchema = z.object({ x: z.number().describe("0 = left edge, 1 = right 
 export const ShapeInputSchema = z.object({
   type: z
     .enum(SHAPE_TYPES)
-    .describe("arrow, line, ellipse (circles and ovals), rect (boxes, rounded or pill), triangle, star, badge (a filled circle with a number or letter, for steps)."),
+    .describe("arrow, line, ellipse (circles and ovals), rect (boxes, rounded or pill), triangle, star, badge (a filled circle with a number or letter, for steps), laurel (an award wreath round your words, e.g. \"App of the Day\"), rating (five stars filled to `value`, with a line under them)."),
   x: z.number().optional().describe("Box shapes: centre x as a fraction of the canvas width. Default 0.5 (ignored with `around`)."),
   y: z.number().optional().describe("Centre y as a fraction of the canvas height. Default 0.5."),
   size: z.number().positive().max(2).optional().describe("Box shapes: height as a fraction of the canvas height (badge default 0.045, ellipse 0.1)."),
@@ -368,7 +368,10 @@ export const ShapeInputSchema = z.object({
   radius: z.number().min(0).max(0.5).optional().describe("rect: corner radius as a share of the shorter side; 0.5 makes a pill. Default 0.2."),
   points: z.number().int().min(3).max(12).optional().describe("star: number of points. Default 5."),
   label: z.string().max(4).optional().describe("badge: the number or letter. Default 1, 2, 3… in list order."),
-  labelColor: z.string().optional().describe("badge: label colour. Default white."),
+  text: z.string().max(60).optional().describe('laurel: the words in the wreath (\\n breaks a line), e.g. "App of the Day", "#1 in Food & Drink", "Editors\' Choice". rating: the line under the stars, e.g. "4.8 · 12K ratings". Only claim what\'s true.'),
+  caption: z.string().max(60).optional().describe('laurel: a smaller line under the words, e.g. "App Store" or "2026".'),
+  value: z.number().min(0).max(5).optional().describe("rating: how many of the five stars are filled, e.g. 4.8. Default 5."),
+  labelColor: z.string().optional().describe("badge: label colour. Default white. laurel and rating: their words' colour. Default the fill."),
   sketch: z.boolean().optional().describe("Hand-drawn, like a marker: a ring that overshoots its start, edges that overshoot their corners, open arrowheads. Default false."),
   seed: z.number().int().optional().describe("sketch: pick a different wobble."),
   opacity: z.number().min(0).max(1).optional(),
