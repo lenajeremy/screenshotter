@@ -6,18 +6,19 @@
     <description>Updates to Screenshotter.</description>
     <language>en</language>
     <item>
-      <title>Screenshotter 0.11.5</title>
-      <pubDate>Fri, 02 Oct 2026 15:12:38 GMT</pubDate>
-      <sparkle:version>0.11.5</sparkle:version>
-      <sparkle:shortVersionString>0.11.5</sparkle:shortVersionString>
+      <title>Screenshotter 0.11.6</title>
+      <pubDate>Sat, 03 Oct 2026 00:02:11 GMT</pubDate>
+      <sparkle:version>0.11.6</sparkle:version>
+      <sparkle:shortVersionString>0.11.6</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://screenshotter-umber.vercel.app/changelog.html</sparkle:fullReleaseNotesLink>
-      <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Highlights</h4>
+      <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Fixes</h4>
 <ul>
-<li><strong>A set is one canvas.</strong> Drag a device onto the gap between two screens and it&#39;s pulled to sit exactly across both: the seam lights up and says &quot;Across 2 &amp; 3&quot;, either way along the set. Drag it mostly onto the screen beside it and it moves there. No settings needed (hold ⌥ to place it freely); a device&#39;s <strong>More options › Keep inside this screen</strong> cuts it off at its own screen&#39;s edges instead.</li>
+<li>My designs&#39; list view lines up in columns again (the Store page preview&#39;s styles had taken over its rows since 0.6.0), and the page&#39;s heading and cards lay out as they should.</li>
+<li>Designs of just words and pictures get a thumbnail in My designs, like the rest.</li>
 </ul>
 ]]></description>
-      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.5.dmg" type="application/octet-stream" sparkle:edSignature="Uskh5ZjiqXyOdr/xVs4QlyF3NNe/sXGs6MbHf8aUVIMRq5Kdx93gNvZg77bZQFe0xnZenOAla37umYITCXbyCw==" length="34872644" />
+      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.11.6.dmg" type="application/octet-stream" sparkle:edSignature="0buk7mccBeRLQdkhgbPRwwAMHDgooqF5g+wCAyvjasfUHsmvqsp0wLyOszrpTE63V/hhg0TJpxLrSiTwv5loCQ==" length="31937109" />
     </item>
   </channel>
 </rss>
