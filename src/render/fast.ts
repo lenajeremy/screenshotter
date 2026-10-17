@@ -326,7 +326,20 @@ function analyse(): { leaves: Leaf[]; error?: string } {
       const [sx, sy] = bo!;
       const nums = (rot.style.transform.match(/-?[\d.]+deg/g) ?? []).map((v) => parseFloat(v));
       const tilt = /rotateZ\(calc\(([-\d.]+)deg[^)]*\)\)\s*rotateX\(calc\(([-\d.]+)deg[^)]*\)\)\s*rotateY\(calc\(([-\d.]+)deg[^)]*\)\)\s*rotateZ\(([-\d.]+)deg\)/.exec(rot.style.transform);
-      const radius = screen ? parseFloat(cs(screen).borderTopLeftRadius) || parseFloat(cs(shot!).borderTopLeftRadius) || 0 : 0;
+      // Its corners: the roundest of what trims it to the screen's box (a card's face rounds it,
+      // not the screen inside it), as px.
+      let radius = 0;
+      if (shot && screen) {
+        const px = (e: HTMLElement) => {
+          const v = cs(e).borderTopLeftRadius;
+          return v.endsWith("%") ? (parseFloat(v) / 100) * Math.min(e.offsetWidth, e.offsetHeight) : parseFloat(v) || 0;
+        };
+        for (let a: HTMLElement | null = shot; a && a !== rot; a = a.parentElement) {
+          const clips = a === shot || a === screen || cs(a).overflow !== "visible";
+          const same = Math.abs(a.offsetWidth - screen.offsetWidth) <= 2 && Math.abs(a.offsetHeight - screen.offsetHeight) <= 2;
+          if (clips && same) radius = Math.max(radius, px(a));
+        }
+      }
       let filter: string | undefined;
       for (let a = el.parentElement; a; a = a.parentElement) {
         const f = cs(a).filter;
