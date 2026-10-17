@@ -401,6 +401,7 @@ async function prepare(input: DeviceInput, light = false): Promise<Prepared> {
     title: input.title,
     chrome: input.chrome ?? "light",
     radius: input.radius,
+    ring: input.ring,
     // A full-screen Mac capture brings its own menu bar; anything else sits below a drawn one.
     menuBar: kind === "device" && resolved?.model.family === "mac" ? await macMenuBarFor(input, file, sidecar, light) : false,
     back: input.side === "back" && drawnFrames(),
@@ -1112,7 +1113,10 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   const shapes =
     plan.images.map((b, i) => imageBlockHtml(b, W, H, `image-${i + 1}`)).join("") + plan.shapes.map((sh, i) => shapeHtml(sh, W, H, input.shapes?.[i]?.z ?? 40, `shape-${i + 1}`)).join("");
   // A neighbour's device passes behind this screen's own, which are its subject.
-  let scene = `${bgGroup}${spilled.map((p) => p.html).join("\n")}${placed.map((p) => p.html).join("\n")}${shapes}`;
+  // Fixed devices (a recording's webcam) stay out of the camera's moves, in front of them.
+  const fixed = placed.filter((_, i) => input.devices[i]?.fixed);
+  const moving = placed.filter((_, i) => !input.devices[i]?.fixed);
+  let scene = `${bgGroup}${spilled.map((p) => p.html).join("\n")}${moving.map((p) => p.html).join("\n")}${shapes}`;
   if (grade.scope === "all") scene = `<div class="scene" style="${grade.filter ? `filter:${grade.filter};` : ""}">${scene}${grade.overlays}</div>`;
   // A close-up: scale the scene about the focus and bring it to the centre, never past an edge.
   if (input.camera && input.camera.zoom > 1) {
@@ -1123,6 +1127,7 @@ export async function buildScene(input: MockupInput, anim?: SceneAnimation, fram
   }
   // Video camera moves (push-in, zoom) scale this wrapper; captions stay put above it.
   if (anim) scene = `<div id="stage" class="scene">${scene}</div>`;
+  if (fixed.length) scene += `<div class="scene">${fixed.map((p) => p.html).join("\n")}</div>`;
 
   // A macOS menu bar across the top, its status item over the first device unless placed.
   let sceneMenuBar = "";

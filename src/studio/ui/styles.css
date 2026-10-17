@@ -106,6 +106,8 @@ svg { display: block; flex: none; }
 .activity span { overflow: hidden; text-overflow: ellipsis; }
 .progress-line { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; overflow: hidden; pointer-events: none; }
 .progress-line::after { content: ""; position: absolute; top: 0; bottom: 0; width: 35%; background: var(--ai); border-radius: 2px; animation: sweep 1.3s var(--ease) infinite; }
+/* An export that says how far along it is: the line fills as it goes. */
+.progress-line.known::after { left: 0; width: calc(var(--p) * 100%); animation: none; transition: width 0.45s ease; }
 @keyframes sweep { from { left: -35%; } to { left: 100%; } }
 
 /* ---------------------------------------------------------------- buttons */
@@ -862,6 +864,11 @@ body.dragging-shape, body.dragging-shape * { cursor: grabbing !important; }
 .orb { width: 64px; height: 64px; border-radius: 50%; background: var(--ai-conic); animation: spin 1.6s linear infinite; filter: blur(0.5px); -webkit-mask: radial-gradient(circle, transparent 55%, #000 57%); mask: radial-gradient(circle, transparent 55%, #000 57%); }
 @keyframes spin { to { --spin: 360deg; } }
 .rendering-overlay .label { margin-top: 14px; color: var(--text-2); font-weight: 550; text-align: center; }
+.render-progress { width: 280px; margin: 14px auto 0; }
+.render-progress .bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.render-progress .bar i { display: block; height: 100%; border-radius: 3px; background: var(--lime); transition: width 0.45s ease; }
+.render-progress .pct { margin-top: 8px; text-align: center; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.render-progress .pct b { color: var(--text); font-weight: 650; }
 
 /* ---------------------------------------------------------------- AI bar */
 
@@ -1338,8 +1345,12 @@ li.done .work-shot .scan { display: none; }
 .tl-clock b { color: var(--text); font-weight: 600; }
 .tl-len { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
 .tl-len > * { width: 84px; }
-.tl-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 172px 1fr; align-content: start; overflow-y: auto; }
-.tl-names { border-right: 1px solid var(--line); }
+.tl-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 172px max-content; align-content: start; overflow: auto; overscroll-behavior-x: contain; }
+/* Zoomed in, the tracks scroll sideways under the names, which stay put. */
+.tl-names { border-right: 1px solid var(--line); position: sticky; left: 0; z-index: 5; background: #141418; }
+.tl-names .tl-corner { z-index: 6; }
+.tl-zoom { display: flex; align-items: center; gap: 4px; }
+.tl-zoom .slider { width: 90px; }
 .tl-corner, .tl-ruler { height: 26px; position: sticky; top: 0; z-index: 3; background: #141418; border-bottom: 1px solid var(--line); }
 .tl-corner { display: flex; align-items: center; padding: 0 12px; font-size: 11px; color: var(--text-4); }
 .tl-name { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 12px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text-2); font-size: 12px; text-align: left; }
@@ -1352,12 +1363,12 @@ li.done .work-shot .scan { display: none; }
 .tl-name.sub { padding-left: 30px; font-size: 11.5px; color: var(--text-3); }
 .tl-name.sub svg { width: 12px; height: 12px; }
 /* Time runs across the tracks: 0 at the left edge, the video's length at the right. */
-.tl-tracks { position: relative; min-width: 0; margin: 0 16px 0 12px; }
+.tl-tracks { position: relative; margin: 0 16px 0 12px; }
 .tl-ruler { cursor: ew-resize; margin: 0 -16px 0 -12px; padding: 0 16px 0 12px; }
 .tl-tick { position: absolute; top: 0; height: 100%; margin-left: 12px; padding: 7px 0 0 5px; border-left: 1px solid var(--line-2); font: 500 10px var(--mono); color: var(--text-4); pointer-events: none; }
 .tl-row { position: relative; height: 32px; margin: 0 -16px 0 -12px; border-bottom: 1px solid var(--line); }
 .tl-row.on { background: rgba(139, 123, 255, 0.07); }
-.tl-bar { position: absolute; top: 5px; height: 22px; margin-left: 12px; padding: 0 8px; display: flex; align-items: center; border-radius: 7px; background: var(--lime); color: var(--lime-ink); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; cursor: grab; transition: box-shadow 120ms ease; }
+.tl-bar { position: absolute; top: 5px; height: 22px; margin-left: 12px; padding: 0 8px; box-sizing: border-box; display: flex; align-items: center; border-radius: 7px; background: var(--lime); color: var(--lime-ink); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; cursor: grab; transition: box-shadow 120ms ease; }
 .tl-bar:active { cursor: grabbing; }
 .tl-bar span { overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .tl-bar.change { background: var(--iris); color: #fff; }

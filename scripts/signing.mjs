@@ -37,8 +37,9 @@ export function entitlements() {
   const dir = mkdtempSync(path.join(tmpdir(), "screenshotter-sign-"));
   const app = path.join(dir, "app.entitlements");
   const node = path.join(dir, "node.entitlements");
-  // Capturing Mac windows asks other apps about their windows (Apple Events).
-  writeFileSync(app, plist(["com.apple.security.automation.apple-events"]));
+  // Capturing Mac windows asks other apps about their windows (Apple Events); the capture bar
+  // records the camera and microphone (the hardened runtime needs both declared).
+  writeFileSync(app, plist(["com.apple.security.automation.apple-events", "com.apple.security.device.camera", "com.apple.security.device.audio-input"]));
   writeFileSync(node, plist(["com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory", "com.apple.security.cs.disable-library-validation"]));
   return { app, node };
 }

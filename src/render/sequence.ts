@@ -205,23 +205,24 @@ async function composeTiles(files: string[], labels: string[], aspect: number, o
 const clock = (t: number) => `${Number(t.toFixed(2))} s`;
 
 /** Render a video of several shots, joined by transitions, and each version asked for. */
-export async function createSequence(input: SequenceInput): Promise<SequenceResult> {
-  const main = await renderSequence(input, {});
+export async function createSequence(input: SequenceInput, opts: { progress?: (f: number) => void } = {}): Promise<SequenceResult> {
+  const n = 1 + (input.versions?.length ?? 0);
+  const main = await renderSequence(input, { progress: opts.progress && ((f) => opts.progress!(f / n)) });
   if (!input.versions?.length) return main;
   const versions: NonNullable<SequenceResult["versions"]> = [];
-  for (const v of input.versions) {
+  for (const [k, v] of input.versions.entries()) {
     const spec = versionSpec(v, input.shots[0]?.layout);
     const format = spec.appStore ? "mp4" : main.path.split(".").pop()!;
     const out = main.path.replace(/\.[a-z0-9]+$/i, `.${spec.name}.${format}`);
     // Each shot keeps its own way in (fit for hand-placed designs, laid out again otherwise) unless the version says.
     const fit = (typeof v === "object" && v.fit) || input.fit;
-    const r = await renderSequence({ ...input, size: `${spec.width}x${spec.height}`, fit, deliveryWidth: undefined }, { output: out, appStore: spec.appStore, filmstrip: false });
+    const r = await renderSequence({ ...input, size: `${spec.width}x${spec.height}`, fit, deliveryWidth: undefined }, { output: out, appStore: spec.appStore, filmstrip: false, progress: opts.progress && ((f) => opts.progress!((k + 1 + f) / n)) });
     versions.push({ name: spec.name, label: spec.label, path: r.path, width: r.width, height: r.height, duration: r.duration, fit: fit ?? "fit", appStore: spec.appStore, warnings: r.warnings });
   }
   return { ...main, versions };
 }
 
-async function renderSequence(input: SequenceInput, o: { output?: string; appStore?: boolean; filmstrip?: boolean }): Promise<SequenceResult> {
+async function renderSequence(input: SequenceInput, o: { output?: string; appStore?: boolean; filmstrip?: boolean; progress?: (f: number) => void }): Promise<SequenceResult> {
   const size = await sizeOf(input);
   const appStore = o.appStore ?? size.appStore;
   const fps = appStore ? 30 : (input.fps ?? 30);
@@ -233,13 +234,24 @@ async function renderSequence(input: SequenceInput, o: { output?: string; appSto
     // Each shot at the video's size, two at a time.
     const plans = await Promise.all(input.shots.map((s) => shotPlan(s, size, input.fit, fps)));
     const rendered: Array<{ path: string; duration: number; warnings?: string[] }> = new Array(plans.length);
+    // The shots take most of the time; joining them, the rest.
+    const shares = plans.map(() => 0);
+    const report = () => o.progress?.((0.92 * shares.reduce((a, b) => a + b, 0)) / Math.max(1, shares.length));
     let next = 0;
     const worker = async () => {
       while (next < plans.length) {
         const i = next++;
         const p = plans[i];
         // An App Store preview is always its exact size.
-        const r = await renderVideo({ ...p.input, quality: appStore ? "final" : input.quality }, { shot: true, frame: p.frame, output: path.join(dir, `shot-${i}.mp4`) });
+        const r = await renderVideo({ ...p.input, quality: appStore ? "final" : input.quality }, {
+          shot: true,
+          frame: p.frame,
+          output: path.join(dir, `shot-${i}.mp4`),
+          progress: (f) => {
+            shares[i] = f;
+            report();
+          },
+        });
         rendered[i] = r;
       }
     };

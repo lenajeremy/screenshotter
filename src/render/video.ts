@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,10 +7,14 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { cacheDir, formatFor, outputPathFor } from "../util/files.js";
 import { newPage } from "./browser.js";
-import { BACKDROP, CALLOUT, animatedIds, backdropStyle, evaluate, evaluateBackdrop, evaluateCallouts, evaluateCamera, keyMoments, targetsOf, timelineEnd, uses3d, type AnimEntity } from "./animate.js";
+import { BACKDROP, CALLOUT, animatedIds, backdropStyle, cameraTransform, evaluate, evaluateBackdrop, evaluateCallouts, evaluateCamera, keyMoments, targetsOf, timelineEnd, uses3d, type AnimEntity } from "./animate.js";
+import { CURSOR_ART, cursorAt, readLog, trackOf } from "./cursor.js";
 import { buildScene, layoutScene, renderHtml, type MockupResult, type SceneEntity, type SceneFrame } from "./mockup.js";
 import { MockupInputShape, type MockupInput } from "./schema.js";
 import { renderShape } from "./shapes.js";
+
+/** The longest video: an hour, for a whole screen recording. */
+export const MAX_LENGTH = 3600;
 
 const timing = z.object({
   in: z.number().optional().describe("Seconds when it appears (fades in)."),
@@ -19,7 +23,11 @@ const timing = z.object({
 
 export const VideoOptionsSchema = z
   .object({
-    duration: z.number().min(0.5).max(60).optional().describe("Seconds. Default 6 (or the screen recording's length)."),
+    duration: z.number().min(0.5).max(MAX_LENGTH).optional().describe("Seconds. Default 6 (or the screen recording's length, up to a minute)."),
+    sound: z
+      .boolean()
+      .optional()
+      .describe("Keep the sound of the devices' recordings (a screen recording's voice-over and system sound), mixed into the video. Default false: silent. Not for GIFs."),
     fps: z.number().int().min(12).max(60).optional().describe("Default 30."),
     motion: z
       .enum(["none", "subtle", "float", "drift", "push-in"])
@@ -55,6 +63,12 @@ export const VideoOptionsSchema = z
         device: z.number().int().min(0).optional().describe("Which device's screen the cursor moves on (index). Default 0."),
         style: z.enum(["pointer", "touch"]).optional().describe("pointer: the macOS arrow (Mac apps, web pages). touch: a fingertip dot (iPhone, iPad, Watch). Default: pointer for MacBooks and browser/window frames, touch otherwise."),
         size: z.number().positive().max(4).optional().describe("Size multiplier. Default 1."),
+        log: z
+          .string()
+          .optional()
+          .describe("A cursor log the capture bar wrote beside a screen recording (cursor.json): the real path, clicks and cursors, instead of points."),
+        smooth: z.number().min(0).max(1).optional().describe("With a log: how much shake to take out of the path, 0 (none) to 1. Default 0.5."),
+        ripple: z.boolean().optional().describe("A ring where each click lands. Default true."),
         points: z
           .array(
             z.object({
@@ -67,10 +81,12 @@ export const VideoOptionsSchema = z
           )
           .min(1)
           .max(300)
-          .describe("Where the cursor is over time; it glides between points. record_web returns these for the flow it recorded."),
+          .optional()
+          .describe("Where the cursor is over time; it glides between points. record_web returns these for the flow it recorded. Not needed with a log."),
       })
       .optional()
-      .describe("Draw a cursor moving over a device's screen, clicking and dragging where you say. It moves with the device (tilt, motion, zooms)."),
+      .describe("Draw a cursor moving over a device's screen, clicking and dragging where you say (or as a recording's log has it). It moves with the device (tilt, motion, zooms)."),
+    follow: z.boolean().optional().describe("With a cursor log: while the camera is zoomed in, it glides after the cursor."),
     highlight: timing.optional().describe("When highlights appear. Default: at 25% of the duration."),
     caption: timing.optional().describe("When the caption shows. Default: from the start."),
     fade: z.number().optional().describe("Fade length in seconds. Default 0.4."),
@@ -219,7 +235,7 @@ export function animEntities(entities: SceneEntity[] = []): AnimEntity[] {
   return entities.map((e) => ({ id: e.id, kind: e.kind, x: e.x, y: e.y, width: e.width, height: e.height, anchor: e.anchor, align: e.align, size: e.size, color: e.color, shape: e.shape, text: e.text, subtext: e.subtext, blur: e.blur }));
 }
 
-function animFrame(animations: MockupInput["animations"], entities: AnimEntity[], t: number, W: number, H: number, backdrop = { width: W, height: H }): AnimFrame {
+function animFrame(animations: MockupInput["animations"], entities: AnimEntity[], t: number, W: number, H: number, backdrop = { width: W, height: H }, follow?: (t: number) => { x: number; y: number } | undefined): AnimFrame {
   const frame: AnimFrame = { els: [], shapes: [], callouts: [] };
   for (const [id, st] of evaluate(animations, entities, t, W, H)) {
     if (st.shape) {
@@ -234,7 +250,7 @@ function animFrame(animations: MockupInput["animations"], entities: AnimEntity[]
     const m = CALLOUT.exec(id)!;
     frame.callouts.push({ device: `device-${m[1]}`, index: Number(m[2]) - 1, v });
   }
-  const cam = evaluateCamera(animations, t);
+  const cam = evaluateCamera(animations, t, follow);
   if (cam) frame.camera = { s: cam.zoom, x: cam.x, y: cam.y };
   const bd = evaluateBackdrop(animations, t, W);
   if (bd) frame.backdrop = backdropStyle(bd, backdrop.width, backdrop.height);
@@ -250,7 +266,14 @@ function installTimeline(cfg: {
   motion: string;
   amount: number;
   keys: CameraKey[];
-  cursor?: { device: number; style: "pointer" | "touch"; size: number; points: Array<{ t: number; x: number; y: number; click?: boolean; drag?: boolean }> };
+  cursor?: {
+    device: number;
+    style: "pointer" | "touch";
+    size: number;
+    points: Array<{ t: number; x: number; y: number; click?: boolean; drag?: boolean }>;
+    /** A recording's own cursor: its path every `step` seconds, clicks, which cursor when, and how they're drawn. */
+    track?: { step: number; xs: number[]; ys: number[]; clicks: Array<[number, number, number]>; kinds: Array<[number, string]>; ripple: boolean; art: typeof CURSOR_ART };
+  };
   highlight?: { in?: number; out?: number };
   caption?: { in?: number; out?: number };
   fade: number;
@@ -397,40 +420,89 @@ function installTimeline(cfg: {
       ripple = document.createElement("div");
       ripple.style.cssText = `position:absolute;left:0;top:0;width:${size * (pointer ? 2.2 : 1.4)}px;height:${size * (pointer ? 2.2 : 1.4)}px;border-radius:50%;border:${Math.max(1, size * (pointer ? 0.1 : 0.05))}px solid rgba(255,255,255,.95);box-shadow:0 0 ${size * 0.2}px rgba(0,0,0,.25);pointer-events:none;z-index:4;opacity:0`;
       host.append(ripple, cursorEl);
-      const pts = [...c.points].sort((a, b) => a.t - b.t);
-      const clicks = pts.filter((p) => p.click).map((p) => p.t);
-      const at = (t: number) => {
-        if (t <= pts[0].t) return { x: pts[0].x, y: pts[0].y, down: false };
-        for (let k = 0; k < pts.length - 1; k++) {
-          const a = pts[k];
-          const b = pts[k + 1];
-          if (t <= b.t) {
-            const p = b.t > a.t ? (t - a.t) / (b.t - a.t) : 1;
-            const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-            return { x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, down: Boolean(a.drag) };
+      if (c.track) {
+        // A recording's own cursor: its path, the cursor macOS showed, a dip and a ring on each click.
+        const tr = c.track;
+        let shown = "";
+        const draw = (kind: string) => {
+          const art = tr.art[kind] ?? tr.art.arrow;
+          const sc = size / art.box[1];
+          cursorEl!.innerHTML = `<svg viewBox="0 0 ${art.box[0]} ${art.box[1]}" width="${art.box[0] * sc}" height="${size}" style="display:block;overflow:visible;margin:${-art.hot[1] * sc}px 0 0 ${-art.hot[0] * sc}px;filter:drop-shadow(0 ${size * 0.04}px ${size * 0.08}px rgba(0,0,0,.35))">${art.svg}</svg>`;
+          shown = kind;
+        };
+        moveCursor = (t: number) => {
+          const n = tr.xs.length;
+          if (!n) return;
+          const f = Math.max(0, t / tr.step);
+          const i = Math.min(n - 1, Math.floor(f));
+          const j = Math.min(n - 1, i + 1);
+          const px = tr.xs[i] + (tr.xs[j] - tr.xs[i]) * (f - i);
+          const py = tr.ys[i] + (tr.ys[j] - tr.ys[i]) * (f - i);
+          let kind = "arrow";
+          for (const [at, k] of tr.kinds) {
+            if (at > t) break;
+            kind = k;
           }
-        }
-        const last = pts[pts.length - 1];
-        return { x: last.x, y: last.y, down: false };
-      };
-      moveCursor = (t: number) => {
-        const p = at(t);
-        const x = shot.offsetLeft + p.x * shot.offsetWidth;
-        const y = shot.offsetTop + p.y * shot.offsetHeight;
-        // A press dips the cursor; each click sends out a ring.
-        const near = clicks.map((c) => t - c).filter((d) => d >= -0.08 && d <= 0.45);
-        const since = near.length ? Math.max(...near) : undefined;
-        const press = p.down || (since !== undefined && since < 0.14) ? (pointer ? 0.86 : 0.84) : 1;
-        cursorEl!.style.transform = `translate(${x}px, ${y}px) scale(${press})`;
-        cursorEl!.style.transformOrigin = "0 0";
-        if (!pointer) (cursorEl!.firstElementChild as HTMLElement).style.background = p.down || press < 1 ? "rgba(255,255,255,.8)" : "rgba(255,255,255,.55)";
-        const rs = ripple!.offsetWidth;
-        if (since !== undefined && since >= 0) {
-          const k = since / 0.45;
-          ripple!.style.opacity = String(Math.max(0, 1 - k));
-          ripple!.style.transform = `translate(${x - rs / 2}px, ${y - rs / 2}px) scale(${0.45 + k * 0.9})`;
-        } else ripple!.style.opacity = "0";
-      };
+          if (kind !== shown) draw(kind);
+          const x = shot.offsetLeft + px * shot.offsetWidth;
+          const y = shot.offsetTop + py * shot.offsetHeight;
+          const inside = px >= -0.01 && px <= 1.01 && py >= -0.01 && py <= 1.01;
+          let since: number | undefined;
+          let at: [number, number, number] | undefined;
+          for (const c of tr.clicks) {
+            if (c[0] > t + 0.06) break;
+            at = c;
+          }
+          if (at && t - at[0] <= 0.5) since = t - at[0];
+          const press = since !== undefined && since < 0.14 ? 0.86 : 1;
+          cursorEl!.style.opacity = inside ? "1" : "0";
+          cursorEl!.style.transformOrigin = "0 0";
+          cursorEl!.style.transform = `translate(${x}px, ${y}px) scale(${press})`;
+          const rs = ripple!.offsetWidth;
+          if (tr.ripple && at && since !== undefined && since >= 0) {
+            const k = since / 0.5;
+            const rx = shot.offsetLeft + at[1] * shot.offsetWidth;
+            const ry = shot.offsetTop + at[2] * shot.offsetHeight;
+            ripple!.style.opacity = String(Math.max(0, 1 - k));
+            ripple!.style.transform = `translate(${rx - rs / 2}px, ${ry - rs / 2}px) scale(${0.45 + k * 0.9})`;
+          } else ripple!.style.opacity = "0";
+        };
+      } else {
+        const pts = [...c.points].sort((a, b) => a.t - b.t);
+        const clicks = pts.filter((p) => p.click).map((p) => p.t);
+        const at = (t: number) => {
+          if (t <= pts[0].t) return { x: pts[0].x, y: pts[0].y, down: false };
+          for (let k = 0; k < pts.length - 1; k++) {
+            const a = pts[k];
+            const b = pts[k + 1];
+            if (t <= b.t) {
+              const p = b.t > a.t ? (t - a.t) / (b.t - a.t) : 1;
+              const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+              return { x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, down: Boolean(a.drag) };
+            }
+          }
+          const last = pts[pts.length - 1];
+          return { x: last.x, y: last.y, down: false };
+        };
+        moveCursor = (t: number) => {
+          const p = at(t);
+          const x = shot.offsetLeft + p.x * shot.offsetWidth;
+          const y = shot.offsetTop + p.y * shot.offsetHeight;
+          // A press dips the cursor; each click sends out a ring.
+          const near = clicks.map((c) => t - c).filter((d) => d >= -0.08 && d <= 0.45);
+          const since = near.length ? Math.max(...near) : undefined;
+          const press = p.down || (since !== undefined && since < 0.14) ? (pointer ? 0.86 : 0.84) : 1;
+          cursorEl!.style.transform = `translate(${x}px, ${y}px) scale(${press})`;
+          cursorEl!.style.transformOrigin = "0 0";
+          if (!pointer) (cursorEl!.firstElementChild as HTMLElement).style.background = p.down || press < 1 ? "rgba(255,255,255,.8)" : "rgba(255,255,255,.55)";
+          const rs = ripple!.offsetWidth;
+          if (since !== undefined && since >= 0) {
+            const k = since / 0.45;
+            ripple!.style.opacity = String(Math.max(0, 1 - k));
+            ripple!.style.transform = `translate(${x - rs / 2}px, ${y - rs / 2}px) scale(${0.45 + k * 0.9})`;
+          } else ripple!.style.opacity = "0";
+        };
+      }
     }
   }
 
@@ -563,6 +635,9 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
   };
   let duration = opts.duration ?? 6;
   let natural = duration;
+  // A recording's camera gliding after its cursor (`follow`), and its cursor (for the fast export).
+  let follow: ((t: number) => { x: number; y: number } | undefined) | undefined;
+  let cursorTrack: NonNullable<Parameters<typeof installTimeline>[0]["cursor"]>["track"];
   try {
     await page.setViewport({ width: Math.round(view.width), height: Math.round(view.height), deviceScaleFactor: scale });
     await page.goto(pathToFileURL(htmlFile).href, { waitUntil: "load", timeout: 90_000 });
@@ -576,6 +651,8 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
       return Math.max(0, ...vids.map((v) => v.duration || 0));
     });
     if (!opts.duration && videoLength > 1) duration = Math.min(60, videoLength);
+    // Kept to the length asked for, up to the longest a video can be.
+    duration = Math.min(MAX_LENGTH, duration);
     // Long enough for every animation to finish, with a moment to take it in.
     if (!opts.duration && animations.length) duration = Math.min(60, Math.max(duration, timelineEnd(animations, ents) + 1.2));
     // A length it must keep to (an App Store preview's 15 to 30 s, a shot's own length).
@@ -598,6 +675,30 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
     const cursorDevice = opts.cursor?.device ?? 0;
     const cursorFrame = scene.result.entities?.find((e) => e.kind === "device" && e.index === cursorDevice);
     const pointerDefault = cursorFrame?.frame === "browser" || cursorFrame?.frame === "window" || /MacBook|iMac/i.test(cursorFrame?.device ?? "");
+    // A recording's own cursor, from the log the capture bar kept beside it.
+    let track: NonNullable<Parameters<typeof installTimeline>[0]["cursor"]>["track"];
+    if (opts.cursor?.log) {
+      try {
+        const log = readLog(JSON.parse(readFileSync(opts.cursor.log, "utf8")));
+        const t = trackOf(log, opts.cursor.smooth ?? 0.5);
+        const r4 = (v: number) => Math.round(v * 10000) / 10000;
+        track = { step: t.step, xs: t.xs.map(r4), ys: t.ys.map(r4), clicks: t.clicks, kinds: t.kinds, ripple: opts.cursor.ripple ?? true, art: CURSOR_ART };
+        cursorTrack = track;
+        // The camera follows a calmer path than the cursor's own.
+        if (opts.follow && cursorFrame) {
+          const calm = trackOf(log, 1);
+          const w = cursorFrame.width ?? 1;
+          const h = cursorFrame.height ?? 1;
+          const box = { x: cursorFrame.x - w / 2, y: cursorFrame.y - h / 2, w, h };
+          follow = (t: number) => {
+            const p = cursorAt(calm, t);
+            return p && { x: box.x + p.x * box.w, y: box.y + p.y * box.h };
+          };
+        }
+      } catch (e) {
+        (scene.result.warnings ??= []).push(`The cursor log couldn't be read (${(e as Error).message}); the video has no cursor.`);
+      }
+    }
 
     await page.evaluate(installTimeline, {
       animated: [...animatedIds(animations)],
@@ -607,7 +708,10 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
       motion,
       amount: opts.motionAmount ?? 1,
       keys: cameraKeys(zooms),
-      cursor: opts.cursor ? { device: cursorDevice, style: opts.cursor.style ?? (pointerDefault ? "pointer" : "touch"), size: opts.cursor.size ?? 1, points: opts.cursor.points } : undefined,
+      cursor:
+        opts.cursor && (opts.cursor.points?.length || track)
+          ? { device: cursorDevice, style: track ? "pointer" : (opts.cursor.style ?? (pointerDefault ? "pointer" : "touch")), size: opts.cursor.size ?? 1, points: opts.cursor.points ?? [], track }
+          : undefined,
       highlight: opts.highlight ?? (hasHighlights ? { in: duration * 0.25 } : undefined),
       caption: opts.caption,
       fade: opts.fade ?? 0.4,
@@ -619,10 +723,10 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
     throw e;
   }
   /** Show the scene as it is at `t` seconds. */
-  const setTime = (t: number) => page.evaluate((t, f) => (window as any).__setTime(t, f), t, animFrame(animations, ents, t, W, H, backdrop));
+  const setTime = (t: number) => page.evaluate((t, f) => (window as any).__setTime(t, f), t, animFrame(animations, ents, t, W, H, backdrop, follow));
   // What to photograph: the whole page.
   const clip = { x: 0, y: 0, width: Math.round(view.width), height: Math.round(view.height) };
-  return { page, dir, scene, ents, animations, W, H, view, clip, duration, natural, setTime, close };
+  return { page, dir, scene, ents, animations, W, H, view, clip, duration, natural, setTime, close, backdrop, follow, cursorTrack, scale };
 }
 
 /** A moment's label: as precise as it was asked for (1 s, 1.5 s, 1.25 s, 1.125 s). */
@@ -686,7 +790,12 @@ export async function storyboard(input: VideoInput, o: { max?: number; output?: 
   }
 }
 
+/** How far along an export is, 0 to 1. */
+export type Progress = (fraction: number) => void;
+
 export interface RenderOptions {
+  /** Told how far along it is as frames are drawn. */
+  progress?: Progress;
   /** A frame of another shape (a preset's size) to show the design in. */
   frame?: SceneFrame;
   /** Follow Apple's app preview rules: 15 to 30 s, 30 fps, H.264, a silent stereo track. */
@@ -700,11 +809,13 @@ export interface RenderOptions {
 }
 
 /** Render an animated mockup to a video file, or to each size asked for in `versions` as well. */
-export async function createVideo(input: VideoInput): Promise<VideoResult> {
-  const main = await renderVideo(input);
+export async function createVideo(input: VideoInput, opts: { progress?: Progress } = {}): Promise<VideoResult> {
+  // Each size an equal share of the progress.
+  const n = 1 + (input.versions?.length ?? 0);
+  const main = await renderVideo(input, { progress: opts.progress && ((f) => opts.progress!(f / n)) });
   if (!input.versions?.length) return main;
   const versions: NonNullable<VideoResult["versions"]> = [];
-  for (const v of input.versions) {
+  for (const [k, v] of input.versions.entries()) {
     const spec = versionSpec(v, input.layout);
     const format = spec.appStore ? "mp4" : main.path.split(".").pop()!;
     const out = main.path.replace(/\.[a-z0-9]+$/i, `.${spec.name}.${format}`);
@@ -713,6 +824,7 @@ export async function createVideo(input: VideoInput): Promise<VideoResult> {
       appStore: spec.appStore,
       length: spec.appStore ? [15, 30] : undefined,
       output: out,
+      progress: opts.progress && ((f) => opts.progress!((k + 1 + f) / n)),
     });
     versions.push({ name: spec.name, label: spec.label, path: r.path, poster: r.poster, width: r.width, height: r.height, duration: r.duration, fit: spec.fit, appStore: spec.appStore, warnings: r.warnings });
   }
@@ -728,13 +840,297 @@ export function versionSpec(v: Version, layout?: string): { name: string; label:
   return { name: preset ? size : `${w}x${h}`, label: preset?.label ?? `${w} × ${h}`, width: w, height: h, fit, appStore: preset?.appStore ?? false };
 }
 
+/** Whether a file has a sound track (ffmpeg lists its streams when asked about it). */
+async function hasSound(file: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const p = spawn("ffmpeg", ["-hide_banner", "-i", file], { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    p.stderr.on("data", (d) => (err += d));
+    p.on("error", () => resolve(false));
+    p.on("exit", () => resolve(/Stream #\d+:\d+[^\n]*: Audio:/.test(err)));
+  });
+}
+
+/**
+ * The recordings' sound under the finished frames: every device video with a sound track, mixed,
+ * from the start, cut to the video's length. The picture is copied as it is.
+ */
+async function addSound(out: string, format: string, videos: string[], duration: number, warnings: string[]): Promise<void> {
+  const files = [...new Set(videos.map((v) => v.replace(/^file:\/\//, "")))];
+  const voiced: string[] = [];
+  for (const f of files) if (await hasSound(f)) voiced.push(f);
+  if (!voiced.length) return;
+  const tmp = out.replace(/(\.[a-z0-9]+)$/i, ".sound$1");
+  const codec = format === "webm" ? ["-c:a", "libopus", "-b:a", "160k"] : ["-c:a", "aac", "-b:a", "192k"];
+  const mix = voiced.length > 1 ? ["-filter_complex", `${voiced.map((_, i) => `[${i + 1}:a]`).join("")}amix=inputs=${voiced.length}:normalize=0[a]`, "-map", "0:v", "-map", "[a]"] : ["-map", "0:v", "-map", "1:a:0"];
+  const args = ["-y", "-loglevel", "error", "-i", out, ...voiced.flatMap((f) => ["-i", f]), ...mix, "-c:v", "copy", ...codec, "-t", duration.toFixed(3), ...(format === "mp4" ? ["-movflags", "+faststart"] : []), tmp];
+  const err = await new Promise<string | null>((resolve) => {
+    const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    let e = "";
+    p.stderr.on("data", (d) => (e += d));
+    p.on("error", (x) => resolve(x.message));
+    p.on("exit", (c) => resolve(c === 0 ? null : e.trim().split("\n").slice(-2).join(" ") || `exit ${c}`));
+  });
+  if (err) {
+    rmSync(tmp, { force: true });
+    warnings.push(`The sound couldn't be added (${err}); the video is silent.`);
+    return;
+  }
+  const { renameSync } = await import("node:fs");
+  renameSync(tmp, out);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The fast export: a screen recording's video drawn by the Mac app on the GPU
+
+type Stage = Awaited<ReturnType<typeof openStage>>;
+
+/** The devices the app draws itself (by index): each plays a recording in a plain or rounded frame. */
+interface NativePlan {
+  devices: number[];
+}
+
+/**
+ * Whether the Mac app (SCREENSHOTTER_NATIVE, set when it runs the engine) can draw this video
+ * itself: recordings in plain or rounded frames (a webcam too), with their camera moves, fades and
+ * cursor, over a backdrop that stays still, everything else drawn once per look. Anything else
+ * (devices' hardware, 3D, ambient motion, film effects, a moving backdrop) keeps the usual export.
+ */
+function nativePlan(input: VideoInput, format: string, o: RenderOptions): NativePlan | undefined {
+  const app = process.env.SCREENSHOTTER_NATIVE;
+  if (!app || !existsSync(app) || process.env.SCREENSHOTTER_NO_NATIVE) return undefined;
+  const opts = input.video ?? {};
+  if (o.shot || o.appStore || o.frame || format !== "mp4" || input.deliveryWidth || input.camera) return undefined;
+  if ((opts.motion ?? "subtle") !== "none" || opts.zoom || opts.zooms?.length) return undefined;
+  if (opts.cursor && !opts.cursor.log) return undefined;
+  if (input.effects && Object.values(input.effects).some((v) => v !== undefined && v !== false)) return undefined;
+  const anims = input.animations ?? [];
+  if (anims.some((a) => targetsOf(a).includes(BACKDROP))) return undefined;
+  const devices: number[] = [];
+  for (const [i, d] of input.devices.entries()) {
+    if (!d.video) continue;
+    const plain = (d.frame === "none" || d.frame === "card") && !d.rotate && !d.rotateX && !d.rotateY && !d.blur && !d.fade && !d.highlights?.length && !d.clay && !d.crop;
+    // A recording the app can't draw: the whole video takes the usual way.
+    if (!plain || anims.some((a) => a.path && targetsOf(a).includes(`device-${i + 1}`))) return undefined;
+    devices.push(i);
+  }
+  if (!devices.length) return undefined;
+  if (opts.cursor && !devices.includes(opts.cursor.device ?? 0)) return undefined;
+  return { devices };
+}
+
+/** A device's shadow, roughly as the page draws it: blur, drop and darkness, as shares of its shorter side. */
+const NATIVE_SHADOWS: Record<string, [number, number, number]> = { soft: [0.05, 0.02, 0.26], medium: [0.07, 0.03, 0.36], strong: [0.1, 0.045, 0.5], studio: [0.12, 0.05, 0.42] };
+
+/**
+ * The app draws the video: the backdrop drawn once, the rest of the design (text, stickers,
+ * shapes) once for each look it has, the cursor's pictures, and every frame's camera and layer
+ * moves worked out here, exactly as the Studio previews them. Then the sound goes in.
+ */
+async function renderNative(input: VideoInput, stage: Stage, plan: NativePlan, out: string, fps: number, warnings: string[], progress?: Progress): Promise<VideoResult> {
+  const opts = input.video ?? {};
+  const { page, dir, scene, ents, animations, clip, duration, W, H, scale } = stage;
+  const OW = Math.round((clip.width * scale) / 2) * 2;
+  const OH = Math.round((clip.height * scale) / 2) * 2;
+  const k = OW / W;
+  const total = Math.max(1, Math.round(duration * fps));
+  const ids = new Set(plan.devices.map((i) => `device-${i + 1}`));
+  const frameAt = (t: number) => animFrame(animations, ents, t, W, H, stage.backdrop, stage.follow);
+
+  // What the app draws, hidden from the page (and its videos no longer sought frame by frame).
+  const hide = [...ids].map((id) => `[data-ent="${id}"]`).join(",");
+  await page.addStyleTag({
+    content: `${hide}{visibility:hidden!important} .nx-under #canvas *{visibility:hidden!important} .nx-under .bg-group,.nx-under .bg-group *{visibility:visible!important} .nx-over .bg-group{visibility:hidden!important}`,
+  });
+  await page.evaluate((sel: string) => document.querySelectorAll<HTMLVideoElement>(sel.split(",").map((s) => `${s} video`).join(",")).forEach((v) => {
+    v.removeAttribute("src");
+    v.load();
+  }), hide);
+  const shoot = async (t: number, frame: AnimFrame, file: string, transparent: boolean) => {
+    await page.evaluate((t, f) => (window as any).__setTime(t, f), t, { ...frame, camera: undefined });
+    await page.screenshot({ path: file as `${string}.png`, type: "png", clip, omitBackground: transparent });
+  };
+
+  // The backdrop, once.
+  const under = path.join(dir, "under.png");
+  await page.evaluate(() => document.body.classList.add("nx-under"));
+  await shoot(0, frameAt(0), under, false);
+  await page.evaluate(() => document.body.classList.remove("nx-under"));
+
+  // The rest of the design, once for each look it has (none: no layer).
+  const others = (scene.result.entities ?? []).filter((e) => !ids.has(e.id));
+  const layers: Array<Record<string, unknown>> = [{ type: "image", file: under, camera: true }];
+  const camera: number[][] = [];
+  const states = new Map<string, number[][]>([...ids].map((id) => [id, []]));
+  const looks = new Map<string, number>();
+  const firstAt: number[] = [];
+  const index: number[] = [];
+  for (let i = 0; i < total; i++) {
+    const t = i / fps;
+    const f = frameAt(t);
+    const cam = f.camera && f.camera.s > 1.0005 ? cameraTransform({ zoom: f.camera.s, x: f.camera.x, y: f.camera.y }, W, H) : null;
+    camera.push(cam ? [cam.zoom, cam.fx * k, cam.fy * k, cam.tx * k, cam.ty * k] : [1, 0, 0, 0, 0]);
+    for (const id of ids) {
+      const el = f.els.find((e) => e.id === id);
+      if (el && ((el.blur ?? 0) > 0.01 || el.rx || el.ry)) throw new Error(`${id}'s animation blurs or tilts it`);
+      states.get(id)!.push(el ? [el.o ?? 1, (el.dx ?? 0) * k, (el.dy ?? 0) * k, el.sx ?? 1, el.sy ?? 1, el.r ?? 0] : [1, 0, 0, 1, 1, 0]);
+    }
+    if (others.length || input.menuBar) {
+      const key = JSON.stringify([f.els.filter((e) => !ids.has(e.id)), f.callouts, f.backdrop]);
+      if (!looks.has(key)) {
+        looks.set(key, looks.size);
+        firstAt.push(t);
+      }
+      index.push(looks.get(key)!);
+    }
+  }
+  if (looks.size) {
+    await page.evaluate(() => document.body.classList.add("nx-over"));
+    const files: string[] = [];
+    for (const [key, n] of looks) {
+      const file = path.join(dir, `over-${n}.png`);
+      await shoot(firstAt[n], frameAt(firstAt[n]), file, true);
+      files[n] = file;
+      void key;
+    }
+    layers.push({ type: "frames", files, index, camera: true });
+  }
+
+  // Each recording: where it sits, its corners, ring and shadow, its moves, and the cursor over it.
+  for (const i of plan.devices) {
+    const d = input.devices[i];
+    const id = `device-${i + 1}`;
+    const e = scene.result.entities?.find((x) => x.id === id);
+    if (!e) continue;
+    const w = (e.width ?? 0) * W * k;
+    const h = (e.height ?? 0) * H * k;
+    const rect = [(e.x - (e.width ?? 0) / 2) * W * k, (e.y - (e.height ?? 0) / 2) * H * k, w, h];
+    const short = Math.min(w, h);
+    const radius = d.radius !== undefined ? (d.radius <= 0.5 ? d.radius * short : d.radius * k) : d.frame === "card" ? short * 0.035 : 0;
+    const ring = d.ring ? { width: (typeof d.ring === "object" ? d.ring.width : undefined) ?? 0.018, color: (typeof d.ring === "object" ? d.ring.color : undefined) ?? "#ffffff" } : undefined;
+    const sh = d.shadow === "none" ? undefined : NATIVE_SHADOWS[typeof d.shadow === "string" ? d.shadow : "medium"] ?? NATIVE_SHADOWS.medium;
+    const layer: Record<string, unknown> = {
+      type: "video",
+      file: d.video,
+      rect,
+      radius,
+      ring: ring && { width: Math.max(1, ring.width * short), color: ring.color },
+      shadow: sh && { blur: sh[0] * short, dy: sh[1] * short, opacity: sh[2] },
+      camera: !d.fixed,
+      states: states.get(id),
+    };
+    const c = stage.cursorTrack;
+    if (c && (opts.cursor?.device ?? 0) === i) {
+      // The cursor's pictures, at the size it's drawn.
+      const size = w * 0.016 * (opts.cursor?.size ?? 1);
+      const pad = Math.ceil(size * 0.3);
+      const art = await newPage();
+      const images: Record<string, { file: string; hot: number[] }> = {};
+      try {
+        for (const [kind, a] of Object.entries(c.art)) {
+          const sc = size / a.box[1];
+          const pw = Math.ceil(a.box[0] * sc + pad * 2);
+          const ph = Math.ceil(size + pad * 2);
+          await art.setViewport({ width: pw, height: ph, deviceScaleFactor: 1 });
+          await art.setContent(`<html><body style="margin:0;background:transparent"><svg viewBox="0 0 ${a.box[0]} ${a.box[1]}" width="${a.box[0] * sc}" height="${size}" style="position:absolute;left:${pad}px;top:${pad}px;overflow:visible;filter:drop-shadow(0 ${size * 0.04}px ${size * 0.08}px rgba(0,0,0,.35))">${a.svg}</svg></body></html>`);
+          const file = path.join(dir, `cursor-${kind}.png`);
+          await art.screenshot({ path: file as `${string}.png`, type: "png", omitBackground: true, clip: { x: 0, y: 0, width: pw, height: ph } });
+          images[kind] = { file, hot: [pad + a.hot[0] * sc, pad + a.hot[1] * sc] };
+        }
+        let ripple: { file: string } | undefined;
+        if (c.ripple) {
+          const D = size * 2.2;
+          const rp = Math.ceil(size * 0.4);
+          const side = Math.ceil(D + rp * 2);
+          await art.setViewport({ width: side, height: side, deviceScaleFactor: 1 });
+          await art.setContent(`<html><body style="margin:0;background:transparent"><div style="position:absolute;left:${rp}px;top:${rp}px;width:${D}px;height:${D}px;box-sizing:border-box;border-radius:50%;border:${Math.max(1, size * 0.1)}px solid rgba(255,255,255,.95);box-shadow:0 0 ${size * 0.2}px rgba(0,0,0,.25)"></div></body></html>`);
+          const file = path.join(dir, "ripple.png");
+          await art.screenshot({ path: file as `${string}.png`, type: "png", omitBackground: true, clip: { x: 0, y: 0, width: side, height: side } });
+          ripple = { file };
+        }
+        layer.cursor = { step: c.step, xs: c.xs, ys: c.ys, kinds: c.kinds.map(([t, kind]) => ({ t, kind })), clicks: c.clicks, images, ripple };
+      } finally {
+        await art.close().catch(() => undefined);
+      }
+    }
+    layers.push(layer);
+  }
+  // Fixed layers (a webcam) go over what the camera moves, as the page has them.
+  layers.sort((a, b) => Number(a.camera === false) - Number(b.camera === false));
+
+  const specFile = path.join(dir, "native.json");
+  writeFileSync(specFile, JSON.stringify({ output: out, width: OW, height: OH, fps, frames: total, camera, layers }));
+  await new Promise<void>((resolve, reject) => {
+    const p = spawn(process.env.SCREENSHOTTER_NATIVE!, ["--render-recording", specFile], { stdio: ["ignore", "pipe", "pipe"] });
+    let err = "";
+    let last = Date.now();
+    p.stdout.on("data", (d) => {
+      last = Date.now();
+      const m = /progress (\d+)\/(\d+)\s*$/.exec(String(d).trim());
+      if (m) progress?.(Number(m[1]) / Math.max(1, Number(m[2])));
+    });
+    p.stderr.on("data", (d) => (err += d));
+    // macOS's video encoder can get stuck: give up when nothing moves for a minute.
+    const watch = setInterval(() => {
+      if (Date.now() - last > 60_000) {
+        p.kill("SIGKILL");
+        reject(new Error("the video encoder stopped responding"));
+      }
+    }, 2000);
+    p.on("error", (e) => (clearInterval(watch), reject(e)));
+    p.on("exit", (code) => {
+      clearInterval(watch);
+      if (code === 0) resolve();
+      else reject(new Error(err.trim().split("\n").slice(-2).join(" ") || `the renderer stopped (${code})`));
+    });
+  });
+  if (opts.sound) await addSound(out, "mp4", input.devices.map((d) => d.video).filter((v): v is string => Boolean(v)), duration, warnings);
+
+  // Poster and filmstrip from the finished video.
+  const still = (t: number, file: string) =>
+    new Promise<void>((resolve, reject) => {
+      const p = spawn("ffmpeg", ["-y", "-loglevel", "error", "-ss", Math.max(0, Math.min(duration - 0.05, t)).toFixed(3), "-i", out, "-frames:v", "1", "-q:v", "3", file], { stdio: ["ignore", "ignore", "pipe"] });
+      p.on("error", reject);
+      p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg couldn't take a still (${c})`))));
+    });
+  const poster = out.replace(/\.[a-z0-9]+$/i, ".poster.jpg");
+  await still(animations.length ? Math.min(duration, timelineEnd(animations, ents)) : duration * 0.5, poster);
+  const times = animations.length ? keyMoments(animations, ents, duration) : [0.1, 0.3, 0.5, 0.7, 0.9].map((p) => p * duration);
+  const strip: string[] = [];
+  for (const [n, t] of times.entries()) {
+    const f = path.join(dir, `strip-${n}.jpg`);
+    await still(t, f);
+    strip.push(f);
+  }
+  const filmstrip = out.replace(/\.[a-z0-9]+$/i, ".filmstrip.jpg");
+  await composeSheet(strip, times.map(clock), W / H, filmstrip, animations.length > 0);
+  writeFileSync(`${out}.mockup.json`, JSON.stringify({ ...input, output: out }, null, 2));
+  return { path: out, poster, filmstrip, width: OW, height: OH, duration, fps, frames: total, ...scene.result, warnings };
+}
+
 /** Render one video: the design at its own size, or in a frame, as a delivery file or a sequence's shot. */
 export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Promise<VideoResult> {
   const opts = input.video ?? {};
   const format = o.shot || o.appStore ? "mp4" : formatFor(input.format, o.output ?? input.output, ["mp4", "mov", "webm", "gif"] as const, "mp4", { m4v: "mp4" });
   const fps = o.appStore ? 30 : (opts.fps ?? 30);
   const preview = input.quality === "preview" && !o.appStore;
-  const stage = await openStage(input, preview ? 0.5 : 1, { frame: o.frame, length: o.length });
+  let stage = await openStage(input, preview ? 0.5 : 1, { frame: o.frame, length: o.length });
+  const plan = nativePlan(input, format, o);
+  if (plan) {
+    const out = o.output ?? outputPathFor(input.output, "videos", `video-${stage.scene.layout}`, format);
+    const warnings = [...(stage.scene.result.warnings ?? [])];
+    try {
+      const done = await renderNative(input, stage, plan, out, fps, warnings, o.progress);
+      await stage.close();
+      return done;
+    } catch (e) {
+      // The usual export instead, on a fresh page.
+      rmSync(out, { force: true });
+      await stage.close();
+      stage = await openStage(input, preview ? 0.5 : 1, { frame: o.frame, length: o.length });
+      (stage.scene.result.warnings ??= []).push(`The fast export didn't work (${(e as Error).message}), so this one took the usual way.`);
+    }
+  }
   const { page, dir, scene, ents, animations, clip, duration } = stage;
   const out = o.output ?? outputPathFor(input.output, "videos", `video-${scene.layout}`, format);
   const warnings = [...(scene.result.warnings ?? [])];
@@ -796,11 +1192,13 @@ export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Pro
           });
         }
         frames++;
+        o.progress?.(frames / total);
       }
       ffmpeg.stdin.end();
       const code = await ffDone;
       if (ffFailed) throw ffFailed;
       if (code !== 0) throw new Error(`ffmpeg failed (${code}): ${ffErr.trim().split("\n").slice(-3).join(" ")}`);
+      if (opts.sound && format !== "gif" && !o.shot) await addSound(out, format, (input.devices ?? []).map((d) => d.video).filter((v): v is string => Boolean(v)), duration, warnings);
     } catch (e) {
       if (ffmpeg.exitCode === null) ffmpeg.kill("SIGKILL");
       rmSync(out, { force: true });

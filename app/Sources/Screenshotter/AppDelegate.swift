@@ -6,6 +6,8 @@ import WebKit
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
     let engine = Engine()
     var window: StudioWindow!
+    /// The capture bar, the menu bar icon and the screenshots and recordings they make.
+    var capture: CaptureCoordinator!
     var web: StudioWebView!
     /// Updates: checks the feed on the site once a day (SUFeedURL in Info.plist), and on demand.
     let updates = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
@@ -40,14 +42,60 @@ import WebKit
         window = StudioWindow()
         window.delegate = self
         window.contentView = web
-        window.makeKeyAndOrderFront(nil)
         window.layoutTrafficLights()
 
         showStatus(.starting)
         engine.onChange = { [weak self] state in self?.engineChanged(state) }
         startEngine()
+
+        // Opening Screenshotter shows the capture bar; the canvas loads behind it, ready for when
+        // it's wanted (Open Screenshotter, Edit in Screenshotter, the Dock icon, a file opened with it).
+        capture = CaptureCoordinator(
+            library: { [weak self] in URL(fileURLWithPath: self?.outputFolder ?? NSHomeDirectory()) },
+            openStudio: { [weak self] in self?.showStudio() },
+            editInStudio: { [weak self] file, poster, size in self?.edit(file, poster: poster, size: size) },
+            openRecording: { [weak self] spec in self?.openRecording(spec) })
+        if let log = ProcessInfo.processInfo.environment["SCREENSHOTTER_CAPTURE_SELFTEST"] {
+            capture.selfTest(log: URL(fileURLWithPath: log))
+        } else if pendingOpen.isEmpty { capture.showBar() } else { showStudio() }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The canvas window, in front.
+    func showStudio() {
+        window.makeKeyAndOrderFront(nil)
+        window.layoutTrafficLights()
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { [weak self] in self?.window.layoutTrafficLights() }
+    }
+
+    /// A capture from the bar, onto the canvas (it's in the library already, so nothing is copied).
+    func edit(_ file: URL, poster: URL?, size: CGSize?) {
+        showStudio()
+        var item: [String: Any] = ["path": file.path]
+        if let poster { item["poster"] = poster.path }
+        if let size {
+            item["width"] = Int(size.width)
+            item["height"] = Int(size.height)
+        }
+        if pageReady { sendImports([item]) } else { pendingImports.append(item) }
+    }
+    private var pendingImports: [[String: Any]] = []
+    private var pendingRecording: [String: Any]?
+
+    /// A recording from the capture bar, opened in the Studio as a design of its own, in Animate.
+    func openRecording(_ spec: [String: Any]) {
+        showStudio()
+        if pageReady { sendRecording(spec) } else { pendingRecording = spec }
+    }
+    private func sendRecording(_ spec: [String: Any]) {
+        web.callAsyncJavaScript("if (window.studio) { await window.studio.command('openRecording', spec); }",
+                                arguments: ["spec": spec], in: nil, in: .page) { _ in }
+    }
+    /// A capture from the bar starts a design of its own (the one open is saved as usual).
+    private func sendImports(_ items: [[String: Any]]) {
+        web.callAsyncJavaScript("if (window.studio) { await window.studio.command('newScene'); await window.studio.command('imported', items); }",
+                                arguments: ["items": items], in: nil, in: .page) { _ in }
     }
 
     func startEngine() {
@@ -55,7 +103,15 @@ import WebKit
         engine.start(outputFolder: outputFolder, apiKey: Keychain.load())
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the canvas keeps Screenshotter running: the capture bar is a click away in the menu bar.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Opening Screenshotter again (the Dock icon, Spotlight, Launchpad, Finder) shows the capture
+    /// bar, as launching it does; the bar's Open Screenshotter is the way to the canvas.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        capture.showBar()
+        return false
+    }
     func applicationWillTerminate(_ note: Notification) { engine.stop() }
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
@@ -83,6 +139,8 @@ import WebKit
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         let urls = filenames.map { URL(fileURLWithPath: $0) }
         if pageReady { upload(urls) } else { pendingOpen += urls }
+        // Files opened with Screenshotter go straight onto the canvas.
+        if window != nil { showStudio() }
         sender.reply(toOpenOrPrint: .success)
     }
     private var pendingOpen: [URL] = []
@@ -96,6 +154,15 @@ import WebKit
             let urls = pendingOpen
             pendingOpen = []
             upload(urls)
+        }
+        if let spec = pendingRecording {
+            pendingRecording = nil
+            sendRecording(spec)
+        }
+        if !pendingImports.isEmpty {
+            let items = pendingImports
+            pendingImports = []
+            sendImports(items)
         }
     }
 
@@ -367,6 +434,8 @@ import WebKit
         NSWorkspace.shared.open(url)
     }
     @objc func restartEngine(_ sender: Any?) { startEngine() }
+    @objc func showCaptureBar(_ sender: Any?) { capture.showBar(.screenshot) }
+    @objc func showRecordBar(_ sender: Any?) { capture.showBar(.record) }
     @objc func openDocs(_ sender: Any?) {
         if let base = engine.baseURL { NSWorkspace.shared.open(base.appendingPathComponent("docs")) }
     }
@@ -414,6 +483,9 @@ import WebKit
             item("Save", "save", "s"),
             .separator(),
             action("Import Screenshots…", #selector(openFilesPanel(_:)), "o", target: self),
+            .separator(),
+            action("Take a Screenshot…", #selector(showCaptureBar(_:)), "", target: self),
+            action("Record the Screen…", #selector(showRecordBar(_:)), "", target: self),
             .separator(),
             item("Export Image", "exportImage", "e"),
             item("Export Video", "exportVideo", "e", [.command, .shift]),

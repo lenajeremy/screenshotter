@@ -142,6 +142,24 @@ async function json<T>(req: http.IncomingMessage): Promise<T> {
   }
 }
 
+/** Exports under way that the Studio asked to follow (`job` in the request): how far along each is. */
+const jobs = new Map<string, { started: number; fraction: number; at: number }>();
+function jobProgress(url: URL): ((f: number) => void) | undefined {
+  const id = url.searchParams.get("job");
+  if (!id || !/^[a-z0-9]{4,32}$/i.test(id)) return undefined;
+  const now = Date.now();
+  jobs.set(id, { started: now, fraction: 0, at: now });
+  // Forgotten a while after they stop moving.
+  for (const [k, j] of jobs) if (now - j.at > 10 * 60_000) jobs.delete(k);
+  return (f) => {
+    const j = jobs.get(id);
+    if (j) Object.assign(j, { fraction: Math.max(j.fraction, Math.min(1, f)), at: Date.now() });
+  };
+}
+
+/** Exports copied out of the library (Save to), which Show in Finder may point at. */
+const copiedOut = new Set<string>();
+
 function allowedFile(p: string): boolean {
   const resolved = path.resolve(p);
   return [outputRoot(), cacheDir(""), bezelsDir()].some((root) => resolved === root || resolved.startsWith(root + path.sep));
@@ -415,7 +433,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   // The canvas draws shapes with the engine's own code: its compiled module (from the build when
   // running from source).
   // The engine's pure modules (shapes, animation), so the canvas draws and animates with the same code.
-  const engineModule = /^\/ui\/(shapes|animate)\.js$/.exec(url.pathname);
+  const engineModule = /^\/ui\/(shapes|animate|cursor)\.js$/.exec(url.pathname);
   if (req.method === "GET" && engineModule) {
     const name = `${engineModule[1]}.js`;
     const file = [path.join(here, "..", "render", name), path.join(here, "..", "..", "dist", "render", name)].find((f) => existsSync(f));
@@ -497,6 +515,13 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   if (req.method === "GET" && url.pathname === "/api/state") return send(200, loadState());
   if (req.method === "GET" && url.pathname === "/api/scenes") return send(200, listScenes());
   if (req.method === "GET" && url.pathname === "/api/scene") return send(200, getScene(url.searchParams.get("id")));
+  if (req.method === "GET" && url.pathname === "/api/progress") {
+    // How far along an export is, and about how long it has to go (from how fast it's been).
+    const j = jobs.get(url.searchParams.get("job") ?? "");
+    if (!j) return send(200, { fraction: null });
+    const elapsed = (Date.now() - j.started) / 1000;
+    return send(200, { fraction: j.fraction, elapsed, left: j.fraction > 0.02 && j.fraction < 1 ? (elapsed * (1 - j.fraction)) / j.fraction : null });
+  }
   if (req.method === "GET" && url.pathname === "/api/ai-status") return send(200, aiStatus());
   if (req.method === "GET" && url.pathname === "/docs") {
     const md = readFileSync(findAsset("README.md"), "utf8");
@@ -786,13 +811,13 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/layout":
       return send(200, await layoutScene(MockupInputSchema.parse(await json(req))));
     case "/api/video": {
-      const result = await createVideo(VideoInputSchema.parse(await json(req)));
+      const result = await createVideo(VideoInputSchema.parse(await json(req)), { progress: jobProgress(url) });
       tagExport(result.path, url);
       result.versions?.forEach((v) => tagExport(v.path, url));
       return send(200, result);
     }
     case "/api/sequence": {
-      const result = await createSequence(SequenceInputSchema.parse(await json(req)));
+      const result = await createSequence(SequenceInputSchema.parse(await json(req)), { progress: jobProgress(url) });
       tagExport(result.path, url);
       result.versions?.forEach((v) => tagExport(v.path, url));
       return send(200, result);
@@ -831,9 +856,23 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const app = await sim.showSimulator(s.udid);
       return send(200, { ok: true, simulator: s.name, app });
     }
+    case "/api/copy-to": {
+      // A finished export copied where the capture bar's Save to says (the Desktop, a folder),
+      // named like macOS names its own, never over another file.
+      const { path: p, dir, name } = await json<{ path: string; dir: string; name?: string }>(req);
+      if (!allowedFile(p) || !existsSync(p)) throw new HttpError(404, "Not found");
+      if (typeof dir !== "string" || !path.isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) throw new HttpError(400, "That folder isn't there any more");
+      const ext = path.extname(p);
+      const stem = (typeof name === "string" && name.trim() ? name.trim() : path.basename(p, ext)).replace(/[/:]/g, "-").slice(0, 120);
+      let dest = path.join(dir, stem + ext);
+      for (let n = 2; existsSync(dest); n++) dest = path.join(dir, `${stem} ${n}${ext}`);
+      copyFileSync(p, dest);
+      copiedOut.add(dest);
+      return send(200, { path: dest });
+    }
     case "/api/reveal": {
       const { path: p } = await json<{ path: string }>(req);
-      if (!allowedFile(p)) throw new HttpError(404, "Not found");
+      if (!allowedFile(p) && !copiedOut.has(p)) throw new HttpError(404, "Not found");
       await run("open", ["-R", p]);
       return send(200, { ok: true });
     }

@@ -10,6 +10,7 @@ import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, 
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
 import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
+import { cameraFollow } from "./recording.js";
 
 // ---------------------------------------------------------------------------------------------
 // The playhead lives outside the store: it moves every frame while playing, and only the canvas
@@ -141,6 +142,8 @@ export function joinStyles(type, p, W, H) {
 
 /** How long the video runs: the length chosen, or long enough for every animation to finish. */
 export function videoLength() {
+  // A recording runs its own length.
+  if (S.scene.recording?.duration) return S.scene.recording.duration;
   const chosen = S.exportOpts.video.duration ?? 6;
   const needed = Math.ceil((timelineEnd(S.scene.animations, animEntities()) + 1.2) * 2) / 2;
   // A shot of several: its own length when set, else as long as its animations need.
@@ -150,10 +153,37 @@ export function videoLength() {
 /** A shot's length when it isn't on the canvas (its text isn't laid out, so words aren't counted). */
 const shotLength = (x) => x.length ?? Math.max(S.exportOpts.video.duration ?? 6, x.scene?.animations?.length ? Math.ceil((timelineEnd(x.scene.animations) + 1.2) * 2) / 2 : 0);
 
+// Recordings on the canvas in Animate follow the playhead: they play, sound and all, while the
+// timeline plays, and show the frame at the playhead when it's scrubbed or stopped.
+const seekTo = (v, t) => Math.max(0, Math.min(t, (v.duration || Infinity) - 0.05));
+export function followVideo(v, t = playhead.t) {
+  if (!v || !S.timelineOpen) return;
+  const at = seekTo(v, t);
+  // A recording sets the pace while playing (the playhead follows it): seeking it would cut up its sound.
+  if (S.playing && v.dataset.master) {
+    v.muted = false;
+    if (v.paused) v.play().catch(() => undefined);
+    return;
+  }
+  if (S.playing) {
+    v.muted = false;
+    if (v.paused) {
+      v.currentTime = at;
+      v.play().catch(() => undefined);
+    } else if (Math.abs(v.currentTime - at) > 0.25) v.currentTime = at;
+  } else {
+    if (!v.paused) v.pause();
+    if (Math.abs(v.currentTime - at) > 0.02) v.currentTime = at;
+  }
+}
+const followAll = (t) => document.querySelectorAll("video[data-follow]").forEach((v) => followVideo(v, t));
+onPlayhead(followAll);
+
 let raf = 0;
 export function pause() {
   cancelAnimationFrame(raf);
   if (S.playing) set({ playing: false });
+  followAll(playhead.t);
 }
 /** Play from the playhead to `until` (the end by default); from the start if already at the end. */
 export function play(until) {
@@ -180,6 +210,24 @@ export function play(until) {
   const end = until ?? videoLength();
   if (playhead.t >= end - 0.02) setPlayhead(0);
   set({ playing: true });
+  // A recording keeps its own pace, sound and all: the playhead follows it (waiting when it buffers).
+  const master = S.scene.recording && document.querySelector("video[data-follow][data-master]");
+  if (master) {
+    master.muted = false;
+    master.currentTime = seekTo(master, playhead.t);
+    master.play().catch(() => undefined);
+    const follow = () => {
+      const t = master.currentTime;
+      if (t >= end - 0.01 || master.ended) {
+        setPlayhead(Math.min(end, t));
+        return pause();
+      }
+      setPlayhead(t);
+      raf = requestAnimationFrame(follow);
+    };
+    raf = requestAnimationFrame(follow);
+    return;
+  }
   let last = performance.now();
   const tick = (now) => {
     const t = playhead.t + (now - last) / 1000;
@@ -284,7 +332,7 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
   const heldBlur = held && held.clip.to?.blur !== undefined ? evaluate(anims, layout.entities.map(toAnim), animationEnd(held.clip), W0, H0) : null;
   if (held) for (const id of targetsOf(held.clip)) states.delete(id);
   // The camera, except while one of its moves is being framed (the viewfinder shows that).
-  const cam = on && !(held && targetsOf(held.clip).includes(CAMERA)) ? evaluateCamera(anims, t) : undefined;
+  const cam = on && !(held && targetsOf(held.clip).includes(CAMERA)) ? evaluateCamera(anims, t, cameraFollow(shot.scene)) : undefined;
   const ct = cam && cam.zoom > 1.0005 ? cameraTransform(cam, W0, H0) : null;
   const through = (x, y) => (ct ? { x: (x - ct.fx) * ct.zoom + ct.fx + ct.tx, y: (y - ct.fy) * ct.zoom + ct.fy + ct.ty } : { x, y });
   const bg = art.querySelector(":scope > .bg");
@@ -301,8 +349,13 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
     }
   }
   const box = art.getBoundingClientRect();
+  const camAll = ct;
   for (const el of art.querySelectorAll(":scope > .ent[data-id]")) {
     const e = layout.entities.find((x) => x.id === el.dataset.id);
+    // A fixed device (a recording's webcam) stays out of the camera's moves.
+    const pinned = e?.kind === "device" && shot.scene.devices?.[e.index]?.fixed;
+    const ct = pinned ? null : camAll;
+    const through = (x, y) => (ct ? { x: (x - ct.fx) * ct.zoom + ct.fx + ct.tx, y: (y - ct.fy) * ct.zoom + ct.fy + ct.ty } : { x, y });
     const st = states.get(el.dataset.id) ?? (ct ? IDLE : undefined);
     const blur = (st ?? heldBlur?.get(el.dataset.id))?.blur;
     if (blur !== undefined) el.style.setProperty("--ablur", `${Math.max(0, blur) * k}px`);
@@ -603,12 +656,21 @@ const ROW_ICON = { camera: "camera", backdrop: "background", device: "phone", ca
 const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const stop = (e) => e.stopPropagation();
 
+/** The ruler's step: the smallest that leaves room for its label at this many pixels a second. */
+const TICK_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
+const tickStep = (pps) => TICK_STEPS.find((s) => s * pps >= 56) ?? 600;
+const tickLabel = (t, step, len) => (len >= 60 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}${step < 1 ? "." + String(Math.round((t % 1) * 10)) : ""}` : `${step < 1 ? t.toFixed(step < 0.5 ? 2 : 1).replace(/0$/, "") : t}s`);
+
 export function TimelineDock() {
   const s = useStore();
+  const body = useRef();
   const tracks = useRef();
   const line = useRef();
   const time = useRef();
+  // The tracks' visible width, and how far in the timeline is zoomed (1 fits the whole video).
   const [width, setWidth] = useState(600);
+  const [zoom, setZoomNow] = useState(1);
+  const anchor = useRef(null);
   const len = videoLength();
   const list = s.scene.animations ?? [];
   const entities = s.layout?.entities ?? [];
@@ -616,21 +678,53 @@ export function TimelineDock() {
   // Each device's call-outs sit under it.
   const rows = [{ id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape")];
   const ents = entities.map(toAnim);
-  const pps = width / len;
+  // Zoomed in, a second gets up to 400px; the timeline scrolls sideways.
+  const maxZoom = Math.max(1, (400 * len) / Math.max(1, width));
+  const z = clamp(zoom, 1, maxZoom);
+  const pps = (width / len) * z;
 
   useLayoutEffect(() => {
-    const el = tracks.current;
+    const el = body.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    // The names column and the tracks' margins aren't timeline.
+    const measure = () => setWidth(Math.max(120, el.clientWidth - 172 - 28));
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setWidth(el.clientWidth);
+    measure();
     return () => ro.disconnect();
   }, []);
+  /** Zoom to `next`, keeping the moment at `clientX` (default: the playhead) where it is. */
+  const setZoom = (next, clientX) => {
+    const el = body.current;
+    const left = tracks.current?.getBoundingClientRect().left ?? 0;
+    const x = clientX ?? left + playhead.t * pps;
+    anchor.current = { t: clamp((x - left) / pps, 0, len), x: x - el.getBoundingClientRect().left };
+    setZoomNow(clamp(next, 1, maxZoom));
+  };
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    const el = body.current;
+    if (!a || !el) return;
+    anchor.current = null;
+    el.scrollLeft = Math.max(0, 172 + 12 + a.t * pps - a.x);
+  }, [z]);
+  // ⌘-scroll or pinch zooms about the pointer.
+  const wheel = (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    setZoom(z * Math.exp(-e.deltaY * 0.01), e.clientX);
+  };
   // The playhead line and the clock follow without re-rendering the dock.
   useEffect(() => {
     const show = (t) => {
       if (line.current) line.current.style.transform = `translateX(${t * pps}px)`;
       if (time.current && !manyShots()) time.current.textContent = clock(t);
+      // Zoomed in and playing: the timeline keeps the playhead in view.
+      const el = body.current;
+      if (el && S.playing && z > 1) {
+        const x = 172 + 12 + t * pps;
+        if (x > el.scrollLeft + el.clientWidth - 48 || x < el.scrollLeft + 172) el.scrollLeft = Math.max(0, x - 172 - 48);
+      }
     };
     show(playhead.t);
     const offShot = onPlayhead(show);
@@ -646,7 +740,7 @@ export function TimelineDock() {
       offShot();
       offVideo();
     };
-  }, [pps, s.shots?.length]);
+  }, [pps, z, s.shots?.length]);
   useEffect(() => {
     if (playhead.t > len) setPlayhead(len);
   }, [len]);
@@ -679,7 +773,7 @@ export function TimelineDock() {
       if (!moved && Math.abs(m.clientX - x0) < 3) return;
       moved = true;
       if (edge) update(i, (a) => (a.duration = clamp(snap(dur0 + dt), 0.05, 30)), "dur");
-      else update(i, (a) => (a.at = clamp(snap(at0 + dt), 0, 120)), "at");
+      else update(i, (a) => (a.at = clamp(snap(at0 + dt), 0, Math.max(120, len))), "at");
       // A Change stays shown as it ends while its bar moves.
       if (keyframe()) setPlayhead(Math.min(videoLength(), animationEnd(S.scene.animations[i])));
     };
@@ -730,7 +824,9 @@ export function TimelineDock() {
     set({ tlH: null });
     persistPrefs();
   };
-  const ticks = Array.from({ length: Math.floor(len) + 1 }, (_, n) => n);
+  const step = tickStep(pps);
+  // Each with room for its label (none right at the end, where it would run past it).
+  const ticks = Array.from({ length: Math.floor(len / step + 1e-6) + 1 }, (_, n) => Math.round(n * step * 1000) / 1000).filter((t) => (len - t) * pps >= 34);
 
   return html`<section class="tl-dock" onPointerDown=${stop}>
     <i class="tl-grip" title="Drag to make the timeline taller or shorter. Double-click for the usual height." onPointerDown=${resize} onDblClick=${usualHeight}></i>
@@ -741,17 +837,23 @@ export function TimelineDock() {
         <${Icon} n="plus" s=${13} w=${2.2} />${chosen.includes(CAMERA) ? "Move the camera" : chosen.includes(BACKDROP) ? "Move the backdrop" : chosen.length > 1 ? `Animate ${chosen.length} together` : chosen.length ? `Animate ${label(chosen[0])}` : "Animate"}
       </button>
       <span class="grow"></span>
-      <label class="tl-len" title=${s.shots?.length > 1 ? "How long this shot is on screen, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Shot ${s.shot + 1}` : "Length"}
+      ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this shot is on screen, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Shot ${s.shot + 1}` : "Length"}
         <${Num} value=${s.shots?.length > 1 ? len : s.exportOpts.video.duration} min=${1} max=${60} step=${0.5} digits=${1} unit="s" onChange=${(v) => {
           if (S.shots?.length > 1) return updateShot(S.shot, { length: v ?? undefined });
           set({ exportOpts: { ...S.exportOpts, video: { ...S.exportOpts.video, duration: v ?? 6 } } });
           persistPrefs();
-        }} /></label>
+        }} /></label>`}
+      <div class="tl-zoom" title="Zoom the timeline (⌘-scroll or pinch over it)">
+        <button class="icon-btn sm" disabled=${z <= 1.001} title="Zoom out" onClick=${() => setZoom(z / 1.6)}><${Icon} n="minus" s=${13} /></button>
+        <${Slider} value=${Math.log(z) / Math.log(maxZoom || 1.0001) || 0} min=${0} max=${1} step=${0.01} format=${(v) => `${Math.pow(maxZoom, v).toFixed(1)}×`} onChange=${(v) => setZoom(Math.pow(maxZoom, v ?? 0))} />
+        <button class="icon-btn sm" disabled=${z >= maxZoom - 0.001} title="Zoom in" onClick=${() => setZoom(z * 1.6)}><${Icon} n="plus" s=${13} /></button>
+        <button class="btn sm ghost" disabled=${z <= 1.001} title="Show the whole video" onClick=${() => setZoom(1)}>Fit</button>
+      </div>
       <button class="btn sm" title="Render the video with these animations (⇧⌘E)" onClick=${exportVideo}><${Icon} n="export" s=${13} />${s.shots?.length > 1 ? `Export ${s.shots.filter((x) => x.video !== false).length || s.shots.length} shots` : "Export video"}</button>
       <button class="icon-btn sm" title="Close the timeline" onClick=${closeTimeline}><${Icon} n="x" s=${14} /></button>
     </header>
     <${ShotStrip} />
-    <div class="tl-body">
+    <div class="tl-body ${z > 1.001 ? "zoomed" : ""}" ref=${body} onWheel=${wheel}>
       <div class="tl-names">
         <div class="tl-corner">${list.length ? `${list.length} animation${list.length === 1 ? "" : "s"}` : "Items"}</div>
         ${rows.map(
@@ -760,9 +862,9 @@ export function TimelineDock() {
           </button>`,
         )}
       </div>
-      <div class="tl-tracks" ref=${tracks}>
+      <div class="tl-tracks" ref=${tracks} style=${{ width: len * pps + "px" }}>
         <div class="tl-ruler" onPointerDown=${scrub}>
-          ${ticks.map((n) => html`<span class="tl-tick" key=${n} style=${{ left: n * pps + "px" }}>${n}s</span>`)}
+          ${ticks.map((n) => html`<span class="tl-tick" key=${n} style=${{ left: n * pps + "px" }}>${tickLabel(n, step, len)}</span>`)}
         </div>
         ${rows.map(
           (e) => html`<div class="tl-row ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} onPointerDown=${scrub}>

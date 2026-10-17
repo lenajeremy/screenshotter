@@ -6,6 +6,7 @@ import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, picture
 import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
+import { setAutoZoom, setRecording } from "./recording.js";
 
 const FONTS = [
   { value: "", label: "SF Pro", font: "-apple-system" },
@@ -265,6 +266,7 @@ function DeviceInspector({ id }) {
         for (const k of ["x", "y", "anchor", "height", "width", "rotate"]) delete dev[k];
       })}><${Icon} n="refresh" s=${12} />Auto-place</button>` : null}>
         <div class="row"><label>Rotation</label><${Slider} value=${d.rotate ?? 0} min=${-45} max=${45} step=${0.5} centered reset=${0} format=${(v) => Math.round(v * 10) / 10 + "°"} onChange=${(v) => upd((dev) => (dev.rotate = v ? Math.round(v * 10) / 10 : undefined), "rot")} /></div>
+        ${(S.scene.recording || d.fixed || S.scene.animations?.some((x) => [x.targets].flat().includes("camera"))) && html`<${Switch} checked=${Boolean(d.fixed)} label="Stay put when the camera zooms" onChange=${(v) => upd((dev) => (dev.fixed = v || undefined), "fixed")} />`}
         <div class="row"><label>Position</label><div class="grid2">
           <${Num} label="X" title="Horizontal: 0% left edge, 100% right edge" value=${X} ...${pct} onChange=${(v) => place({ x: v === undefined ? undefined : r4(v) }, "x")} />
           <${Num} label="Y" title="Vertical: 0% top, 100% bottom" value=${Y} ...${pct} onChange=${(v) => place({ y: v === undefined ? undefined : r4(v) }, "y")} />
@@ -823,6 +825,39 @@ export function sizeOptions(presets) {
     for (const [value, p] of Object.entries(presets)) if (test(p)) out.push({ value, label: p.short ?? p.label, hint: `${p.width} × ${p.height}`, group });
   return out;
 }
+/**
+ * A screen recording's own settings, each one a switch: its cursor (drawn from the log the
+ * capture bar kept, so it can be smoothed, sized or hidden), the click ripple, zooms onto the
+ * clicks, the camera following the cursor when zoomed, and the sound.
+ */
+function RecordingInspector() {
+  const s = useStore();
+  const rec = s.scene.recording;
+  const c = rec.cursor;
+  const cursor = (patch) => setRecording({ cursor: patch });
+  return html`
+    <${Section} title="Cursor">
+      ${c?.log
+        ? html`<${Switch} checked=${c.show !== false} label="Show the cursor" onChange=${(v) => cursor({ show: v })} />
+          ${c.show !== false &&
+          html`<${Switch} checked=${(c.smooth ?? 0.5) > 0} label="Smooth movement" onChange=${(v) => cursor({ smooth: v ? 0.5 : 0 })} />
+            ${(c.smooth ?? 0.5) > 0 && html`<div class="row"><label>Smoothing</label><${Slider} value=${c.smooth ?? 0.5} min=${0.1} max=${1} step=${0.05} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => cursor({ smooth: v ?? 0.5 })} /></div>`}
+            <div class="row"><label>Size</label><${Slider} value=${c.size ?? 1.4} min=${0.6} max=${3} step=${0.05} reset=${1.4} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => cursor({ size: v ?? 1.4 })} /></div>
+            <${Switch} checked=${c.ripple !== false} label="Ripple on clicks" onChange=${(v) => cursor({ ripple: v })} />`}`
+        : html`<div class="note">This recording has the cursor drawn into it. Turn on Cursor effects in the capture bar before recording to smooth it, size it and zoom on clicks.</div>`}
+    <//>
+    ${c?.log &&
+    html`<${Section} title="Zoom">
+      <${Switch} checked=${Boolean(rec.autoZoom)} label="Zoom in on clicks" onChange=${(v) => setAutoZoom(v)} />
+      ${rec.autoZoom && html`<div class="row"><label>How far</label><${Slider} value=${rec.zoom ?? 1.8} min=${1.2} max=${3} step=${0.1} reset=${1.8} format=${(v) => v.toFixed(1) + "×"} onChange=${(v) => setAutoZoom(true, v ?? 1.8)} /></div>`}
+      <div class="note">${rec.autoZoom ? "Its zooms are on the Camera row: drag, change or delete any. Turning this off removes only the ones it made." : "Zoom in where you click, and back out after."}</div>
+      <${Switch} checked=${Boolean(rec.follow)} label="Follow the cursor when zoomed in" onChange=${(v) => setRecording({ follow: v })} />
+    <//>`}
+    <${Section} title="Sound">
+      <${Switch} checked=${rec.sound !== false} label="Keep the recording's sound" onChange=${(v) => setRecording({ sound: v })} />
+    <//>`;
+}
+
 function SceneInspector() {
   const s = useStore();
   const sc = s.scene;
@@ -835,9 +870,9 @@ function SceneInspector() {
   const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
   const bgStill = sc.background && !o.generate && o.type !== "transparent" ? `/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(sc.background))}&w=120&h=120` : null;
   return html`
-    <div class="panel-head"><h2>Whole image</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
+    <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
     <div class="panel-body">
-      <div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>
+      ${sc.recording?.duration ? html`<${RecordingInspector} />` : html`<div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>`}
       <${Section} title="Image size">
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;

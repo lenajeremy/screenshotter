@@ -32,6 +32,7 @@
     "app:test": "swift test --package-path app",
     "test:studio": "tsx scripts/studio-test.ts",
     "test:ui": "tsx scripts/ui-test.ts",
+    "test:recording": "tsx scripts/recording-test.ts",
     "app:check": "node scripts/app-check.mjs",
     "app:dmg": "node scripts/build-dmg.mjs",
     "release:feed": "node scripts/release-feed.mjs",

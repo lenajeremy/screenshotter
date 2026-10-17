@@ -399,8 +399,12 @@ export interface CameraState {
   y: number;
 }
 
-/** Where the camera is at `t`: undefined when no animation moves it. */
-export function evaluateCamera(list: Animation[] | undefined, t: number): CameraState | undefined {
+/**
+ * Where the camera is at `t`: undefined when no animation moves it. `follow` (a recording's
+ * cursor, as canvas fractions) makes a zoomed-in camera glide after it: the further in, the more
+ * it follows, so pushing in and pulling out stay where they were aimed.
+ */
+export function evaluateCamera(list: Animation[] | undefined, t: number, follow?: (t: number) => { x: number; y: number } | undefined): CameraState | undefined {
   const clips = (list ?? []).filter((a) => targetsOf(a).includes(CAMERA) && a.to).sort((p, q) => p.at - q.at);
   if (!clips.length) return undefined;
   let cam: CameraState = { zoom: 1, x: 0.5, y: 0.5 };
@@ -410,6 +414,12 @@ export function evaluateCamera(list: Animation[] | undefined, t: number): Camera
     // Not zoomed in yet, the camera isn't looking anywhere in particular: push straight in on the point.
     const start = cam.zoom <= 1.001 ? { zoom: cam.zoom, x: to.x, y: to.y } : cam;
     cam = { zoom: lerp(start.zoom, to.zoom, k), x: lerp(start.x, to.x, k), y: lerp(start.y, to.y, k) };
+  }
+  const p = follow && cam.zoom > 1.001 ? follow(t) : undefined;
+  if (p) {
+    const w = Math.min(1, (cam.zoom - 1) / 0.5);
+    const e = w * w * (3 - 2 * w);
+    cam = { zoom: cam.zoom, x: lerp(cam.x, Math.min(1, Math.max(0, p.x)), e), y: lerp(cam.y, Math.min(1, Math.max(0, p.y)), e) };
   }
   return cam;
 }

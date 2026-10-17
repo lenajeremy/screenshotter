@@ -62,6 +62,8 @@ import Foundation
             .joined(separator: ":")
         env["SCREENSHOTTER_OUTPUT_DIR"] = outputFolder
         env["SCREENSHOTTER_APP"] = "1"
+        // The app itself, which draws recordings' videos on the GPU for the engine's export.
+        if let me = Bundle.main.executablePath { env["SCREENSHOTTER_NATIVE"] = me }
         if let apiKey, !apiKey.isEmpty { env["ANTHROPIC_API_KEY"] = apiKey }
         env.removeValue(forKey: "SCREENSHOTTER_STUDIO_PORT")
         environment = env

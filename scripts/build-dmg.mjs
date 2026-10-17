@@ -14,9 +14,10 @@
  *
  * (it asks for an app-specific password from account.apple.com). See scripts/signing.mjs.
  *
- * Before anything is built, the Studio's checks run (npm run test:studio, then test:ui in Chromium
- * and WebKit) against a throwaway library; a failure stops the release. SCREENSHOTTER_SKIP_TESTS=1
- * skips them.
+ * Before anything is built, the Studio's checks run (npm run test:studio, then test:ui and
+ * test:recording in Chromium and WebKit) against a throwaway library, and once the app is built,
+ * its fast export of recordings is checked against the usual one; a failure stops the release.
+ * SCREENSHOTTER_SKIP_TESTS=1 skips them.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, cpSync } from "node:fs";
@@ -44,7 +45,7 @@ if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
     SCREENSHOTTER_OUTPUT_DIR: path.join(scratch, "library"),
   };
   try {
-    for (const script of ["build", "test:studio", "test:ui"]) {
+    for (const script of ["build", "test:studio", "test:ui", "test:recording"]) {
       const r = spawnSync("npm", ["run", script], { cwd: root, stdio: "inherit", env });
       if (r.status !== 0) throw new Error(`npm run ${script} failed: the release stops here. Fix it, or set SCREENSHOTTER_SKIP_TESTS=1 to release anyway.`);
     }
@@ -56,6 +57,11 @@ if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
 run("node", ["scripts/build-app.mjs", ...process.argv.slice(2)]);
 const app = path.join(root, "build", "Screenshotter.app");
 if (!existsSync(app)) throw new Error("build/Screenshotter.app is missing");
+// The app just built draws recordings' videos itself: check it against the usual export.
+if (!process.env.SCREENSHOTTER_SKIP_TESTS) {
+  const r = spawnSync("npm", ["run", "test:recording", "--", "--native-only"], { cwd: root, stdio: "inherit", env: { ...process.env, SCREENSHOTTER_NATIVE: path.join(app, "Contents", "MacOS", "Screenshotter") } });
+  if (r.status !== 0) throw new Error("The app's fast export of recordings failed its check: the release stops here.");
+}
 
 // Stage the app next to an Applications shortcut, so the window says what to do.
 const stage = path.join(mkdtempSync(path.join(tmpdir(), "screenshotter-dmg-")), "Screenshotter");

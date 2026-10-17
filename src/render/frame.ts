@@ -56,8 +56,10 @@ export interface FrameOptions {
   url?: string;
   title?: string;
   chrome: "light" | "dark";
-  /** Corner radius in rendered px for flat frames. */
+  /** Corner radius for flat frames: a share of the shorter side up to 0.5, else rendered px. */
   radius?: number;
+  /** A ring round a flat frame's edge. */
+  ring?: boolean | { width?: number; color?: string };
   /**
    * Laptops: keep a black menu-bar strip under the notch and show the capture below it, the way
    * a notched Mac shows a full-screen app. Off for full-screen Mac captures, which have their own
@@ -227,7 +229,9 @@ export function screenRect(o: FrameOptions): { x: number; y: number; width: numb
   const m = measureFrame(o);
   if (o.kind !== "device") {
     const bar = o.kind === "window" ? WINDOW_BAR : o.kind === "browser" ? BROWSER_BAR : 0;
-    const radius = o.kind === "none" ? 0 : o.kind === "card" ? (o.model ? o.model.screen.cornerRadius : 0.035 * Math.min(m.width, m.height)) : 12;
+    const short = Math.min(m.width, m.height);
+    const radius =
+      o.radius !== undefined ? (o.radius <= 0.5 ? o.radius * short : o.radius) : o.kind === "none" ? 0 : o.kind === "card" ? (o.model ? o.model.screen.cornerRadius : 0.035 * short) : 12;
     return { x: 0, y: bar / m.height, width: 1, height: (m.height - bar) / m.height, radius: radius / m.width };
   }
   const model = o.model!;
@@ -800,7 +804,13 @@ function flat(o: FrameOptions, u: number, depth: boolean): FrameOutput {
   const W = cw;
   const H = ch + bar;
   // A device shown without its hardware (no Apple art) keeps its screen's own rounded corners.
-  const R = o.radius ?? (o.kind === "card" && o.model ? o.model.screen.cornerRadius * u : o.kind === "none" ? 0 : o.kind === "card" ? Math.min(W, H) * 0.035 : 12 * u);
+  // A radius up to 0.5 is a share of the shorter side (0.5: round), so it holds at any size.
+  const R =
+    o.radius !== undefined
+      ? o.radius <= 0.5
+        ? Math.min(W, H) * o.radius
+        : o.radius
+      : o.kind === "card" && o.model ? o.model.screen.cornerRadius * u : o.kind === "none" ? 0 : o.kind === "card" ? Math.min(W, H) * 0.035 : 12 * u;
   const c = content(o, cw, ch, 0, u);
   const barBg = dark ? "#2a2a2c" : "#f3f3f5";
   const ink = dark ? "#e6e6e8" : "#3a3a3c";
@@ -837,7 +847,10 @@ function flat(o: FrameOptions, u: number, depth: boolean): FrameOutput {
   }
 
   const bodyBg = dark ? "#1c1c1e" : "#ffffff";
-  const border = o.kind === "none" ? "" : `box-shadow:inset 0 0 0 ${f(0.5 * u)} ${dark ? "rgba(255,255,255,.14)" : "rgba(0,0,0,.14)"};`;
+  const ring = o.ring ? { width: (typeof o.ring === "object" ? o.ring.width : undefined) ?? 0.018, color: (typeof o.ring === "object" ? o.ring.color : undefined) ?? "#fff" } : null;
+  const border = ring
+    ? `box-shadow:inset 0 0 0 ${f(Math.max(1, ring.width * Math.min(W, H)))} ${esc(ring.color)};`
+    : o.kind === "none" ? "" : `box-shadow:inset 0 0 0 ${f(0.5 * u)} ${dark ? "rgba(255,255,255,.14)" : "rgba(0,0,0,.14)"};`;
   const T = FLAT_DEPTH * u;
   const html =
     `<div class="device flat${depth ? " d3" : ""}" style="--c:${dark ? "#1c1c1e" : "#d9d9de"};--u:${u};width:${f(W)};height:${f(H)}">` +

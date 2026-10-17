@@ -712,6 +712,8 @@ export function entityLabel(id, scene = S.scene, layout = S.layout) {
   if (kind === "device") {
     const e = layout?.entities.find((x) => x.id === id);
     const d = scene.devices?.[n - 1];
+    // A name of its own (a recording's layers: "Recording", "Webcam").
+    if (d?.label) return d.label;
     if (d?.frame && d.frame !== "device") return { browser: "Browser", window: "Window", card: "Card", none: "Screenshot" }[d.frame];
     return e?.device || d?.device || `Device ${n}`;
   }

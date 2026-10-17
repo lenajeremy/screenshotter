@@ -15,6 +15,7 @@ import {
   deleteSavedScene,
   duplicateSavedScene,
   openScene,
+  openRecording,
   renameSavedScene,
   saveNow,
   canRevertAI,
@@ -134,7 +135,7 @@ function Topbar() {
       <button class="btn ai" onClick=${() => (s.ai.open ? set({ ai: { ...s.ai, open: false } }) : openAI())} title="Describe a change in plain words and AI makes it (⌘K)"><${Icon} n="spark" s=${15} class="spark" />Ask AI<span class="kbd">⌘K</span></button>
       <button class="btn primary" ref=${exportBtn} disabled=${!(hasDesign(s.scene) || s.shots) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => set({ exportOpen: !s.exportOpen })}><${Icon} n="export" s=${15} w=${2} />Export</button>
     </div>
-    ${(s.busy || s.rendering) && html`<div class="progress-line"></div>`}
+    ${(s.busy || s.rendering) && html`<div class="progress-line ${s.rendering?.progress > 0 ? "known" : ""}" style=${s.rendering?.progress > 0 ? { "--p": s.rendering.progress } : undefined}></div>`}
     ${s.exportOpen && html`<${ExportPopover} anchor=${exportBtn.current} />`}
   </header>`;
 }
@@ -658,7 +659,7 @@ function RenderView() {
           <div class="hstack"><button class="btn" onClick=${renderPreview} disabled=${!hasDesign(s.scene)}>Show preview <span class="kbd">⌘R</span></button>
           <button class="btn primary" onClick=${exportImage} disabled=${!hasDesign(s.scene)}>Export image <span class="kbd">⌘E</span></button></div>
         </div>`}
-    ${s.rendering && html`<div class="rendering-overlay"><div><div class="orb" style=${{ margin: "0 auto" }}></div><div class="label">${s.rendering.label}</div></div></div>`}
+    ${s.rendering && html`<div class="rendering-overlay"><div><div class="orb" style=${{ margin: "0 auto" }}></div><div class="label">${s.rendering.label}</div>${s.rendering.progress !== undefined && html`<${RenderProgress} r=${s.rendering} />`}</div></div>`}
   </div>`;
 }
 
@@ -1667,6 +1668,17 @@ function nudgeSelected(dx, dy, scaleF, rot) {
   commitEntity(next);
 }
 
+/** How far a video export has got: a bar, the percentage, and about how long it has to go. */
+function RenderProgress({ r }) {
+  const pct = Math.min(100, Math.floor((r.progress ?? 0) * 100));
+  const left = r.left;
+  const time = left == null ? "" : left < 60 ? `about ${Math.max(1, Math.round(left))} s left` : `about ${Math.floor(left / 60)} min ${String(Math.round(left % 60)).padStart(2, "0")} s left`;
+  return html`<div class="render-progress">
+    <div class="bar"><i style=${{ width: pct + "%" }}></i></div>
+    <div class="pct"><b>${pct}%</b>${pct >= 100 ? " · finishing up…" : time ? ` · ${time}` : pct === 0 ? " · getting ready…" : ""}</div>
+  </div>`;
+}
+
 const commands = {
   undo: () => (typing() ? document.execCommand("undo") : undo()),
   redo: () => (typing() ? document.execCommand("redo") : redo()),
@@ -1691,6 +1703,12 @@ const commands = {
   help: () => set({ modal: { kind: "help" } }),
   whatsNew: () => openWhatsNew(true),
   newScene,
+  // A recording from the capture bar: a design of its own, open in Animate.
+  openRecording: async (r) => {
+    await booted;
+    await openRecording(r);
+    await refreshFiles().catch(() => undefined);
+  },
   save: () => saveNow(),
   scenes: () => toggleScenesPage(),
   import: () => {

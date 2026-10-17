@@ -1,5 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
+import { setAutoZoom } from "./recording.js";
 import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -1021,6 +1022,23 @@ export function previewScreen(i) {
 /** Exports carry the scene they came from, so the library can show each scene's versions. */
 const historyQuery = () => (S.sceneId ? `?scene=${encodeURIComponent(S.sceneId)}&name=${encodeURIComponent(S.sceneName ?? "")}` : "");
 
+/**
+ * Follow a video export: an id for its request (`?job=`), and its progress shown as it renders
+ * (how far along, and about how long to go). Call `done` when it's finished.
+ */
+function followExport() {
+  const id = Math.random().toString(36).slice(2, 12);
+  const timer = setInterval(async () => {
+    try {
+      const p = await (await fetch(`/api/progress?job=${id}`)).json();
+      if (S.rendering && typeof p.fraction === "number") set({ rendering: { ...S.rendering, progress: p.fraction, left: p.left ?? null } });
+    } catch {
+      // A missed look; the next one will do.
+    }
+  }, 500);
+  return { query: (q) => `${q}${q ? "&" : "?"}job=${id}`, done: () => clearInterval(timer) };
+}
+
 /** Bring an exported version back as the working design (one undo step). */
 export async function restoreVersion(file) {
   try {
@@ -1108,6 +1126,18 @@ const withoutSpill = (scene) => {
 /** A shot's video options: the camera motion chosen for export, and its own length when it has one. */
 function shotVideo(scene, length) {
   const v = S.exportOpts.video;
+  // A recording: its own length, no ambient motion, its sound (unless turned off).
+  if (scene.recording?.duration) {
+    const rec = scene.recording;
+    const c = rec.cursor;
+    return tidy({
+      duration: rec.duration,
+      motion: "none",
+      sound: rec.sound !== false,
+      cursor: c?.log && c.show !== false ? { device: 0, log: c.log, smooth: c.smooth ?? 0.5, size: c.size ?? 1.4, ripple: c.ripple !== false } : undefined,
+      follow: c?.log && rec.follow ? true : undefined,
+    });
+  }
   const d = length ?? Math.max(v.duration ?? 6, Math.ceil((timelineEnd(scene.animations) + (scene.animations?.length ? 1.2 : 0)) * 2) / 2);
   return tidy({ duration: d, motion: v.motion, zoom: v.zoom ? { start: d * 0.35, end: d * 0.85 } : undefined });
 }
@@ -1178,18 +1208,29 @@ export async function exportVideo() {
   const versions = rest.map((size) => (fit ? { size, fit } : size));
   const started = performance.now();
   const what = shots ? `${shots.length} shot${shots.length === 1 ? "" : "s"}` : "video";
-  set({ rendering: { label: `Rendering the ${what}${sizes.length > 1 ? ` at ${sizes.length} sizes` : ""}… this takes a little while` }, view: "render", exportOpen: false });
+  set({ rendering: { label: `Rendering the ${what}${sizes.length > 1 ? ` at ${sizes.length} sizes` : ""}…`, progress: 0 }, view: "render", exportOpen: false });
+  const job = followExport();
   try {
     let r;
     if (!shots && main === "design") {
       const video = shotVideo(S.scene, S.exportOpts.video.duration && Math.max(S.exportOpts.video.duration, shotVideo(S.scene).duration));
-      r = await api(`/api/video${historyQuery()}`, { ...clone(S.scene), video, format: o.format, preview: false, versions: versions.length ? versions : undefined });
+      r = await api(`/api/video${job.query(historyQuery())}`, { ...clone(S.scene), video, format: o.format, preview: false, versions: versions.length ? versions : undefined });
     } else {
-      r = await api(`/api/sequence${historyQuery()}`, { shots: sequenceShots(shots ?? undefined), name: videoName(shots), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
+      r = await api(`/api/sequence${job.query(historyQuery())}`, { shots: sequenceShots(shots ?? undefined), name: videoName(shots), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
     }
     renderResult(r, { preview: false, isVideo: o.format !== "gif", ms: performance.now() - started });
     touch("exported");
     refreshFiles();
+    // A recording's export also goes where the capture bar's Save to says (the Desktop, a folder).
+    const to = !shots && S.scene.recording?.saveTo;
+    if (to) {
+      try {
+        const copy = await api("/api/copy-to", { path: r.path, dir: to, name: S.scene.recording.saveName });
+        toast({ kind: "ok", icon: "video", title: `Saved to ${base(to)}`, text: base(copy.path), actions: [{ label: "Show in Finder", run: () => reveal(copy.path) }] });
+      } catch (e) {
+        fail(e, `Couldn't save a copy to ${base(to)}`);
+      }
+    }
     const extra = r.versions?.length ? ` + ${r.versions.map((v) => v.label.split(" · ")[0] === "App Store" ? v.label : v.label.split(" · ")[0]).join(", ")}` : "";
     toast({ kind: "ok", title: !shots ? "Video exported" : shots.length === 1 && allShots().length > 1 ? `Screen ${shots[0].at + 1}'s video exported` : `${shots.length}-shot video exported`, text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, actions: [{ label: "Show in Finder", run: () => reveal(r.path) }] });
     const notes = [...(r.warnings ?? []), ...(r.versions ?? []).flatMap((v) => (v.warnings ?? []).map((w) => `${v.label}: ${w}`))];
@@ -1197,6 +1238,7 @@ export async function exportVideo() {
   } catch (e) {
     fail(e, "Video export failed");
   } finally {
+    job.done();
     set({ rendering: null });
   }
 }
@@ -1214,8 +1256,14 @@ async function exportEachVideo(shots) {
   try {
     for (const [k, x] of shots.entries()) {
       const n = x.at + 1;
-      set({ rendering: { label: `Rendering screen ${n} (${k + 1} of ${shots.length})… this takes a little while` } });
-      const r = await api(`/api/sequence${historyQuery()}`, { shots: sequenceShots([x]), name: videoName([x]), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
+      set({ rendering: { label: `Rendering screen ${n} (${k + 1} of ${shots.length})…`, progress: 0 } });
+      const job = followExport();
+      let r;
+      try {
+        r = await api(`/api/sequence${job.query(historyQuery())}`, { shots: sequenceShots([x]), name: videoName([x]), size: main === "design" ? undefined : main, fit, versions: versions.length ? versions : undefined, format: o.format, preview: false });
+      } finally {
+        job.done();
+      }
       done.push(r);
       renderResult(r, { preview: false, isVideo: o.format !== "gif", ms: performance.now() - started });
     }
@@ -2036,6 +2084,121 @@ export async function newScene() {
   });
   scheduleLayout(0);
   persist();
+}
+
+/**
+ * The webcam's moves while recording, as the Studio's own animations: each drag (notes close
+ * together) becomes one move, or a few for a curving drag, straight from point to point; resizing
+ * goes with it as a change of size. The path notes only changes, so a long gap means it sat still.
+ */
+function bubbleMoves(path) {
+  if (!Array.isArray(path) || path.length < 2) return [];
+  const h0 = path[0][3] || 1;
+  const drags = [];
+  for (let i = 1; i < path.length; i++) {
+    const prev = path[i - 1];
+    const drag = drags[drags.length - 1];
+    if (drag && path[i][0] - drag[drag.length - 1][0] <= 0.15) drag.push(path[i]);
+    else drags.push([prev, path[i]]);
+  }
+  // A drag's turning points: the fewest points that keep within 1.5% of where it went.
+  const simplify = (pts) => {
+    if (pts.length < 3) return pts;
+    const [a, b] = [pts[0], pts[pts.length - 1]];
+    let far = 0;
+    let at = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const dx = b[1] - a[1];
+      const dy = b[2] - a[2];
+      const len = Math.hypot(dx, dy) || 1e-9;
+      const d = Math.abs(dy * p[1] - dx * p[2] + b[1] * a[2] - b[2] * a[1]) / len;
+      if (d > far) [far, at] = [d, i];
+    }
+    return far > 0.015 ? [...simplify(pts.slice(0, at + 1)).slice(0, -1), ...simplify(pts.slice(at))] : [a, b];
+  };
+  const moves = [];
+  for (const drag of drags) {
+    // It started moving a moment before the first new place was noted, from where it rested.
+    const start = Math.max(0, drag[1][0] - 1 / 30);
+    const pts = simplify([[start, drag[0][1], drag[0][2], drag[0][3]], ...drag.slice(1)]);
+    for (let k = 1; k < pts.length; k++) {
+      const [a, p] = [pts[k - 1], pts[k]];
+      const scale = Math.abs(p[3] / h0 - 1) > 0.01 ? r4(p[3] / h0) : undefined;
+      moves.push({ targets: "device-2", at: r4(a[0]), duration: r4(Math.max(0.05, p[0] - a[0])), ease: "linear", to: tidy({ x: r4(p[1]), y: r4(p[2]), scale }) });
+    }
+  }
+  return moves;
+}
+
+/**
+ * A recording from the capture bar, as a design of its own and straight into Animate: the canvas is
+ * the recording's size and the recording fills it (no device, no backdrop to see), the camera rides
+ * on top as a round layer to move, resize or animate, and the video runs the recording's length
+ * with its sound. Exports also go where the bar's Save to says (`saveTo`).
+ */
+export async function openRecording(r) {
+  if (!r?.video) return;
+  await saveSceneNow();
+  const devices = [{ label: "Recording", screenshot: r.poster, video: r.video, frame: "none", x: 0.5, y: 0.5, height: 1, shadow: "none" }];
+  const animations = [];
+  if (r.camera?.video) {
+    const c = r.camera;
+    devices.push(tidy({ label: "Webcam", fixed: true, screenshot: c.poster, video: c.video, frame: "card", radius: c.radius ?? 0.5, ring: c.ring ? true : undefined, shadow: "medium", x: c.x, y: c.y, height: c.height }));
+    // Moved or resized while recording: it does the same in the video, as moves on its row.
+    animations.push(...bubbleMoves(c.path));
+    // The camera turned off partway: it fades out there (an animation to move or delete).
+    if (c.endsAt && c.endsAt < r.duration - 0.5) animations.push({ targets: "device-2", at: r4(Math.max(0, c.endsAt - 0.4)), exit: "fade", duration: 0.4 });
+  }
+  set({
+    scene: tidy({
+      canvas: { width: r.width, height: r.height },
+      background: "#000000",
+      devices,
+      animations: animations.length ? animations : undefined,
+      // The cursor (logged beside the recording, so the editor draws it), smoothed, with ripples;
+      // zooms onto the clicks; following it when zoomed: each can be turned off.
+      recording: tidy({
+        duration: r.duration,
+        sound: true,
+        saveTo: r.saveTo,
+        saveName: r.saveName,
+        cursor: r.cursor ? { log: r.cursor, show: true, smooth: 0.5, size: 1.4, ripple: true } : undefined,
+        autoZoom: r.cursor ? true : undefined,
+        zoom: r.cursor ? 1.8 : undefined,
+        follow: r.cursor ? true : undefined,
+      }),
+    }),
+    shots: null,
+    shot: 0,
+    groups: null,
+    group: 0,
+    sceneId: null,
+    sceneStamp: null,
+    guide: null,
+    stillPick: null,
+    animSel: null,
+    animRows: [],
+    sceneName: r.name || "Recording",
+    appIcon: null,
+    past: [],
+    future: [],
+    selected: null,
+    render: null,
+    renderStale: false,
+    view: "canvas",
+    scenesOpen: false,
+    scenesPage: false,
+    timelineOpen: true,
+    ai: { ...S.ai, thread: [] },
+  });
+  scheduleLayout(0);
+  persist();
+  if (r.cursor) {
+    const n = await setAutoZoom(true);
+    if (n) toast({ kind: "ok", icon: "video", title: "Zooms added on your clicks", text: `${n} camera move${n === 1 ? "" : "s"} on the Camera row. Drag, change or delete any, or turn auto zoom off in the Recording panel.` });
+  }
+  await saveSceneNow();
 }
 
 export async function openScene(id) {

@@ -1,0 +1,289 @@
+/**
+ * Screen recordings from the capture bar, as the Studio edits and exports them: opening one (the
+ * recording filling a canvas its size, the webcam its own layer that stays put), its cursor drawn
+ * from the log beside it and switching cursors, zooms onto the clicks (and only those going when
+ * auto zoom is turned off), the video following the playhead, and the export (its length, its
+ * sound). With the Mac app's renderer (SCREENSHOTTER_NATIVE, or --native with a built app), the
+ * fast export too, checked against the usual one frame by frame. Its own library, made-up footage.
+ *
+ *   npm run test:recording                 the Studio in Chromium and WebKit, and the export
+ *   npm run test:recording -- --native     also the app's fast export (build the app first)
+ *   npm run test:recording -- --native-only
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { chromium, webkit, type Page } from "playwright";
+
+const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const args = process.argv.slice(2);
+const nativeOnly = args.includes("--native-only");
+const appBin = path.join(root, "build", "Screenshotter.app", "Contents", "MacOS", "Screenshotter");
+const native = process.env.SCREENSHOTTER_NATIVE ?? (args.includes("--native") || nativeOnly ? appBin : undefined);
+if ((args.includes("--native") || nativeOnly) && !existsSync(native ?? "")) throw new Error(`No app to draw with at ${native}: run npm run app:build first.`);
+// The Studio's own exports take the usual way unless this test asks for the fast one.
+delete process.env.SCREENSHOTTER_NATIVE;
+
+const tmp = mkdtempSync(path.join(os.tmpdir(), "screenshotter-rec-"));
+const LIB = path.join(tmp, "library");
+const REC = path.join(LIB, "recordings");
+const PARTS = path.join(REC, ".parts", "mac-screen-fixture");
+mkdirSync(PARTS, { recursive: true });
+writeFileSync(path.join(tmp, "studio.json"), JSON.stringify({ folder: LIB }));
+process.env.SCREENSHOTTER_STUDIO_FILE = path.join(tmp, "studio.json");
+process.env.SCREENSHOTTER_SEEN_FILE = path.join(tmp, "seen.json");
+process.env.SCREENSHOTTER_STYLE_FILE = path.join(tmp, "style.json");
+process.env.SCREENSHOTTER_OUTPUT_DIR = LIB;
+
+const { startStudio } = await import("../src/studio/server.js");
+const { createVideo } = await import("../src/render/video.js");
+const { closeBrowser } = await import("../src/render/browser.js");
+
+const ff = (...a: string[]) => {
+  const r = spawnSync("ffmpeg", ["-y", "-loglevel", "error", ...a], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`ffmpeg ${a.join(" ")}: ${r.stderr}`);
+  return r.stderr;
+};
+/** Seconds long, and how loud (mean dB), of a video. */
+const probe = (file: string) => {
+  const r = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-map", "0:a?", "-af", "volumedetect", "-f", "null", "-"], { encoding: "utf8" });
+  const dur = /Duration: (\d+):(\d+):([\d.]+)/.exec(r.stderr);
+  const vol = /mean_volume: (-?[\d.]+) dB/.exec(r.stderr);
+  return { seconds: dur ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : 0, volume: vol ? Number(vol[1]) : -Infinity };
+};
+
+// The footage: a 4 s screen recording with a tone, a square webcam clip, and a cursor log with
+// three clicks (two close together, one later) and the cursor changing on the way.
+const video = path.join(REC, "mac-screen-fixture.mp4");
+const poster = path.join(REC, "mac-screen-fixture.png");
+const cam = path.join(PARTS, "camera-edit.mp4");
+const camPoster = path.join(PARTS, "camera-edit.png");
+const log = path.join(PARTS, "cursor.json");
+// Tagged as HD colour, as a Mac's recordings are, so there's no guessing how it looks.
+const hd = ["-vf", "scale=out_color_matrix=bt709", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"];
+ff("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "4", ...hd, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", video);
+ff("-ss", "0.1", "-i", video, "-frames:v", "1", poster);
+ff("-f", "lavfi", "-i", "testsrc=size=480x480:rate=30", "-t", "4", ...hd, "-c:v", "libx264", "-pix_fmt", "yuv420p", cam);
+ff("-ss", "0.1", "-i", cam, "-frames:v", "1", camPoster);
+const samples = Array.from({ length: 241 }, (_, i) => {
+  const t = i / 60;
+  return [t, 0.2 + 0.12 * t + 0.01 * Math.sin(t * 37), 0.35 + 0.1 * Math.sin(t) + 0.008 * Math.cos(t * 41)].map((v) => Math.round(v * 10000) / 10000);
+});
+writeFileSync(log, JSON.stringify({ version: 1, width: 1280, height: 720, samples, clicks: [[0.9, 0.31, 0.43, "down"], [1.0, 0.31, 0.43, "up"], [1.7, 0.4, 0.45, "down"], [3.4, 0.62, 0.4, "down"]], kinds: [[0, "arrow"], [2, "text"], [3, "hand"]] }));
+const spec = {
+  video, poster, width: 1280, height: 720, duration: 4, name: "Recording test", saveName: "Screen Recording test", saveTo: path.join(tmp, "desktop"), cursor: log,
+  // Dragged across at 1.5 s (a curving drag), then made bigger at 2.2 s.
+  camera: {
+    video: cam, poster: camPoster, x: 0.1, y: 0.8, height: 0.25, radius: 0.5, ring: true, endsAt: 3,
+    path: [[0, 0.1, 0.8, 0.25], [1.5, 0.15, 0.78, 0.25], [1.533, 0.3, 0.6, 0.25], [1.566, 0.45, 0.62, 0.25], [1.6, 0.6, 0.7, 0.25], [2.2, 0.6, 0.7, 0.3], [2.233, 0.6, 0.7, 0.35]],
+  },
+};
+mkdirSync(spec.saveTo, { recursive: true });
+
+let failed = 0;
+const check = async (name: string, fn: () => Promise<string | void>) => {
+  try {
+    const note = await fn();
+    console.log(`PASS ${name}${note ? ` (${note})` : ""}`);
+  } catch (e) {
+    failed++;
+    console.log(`FAIL ${name}: ${(e as Error).message}`);
+  }
+};
+const expect = (ok: unknown, why: string) => {
+  if (!ok) throw new Error(why);
+};
+
+// The Studio, as people use it.
+const server = nativeOnly ? null : await startStudio(0, false);
+const BASE = server ? `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/` : "";
+const S = <T,>(page: Page, fn: (arg: any) => T | Promise<T>, arg?: unknown) => page.evaluate(fn as never, arg) as Promise<T>;
+for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webkit", webkit]] as const)) {
+  if (args.some((a) => a === "chromium" || a === "webkit") && !args.includes(name)) continue;
+  // Silent: the recordings play with their sound on (that's checked), but never out loud.
+  const browser = await engine.launch(name === "chromium" ? { args: ["--mute-audio"] } : {});
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      this.volume = 0;
+      return play.call(this);
+    };
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(BASE);
+  await page.waitForFunction(() => (window as any).studio?.state?.ready, null, { timeout: 30000 });
+  await S(page, (s) => (window as any).studio.command("openRecording", s), spec);
+  await page.waitForFunction(() => (window as any).studio.state.scene.recording?.autoZoom && document.querySelector(".rec-cursor svg"), null, { timeout: 15000 }).catch(() => undefined);
+  const pad = name.padEnd(8);
+
+  await check(`${pad} a recording opens in Animate: its size, the recording filling it, the webcam its own layer that stays put`, async () => {
+    const st = await S(page, () => {
+      const s = (window as any).studio.state;
+      return { open: s.timelineOpen, canvas: s.scene.canvas, devices: s.scene.devices.map((d: any) => [d.label, d.frame, Boolean(d.fixed)]), panel: document.querySelector(".panel.right h2")?.textContent };
+    });
+    expect(st.open, "Animate isn't open");
+    expect(st.canvas?.width === 1280 && st.canvas?.height === 720, `canvas ${JSON.stringify(st.canvas)}`);
+    expect(JSON.stringify(st.devices) === JSON.stringify([["Recording", "none", false], ["Webcam", "card", true]]), `devices ${JSON.stringify(st.devices)}`);
+    expect(st.panel === "Recording", `panel says ${st.panel}`);
+  });
+
+  await check(`${pad} moving and resizing the webcam while recording does the same in the video`, async () => {
+    const moves = await S(page, () => ((window as any).studio.state.scene.animations ?? []).filter((a: any) => a.targets === "device-2" && a.to));
+    expect(moves.length >= 2 && moves.length <= 5, `${moves.length} moves`);
+    const last = moves[moves.length - 1];
+    expect(Math.abs(last.to.x - 0.6) < 0.01 && Math.abs(last.to.y - 0.7) < 0.01 && Math.abs(last.to.scale - 1.4) < 0.01, `ends at ${JSON.stringify(last.to)}`);
+    expect(moves[0].at >= 1.4 && moves[0].at <= 1.5, `starts at ${moves[0].at}`);
+    return `${moves.length} moves`;
+  });
+
+  await check(`${pad} the timeline zooms in (it scrolls sideways) and fits again`, async () => {
+    const r = await S(page, async () => {
+      const body = document.querySelector(".tl-body") as HTMLElement;
+      const fit = { scroll: body.scrollWidth - body.clientWidth };
+      const edge = body.getBoundingClientRect().left + body.clientWidth;
+      for (let n = 0; n < 4; n++) (document.querySelector('.tl-zoom button[title="Zoom in"]') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 300));
+      const ticks = document.querySelectorAll(".tl-tick").length;
+      const zoomed = { scroll: body.scrollWidth - body.clientWidth, ticks };
+      (document.querySelector(".tl-zoom .btn") as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 300));
+      return { fit, zoomed, back: body.scrollWidth - body.clientWidth };
+    });
+    expect(r.fit.scroll <= 2, `fit scrolls by ${r.fit.scroll}`);
+    expect(r.zoomed.scroll > 300, `zoomed in scrolls by only ${r.zoomed.scroll}`);
+    expect(r.back <= 2, `Fit left it scrolling by ${r.back}`);
+  });
+
+  await check(`${pad} zooms land on the clicks, and turning auto zoom off removes only those`, async () => {
+    const zooms = await S(page, () => ((window as any).studio.state.scene.animations ?? []).filter((a: any) => a.targets === "camera" && a.auto).length);
+    expect(zooms >= 3, `${zooms} automatic zooms`);
+    const left = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      st.edit((d: any) => d.animations.push({ targets: "camera", at: 3.6, duration: 0.3, to: { zoom: 1.3, x: 0.5, y: 0.5 } }));
+      const r = await import("/ui/recording.js" as string);
+      await r.setAutoZoom(false);
+      return ((window as any).studio.state.scene.animations ?? []).filter((a: any) => a.targets === "camera").map((a: any) => Boolean(a.auto));
+    });
+    expect(JSON.stringify(left) === "[false]", `left ${JSON.stringify(left)}`);
+    const back = await S(page, async () => (await import("/ui/recording.js" as string)).setAutoZoom(true));
+    expect(back === zooms, `${back} zooms when turned back on`);
+    return `${zooms} zooms`;
+  });
+
+  await check(`${pad} the cursor follows the playhead and changes as macOS's did`, async () => {
+    const at = (t: number) =>
+      S(page, async (t: number) => {
+        (await import("/ui/timeline.js" as string)).setPlayhead(t);
+        await new Promise((r) => setTimeout(r, 150));
+        const c = document.querySelector(".rec-cursor > div:last-child") as HTMLElement;
+        return { tf: c?.style.transform ?? "", d: c?.querySelector("path")?.getAttribute("d")?.slice(0, 6) ?? "" };
+      }, t);
+    const [a, b, c] = [await at(0.5), await at(2.5), await at(3.5)];
+    expect(a.tf && a.tf !== b.tf, `it didn't move (${a.tf} / ${b.tf})`);
+    expect(new Set([a.d, b.d, c.d]).size === 3, `cursors ${a.d} ${b.d} ${c.d}`);
+  });
+
+  await check(`${pad} playing plays the recording with its sound; scrubbing shows the frame at the playhead`, async () => {
+    const r = await S(page, async () => {
+      const tl = await import("/ui/timeline.js" as string);
+      tl.setPlayhead(0);
+      tl.play();
+      await new Promise((r) => setTimeout(r, 1200));
+      const playing = [...document.querySelectorAll<HTMLVideoElement>("video[data-follow]")].map((v) => ({ t: v.currentTime, muted: v.muted, paused: v.paused }));
+      // The recording sets the pace: the playhead is where it is.
+      const master = document.querySelector<HTMLVideoElement>("video[data-master]")!;
+      const lead = Math.abs(tl.playhead.t - master.currentTime);
+      tl.pause();
+      tl.setPlayhead(2.5);
+      await new Promise((r) => setTimeout(r, 400));
+      const still = [...document.querySelectorAll<HTMLVideoElement>("video[data-follow]")].map((v) => ({ t: v.currentTime, paused: v.paused }));
+      return { playing, still, lead };
+    });
+    expect(r.lead < 0.1, `the playhead is ${r.lead.toFixed(2)} s from the recording`);
+    expect(r.playing.length === 2 && r.playing.every((v) => v.t > 0.5 && !v.muted && !v.paused), `playing ${JSON.stringify(r.playing)}`);
+    expect(r.still.every((v) => v.paused && Math.abs(v.t - 2.5) < 0.05), `scrubbed ${JSON.stringify(r.still)}`);
+  });
+
+  if (name === "chromium") {
+    await check(`${pad} exporting shows how far along it is, and about how long is left`, async () => {
+      const seen = await S(page, async () => {
+        const a = await import("/ui/actions.js" as string);
+        const st = (window as any).studio.state;
+        const seen: Array<[number, number | null]> = [];
+        const watch = setInterval(() => st.rendering?.progress !== undefined && seen.push([st.rendering.progress, st.rendering.left ?? null]), 200);
+        await a.exportVideo();
+        clearInterval(watch);
+        const shown = document.querySelector(".render-progress") ? true : false;
+        return { seen, shown };
+      });
+      const mid = seen.seen.filter(([p]) => p > 0.05 && p < 0.95);
+      expect(mid.length >= 2, `progress seen: ${JSON.stringify(seen.seen.slice(0, 8))}`);
+      expect(mid.some(([, left]) => left !== null && left > 0), "no time left was shown");
+      expect(seen.seen.every(([p], i) => i === 0 || p >= seen.seen[i - 1][0]), "it went backwards");
+      return `${mid.length} readings mid-way`;
+    });
+  }
+
+  await check(`${pad} no page errors`, async () => expect(!errors.length, errors.join(" | ")));
+  await browser.close();
+}
+
+// The export: the usual way, then (with the app) the fast one, which should look the same.
+const input = (out: string) => ({
+  canvas: { width: 1280, height: 720 },
+  background: "#000000",
+  devices: [
+    { screenshot: poster, video, frame: "none" as const, x: 0.5, y: 0.5, height: 1, shadow: "none" as const },
+    { screenshot: camPoster, video: cam, frame: "card" as const, radius: 0.5, ring: true, shadow: "medium" as const, fixed: true, x: 0.1, y: 0.8, height: 0.25 },
+  ],
+  animations: [
+    { targets: "camera", at: 0.3, duration: 0.6, to: { zoom: 1.8, x: 0.31, y: 0.43 } },
+    { targets: "camera", at: 1.3, duration: 0.4, to: { zoom: 1.8, x: 0.4, y: 0.45 } },
+    { targets: "camera", at: 3.2, duration: 0.6, to: { zoom: 1 } },
+    { targets: "device-2", at: 2.6, exit: "fade" as const, duration: 0.4 },
+  ],
+  video: { duration: 4, motion: "none" as const, sound: true, cursor: { device: 0, log, smooth: 0.5, size: 1.4, ripple: true }, follow: true },
+  output: out,
+});
+const usual = path.join(tmp, "usual.mp4");
+if (!nativeOnly) {
+  await check("the export runs the recording's length, with its sound", async () => {
+    const t0 = Date.now();
+    const r = await createVideo(input(usual) as never);
+    const p = probe(usual);
+    expect(Math.abs(p.seconds - 4) < 0.1, `${p.seconds} s`);
+    expect(p.volume > -40, `sound at ${p.volume} dB`);
+    expect(!r.warnings?.length, `warnings: ${r.warnings?.join(" ")}`);
+    return `${((Date.now() - t0) / 1000).toFixed(1)} s`;
+  });
+}
+if (native) {
+  await check("the fast export (the app, on the GPU) looks like the usual one, with its sound", async () => {
+    if (!existsSync(usual)) await createVideo(input(usual) as never);
+    process.env.SCREENSHOTTER_NATIVE = native;
+    const fast = path.join(tmp, "fast.mp4");
+    const t0 = Date.now();
+    const r = await createVideo(input(fast) as never);
+    const secs = (Date.now() - t0) / 1000;
+    delete process.env.SCREENSHOTTER_NATIVE;
+    expect(!r.warnings?.length, `warnings: ${r.warnings?.join(" ")}`);
+    const p = probe(fast);
+    expect(Math.abs(p.seconds - 4) < 0.1 && p.volume > -40, `${p.seconds} s, sound at ${p.volume} dB`);
+    // Frame by frame against the usual export.
+    const cmp = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", usual, "-i", fast, "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"], { encoding: "utf8" });
+    const psnr = /average:([\d.]+|inf)/.exec(cmp.stderr);
+    const db = psnr ? (psnr[1] === "inf" ? 99 : Number(psnr[1])) : 0;
+    expect(db > 24, `only ${db.toFixed(1)} dB alike`);
+    return `${secs.toFixed(1)} s, ${db.toFixed(1)} dB alike`;
+  });
+}
+
+await closeBrowser();
+server?.close();
+if (process.env.KEEP) console.log("kept", tmp);
+else rmSync(tmp, { recursive: true, force: true });
+console.log(failed ? `\n${failed} recording check${failed === 1 ? "" : "s"} failed.` : "\nAll recording checks passed.");
+process.exit(failed ? 1 : 0);

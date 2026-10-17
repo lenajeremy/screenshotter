@@ -1,5 +1,14 @@
 # What's new
 
+## Unreleased
+
+### Highlights
+- **Screenshotter opens on a capture bar.** A bar on the screen you're using, like ⌘⇧5: a screenshot or a recording, of an area, a window or the whole screen. **Open Screenshotter** goes to the canvas. ⌘⇧2 or the menu bar icon brings the bar back from anywhere, over full-screen apps too.
+- **Record your screen, with your camera.** Turn the camera on and you're in a bubble you can drag anywhere, shape (circle, rounded, square; roundness, proportions, size, mirror, border) and turn off mid-recording, your voice carrying on. Your microphone and the Mac's own sound record too, a 3-2-1 countdown starts it, and a small pill (drag it, or shrink it to a dot) pauses, stops or throws it away.
+- **Save to where you like.** Screenshots and recordings each keep their own place: your library, the Desktop, any folder, or (screenshots) just the clipboard.
+- **Edit recordings like Screen Studio.** Stopping opens the recording in **Animate**: it fills a canvas its own size, your camera is a layer of its own that stays put as the view zooms, and the video runs its full length with its sound. With **Cursor effects** on, the cursor is drawn by Screenshotter: smoothed, sized as you like, the right cursor for each moment, a ripple on each click. **Zoom in on clicks** adds zooms you can drag, change or delete, and the zoomed view follows the cursor. Every effect has its own switch in the **Recording** panel.
+- **Fast export for recordings.** The Mac app draws a recording's video on the GPU and encodes it with the media engine: a minute of 4K exports in under a minute, about ten times faster, with anything else in the design drawn just once.
+
 ## 0.11.6 · 3 October 2026
 
 ### Fixes

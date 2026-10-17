@@ -4,8 +4,10 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import { ColorPicker, Dropdown, Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
-import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
+import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, followVideo, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
 import { textPieces, unitMode } from "./animate.js";
+import { CURSOR_ART, clickAt, cursorAt, cursorKindAt } from "./cursor.js";
+import { cursorTrack } from "./recording.js";
 import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout, hasDesign } from "./store.js";
 import { addDevice, addShot, addSize, carryDeviceOver, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
@@ -300,10 +302,65 @@ function DeviceEnt({ e, W, H }) {
     ${band && html`<div style=${stub(true)}></div><div style=${stub(false)}></div><div style=${caseBox}></div>`}
     ${menuStrip && html`<div style=${menuStrip}></div>`}
     <img draggable=${false} src=${thumbUrl(e.screenshot, Math.min(900, Math.max(240, Math.round(bw * s.width * 2))))} style=${screen} />
-    ${dev.video && !ghost && S.stillPick?.id !== e.id && html`<video key=${dev.video} src=${fileUrl(dev.video)} muted loop autoplay playsinline preload="auto" style=${{ ...screen, objectFit: "cover" }}></video>`}
+    ${dev.video && !ghost && S.stillPick?.id !== e.id && (S.timelineOpen
+      ? // In Animate, the recording follows the playhead (and plays its sound with the timeline).
+        html`<video key=${dev.video + "#follow"} data-follow data-master=${e.index === 0 && scene.recording ? "1" : undefined} src=${fileUrl(dev.video)} playsinline preload="auto" onLoadedMetadata=${(ev) => followVideo(ev.currentTarget)} style=${{ ...screen, objectFit: "cover" }}></video>`
+      : html`<video key=${dev.video} src=${fileUrl(dev.video)} muted loop autoplay playsinline preload="auto" style=${{ ...screen, objectFit: "cover" }}></video>`)}
+    ${e.index === 0 && !e.spill && scene.recording?.cursor?.log && scene.recording.cursor.show !== false && !ghost && html`<${RecordingCursor} c=${scene.recording.cursor} box=${screen} w=${bw * s.width} />`}
+    ${dev.ring && html`<div style=${{ ...screen, position: "absolute", pointerEvents: "none", boxShadow: `inset 0 0 0 ${Math.max(1, (dev.ring.width ?? 0.018) * Math.min(bw * s.width, e.height * H * s.height))}px ${dev.ring.color ?? "#fff"}` }}></div>`}
     ${e.bezel && (e.clay ? html`<${ClayArt} e=${e} s=${s} bw=${bw} />` : html`<img class="bezel-art" draggable=${false} src=${fileUrl(e.bezel)} />`)}
   </div>
   ${tags.length > 0 && html`<span class="tag">${tags.join(" · ")}</span>`}`;
+}
+
+/**
+ * A recording's cursor over it, where the log has it at the playhead: smoothed or not, the cursor
+ * macOS showed, a dip and a ring on each click. The export draws it the same way.
+ */
+function RecordingCursor({ c, box, w }) {
+  useStore();
+  const track = cursorTrack(c.log, c.smooth ?? 0.5);
+  const el = useRef(null);
+  const ring = useRef(null);
+  const size = w * 0.016 * (c.size ?? 1.4);
+  useEffect(() => {
+    if (!track || !el.current) return;
+    let shown = "";
+    const move = (t) => {
+      const p = cursorAt(track, t);
+      const node = el.current;
+      if (!p || !node) return;
+      const kind = cursorKindAt(track, t);
+      if (kind !== shown) {
+        const art = CURSOR_ART[kind] ?? CURSOR_ART.arrow;
+        const sc = size / art.box[1];
+        node.innerHTML = `<svg viewBox="0 0 ${art.box[0]} ${art.box[1]}" width="${art.box[0] * sc}" height="${size}" style="display:block;overflow:visible;margin:${-art.hot[1] * sc}px 0 0 ${-art.hot[0] * sc}px;filter:drop-shadow(0 ${size * 0.04}px ${size * 0.08}px rgba(0,0,0,.35))">${art.svg}</svg>`;
+        shown = kind;
+      }
+      const click = clickAt(track, t);
+      const press = click && click.since >= 0 && click.since < 0.14 ? 0.86 : 1;
+      const W = node.parentElement.offsetWidth;
+      const H = node.parentElement.offsetHeight;
+      node.style.opacity = p.x >= -0.01 && p.x <= 1.01 && p.y >= -0.01 && p.y <= 1.01 ? "1" : "0";
+      node.style.transform = `translate(${p.x * W}px, ${p.y * H}px) scale(${press})`;
+      const r = ring.current;
+      if (r) {
+        if (c.ripple !== false && click && click.since >= 0) {
+          const k = click.since / 0.5;
+          const rs = size * 2.2;
+          r.style.opacity = String(Math.max(0, 1 - k));
+          r.style.transform = `translate(${click.x * W - rs / 2}px, ${click.y * H - rs / 2}px) scale(${0.45 + k * 0.9})`;
+        } else r.style.opacity = "0";
+      }
+    };
+    move(playhead.t);
+    return onPlayhead(move);
+  }, [track, size, c.ripple]);
+  if (!track) return null;
+  return html`<div class="rec-cursor" style=${{ ...box, position: "absolute", overflow: "hidden", pointerEvents: "none" }}>
+    <div ref=${ring} style=${{ position: "absolute", left: 0, top: 0, width: size * 2.2 + "px", height: size * 2.2 + "px", borderRadius: "50%", border: `${Math.max(1, size * 0.1)}px solid rgba(255,255,255,.95)`, boxShadow: `0 0 ${size * 0.2}px rgba(0,0,0,.25)`, opacity: 0 }}></div>
+    <div ref=${el} style=${{ position: "absolute", left: 0, top: 0, transformOrigin: "0 0", willChange: "transform" }}></div>
+  </div>`;
 }
 
 /**

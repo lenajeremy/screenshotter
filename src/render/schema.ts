@@ -240,6 +240,7 @@ export const DeviceInputSchema = z.object({
   rotateY: z.number().optional().describe("3D turn, degrees. Positive turns the right edge away."),
   perspective: z.number().positive().optional().describe("3D perspective in px; smaller is more dramatic."),
   shadow: ShadowSchema.optional(),
+  fixed: z.boolean().optional().describe("Stays where it is when the camera zooms or pans (a webcam bubble over a screen recording), in front of what the camera moves. Its own animations still move it."),
   z: z.number().optional().describe("Stacking order; higher is in front."),
   glare: z.boolean().optional().describe("Subtle diagonal glass reflection."),
   blur: z
@@ -262,7 +263,11 @@ export const DeviceInputSchema = z.object({
     .object({ x: z.number().min(0), y: z.number().min(0), width: z.number().positive(), height: z.number().positive() })
     .optional()
     .describe("Use only this part of the screenshot (px). Mostly for card/none frames."),
-  radius: z.number().min(0).optional().describe("Corner radius in canvas px for card/browser/window frames."),
+  radius: z.number().min(0).optional().describe("Corner radius for card/browser/window/none frames: a share of the device's shorter side up to 0.5 (0.5 is round: a circle for a square), or canvas px above that."),
+  ring: z
+    .union([z.boolean(), z.object({ width: z.number().min(0).max(0.2).optional().describe("A share of the shorter side. Default 0.018."), color: z.string().optional().describe("Default white.") })])
+    .optional()
+    .describe("A ring round a card or none frame's edge (a camera bubble's white rim): true, or {width, color}."),
   url: z.string().optional().describe("browser frame: address bar text."),
   title: z.string().optional().describe("window frame: title bar text."),
   chrome: z.enum(["light", "dark"]).optional().describe("browser/window chrome theme. Default light."),
@@ -466,7 +471,7 @@ export const AnimationSchema = z
       .describe(
         'What it animates: item ids as layout_mockup lists them ("device-1", "caption", "text-2", "shape-3"). Several move as one group: a zoom or turn is about their shared centre. Or "backdrop": `to: { zoom, x, y, rotate, blur, hue }` moves only the backdrop (a slow push into a photo, a drifting glow, a colour shift). Or "camera": `to: { zoom, x, y }` pushes the view in on a point (the whole picture, text included), glides to another, and `to: { zoom: 1 }` pulls back out. Or a device\'s call-out, "device-1/callout-2" (its highlights, counting from 1): `enter` or `exit` sets when it appears or leaves, arriving the way its style does (a lift rises, a loupe grows); call-outs not animated appear at video.highlight\'s time.',
       ),
-    at: z.number().min(0).max(120).describe("Seconds after the video starts."),
+    at: z.number().min(0).max(3600).describe("Seconds after the video starts (up to an hour, for a long recording)."),
     duration: z.number().min(0).max(30).optional().describe("Seconds. Default 0.6."),
     ease: z.enum(EASES).optional().describe("ease-out (default: fast, then settles), ease-in, ease-in-out, linear, back-out (overshoots a little), spring (overshoots and settles), bounce."),
     enter: z
