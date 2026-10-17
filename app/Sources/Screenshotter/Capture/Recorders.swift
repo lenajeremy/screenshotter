@@ -55,6 +55,9 @@ final class TrackWriter: @unchecked Sendable {
     /// Samples written, and ones left out because the writer wasn't ready (falling behind), by track.
     private(set) var written: [Track: Int] = [:]
     private(set) var dropped: [Track: Int] = [:]
+    /// Taking samples (false: the stream's running but the recording hasn't begun, as during a
+    /// countdown, so it starts the moment it's let in).
+    var open = true
     /// Whether the file waits for a picture to start. Off once the camera is turned off, so a
     /// recording whose camera went off before its first frame still keeps your voice.
     var waitsForVideo = true
@@ -103,7 +106,7 @@ final class TrackWriter: @unchecked Sendable {
     /// Appends a sample (on the caller's queue). The file starts at the first video frame (or, once
     /// it no longer waits for one, the first sample of any kind).
     func append(_ sample: CMSampleBuffer, to track: Track) {
-        guard !finished, CMSampleBufferDataIsReady(sample) else { return }
+        guard open, !finished, CMSampleBufferDataIsReady(sample) else { return }
         let t = CMSampleBufferGetPresentationTimeStamp(sample)
         guard let at = clock.shifted(t) else { return }
         if firstTime == nil {
@@ -216,8 +219,15 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         if mic, #available(macOS 15.0, *) { try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue) }
     }
 
-    func start() async throws {
+    /// Starts the stream. With `waiting`, nothing's kept until `begin()` (the stream warms up
+    /// during a countdown, so the recording starts the moment it ends).
+    func start(waiting: Bool = false) async throws {
+        if waiting { queue.sync { writer.open = false } }
         try await stream.startCapture()
+    }
+
+    func begin() {
+        queue.sync { writer.open = true }
     }
 
     func stop() async -> Bool {

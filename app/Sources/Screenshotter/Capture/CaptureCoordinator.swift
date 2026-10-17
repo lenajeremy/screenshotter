@@ -314,6 +314,7 @@ import Combine
                     p.bubble.keepOver(region.frame)
                     // Your voice goes with the camera (and survives it being turned off).
                     if micOn, !(await p.camera.addMic(model.micID)) { NSLog("Screenshotter: the microphone couldn't join the camera") }
+                    testLog?("step microphone joined")
                 }
                 recording = rec
                 capturing = false
@@ -321,34 +322,51 @@ import Combine
                 let screenMic = micOn && !model.cameraOn ? model.micID : nil
                 // Cursor effects: the cursor is logged and drawn by the editor, so it stays out of the picture.
                 if edit, model.cursorEffects { rec.cursor = CursorRecorder(region: region.frame) }
-                rec.screen = try ScreenRecorder(region: region, source: source, url: rec.parts.appendingPathComponent("screen.mp4"),
-                                                systemAudio: model.systemAudio, micID: screenMic, clock: rec.clock, showsCursor: rec.cursor == nil)
+                rec.screen = try timed("screen recorder") {
+                    try ScreenRecorder(region: region, source: source, url: rec.parts.appendingPathComponent("screen.mp4"),
+                                       systemAudio: model.systemAudio, micID: screenMic, clock: rec.clock, showsCursor: rec.cursor == nil)
+                }
+                // The screen stream and the cursor log warm up while the countdown runs (keeping
+                // nothing yet), so the recording starts the moment it ends, without a stall.
+                timed("cursor log") { rec.cursor?.start() }
                 if model.countdown {
-                    let go = await withCheckedContinuation { done in Countdown(over: region.frame).run { done.resume(returning: $0) } }
+                    // The countdown runs while the stream starts; then wait for it to finish.
+                    var outcome: Bool?
+                    var waiting: CheckedContinuation<Bool, Never>?
+                    Countdown(over: region.frame).run { go in
+                        if let waiting { waiting.resume(returning: go) } else { outcome = go }
+                    }
+                    try await rec.screen?.start(waiting: true)
+                    let go = await withCheckedContinuation { done in
+                        if let outcome { done.resume(returning: outcome) } else { waiting = done }
+                    }
                     if !go { return discard() }
+                } else {
+                    try await rec.screen?.start(waiting: true)
                 }
                 // Stopped or thrown away during the countdown.
                 guard recording === rec else { return }
-                try rec.camera?.startRecording(to: rec.parts.appendingPathComponent("camera.mov"), clock: rec.clock)
+                try timed("camera writer") { try rec.camera?.startRecording(to: rec.parts.appendingPathComponent("camera.mov"), clock: rec.clock) }
                 rec.startedAt = CACurrentMediaTime()
-                rec.cursor?.start()
+                rec.screen?.begin()
                 if let bubble = rec.bubble {
                     let tracker = BubbleTracker(bubble: bubble)
-                    tracker.start()
+                    timed("bubble tracker") { tracker.start() }
                     rec.bubbleTracker = tracker
                 }
-                try await rec.screen?.start()
                 rec.screen?.onStop = { [weak self] error in
                     DispatchQueue.main.async { self?.fail("The recording stopped", error) }
                 }
-                let pill = RecordingPill(on: region.screen, camera: rec.bubble != nil,
-                                         onPause: { [weak self] in self?.togglePause() },
-                                         onStop: { [weak self] in self?.stop() },
-                                         onDiscard: { [weak self] in self?.discard() },
-                                         onCameraOff: { [weak self] in self?.cameraOffPressed() })
+                let pill = timed("pill") {
+                    RecordingPill(on: region.screen, camera: rec.bubble != nil,
+                                  onPause: { [weak self] in self?.togglePause() },
+                                  onStop: { [weak self] in self?.stop() },
+                                  onDiscard: { [weak self] in self?.discard() },
+                                  onCameraOff: { [weak self] in self?.cameraOffPressed() })
+                }
                 rec.pill = pill
-                pill.begin()
-                updateStatusItem()
+                timed("pill shown") { pill.begin() }
+                timed("menu bar") { updateStatusItem() }
             } catch {
                 await tearDown(keepFiles: false)
                 fail("Couldn't start recording", error)
@@ -597,6 +615,14 @@ import Combine
     /// During the self-test, problems go to its log instead of an alert.
     private var testLog: ((String) -> Void)?
 
+    /// In the self-test: how long a step held the main thread.
+    private func timed<T>(_ step: String, _ work: () throws -> T) rethrows -> T {
+        guard let testLog else { return try work() }
+        let t0 = CACurrentMediaTime()
+        defer { testLog(String(format: "step %@: %.0f ms", step, (CACurrentMediaTime() - t0) * 1000)) }
+        return try work()
+    }
+
     private func fail(_ title: String, _ error: Error?) {
         model.busy = false
         if let testLog { return testLog("\(title): \(error?.localizedDescription ?? "no detail")") }
@@ -635,7 +661,7 @@ import Combine
             model.cameraOn = withCamera && !model.cameras.isEmpty
             model.micOn = env["SCREENSHOTTER_CAPTURE_SELFTEST_MIC"] == "1" && model.micAvailable
             model.systemAudio = false
-            model.countdown = false
+            model.countdown = env["SCREENSHOTTER_CAPTURE_SELFTEST_COUNTDOWN"] == "1"
             note("camera: \(model.cameraOn ? model.cameraName : "off"), microphone: \(model.micOn ? model.micName : "off")")
             record(.screen(screen))
             // Your own choices back before quitting (they're saved as they change).
