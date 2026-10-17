@@ -668,7 +668,7 @@ export function CanvasView() {
   const H0 = layout?.canvas.height ?? 2868;
   // While a first-steps card sits at the bottom, the design fits in the room above it.
   // The timeline as tall as it's been dragged (else the usual), with a gap above it.
-  const bottom = s.timelineOpen ? Math.max(0, Math.min(s.tlH ?? Math.min(size.h * 0.44, 270), size.h - 150)) + 30 : s.guide === "design" || s.stillPick ? Math.min(size.h * 0.46, 290) : s.guide ? 210 : BOTTOM;
+  const bottom = s.timelineOpen ? Math.max(0, Math.min(s.tlH ?? Math.min(size.h * 0.44, 320), size.h - 150)) + 30 : s.guide === "design" || s.stillPick ? Math.min(size.h * 0.46, 290) : s.guide ? 210 : BOTTOM;
   // A set of screens sits in a row in Edit: fit the whole row, or just the screen being edited.
   const setMode = !s.timelineOpen && s.view === "canvas" && manyShots();
   const count = setMode ? s.shots.length : 1;

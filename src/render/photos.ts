@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { asJpeg, wallpaperFile } from "./wallpapers.js";
 import path from "node:path";
 import { cacheDir, resolveUserPath } from "../util/files.js";
 
@@ -318,6 +319,8 @@ export async function madeImage(opts: GenerateOptions, width: number, height: nu
  * "unsplash:<photo id>", or "unsplash:search:<query>".
  */
 export async function resolvePhoto(ref: string, canvas: { width: number; height: number }, pick = 0): Promise<Photo> {
+  // One of macOS's own wallpapers, from this Mac.
+  if (ref.startsWith("macos:")) return { path: await wallpaperFile(ref.slice("macos:".length)) };
   const orientation = canvas.width > canvas.height * 1.15 ? "landscape" : canvas.height > canvas.width * 1.15 ? "portrait" : "squarish";
   const width = Math.max(canvas.width, canvas.height);
   if (ref.startsWith("unsplash:search:")) return unsplashSearch(ref.slice("unsplash:search:".length), orientation, pick, width);
@@ -337,5 +340,7 @@ export async function resolvePhoto(ref: string, canvas: { width: number; height:
   }
   const file = resolveUserPath(ref);
   if (!existsSync(file)) throw new Error(`Background photo not found: ${file}`);
+  // HEIC (an iPhone photo, a Mac wallpaper): as a JPEG the renderer can draw.
+  if (/\.hei[cf]$/i.test(file)) return { path: await asJpeg(file) };
   return { path: file };
 }

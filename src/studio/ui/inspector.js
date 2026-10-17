@@ -4,7 +4,8 @@ import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, T
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore, pictureUrl } from "./store.js";
 import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
-import { ClipInspector } from "./timeline.js";
+import { ClipInspector, SoundInspector } from "./timeline.js";
+import { soundClips } from "./sound.js";
 import { LayersList, bgObj } from "./panels.js";
 import { setAutoZoom, setFrame, setRecording } from "./recording.js";
 
@@ -43,6 +44,7 @@ export function Inspector() {
   let body;
   // Animate: the selected animation takes the panel.
   if (s.timelineOpen && s.animSel !== null && s.scene.animations?.[s.animSel]) body = html`<${ClipInspector} />`;
+  else if (s.timelineOpen && s.soundSel != null && soundClips(s.scene)[s.soundSel]) body = html`<${SoundInspector} />`;
   else if (!id) body = html`<${SceneInspector} />`;
   else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
   else if (id === "caption") body = html`<${CaptionInspector} />`;
@@ -831,13 +833,15 @@ export function sizeOptions(presets) {
  */
 function FrameSection() {
   const s = useStore();
+  const bg = s.scene.background;
+  const still = bg && !bgObj(bg).generate && bgObj(bg).type !== "transparent" ? `url("/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(bg))}&w=120&h=120")` : null;
   return html`
     <${Section} title="Frame">
       <div class="row"><label>Padding</label><${Slider} value=${Math.max(0, (1 - (s.scene.devices[0]?.height ?? 1)) / 2)} min=${0} max=${0.25} step=${0.005} reset=${0} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setFrame({ padding: v ?? 0 })} /></div>
       <div class="row"><label>Corners</label><${Slider} value=${s.scene.devices[0]?.radius ?? 0} min=${0} max=${0.12} step=${0.002} reset=${0} format=${(v) => (v ? Math.round(v * 1000) / 10 + "%" : "Square")} onChange=${(v) => setFrame({ radius: v ?? 0 })} /></div>
-      <div class="row"><label>Shadow</label><${Seg} value=${s.scene.devices[0]?.shadow ?? "none"} options=${[["none", "None"], ["soft", "Soft"], ["medium", "Medium"], ["strong", "Strong"]]} onChange=${(v) => setFrame({ shadow: v })} /></div>
+      <div class="row"><label>Shadow</label><div class="chips">${["none", "soft", "medium", "strong"].map((sh) => html`<button class="chip sm ${(s.scene.devices[0]?.shadow ?? "none") === sh ? "on" : ""}" onClick=${() => setFrame({ shadow: sh })}>${sh[0].toUpperCase() + sh.slice(1)}</button>`)}</div></div>
       <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
-        <span class="sw" style=${{ background: "var(--check)" }}></span>
+        <span class="sw" style=${{ background: still ? `${still} center / cover, var(--check)` : "var(--check)" }}></span>
         <span class="grow"><b style=${{ display: "block" }}>Background</b><span class="note">${(s.scene.devices[0]?.height ?? 1) < 1 ? "Shows round the recording" : "Add padding to see it round the recording"}</span></span>
         <${Icon} n="right" s=${14} />
       </button>
@@ -893,7 +897,7 @@ function SceneInspector() {
   const custom = cur && !canvases.some((c) => c.value === cur);
   const [cw, ch] = (/^(\d+)x(\d+)$/.exec(cur) ?? []).slice(1).map(Number);
   const o = bgObj(sc.background);
-  const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
+  const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : o.photo.startsWith("macos:") ? `${o.photo.slice(6)} (macOS)` : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
   const bgStill = sc.background && !o.generate && o.type !== "transparent" ? `/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(sc.background))}&w=120&h=120` : null;
   return html`
     <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : sc.plain && sc.devices?.length === 1 ? "Screenshot" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>

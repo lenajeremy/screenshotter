@@ -22,6 +22,8 @@ import { GRADES, LAYOUTS, MockupInputSchema, type BackgroundInput, type MockupIn
 import { madeBackdrop } from "../render/background.js";
 import { setImageQuality } from "../render/photos.js";
 import { STILL, isRecording, momentThumb, saveStill, stillMoments } from "./stills.js";
+import { waveform } from "./waveform.js";
+import { asJpeg, findWallpaper, macWallpapers } from "../render/wallpapers.js";
 import { createVideo, VideoInputSchema } from "../render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputSchema } from "../render/sequence.js";
 import { captureScreenshot } from "../simulator/capture.js";
@@ -470,6 +472,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     createReadStream(file).pipe(res);
     return;
   }
+  // A file's sound as a waveform, for the timeline's Sound row.
+  if (req.method === "GET" && url.pathname === "/api/waveform") {
+    const file = url.searchParams.get("path") ?? "";
+    if (!allowedFile(file) || !existsSync(file)) throw new HttpError(404, "Not found");
+    return send(200, await waveform(file));
+  }
   // A recording's moments to pick its still from, and a small picture of each.
   if (req.method === "GET" && url.pathname === "/api/moments") {
     const video = url.searchParams.get("path") ?? "";
@@ -482,6 +490,19 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const t = Number(url.searchParams.get("t") ?? 0);
     if (!allowedFile(video) || !isRecording(video) || !existsSync(video) || !Number.isFinite(t) || t < 0) throw new HttpError(404, "Not found");
     const file = await momentThumb(video, t, Number(url.searchParams.get("w") ?? 240));
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
+    createReadStream(file).pipe(res);
+    return;
+  }
+  // macOS's own wallpapers: those on this Mac, and the rest of Apple's set to download.
+  if (req.method === "GET" && url.pathname === "/api/wallpapers") {
+    return send(200, (await macWallpapers()).map((w) => ({ name: w.name, here: Boolean(w.file), thumb: `/api/wallpaper-thumb?name=${encodeURIComponent(w.name)}` })));
+  }
+  if (req.method === "GET" && url.pathname === "/api/wallpaper-thumb") {
+    const w = await findWallpaper(url.searchParams.get("name") ?? "");
+    const src = w?.file ?? w?.thumb;
+    if (!src) throw new HttpError(404, "Not found");
+    const file = await asJpeg(src, 480);
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
     createReadStream(file).pipe(res);
     return;
@@ -850,6 +871,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const root = path.resolve(outputRoot());
       if (!path.resolve(p).startsWith(root + path.sep)) throw new HttpError(403, "Only files in the output folder can be deleted");
       return send(200, { deleted: deleteWithCompanions(p) });
+    }
+    case "/api/wallpaper-settings": {
+      // System Settings › Wallpaper, where Apple's other wallpapers download.
+      await run("open", ["x-apple.systempreferences:com.apple.Wallpaper-Settings.extension"], { timeoutMs: 10_000 });
+      return send(200, { ok: true });
     }
     case "/api/open-simulator": {
       const { simulator } = await json<{ simulator?: string }>(req);

@@ -67,7 +67,8 @@ import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from ".
 import { ContextMenu, openMenu } from "./menu.js";
 import { BackgroundsPanel, CapturesPanel, DesignsPanel, ImagesPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
-import { TimelineDock, closeTimeline, deleteAnimation, openTimeline, play } from "./timeline.js";
+import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play } from "./timeline.js";
+import { deleteSound, hasSoundRow } from "./sound.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
 // =============================================================================================
@@ -1800,6 +1801,8 @@ window.addEventListener("keydown", (e) => {
     const inSet = S.shots?.length > 1 && !S.timelineOpen;
     return e.shiftKey && inSet ? canvasApi.fitSet() : inSet ? canvasApi.fitScreen() : commands.fit();
   }
+  // Animate: ⌘B cuts the sound at the playhead.
+  if (mod && k === "b" && S.view === "canvas" && S.timelineOpen && hasSoundRow()) return e.preventDefault(), cutSoundHere();
   if (mod && k === "d") return e.preventDefault(), commands.duplicate();
   if (mod && k === "o") return e.preventDefault(), commands.import();
   if (mod && k === ",") return e.preventDefault(), commands.settings();
@@ -1813,6 +1816,8 @@ window.addEventListener("keydown", (e) => {
     if (e.key === " ") return e.preventDefault(), play();
     if (S.animSel !== null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteAnimation(S.animSel);
     if (S.animSel !== null && e.key === "Escape") return set({ animSel: null });
+    if (S.soundSel != null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteSound(S.soundSel);
+    if (S.soundSel != null && e.key === "Escape") return set({ soundSel: null });
   }
   if (e.key === "Escape") {
     if (S.stillPick) return closeStills(true);

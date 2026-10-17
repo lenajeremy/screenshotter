@@ -556,6 +556,23 @@ export const MockupInputShape = {
     .describe(
       "For videos (create_video, and Studio video exports): when and how each item appears, changes and leaves. Items not animated are there from the start. Example: the headline slides up at 1 s, the MacBook and iPhone zoom in together at 2.5 s, an arrow's end moves at 4 s. Still images show the design as it is.",
     ),
+  sounds: z
+    .array(
+      z.object({
+        src: z.string().describe("A sound file, or a video whose sound to use (a screen recording)."),
+        at: z.number().min(0).max(3600).describe("Seconds into the video when this piece starts."),
+        from: z.number().min(0).optional().describe("Where in the file the piece begins, in seconds. Default 0."),
+        to: z.number().min(0).optional().describe("Where in the file it ends. Default: the file's end."),
+        volume: z.number().min(0).max(2).optional().describe("1 is as recorded (the default), 0.5 half as loud."),
+        fadeIn: z.number().min(0).max(10).optional().describe("Seconds to fade in over."),
+        fadeOut: z.number().min(0).max(10).optional().describe("Seconds to fade out over."),
+      }),
+    )
+    .max(200)
+    .optional()
+    .describe(
+      "For videos: the sound, as pieces of files placed on the timeline (a recording's voice cut up and moved, music). Given, it's the video's sound in place of the devices' recordings' own (with video.sound on); an empty list is silence.",
+    ),
   camera: z
     .object({
       zoom: z.number().min(1).max(8).describe("How far to zoom in: 2 shows half the width and height."),

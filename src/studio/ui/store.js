@@ -119,6 +119,8 @@ export const S = {
   /** Animate: the timeline under the canvas, the selected animation, the rows chosen to animate. */
   timelineOpen: false,
   animSel: null,
+  /** The chosen piece of sound on Animate's Sound row. */
+  soundSel: null,
   animRows: [],
   playing: false,
   /** docked: Ask AI fills the right-hand panel instead of floating over the canvas. */

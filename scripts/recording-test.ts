@@ -82,6 +82,8 @@ const spec = {
 mkdirSync(spec.saveTo, { recursive: true });
 
 let failed = 0;
+// The sound as the Sound row left it (cut, a piece deleted, one moved), to export.
+let soundsFromUI: Array<{ at: number; from: number; to: number }> | null = null;
 const check = async (name: string, fn: () => Promise<string | void>) => {
   try {
     const note = await fn();
@@ -105,7 +107,10 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
   const browser = await engine.launch(name === "chromium" ? { args: ["--mute-audio"] } : {});
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.addInitScript(() => {
+    // Every volume set is 0, so the Sound row's players never play out loud either.
     const play = HTMLMediaElement.prototype.play;
+    const volume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "volume")!;
+    Object.defineProperty(HTMLMediaElement.prototype, "volume", { configurable: true, get: volume.get, set() { volume.set!.call(this, 0); } });
     HTMLMediaElement.prototype.play = function () {
       this.volume = 0;
       return play.call(this);
@@ -124,6 +129,12 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
       const s = (window as any).studio.state;
       return { open: s.timelineOpen, canvas: s.scene.canvas, devices: s.scene.devices.map((d: any) => [d.label, d.frame, Boolean(d.fixed)]), panel: document.querySelector(".panel.right h2")?.textContent };
     });
+    if (process.env.SHOTS) {
+      await new Promise((r) => setTimeout(r, 2500));
+      await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: null }));
+      await new Promise((r) => setTimeout(r, 300));
+      await page.screenshot({ path: path.join(process.env.SHOTS, `${name}-opened.png`) });
+    }
     expect(st.open, "Animate isn't open");
     expect(st.canvas?.width === 1280 && st.canvas?.height === 720, `canvas ${JSON.stringify(st.canvas)}`);
     expect(JSON.stringify(st.devices) === JSON.stringify([["Recording", "none", false], ["Webcam", "card", true]]), `devices ${JSON.stringify(st.devices)}`);
@@ -134,7 +145,9 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
     const moves = await S(page, () => ((window as any).studio.state.scene.animations ?? []).filter((a: any) => a.targets === "device-2" && a.to));
     expect(moves.length >= 2 && moves.length <= 5, `${moves.length} moves`);
     const last = moves[moves.length - 1];
-    expect(Math.abs(last.to.x - 0.6) < 0.01 && Math.abs(last.to.y - 0.7) < 0.01 && Math.abs(last.to.scale - 1.4) < 0.01, `ends at ${JSON.stringify(last.to)}`);
+    // Where it went over the recording, which opens framed (5% of room round it).
+    const framed = (v: number) => 0.5 + (v - 0.5) * 0.9;
+    expect(Math.abs(last.to.x - framed(0.6)) < 0.01 && Math.abs(last.to.y - framed(0.7)) < 0.01 && Math.abs(last.to.scale - 1.4) < 0.01, `ends at ${JSON.stringify(last.to)}`);
     expect(moves[0].at >= 1.4 && moves[0].at <= 1.5, `starts at ${moves[0].at}`);
     return `${moves.length} moves`;
   });
@@ -192,18 +205,20 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
       tl.setPlayhead(0);
       tl.play();
       await new Promise((r) => setTimeout(r, 1200));
-      const playing = [...document.querySelectorAll<HTMLVideoElement>("video[data-follow]")].map((v) => ({ t: v.currentTime, muted: v.muted, paused: v.paused }));
-      // The recording sets the pace: the playhead is where it is.
+      const playing = [...document.querySelectorAll<HTMLVideoElement>("video[data-follow]")].map((v) => ({ t: v.currentTime, muted: v.muted, paused: v.paused, master: Boolean(v.dataset.master) }));
+      // The recording sets the pace: the playhead is where it is. Its sound plays from the Sound row.
       const master = document.querySelector<HTMLVideoElement>("video[data-master]")!;
       const lead = Math.abs(tl.playhead.t - master.currentTime);
+      const sound = (await import("/ui/sound.js" as string)).soundPlayers().map((p: { t: number; paused: boolean }) => ({ ...p, off: p.t - master.currentTime }));
       tl.pause();
       tl.setPlayhead(2.5);
       await new Promise((r) => setTimeout(r, 400));
       const still = [...document.querySelectorAll<HTMLVideoElement>("video[data-follow]")].map((v) => ({ t: v.currentTime, paused: v.paused }));
-      return { playing, still, lead };
+      return { playing, still, lead, sound };
     });
     expect(r.lead < 0.1, `the playhead is ${r.lead.toFixed(2)} s from the recording`);
-    expect(r.playing.length === 2 && r.playing.every((v) => v.t > 0.5 && !v.muted && !v.paused), `playing ${JSON.stringify(r.playing)}`);
+    expect(r.playing.length === 2 && r.playing.every((v) => v.t > 0.5 && !v.paused && !v.muted), `playing ${JSON.stringify(r.playing)}`);
+    expect(!r.sound.some((p) => !p.paused), `nothing's moved, yet a sound player plays: ${JSON.stringify(r.sound)}`);
     expect(r.still.every((v) => v.paused && Math.abs(v.t - 2.5) < 0.05), `scrubbed ${JSON.stringify(r.still)}`);
   });
 
@@ -226,6 +241,80 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
     const worst = Math.max(...offs.map(Math.abs));
     expect(offs.length >= 10 && worst < 0.08, `the webcam is up to ${(worst * 1000).toFixed(0)} ms off the recording (${offs.map((o) => Math.round(o * 1000)).join(", ")} ms)`);
     return `within ${(worst * 1000).toFixed(0)} ms`;
+  });
+
+  await check(`${pad} the Sound row: a waveform, cut at the playhead, a piece deleted, one dragged later`, async () => {
+    const r = await S(page, async () => {
+      const tl = await import("/ui/timeline.js" as string);
+      const snd = await import("/ui/sound.js" as string);
+      const st = (window as any).studio.state;
+      tl.pause();
+      let drawn = 0;
+      for (let k = 0; k < 40 && !drawn; k++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const cv = document.querySelector<HTMLCanvasElement>(".tl-row.sound .tl-sound canvas");
+        if (cv && cv.width > 1) {
+          const d = cv.getContext("2d")!.getImageData(0, 0, cv.width, cv.height).data;
+          for (let i = 3; i < d.length; i += 4) if (d[i] > 0) drawn++;
+        }
+      }
+      const name = document.querySelector(".tl-name.sound")?.textContent?.trim();
+      tl.setPlayhead(1.5);
+      tl.cutSoundHere();
+      tl.setPlayhead(2.5);
+      tl.cutSoundHere();
+      const cut = st.scene.sounds.map((c: any) => [c.at, c.from, c.to]);
+      await new Promise((r) => setTimeout(r, 100));
+      const panel = document.querySelector(".panel.right h2")?.textContent;
+      snd.deleteSound(1);
+      // Out of the way of the mouse: any dialog that opened on its own (What's new, say).
+      const modal = st.modal?.kind ?? null;
+      (await import("/ui/store.js" as string)).set({ modal: null });
+      await new Promise((r) => setTimeout(r, 250));
+      document.querySelector(".tl-row.sound")?.scrollIntoView({ block: "nearest" });
+      await new Promise((r) => setTimeout(r, 100));
+      const pieces = [...document.querySelectorAll<HTMLElement>(".tl-row.sound .tl-sound")].map((e) => {
+        const b = e.getBoundingClientRect();
+        const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+        return { x: b.x, y: b.y, w: b.width, h: b.height, hit: hit === e || e.contains(hit) ? "piece" : `${hit?.tagName}.${hit?.className}` };
+      });
+      return { drawn, name, cut, panel, pieces, modal, pps: document.querySelector<HTMLElement>(".tl-tracks")!.getBoundingClientRect().width / 4 };
+    });
+    expect(r.drawn > 100, `the waveform isn't drawn (${r.drawn} pixels)`);
+    expect(r.name === "Sound", `the row is called ${r.name}`);
+    expect(JSON.stringify(r.cut) === JSON.stringify([[0, 0, 1.5], [1.5, 1.5, 2.5], [2.5, 2.5, 4]]), `cut into ${JSON.stringify(r.cut)}`);
+    expect(r.panel === "Sound", `the panel says ${r.panel}`);
+    expect(r.pieces.length === 2, `${r.pieces.length} pieces after deleting one`);
+    expect(r.pieces[1].hit === "piece", `the piece is under ${r.pieces[1].hit} (dialog: ${r.modal})`);
+    // The last piece, dragged half a second later.
+    const p = r.pieces[1];
+    await page.mouse.move(p.x + p.w / 2, p.y + p.h / 2);
+    await page.mouse.down();
+    await page.mouse.move(p.x + p.w / 2 + 0.25 * r.pps, p.y + p.h / 2, { steps: 4 });
+    await page.mouse.move(p.x + p.w / 2 + 0.5 * r.pps, p.y + p.h / 2, { steps: 4 });
+    await page.mouse.up();
+    const sounds = await S<Array<{ at: number; from: number; to: number }>>(page, () => (window as any).studio.state.scene.sounds);
+    expect(Math.abs(sounds[1].at - 3) < 0.03 && sounds[1].from === 2.5, `dragged to ${JSON.stringify(sounds[1])}`);
+    soundsFromUI ??= sounds;
+    const heard = await S(page, async (engine: string) => {
+      const snd = await import("/ui/sound.js" as string);
+      const tl = await import("/ui/timeline.js" as string);
+      const gains = [0.8, 2, 3.2].map((t) => snd.recordingGain(t));
+      if (engine !== "chromium") return { gains, off: null };
+      // Played: the moved piece (2.5–4 s of the recording, now at 3 s) on its own player.
+      tl.setPlayhead(3.1);
+      tl.play();
+      await new Promise((r) => setTimeout(r, 600));
+      const master = document.querySelector<HTMLVideoElement>("video[data-master]")!;
+      const p = snd.soundPlayers()[0];
+      const off = p && !p.paused ? p.t - (master.currentTime - 3 + 2.5) : null;
+      tl.pause();
+      return { gains, off };
+    }, name);
+    expect(JSON.stringify(heard.gains) === "[1,0,0]", `the recording's own sound at 0.8, 2 and 3.2 s: ${JSON.stringify(heard.gains)}`);
+    expect(name !== "chromium" || (heard.off !== null && Math.abs(heard.off) < 0.08), `the moved piece plays ${heard.off === null ? "not at all" : `${Math.round(heard.off * 1000)} ms off`}`);
+    if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, `${name}-sound.png`) });
+    return `${r.drawn} waveform pixels; ${sounds.map((c) => `${c.from}–${c.to} s at ${c.at} s`).join(", ")}`;
   });
 
   if (name === "chromium") {
@@ -306,6 +395,21 @@ if (!nativeOnly) {
     expect(p.volume > -40, `sound at ${p.volume} dB`);
     expect(!r.warnings?.length, `warnings: ${r.warnings?.join(" ")}`);
     return `${((Date.now() - t0) / 1000).toFixed(1)} s`;
+  });
+}
+if (!nativeOnly) {
+  await check("the export's sound is where the Sound row put it (cut, a piece deleted, one moved)", async () => {
+    expect(soundsFromUI, "the Sound row check didn't get that far");
+    const out = path.join(tmp, "cut.mp4");
+    await createVideo({ ...input(out), sounds: soundsFromUI } as never);
+    const loud = (from: number, to: number) => {
+      const r = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-ss", String(from), "-t", String(to - from), "-i", out, "-af", "volumedetect", "-f", "null", "-"], { encoding: "utf8" });
+      const m = /mean_volume: (-?[\d.]+|-inf) dB/.exec(r.stderr)?.[1];
+      return m === undefined || m === "-inf" ? -Infinity : Number(m);
+    };
+    const parts = [loud(0.2, 1.3), loud(1.7, 2.8), loud(3.2, 3.9)];
+    expect(parts[0] > -40 && parts[1] < -60 && parts[2] > -40, `loudness: ${parts.map((v) => v.toFixed(0)).join(", ")} dB (sound, silence, sound wanted)`);
+    return `${parts.map((v) => (Number.isFinite(v) ? v.toFixed(0) : "silent")).join(" / ")} dB`;
   });
 }
 if (native) {

@@ -30,6 +30,9 @@ import WebKit
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "native")
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
         config.websiteDataStore = .nonPersistent()
+        // The editor plays a recording's sound (and pieces of it moved on the timeline) as the
+        // playhead reaches them, not only on a click.
+        config.mediaTypesRequiringUserActionForPlayback = []
         web = StudioWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
         web.uiDelegate = self

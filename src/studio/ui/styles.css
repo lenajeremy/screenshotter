@@ -1069,6 +1069,9 @@ li.done .work-shot .scan { display: none; }
 .look .sw, .look img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .look img { opacity: 0; transition: opacity 0.4s; }
 .look img.ready { opacity: 1; }
+.look.fetch img.ready { opacity: 0.5; filter: saturate(0.7); }
+.look .get { position: absolute; top: 7px; right: 7px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0, 0, 0, 0.55); color: #fff; display: grid; place-items: center; }
+.wall-more { margin-top: 8px; }
 .look .name { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 9px 7px; font-size: 11.5px; font-weight: 600; color: #fff; background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.55)); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: capitalize; }
 .look .check { position: absolute; top: 7px; right: 7px; width: 20px; height: 20px; border-radius: 50%; background: var(--lime); color: var(--lime-ink); display: grid; place-items: center; animation: pop-in 0.2s var(--spring); }
 .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
@@ -1339,7 +1342,7 @@ li.done .work-shot .scan { display: none; }
 /* -------------------------------------------------------------------------------------------
    Animate: the timeline under the canvas. A row per item, a bar per animation, a playhead. */
 /* The timeline's height: as dragged (--tl-h), else the usual; the canvas always keeps some room. */
-.stage { --tl-now: min(var(--tl-h, min(44%, 270px)), calc(100% - 150px)); }
+.stage { --tl-now: min(var(--tl-h, min(44%, 320px)), calc(100% - 150px)); }
 .tl-dock { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 62; height: var(--tl-now); display: flex; flex-direction: column; border-radius: 16px; background: rgba(20, 20, 24, 0.97); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: var(--shadow-pop); overflow: hidden; animation: pop-in 0.2s var(--ease); }
 .tl-head { flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px 0 8px; border-bottom: 1px solid var(--line); }
 .tl-play { width: 30px; height: 30px; border-radius: 50%; background: var(--text); color: #000; }
@@ -1371,6 +1374,22 @@ li.done .work-shot .scan { display: none; }
 .tl-tick { position: absolute; top: 0; height: 100%; margin-left: 12px; padding: 7px 0 0 5px; border-left: 1px solid var(--line-2); font: 500 10px var(--mono); color: var(--text-4); pointer-events: none; }
 .tl-row { position: relative; height: 32px; margin: 0 -16px 0 -12px; border-bottom: 1px solid var(--line); }
 .tl-row.on { background: rgba(139, 123, 255, 0.07); }
+/* The Sound row: pieces of sound with their waveforms, taller than the others. */
+.tl-name.sound, .tl-row.sound { height: 48px; }
+.tl-sound { position: absolute; top: 5px; bottom: 5px; margin-left: 12px; box-sizing: border-box; border-radius: 7px; background: rgba(84, 150, 255, 0.16); border: 1px solid rgba(84, 150, 255, 0.5); color: #5d9dff; overflow: hidden; cursor: grab; touch-action: none; }
+.tl-sound:active { cursor: grabbing; }
+.tl-sound:hover { background: rgba(84, 150, 255, 0.22); }
+.tl-sound.on { box-shadow: 0 0 0 2px var(--text); z-index: 2; background: rgba(84, 150, 255, 0.26); }
+.tl-sound.off { opacity: 0.4; }
+.tl-sound canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.tl-fades { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; fill: rgba(0, 0, 0, 0.28); }
+.tl-trim { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 1; }
+.tl-trim.at-start { left: 0; }
+.tl-trim.at-end { right: 0; }
+.tl-sound:hover .tl-trim, .tl-sound.on .tl-trim { background: rgba(84, 150, 255, 0.55); }
+.tl-trim::after { content: ""; position: absolute; left: 3px; top: 50%; width: 2px; height: 12px; margin-top: -6px; border-radius: 1px; background: #fff; opacity: 0; }
+.tl-sound:hover .tl-trim::after, .tl-sound.on .tl-trim::after { opacity: 0.9; }
+.tl-sound-none { position: absolute; left: 24px; top: 50%; transform: translateY(-50%); font-size: 11.5px; color: var(--text-3); }
 .tl-bar { position: absolute; top: 5px; height: 22px; margin-left: 12px; padding: 0 8px; box-sizing: border-box; display: flex; align-items: center; border-radius: 7px; background: var(--lime); color: var(--lime-ink); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; cursor: grab; transition: box-shadow 120ms ease; }
 .tl-bar:active { cursor: grabbing; }
 .tl-bar span { overflow: hidden; text-overflow: ellipsis; pointer-events: none; }

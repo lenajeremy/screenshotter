@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, touch, useStore, pictureUrl } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, toast, touch, useStore, pictureUrl } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import { openMenu } from "./menu.js";
 import {
@@ -302,6 +302,7 @@ function currentMode(bg) {
   const o = bgObj(bg);
   if (o.type === "transparent") return "none";
   if (o.generate) return "ai";
+  if (typeof o.photo === "string" && o.photo.startsWith("macos:")) return "looks";
   if (o.photo || o.unsplash) return "photo";
   if (o.look) return "looks";
   return "color";
@@ -322,6 +323,43 @@ function LookTile({ l, on }) {
   </button>`;
 }
 
+/** macOS's own wallpapers, read from this Mac; Apple's others download in System Settings › Wallpaper. */
+function MacWallpapers() {
+  const s = useStore();
+  const o = bgObj(s.scene.background);
+  const [list, setList] = useState(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    api("/api/wallpapers").then(setList, () => setList([]));
+  }, []);
+  if (!list?.length) return null;
+  const here = list.filter((w) => w.here);
+  const more = list.filter((w) => !w.here);
+  const pick = (w) => {
+    if (!w.here) {
+      api("/api/wallpaper-settings", {}).catch(() => undefined);
+      return toast({ kind: "info", icon: "image", title: `Get “${w.name}” from Apple`, text: "System Settings › Wallpaper is opening: choose it there once to download it, and it'll be here." });
+    }
+    const t = keepTreatment(S.scene.background);
+    setBackground({ photo: `macos:${w.name}`, ...t });
+  };
+  return html`<${Section} title="macOS wallpapers" count=${here.length}>
+    <div class="looks">${(all ? list : here).map((w) => html`<${WallpaperTile} key=${w.name} w=${w} on=${o.photo === `macos:${w.name}`} pick=${pick} />`)}</div>
+    ${more.length > 0 && html`<button class="btn sm ghost wall-more" onClick=${() => setAll(!all)}><${Icon} n=${all ? "up" : "down"} s=${12} />${all ? "Just the ones on this Mac" : `${more.length} more of Apple's, to download`}</button>`}
+  <//>`;
+}
+
+function WallpaperTile({ w, on, pick }) {
+  const [ready, setReady] = useState(false);
+  return html`<button class="look ${on ? "on" : ""} ${w.here ? "" : "fetch"}" title=${w.here ? w.name : `${w.name}: download it once in System Settings › Wallpaper`} onClick=${() => pick(w)}>
+    <div class="sw"></div>
+    <img class=${ready ? "ready" : ""} loading="lazy" src=${w.thumb} onLoad=${() => setReady(true)} />
+    <div class="name">${w.name}</div>
+    ${!w.here && html`<span class="get" title="Download in System Settings"><${Icon} n="down" s=${12} w=${2.4} /></span>`}
+    ${on && html`<span class="check"><${Icon} n="check" s=${12} w=${2.6} /></span>`}
+  </button>`;
+}
+
 function Looks() {
   const s = useStore();
   const o = bgObj(s.scene.background);
@@ -330,6 +368,7 @@ function Looks() {
   const paintings = looks.filter((l) => l.painting);
   const made = looks.filter((l) => !l.photo);
   return html`
+    <${MacWallpapers} />
     <${Section} title="Photographic" count=${photo.length}><div class="looks">${photo.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>
     <${Section} title="Paintings & prints" count=${paintings.length}><div class="looks">${paintings.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>
     <${Section} title="Gradients" count=${made.length}><div class="looks">${made.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>`;

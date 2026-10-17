@@ -858,19 +858,54 @@ async function hasSound(file: string): Promise<boolean> {
   });
 }
 
+/** A piece of the video's sound: `from`–`to` seconds of a file, starting `at` seconds into the video. */
+type SoundPiece = { src: string; at: number; from: number; to?: number; volume?: number; fadeIn?: number; fadeOut?: number };
+
+/** The video's sound: the pieces the design gives (`sounds`), or each device recording's own, whole, from the start. */
+function soundPieces(input: VideoInput): SoundPiece[] {
+  const local = (p: string) => p.replace(/^file:\/\//, "");
+  if (input.sounds) return input.sounds.map((p) => ({ ...p, src: local(p.src), from: p.from ?? 0 }));
+  const videos = (input.devices ?? []).map((d) => d.video).filter((v): v is string => Boolean(v));
+  return [...new Set(videos.map(local))].map((src) => ({ src, at: 0, from: 0 }));
+}
+
+/** How long a file runs, in seconds (0 when it can't be told). */
+async function mediaLength(file: string): Promise<number> {
+  return new Promise((resolve) => {
+    const p = spawn("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file], { stdio: ["ignore", "pipe", "ignore"] });
+    let o = "";
+    p.stdout.on("data", (d) => (o += d));
+    p.on("error", () => resolve(0));
+    p.on("exit", () => resolve(Number(o.trim()) || 0));
+  });
+}
+
 /**
- * The recordings' sound under the finished frames: every device video with a sound track, mixed,
- * from the start, cut to the video's length. The picture is copied as it is.
+ * The sound under the finished frames: each piece cut from its file, turned up or down, faded,
+ * placed at its time, and all mixed, cut to the video's length. The picture is copied as it is.
  */
-async function addSound(out: string, format: string, videos: string[], duration: number, warnings: string[]): Promise<void> {
-  const files = [...new Set(videos.map((v) => v.replace(/^file:\/\//, "")))];
-  const voiced: string[] = [];
-  for (const f of files) if (await hasSound(f)) voiced.push(f);
-  if (!voiced.length) return;
+async function addSound(out: string, format: string, pieces: SoundPiece[], duration: number, warnings: string[]): Promise<void> {
+  const voiced = new Set<string>();
+  for (const f of new Set(pieces.map((p) => p.src))) if (await hasSound(f)) voiced.add(f);
+  const used = pieces.filter((p) => voiced.has(p.src) && p.at < duration && (p.to === undefined || p.to > p.from + 0.01) && (p.volume ?? 1) > 0);
+  if (!used.length) return;
+  const files = [...voiced].filter((f) => used.some((p) => p.src === f));
+  const chains = await Promise.all(
+    used.map(async (p, k) => {
+      const end = p.to ?? (await mediaLength(p.src));
+      const len = Math.max(0.01, end - p.from);
+      const f = [`atrim=start=${p.from.toFixed(4)}${end > 0 ? `:end=${end.toFixed(4)}` : ""}`, "asetpts=PTS-STARTPTS"];
+      if (p.volume !== undefined && p.volume !== 1) f.push(`volume=${p.volume.toFixed(3)}`);
+      if (p.fadeIn) f.push(`afade=t=in:st=0:d=${Math.min(p.fadeIn, len).toFixed(3)}`);
+      if (p.fadeOut) f.push(`afade=t=out:st=${Math.max(0, len - p.fadeOut).toFixed(3)}:d=${Math.min(p.fadeOut, len).toFixed(3)}`);
+      if (p.at > 0) f.push(`adelay=delays=${Math.round(p.at * 1000)}:all=1`);
+      return `[${files.indexOf(p.src) + 1}:a:0]${f.join(",")}[s${k}]`;
+    }),
+  );
+  const graph = `${chains.join(";")};${used.map((_, k) => `[s${k}]`).join("")}amix=inputs=${used.length}:normalize=0:dropout_transition=0[a]`;
   const tmp = out.replace(/(\.[a-z0-9]+)$/i, ".sound$1");
   const codec = format === "webm" ? ["-c:a", "libopus", "-b:a", "160k"] : ["-c:a", "aac", "-b:a", "192k"];
-  const mix = voiced.length > 1 ? ["-filter_complex", `${voiced.map((_, i) => `[${i + 1}:a]`).join("")}amix=inputs=${voiced.length}:normalize=0[a]`, "-map", "0:v", "-map", "[a]"] : ["-map", "0:v", "-map", "1:a:0"];
-  const args = ["-y", "-loglevel", "error", "-i", out, ...voiced.flatMap((f) => ["-i", f]), ...mix, "-c:v", "copy", ...codec, "-t", duration.toFixed(3), ...(format === "mp4" ? ["-movflags", "+faststart"] : []), tmp];
+  const args = ["-y", "-loglevel", "error", "-i", out, ...files.flatMap((f) => ["-i", f]), "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", ...codec, "-t", duration.toFixed(3), ...(format === "mp4" ? ["-movflags", "+faststart"] : []), tmp];
   const err = await new Promise<string | null>((resolve) => {
     const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
     let e = "";
@@ -922,7 +957,7 @@ export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Pro
       const { scene, ents, animations, duration } = stage;
       const r = await renderFast(input, stage as unknown as FastStage, out, fps, { format, shot: o.shot, appStore: o.appStore, deliveryWidth: o.appStore || o.shot ? undefined : input.deliveryWidth, progress: o.progress });
       if (o.appStore) await silentTrack(out);
-      else if (opts.sound && format !== "gif" && !o.shot) await addSound(out, format, input.devices.map((d) => d.video).filter((v): v is string => Boolean(v)), duration, warnings);
+      else if (opts.sound && format !== "gif" && !o.shot) await addSound(out, format, soundPieces(input), duration, warnings);
       const size = { width: r.width, height: r.height };
       if (o.shot) {
         await stage.close();
@@ -1020,7 +1055,7 @@ export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Pro
       const code = await ffDone;
       if (ffFailed) throw ffFailed;
       if (code !== 0) throw new Error(`ffmpeg failed (${code}): ${ffErr.trim().split("\n").slice(-3).join(" ")}`);
-      if (opts.sound && format !== "gif" && !o.shot) await addSound(out, format, (input.devices ?? []).map((d) => d.video).filter((v): v is string => Boolean(v)), duration, warnings);
+      if (opts.sound && format !== "gif" && !o.shot) await addSound(out, format, soundPieces(input), duration, warnings);
     } catch (e) {
       if (ffmpeg.exitCode === null) ffmpeg.kill("SIGKILL");
       rmSync(out, { force: true });

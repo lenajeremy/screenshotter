@@ -2075,6 +2075,7 @@ export async function newScene() {
     guide: null,
     stillPick: null,
     animSel: null,
+    soundSel: null,
     animRows: [],
     sceneName: "Untitled design",
     appIcon: null,
@@ -2096,6 +2097,20 @@ export async function newScene() {
  * together) becomes one move, or a few for a curving drag, straight from point to point; resizing
  * goes with it as a change of size. The path notes only changes, so a long gap means it sat still.
  */
+/**
+ * The look a recording or screenshot opens with, to start out pretty: a little room round it,
+ * rounded corners and a soft shadow, on a macOS wallpaper (this Mac's newest).
+ */
+const FRAMED = { padding: 0.05, radius: 0.03, shadow: "medium" };
+let wallpaper;
+async function prettyBackdrop() {
+  wallpaper ??= api("/api/wallpapers").then((l) => l.find((w) => w.here)?.name, () => undefined);
+  const name = await wallpaper;
+  return name ? { photo: `macos:${name}` } : DEFAULT_SCENE.background;
+}
+/** A place on the canvas, moved into the framed recording (which no longer fills it). */
+const inFrame = (v) => r4(0.5 + (v - 0.5) * (1 - 2 * FRAMED.padding));
+
 function bubbleMoves(path) {
   if (!Array.isArray(path) || path.length < 2) return [];
   const h0 = path[0][3] || 1;
@@ -2144,7 +2159,12 @@ export async function openScreenshot(r) {
   if (!r?.image) return;
   await saveSceneNow();
   set({
-    scene: { canvas: { width: r.width, height: r.height }, background: "#000000", devices: [{ label: "Screenshot", screenshot: r.image, frame: "none", x: 0.5, y: 0.5, height: 1, shadow: "none" }], plain: true },
+    scene: {
+      canvas: { width: r.width, height: r.height },
+      background: await prettyBackdrop(),
+      devices: [{ label: "Screenshot", screenshot: r.image, frame: "none", x: 0.5, y: 0.5, height: r4(1 - 2 * FRAMED.padding), radius: FRAMED.radius, shadow: FRAMED.shadow }],
+      plain: true,
+    },
     shots: null,
     shot: 0,
     groups: null,
@@ -2154,6 +2174,7 @@ export async function openScreenshot(r) {
     guide: null,
     stillPick: null,
     animSel: null,
+    soundSel: null,
     animRows: [],
     sceneName: r.name || "Screenshot",
     appIcon: null,
@@ -2182,20 +2203,22 @@ export async function openScreenshot(r) {
 export async function openRecording(r) {
   if (!r?.video) return;
   await saveSceneNow();
-  const devices = [{ label: "Recording", screenshot: r.poster, video: r.video, frame: "none", x: 0.5, y: 0.5, height: 1, shadow: "none" }];
+  const devices = [{ label: "Recording", screenshot: r.poster, video: r.video, frame: "none", x: 0.5, y: 0.5, height: r4(1 - 2 * FRAMED.padding), radius: FRAMED.radius, shadow: FRAMED.shadow }];
   const animations = [];
   if (r.camera?.video) {
     const c = r.camera;
-    devices.push(tidy({ label: "Webcam", fixed: true, screenshot: c.poster, video: c.video, frame: "card", radius: c.radius ?? 0.5, ring: c.ring ? true : undefined, shadow: "medium", x: c.x, y: c.y, height: c.height }));
+    // Where it was over the recording, now the recording has room round it.
+    const scale = 1 - 2 * FRAMED.padding;
+    devices.push(tidy({ label: "Webcam", fixed: true, screenshot: c.poster, video: c.video, frame: "card", radius: c.radius ?? 0.5, ring: c.ring ? true : undefined, shadow: "medium", x: inFrame(c.x), y: inFrame(c.y), height: r4(c.height * scale) }));
     // Moved or resized while recording: it does the same in the video, as moves on its row.
-    animations.push(...bubbleMoves(c.path));
+    animations.push(...bubbleMoves(Array.isArray(c.path) ? c.path.map(([t, x, y, h]) => [t, inFrame(x), inFrame(y), h * scale]) : c.path));
     // The camera turned off partway: it fades out there (an animation to move or delete).
     if (c.endsAt && c.endsAt < r.duration - 0.5) animations.push({ targets: "device-2", at: r4(Math.max(0, c.endsAt - 0.4)), exit: "fade", duration: 0.4 });
   }
   set({
     scene: tidy({
       canvas: { width: r.width, height: r.height },
-      background: "#000000",
+      background: await prettyBackdrop(),
       plain: true,
       devices,
       animations: animations.length ? animations : undefined,
@@ -2221,6 +2244,7 @@ export async function openRecording(r) {
     guide: null,
     stillPick: null,
     animSel: null,
+    soundSel: null,
     animRows: [],
     sceneName: r.name || "Recording",
     appIcon: null,
@@ -2252,7 +2276,7 @@ export async function openScene(id) {
     // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
     const groups = saved.groups?.length > 1 ? saved.groups : null;
-    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {

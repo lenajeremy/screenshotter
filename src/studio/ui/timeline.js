@@ -6,11 +6,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ColorButton, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html } from "./controls.js";
 import { openMenu } from "./menu.js";
 import { Icon } from "./icons.js";
-import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, useStore, hasDesign } from "./store.js";
+import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, toast, useStore, hasDesign } from "./store.js";
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
 import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
 import { cameraFollow } from "./recording.js";
+import { SOUND, SoundPieces, deleteSound, editSounds, followSound, hasSoundRow, pieceLength, recordingGain, resetSounds, soundClips, splitSound } from "./sound.js";
 
 // ---------------------------------------------------------------------------------------------
 // The playhead lives outside the store: it moves every frame while playing, and only the canvas
@@ -161,7 +162,10 @@ export function followVideo(v, t = playhead.t) {
   const at = seekTo(v, t);
   // A recording sets the pace while playing (the playhead follows it): seeking it would cut up its sound.
   if (S.playing && v.dataset.master) {
-    v.muted = false;
+    // Its sound, as the Sound row has it: silent where it's been cut out, quieter where turned down.
+    const g = recordingGain(t);
+    v.muted = g <= 0;
+    if (g > 0 && Math.abs(v.volume - g) > 0.01) v.volume = g;
     if (v.paused) v.play().catch(() => undefined);
     return;
   }
@@ -186,7 +190,10 @@ export function followVideo(v, t = playhead.t) {
     if (Math.abs(v.currentTime - at) > 0.02) v.currentTime = at;
   }
 }
-const followAll = (t) => document.querySelectorAll("video[data-follow]").forEach((v) => followVideo(v, t));
+const followAll = (t) => {
+  document.querySelectorAll("video[data-follow]").forEach((v) => followVideo(v, t));
+  followSound(t, S.playing);
+};
 onPlayhead(followAll);
 
 let raf = 0;
@@ -223,7 +230,7 @@ export function play(until) {
   // A recording keeps its own pace, sound and all: the playhead follows it (waiting when it buffers).
   const master = S.scene.recording && document.querySelector("video[data-follow][data-master]");
   if (master) {
-    master.muted = false;
+    master.muted = recordingGain(playhead.t) <= 0;
     master.currentTime = seekTo(master, playhead.t);
     master.play().catch(() => undefined);
     const follow = () => {
@@ -257,7 +264,14 @@ export function openTimeline() {
 }
 export function closeTimeline() {
   pause();
-  set({ timelineOpen: false, animSel: null, animRows: [] });
+  set({ timelineOpen: false, animSel: null, soundSel: null, animRows: [] });
+}
+
+/** Cut the sound in two at the playhead (⌘B). */
+export function cutSoundHere() {
+  if (splitSound(playhead.t)) return true;
+  toast({ kind: "info", icon: "sound", title: "No sound to cut here", text: "Move the playhead over a piece of sound on the Sound row, then cut." });
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -275,7 +289,7 @@ function calloutLabel(id) {
   const text = h?.text?.trim();
   return `${HL_NAMES[h?.style] ?? "Call-out"} ${text ? `“${text.length > 18 ? text.slice(0, 17) + "…" : text}”` : m[2]}`;
 }
-const label = (id) => (id === CAMERA ? "Camera" : id === BACKDROP ? "Backdrop" : isCallout(id) ? calloutLabel(id) : entityLabel(id));
+const label = (id) => (id === CAMERA ? "Camera" : id === BACKDROP ? "Backdrop" : id === SOUND ? "Sound" : isCallout(id) ? calloutLabel(id) : entityLabel(id));
 /** A device's call-outs as rows of their own, "device-1/callout-2" (counting from 1). */
 const calloutRows = (e) => (S.scene.devices?.[e.index]?.highlights ?? []).map((_, k) => ({ id: `${e.id}/callout-${k + 1}`, kind: "callout" }));
 /** Whether a device's soft focus is animated (the canvas then takes it from --ablur). */
@@ -524,7 +538,7 @@ export function commitKeyframe(e) {
 
 /** Select an animation. A Change shows on the canvas as it ends, ready to drag into place. */
 export function selectAnimation(i) {
-  set({ animSel: i, rightOpen: true });
+  set({ animSel: i, soundSel: null, rightOpen: true });
   const a = S.scene.animations?.[i];
   if (a && !a.enter && !a.exit) {
     pause();
@@ -662,7 +676,7 @@ export function deleteAnimation(i) {
 // ---------------------------------------------------------------------------------------------
 // The timeline under the canvas
 
-const ROW_ICON = { camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes" };
+const ROW_ICON = { camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes", sound: "sound" };
 const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const stop = (e) => e.stopPropagation();
 
@@ -686,7 +700,7 @@ export function TimelineDock() {
   const entities = s.layout?.entities ?? [];
   // Text first, then devices, then shapes: roughly the order things are introduced.
   // Each device's call-outs sit under it.
-  const rows = [{ id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape")];
+  const rows = [{ id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape"), ...(hasSoundRow(s.scene) ? [{ id: SOUND, kind: "sound" }] : [])];
   const ents = entities.map(toAnim);
   // Zoomed in, a second gets up to 400px; the timeline scrolls sideways.
   const maxZoom = Math.max(1, (400 * len) / Math.max(1, width));
@@ -796,12 +810,12 @@ export function TimelineDock() {
   };
   const pickRow = (e, id) => {
     // The camera is animated on its own; items can be chosen together, and so can call-outs.
-    const solo = (x) => x === CAMERA || x === BACKDROP;
+    const solo = (x) => x === CAMERA || x === BACKDROP || x === SOUND;
     const group = (x) => (solo(x) ? x : isCallout(x) ? "callout" : "item");
     const many = (e.metaKey || e.ctrlKey || e.shiftKey) && !solo(id) && s.animRows.every((x) => group(x) === group(id));
     const rowsNow = many ? (s.animRows.includes(id) ? s.animRows.filter((x) => x !== id) : [...s.animRows, id]) : [id];
     // A call-out's row selects its device on the canvas.
-    set({ animRows: rowsNow, animSel: null, ...(solo(id) ? {} : { selected: id.split("/")[0] }) });
+    set({ animRows: rowsNow, animSel: null, soundSel: null, ...(solo(id) ? {} : { selected: id.split("/")[0] }) });
   };
   const chosen = s.animRows.length ? s.animRows : s.selected ? [s.selected] : [];
   // Drag the top edge to make the timeline taller or shorter; the canvas keeps at least 150px.
@@ -843,9 +857,12 @@ export function TimelineDock() {
     <header class="tl-head">
       <button class="icon-btn tl-play" title=${s.playing ? "Pause (Space)" : "Play (Space)"} onClick=${() => play()}><${Icon} n=${s.playing ? "pause" : "play"} s=${15} /></button>
       <span class="tl-clock" title=${manyShots() ? "Where the whole video is, and how long it runs" : ""}><b ref=${time}>0:00.0</b><span> / ${clock(manyShots() ? videoPlan().total : len)}</span></span>
-      <button class="btn sm primary" disabled=${!chosen.length} title=${chosen.length ? "Add an animation for the chosen items, starting at the playhead" : "Choose an item on the left first (⌘-click for several)"} onClick=${() => addAnimation(chosen)}>
+      ${chosen.includes(SOUND)
+        ? html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
+          ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`
+        : html`<button class="btn sm primary" disabled=${!chosen.length} title=${chosen.length ? "Add an animation for the chosen items, starting at the playhead" : "Choose an item on the left first (⌘-click for several)"} onClick=${() => addAnimation(chosen)}>
         <${Icon} n="plus" s=${13} w=${2.2} />${chosen.includes(CAMERA) ? "Move the camera" : chosen.includes(BACKDROP) ? "Move the backdrop" : chosen.length > 1 ? `Animate ${chosen.length} together` : chosen.length ? `Animate ${label(chosen[0])}` : "Animate"}
-      </button>
+      </button>`}
       <span class="grow"></span>
       ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this shot is on screen, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Shot ${s.shot + 1}` : "Length"}
         <${Num} value=${s.shots?.length > 1 ? len : s.exportOpts.video.duration} min=${1} max=${60} step=${0.5} digits=${1} unit="s" onChange=${(v) => {
@@ -867,7 +884,7 @@ export function TimelineDock() {
       <div class="tl-names">
         <div class="tl-corner">${list.length ? `${list.length} animation${list.length === 1 ? "" : "s"}` : "Items"}</div>
         ${rows.map(
-          (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title="Click to choose; ⌘-click to choose several and animate them together" onClick=${(ev) => pickRow(ev, e.id)}>
+          (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title=${e.kind === "sound" ? "The video's sound: drag a piece to move it, its ends to trim it, and cut it at the playhead (⌘B)" : "Click to choose; ⌘-click to choose several and animate them together"} onClick=${(ev) => pickRow(ev, e.id)}>
             <${Icon} n=${ROW_ICON[e.kind]} s=${13} /><span>${label(e.id)}</span>
           </button>`,
         )}
@@ -877,7 +894,8 @@ export function TimelineDock() {
           ${ticks.map((n) => html`<span class="tl-tick" key=${n} style=${{ left: n * pps + "px" }}>${tickLabel(n, step, len)}</span>`)}
         </div>
         ${rows.map(
-          (e) => html`<div class="tl-row ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} onPointerDown=${scrub}>
+          (e) => html`<div class="tl-row ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} onPointerDown=${scrub}>
+            ${e.kind === "sound" && html`<${SoundPieces} pps=${pps} len=${len} now=${() => playhead.t} />`}
             ${list.map((a, i) => {
               const k = targetsOf(a).indexOf(e.id);
               if (k < 0) return null;
@@ -1391,6 +1409,44 @@ export function Viewfinder() {
     <span class="vf-tag"><${Icon} n="camera" s=${11} />${cam.zoom <= 1.001 ? "The whole design" : cam.zoom.toFixed(1) + "×"}</span>
     ${["nw", "ne", "sw", "se"].map((c) => html`<i class="vf-h ${c}" key=${c} onPointerDown=${(e) => drag(e, c)}></i>`)}
   </div>`;
+}
+
+/** A piece of sound: how loud, its fades, when it starts; cut it, play it or delete it. */
+export function SoundInspector() {
+  const s = useStore();
+  const list = soundClips(s.scene);
+  const i = s.soundSel;
+  const c = list[i];
+  if (!c) return null;
+  const setPiece = (patch, key) => editSounds((l) => Object.assign(l[i], patch), key);
+  const whole = c.src === s.scene.devices?.[0]?.video ? "the recording" : "the file";
+  const playPiece = () => {
+    pause();
+    setPlayhead(c.at);
+    play(Math.min(videoLength(), c.at + pieceLength(c)));
+  };
+  return html`
+    <div class="panel-head clip-head"><h2>Sound</h2><span class="sub">${list.length > 1 ? `Piece ${i + 1} of ${list.length}` : "The recording's sound"}</span><span class="grow"></span>
+      <button class="icon-btn sm" title="Delete this piece (⌫)" onClick=${() => deleteSound(i)}><${Icon} n="trash" s=${14} /></button>
+      <button class="icon-btn sm" title="Close" onClick=${() => set({ soundSel: null })}><${Icon} n="x" s=${14} /></button>
+    </div>
+    <div class="panel-body">
+      <div class="note">Drag the piece to move it, and its ends to trim it. To take a part out, cut at its start and its end (⌘B cuts at the playhead), then delete the piece between.</div>
+      <${Section} title="Loudness">
+        <div class="row"><label>Volume</label><${Slider} value=${c.volume ?? 1} min=${0} max=${1} step=${0.01} format=${(v) => `${Math.round(v * 100)}%`} onChange=${(v) => setPiece({ volume: v === undefined || v >= 0.995 ? undefined : r3(v) }, "volume")} /></div>
+        <div class="row"><label>Fade in</label><${Slider} value=${c.fadeIn ?? 0} min=${0} max=${3} step=${0.1} format=${(v) => (v > 0 ? `${v.toFixed(1)} s` : "None")} onChange=${(v) => setPiece({ fadeIn: v ? r3(v) : undefined }, "fadeIn")} /></div>
+        <div class="row"><label>Fade out</label><${Slider} value=${c.fadeOut ?? 0} min=${0} max=${3} step=${0.1} format=${(v) => (v > 0 ? `${v.toFixed(1)} s` : "None")} onChange=${(v) => setPiece({ fadeOut: v ? r3(v) : undefined }, "fadeOut")} /></div>
+      <//>
+      <${Section} title="Timing">
+        <div class="row"><label>Starts at</label><${Num} value=${c.at} min=${0} max=${videoLength()} step=${0.1} digits=${2} unit="s" onChange=${(v) => v !== undefined && setPiece({ at: r3(clamp(v, 0, videoLength())) }, "at")} /></div>
+        <div class="note">${clock(pieceLength(c))} long: ${clock(c.from)} to ${clock(c.to)} of ${whole}.</div>
+      <//>
+      <div class="hstack">
+        <button class="btn" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
+        <button class="btn" onClick=${playPiece}><${Icon} n="play" s=${13} />Play it</button>
+      </div>
+      ${s.scene.sounds && html`<button class="btn sm ghost" title="Undo every cut, move and change to the sound" onClick=${resetSounds}><${Icon} n="undo" s=${12} />Put the recording's sound back as it was</button>`}
+    </div>`;
 }
 
 export function ClipInspector() {
