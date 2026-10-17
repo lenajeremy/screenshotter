@@ -508,44 +508,62 @@ struct PillButton: View {
 
 /// 3, 2, 1 in the middle of what's about to be recorded. A click or Esc calls it off.
 @MainActor final class Countdown: NSPanel {
-    private var count = 3
-    private let label = NSTextField(labelWithString: "3")
+    final class State: ObservableObject {
+        @Published var count = 3
+        /// How much of the countdown has run, 0 to 1 (the ring fills with it).
+        @Published var done: Double = 0
+    }
+    private let state = State()
+    private let sound: Bool
     private var timer: Timer?
-    private var done: ((Bool) -> Void)?
+    private var finished: ((Bool) -> Void)?
 
-    init(over region: CGRect) {
-        let d: CGFloat = 150
-        super.init(contentRect: CGRect(x: region.midX - d / 2, y: region.midY - d / 2, width: d, height: d), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    /// Over the middle of what's about to be recorded. `sound`: a tick for each number.
+    init(over region: CGRect, sound: Bool = true) {
+        self.sound = sound
+        let size = CGSize(width: 260, height: 250)
+        super.init(contentRect: CGRect(x: region.midX - size.width / 2, y: region.midY - size.height / 2, width: size.width, height: size.height),
+                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
+        hasShadow = true
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let v = NSView(frame: CGRect(x: 0, y: 0, width: d, height: d))
-        v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.6).cgColor
-        v.layer?.cornerRadius = d / 2
-        label.font = .systemFont(ofSize: 76, weight: .bold)
-        label.textColor = .white
-        label.alignment = .center
-        label.frame = CGRect(x: 0, y: (d - 92) / 2, width: d, height: 92)
-        v.addSubview(label)
-        contentView = v
+        let host = FirstClickHostingView(rootView: CountdownView(state: state))
+        host.frame = CGRect(origin: .zero, size: size)
+        contentView = host
     }
 
     override var canBecomeKey: Bool { true }
 
     func run(_ done: @escaping (Bool) -> Void) {
-        self.done = done
+        finished = done
         makeKeyAndOrderFront(nil)
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.step() }
+        tick()
+        // The ring fills over the three seconds; the number steps down each second.
+        let started = CACurrentMediaTime()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let t = CACurrentMediaTime() - started
+                if t >= 3 { return self.finish(true) }
+                self.state.done = t / 3
+                let count = 3 - Int(t)
+                if count != self.state.count {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { self.state.count = count }
+                    self.tick()
+                }
+            }
         }
+        RunLoop.main.add(timer!, forMode: .common)
     }
 
-    private func step() {
-        count -= 1
-        if count == 0 { return finish(true) }
-        label.stringValue = "\(count)"
+    /// A tick for each number (before the recording starts, so it's never in it).
+    private func tick() {
+        guard sound else { return }
+        let s = NSSound(named: "Tink")
+        s?.volume = 0.6
+        s?.play()
     }
 
     override func mouseDown(with event: NSEvent) { finish(false) }
@@ -555,8 +573,37 @@ struct PillButton: View {
         timer?.invalidate()
         timer = nil
         orderOut(nil)
-        let d = done
-        done = nil
+        let d = finished
+        finished = nil
         d?(go)
+    }
+}
+
+/// The countdown: what's coming, the number in a ring that fills as it runs out, and how to call it off.
+struct CountdownView: View {
+    @ObservedObject var state: Countdown.State
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 7) {
+                Circle().fill(Color.red).frame(width: 9, height: 9)
+                Text("Recording starts in").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+            }
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.14), lineWidth: 7)
+                Circle().trim(from: 0, to: state.done)
+                    .stroke(Color(red: 0.82, green: 1, blue: 0.3), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text("\(state.count)")
+                    .font(.system(size: 66, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText(countsDown: true))
+            }
+            .frame(width: 124, height: 124)
+            Text("Click or press Esc to cancel").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.5))
+        }
+        .frame(width: 260, height: 250)
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color(white: 0.07).opacity(0.9)))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
     }
 }

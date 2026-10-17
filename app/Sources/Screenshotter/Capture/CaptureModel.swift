@@ -34,6 +34,8 @@ import ScreenCaptureKit
     @Published var systemAudio: Bool { didSet { save("systemAudio", systemAudio) } }
     @Published var countdown: Bool { didSet { save("countdown", countdown) } }
     @Published var afterRecording: AfterRecording { didSet { save("afterRecording", afterRecording.rawValue) } }
+    /// A tick for each number of the countdown.
+    @Published var countdownSound: Bool { didSet { save("countdownSound", countdownSound) } }
     /// Log the cursor beside a recording to edit (and keep it out of the picture), for the editor's
     /// smooth cursor, click ripples, auto zoom and following.
     @Published var cursorEffects: Bool { didSet { save("cursorEffects", cursorEffects) } }
@@ -72,6 +74,7 @@ import ScreenCaptureKit
         systemAudio = d.bool(forKey: p + "systemAudio")
         countdown = d.object(forKey: p + "countdown") as? Bool ?? true
         afterRecording = AfterRecording(rawValue: d.string(forKey: p + "afterRecording") ?? "") ?? .edit
+        countdownSound = d.object(forKey: p + "countdownSound") as? Bool ?? true
         cursorEffects = d.object(forKey: p + "cursorEffects") as? Bool ?? true
         shotDestination = Destination(rawValue: d.string(forKey: p + "shotDestination") ?? "") ?? .library
         videoDestination = Destination(rawValue: d.string(forKey: p + "videoDestination") ?? "") ?? .library

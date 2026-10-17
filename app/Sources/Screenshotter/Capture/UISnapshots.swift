@@ -48,6 +48,12 @@ import SwiftUI
         rec.isVideo = true
         save(CaptureHUDView(state: rec, actions: actions, close: {}, hover: { _ in }), "5-after-recording", folder)
 
+        // The countdown, a second in.
+        let count = Countdown.State()
+        count.count = 2
+        count.done = 0.42
+        save(CountdownView(state: count), "9-countdown", folder)
+
         // Saving to the Desktop; the camera's style panel.
         model.mode = .screenshot
         model.shotDestination = .desktop

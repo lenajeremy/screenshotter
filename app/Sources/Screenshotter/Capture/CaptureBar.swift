@@ -89,6 +89,7 @@ struct CaptureBarView: View {
             SaveToMenu(model: model, chooseFolder: actions.chooseFolder)
             Menu {
                 Toggle("Count down from 3", isOn: $model.countdown)
+                Toggle("Countdown sound", isOn: $model.countdownSound).disabled(!model.countdown)
                 Picker("After recording", selection: $model.afterRecording) {
                     Text("Open in Screenshotter to edit").tag(CaptureModel.AfterRecording.edit)
                     Text("Save the video right away").tag(CaptureModel.AfterRecording.save)

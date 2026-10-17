@@ -333,7 +333,7 @@ import Combine
                     // The countdown runs while the stream starts; then wait for it to finish.
                     var outcome: Bool?
                     var waiting: CheckedContinuation<Bool, Never>?
-                    Countdown(over: region.frame).run { go in
+                    Countdown(over: region.frame, sound: model.countdownSound).run { go in
                         if let waiting { waiting.resume(returning: go) } else { outcome = go }
                     }
                     try await rec.screen?.start(waiting: true)
