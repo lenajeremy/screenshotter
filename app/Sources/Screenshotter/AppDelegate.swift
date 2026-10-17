@@ -251,14 +251,15 @@ import WebKit
         case "getSettings":
             replyHandler([
                 "hasApiKey": Keychain.load() != nil,
+                "hasUnsplashKey": Keychain.load("unsplash") != nil,
                 "outputFolder": outputFolder,
                 "version": AppDelegate.version,
                 "node": engine.node?.version ?? "",
                 "nodePath": engine.node?.path ?? "",
             ], nil)
-        case "setApiKey":
+        case "setApiKey", "setUnsplashKey":
             do {
-                try Keychain.save(body["key"] as? String ?? "")
+                try Keychain.save(body["key"] as? String ?? "", account: cmd == "setUnsplashKey" ? "unsplash" : "anthropic")
                 replyHandler(true, nil)
                 restartSoon()
             } catch { replyHandler(nil, error.localizedDescription) }

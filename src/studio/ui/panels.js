@@ -436,7 +436,8 @@ function PhotoBg() {
     html`<div class="photo-grid">${hits.map((h) => html`<button key=${h.id} class=${current === h.id ? "on" : ""} style=${{ background: h.color }} title=${`${h.description ?? ""}${h.author ? ` — ${h.author}` : ""}`}
         onClick=${() => setBackground({ ...keepTreatment(S.scene.background), photo: `unsplash:${h.id}` })}><img loading="lazy" src=${h.thumb} /></button>`)}</div>
       ${!hits.length && html`<div class="empty-note">No free photos found.</div>`}
-      <div class="note">Photos from <a href="https://unsplash.com" target="_blank">Unsplash</a>. Credits are added to each render's metadata.</div>`}
+      <div class="note">Photos from <a href="https://unsplash.com" target="_blank">Unsplash</a>. Credits are added to each render's metadata.</div>
+      ${!S.opts?.unsplashKey && html`<div class="note warn">Searching Unsplash needs a free access key. <a href="#" onClick=${(e) => (e.preventDefault(), set({ modal: { kind: "settings" } }))}>Add one in Settings</a></div>`}`}
     <div class="divider"></div>
     <button class="btn" onClick=${() => file.current.click()}><${Icon} n="upload" s=${14} />Use your own photo</button>
     <input type="file" ref=${file} hidden accept="image/*" onChange=${async (e) => {

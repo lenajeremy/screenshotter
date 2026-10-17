@@ -1,17 +1,20 @@
 import Foundation
 import Security
 
-/// The optional Anthropic API key for AI Edit. It's handed to the engine as an environment
-/// variable and never shown to the web UI.
+/// The optional keys: Anthropic's for AI Edit ("anthropic"), Unsplash's for photo search
+/// ("unsplash"). Each is handed to the engine as an environment variable and never shown to the
+/// web UI.
 enum Keychain {
-    private static let base: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "Screenshotter.AI",
-        kSecAttrAccount as String: "anthropic",
-    ]
+    private static func base(_ account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Screenshotter.AI",
+            kSecAttrAccount as String: account,
+        ]
+    }
 
-    static func load() -> String? {
-        var q = base
+    static func load(_ account: String = "anthropic") -> String? {
+        var q = base(account)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -20,7 +23,8 @@ enum Keychain {
         return key.isEmpty ? nil : key
     }
 
-    static func save(_ key: String) throws {
+    static func save(_ key: String, account: String = "anthropic") throws {
+        let base = base(account)
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             SecItemDelete(base as CFDictionary)

@@ -395,6 +395,8 @@ async function options() {
     stickers: stickerNames(),
     art: artNames(),
     colouredArt: COLOURED_ART,
+    // Unsplash's photo search has an access key to use (UNSPLASH_ACCESS_KEY).
+    unsplashKey: Boolean(process.env.UNSPLASH_ACCESS_KEY?.trim()),
     aiProviders: [
       process.env.OPENAI_API_KEY && "openai",
       (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) && "gemini",

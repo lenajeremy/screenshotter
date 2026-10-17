@@ -52,6 +52,9 @@ final class TrackWriter: @unchecked Sendable {
     private(set) var firstTime: CMTime?
     private var lastTime = CMTime.zero
     private var finished = false
+    /// Samples written, and ones left out because the writer wasn't ready (falling behind), by track.
+    private(set) var written: [Track: Int] = [:]
+    private(set) var dropped: [Track: Int] = [:]
     /// Whether the file waits for a picture to start. Off once the camera is turned off, so a
     /// recording whose camera went off before its first frame still keeps your voice.
     var waitsForVideo = true
@@ -110,9 +113,16 @@ final class TrackWriter: @unchecked Sendable {
             firstTime = t
         }
         let input = track == .video ? video : audio[track]
-        guard let input, input.isReadyForMoreMediaData else { return }
+        guard let input else { return }
+        guard input.isReadyForMoreMediaData else {
+            dropped[track, default: 0] += 1
+            return
+        }
         let out = at == t ? sample : retimed(sample, by: t - at)
-        if let out, input.append(out) { lastTime = max(lastTime, at) }
+        if let out, input.append(out) {
+            lastTime = max(lastTime, at)
+            written[track, default: 0] += 1
+        }
     }
 
     private func retimed(_ sample: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
@@ -174,7 +184,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
         cfg.queueDepth = 6
         cfg.showsCursor = showsCursor
-        cfg.pixelFormat = kCVPixelFormatType_32BGRA
+        // The encoder's own format (a third of BGRA's size): less for the window server to copy.
+        cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        cfg.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         cfg.colorSpaceName = CGColorSpace.sRGB
         cfg.captureResolution = .best
         if case .window = region { cfg.ignoreShadowsSingleWindow = true }
@@ -250,6 +262,9 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private let videoOut = AVCaptureVideoDataOutput()
     private let audioOut = AVCaptureAudioDataOutput()
     private var writer: TrackWriter?
+    /// The last recording's writer (for its counts), and frames the camera dropped for being late.
+    private(set) var lastWriter: TrackWriter?
+    private(set) var lateFrames = 0
     private var cameraOff = false
     private(set) var videoSize = CGSize(width: 1280, height: 720)
 
@@ -258,38 +273,53 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         guard let cam = AVCaptureDevice(uniqueID: cameraID) ?? AVCaptureDevice.default(for: .video) else { throw CaptureError.writeFailed("no camera is connected") }
         videoIn = try AVCaptureDeviceInput(device: cam)
         super.init()
-        session.beginConfiguration()
-        session.sessionPreset = .high
-        if session.canAddInput(videoIn) { session.addInput(videoIn) }
-        let dims = CMVideoFormatDescriptionGetDimensions(cam.activeFormat.formatDescription)
-        videoSize = CGSize(width: Int(dims.width), height: Int(dims.height))
-        videoOut.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        videoOut.alwaysDiscardsLateVideoFrames = true
-        videoOut.setSampleBufferDelegate(self, queue: queue)
-        if session.canAddOutput(videoOut) { session.addOutput(videoOut) }
-        session.commitConfiguration()
+    }
+
+    /// Sets the camera up, on its own queue (it takes a moment, and the bar, bubble and pill
+    /// mustn't stall while it does). Before anything attaches to the session.
+    func configure() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            queue.async {
+                self.session.beginConfiguration()
+                self.session.sessionPreset = .high
+                if self.session.canAddInput(self.videoIn) { self.session.addInput(self.videoIn) }
+                let dims = CMVideoFormatDescriptionGetDimensions(self.videoIn.device.activeFormat.formatDescription)
+                self.videoSize = CGSize(width: Int(dims.width), height: Int(dims.height))
+                // The encoder's own format: no conversion on the way in.
+                self.videoOut.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+                self.videoOut.alwaysDiscardsLateVideoFrames = true
+                self.videoOut.setSampleBufferDelegate(self, queue: self.queue)
+                if self.session.canAddOutput(self.videoOut) { self.session.addOutput(self.videoOut) }
+                self.session.commitConfiguration()
+                done.resume()
+            }
+        }
     }
 
     var hasMic: Bool { queue.sync { session.outputs.contains(audioOut) } }
 
-    /// Adds the microphone (as a recording starts). Returns whether it could.
-    @discardableResult func addMic(_ micID: String) -> Bool {
-        queue.sync {
-            guard !session.outputs.contains(audioOut),
-                  let mic = AVCaptureDevice(uniqueID: micID) ?? AVCaptureDevice.default(for: .audio),
-                  let input = try? AVCaptureDeviceInput(device: mic) else { return session.outputs.contains(audioOut) }
-            session.beginConfiguration()
-            defer { session.commitConfiguration() }
-            guard session.canAddInput(input) else { return false }
-            session.addInput(input)
-            audioOut.setSampleBufferDelegate(self, queue: queue)
-            guard session.canAddOutput(audioOut) else {
-                session.removeInput(input)
-                return false
-            }
-            session.addOutput(audioOut)
-            return true
+    /// Adds the microphone (as a recording starts), on the camera's queue. Returns whether it could.
+    @discardableResult func addMic(_ micID: String) async -> Bool {
+        await withCheckedContinuation { done in
+            queue.async { done.resume(returning: self.attachMic(micID)) }
         }
+    }
+
+    private func attachMic(_ micID: String) -> Bool {
+        guard !session.outputs.contains(audioOut),
+              let mic = AVCaptureDevice(uniqueID: micID) ?? AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: mic) else { return session.outputs.contains(audioOut) }
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        guard session.canAddInput(input) else { return false }
+        session.addInput(input)
+        audioOut.setSampleBufferDelegate(self, queue: queue)
+        guard session.canAddOutput(audioOut) else {
+            session.removeInput(input)
+            return false
+        }
+        session.addOutput(audioOut)
+        return true
     }
 
     /// Turns the camera off partway through a recording: no more pictures (its light goes out),
@@ -333,6 +363,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             queue.async {
                 guard let w = self.writer else { return done.resume(returning: false) }
                 self.writer = nil
+                self.lastWriter = w
                 Task { done.resume(returning: await w.finish()) }
             }
         }
@@ -343,6 +374,10 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             writer?.cancel()
             writer = nil
         }
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didDrop sample: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if output === videoOut { lateFrames += 1 }
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {

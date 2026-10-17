@@ -43,24 +43,56 @@ function readMeta(file: string): Omit<Photo, "path"> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Unsplash (public web endpoints; no API key needed)
+// Unsplash: its official API with an access key (UNSPLASH_ACCESS_KEY, Settings › Photos in the
+// app); a photo already chosen downloads without one.
+
+export const UNSPLASH_KEY_NEEDED =
+  "Unsplash search needs a free access key now: make an app at unsplash.com/developers, copy its Access Key, and add it in Settings › Photos.";
+
+/** Free Unsplash photos for a query (the raw results, premium ones left out). */
+export async function unsplashResults(query: string, o: { perPage: number; page?: number; orientation?: string }): Promise<any[]> {
+  const key = process.env.UNSPLASH_ACCESS_KEY?.trim();
+  const qs = `query=${encodeURIComponent(query)}&per_page=${o.perPage}&page=${o.page ?? 1}${o.orientation ? `&orientation=${o.orientation}` : ""}`;
+  const res = key
+    ? await fetch(`https://api.unsplash.com/search/photos?${qs}`, { headers: { Authorization: `Client-ID ${key}`, "Accept-Version": "v1" }, signal: AbortSignal.timeout(15_000) })
+    : // The website's own search, which Unsplash has closed to apps (it may open again).
+      await fetch(`https://unsplash.com/napi/search/photos?${qs}`, { headers: { Accept: "application/json", "User-Agent": "screenshotter-mcp" }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+  if (!key && !res.ok) throw new Error(UNSPLASH_KEY_NEEDED);
+  if (res.status === 401) throw new Error("Unsplash didn't accept the access key. Check it in Settings › Photos.");
+  if (res.status === 403) throw new Error("This Unsplash key's searches are used up for the hour (50 an hour until Unsplash approves the app for more).");
+  if (!res.ok) throw new Error(`Unsplash search failed (${res.status}).`);
+  return (((await res.json()) as { results?: any[] }).results ?? []).filter((r) => !r.premium && !r.plus);
+}
 
 async function unsplashById(id: string, width: number): Promise<Photo> {
   const w = width > 2400 ? 3200 : 2400;
   const file = path.join(cacheDir("unsplash"), `${id}-${w}.jpg`);
   if (!existsSync(file)) {
-    await download(`https://unsplash.com/photos/${encodeURIComponent(id)}/download?force=true&w=${w}`, file);
+    const key = process.env.UNSPLASH_ACCESS_KEY?.trim();
+    // Where the photo is (the download link points at it, and names its photographer).
+    const link = `https://unsplash.com/photos/${encodeURIComponent(id)}/download?force=true&w=${w}`;
+    const hop = await fetch(link, { redirect: "manual" }).catch(() => undefined);
+    const location = hop?.headers.get("location") ?? "";
+    await download(location.startsWith("https://images.unsplash.com/") ? location : link, file);
     try {
-      const res = await fetch(`https://unsplash.com/napi/photos/${encodeURIComponent(id)}`, {
-        headers: { Accept: "application/json" },
-      });
-      if (res.ok) {
-        const meta = (await res.json()) as any;
-        writeFileSync(
-          `${file}.json`,
-          JSON.stringify({ color: meta.color, credit: `Photo by ${meta.user?.name} on Unsplash (${meta.links?.html ?? `https://unsplash.com/photos/${id}`})` }),
-        );
+      let credit: { color?: string; credit: string } | undefined;
+      if (key) {
+        const res = await fetch(`https://api.unsplash.com/photos/${encodeURIComponent(id)}`, { headers: { Authorization: `Client-ID ${key}`, "Accept-Version": "v1" } });
+        if (res.ok) {
+          const meta = (await res.json()) as any;
+          credit = { color: meta.color, credit: `Photo by ${meta.user?.name} on Unsplash (${meta.links?.html ?? `https://unsplash.com/photos/${id}`})` };
+          // Unsplash asks apps to say when a photo is used.
+          if (meta.links?.download_location) fetch(meta.links.download_location, { headers: { Authorization: `Client-ID ${key}` } }).catch(() => undefined);
+        }
       }
+      if (!credit) {
+        // Without a key: the photographer as the download names them ("<username>-<id>-unsplash.jpg").
+        const dl = decodeURIComponent(/[?&]dl=([^&]+)/.exec(location)?.[1] ?? "");
+        const end = `-${id}-unsplash.`;
+        const who = dl.includes(end) ? dl.slice(0, dl.lastIndexOf(end)) : "";
+        if (who) credit = { credit: `Photo by ${who} on Unsplash (https://unsplash.com/photos/${id})` };
+      }
+      if (credit) writeFileSync(`${file}.json`, JSON.stringify(credit));
     } catch {
       // Attribution is best-effort.
     }
@@ -74,10 +106,7 @@ async function unsplashSearch(query: string, orientation: "landscape" | "portrai
   const cached = path.join(cacheDir("unsplash"), `search-${key}.txt`);
   let id = existsSync(cached) ? readFileSync(cached, "utf8").trim() : "";
   if (!id) {
-    const url = `https://unsplash.com/napi/search/photos?query=${encodeURIComponent(query)}&per_page=20&orientation=${orientation}`;
-    const res = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "screenshotter-mcp" } });
-    if (!res.ok) throw new Error(`Unsplash search failed (${res.status}). Pass a photo id with "unsplash:<id>" instead.`);
-    const results = (((await res.json()) as any).results ?? []).filter((r: any) => !r.premium && !r.plus);
+    const results = await unsplashResults(query, { perPage: 20, orientation });
     if (!results.length) throw new Error(`Unsplash found no free photos for "${query}".`);
     id = results[pick % results.length].id;
     writeFileSync(cached, id);

@@ -65,6 +65,8 @@ import Foundation
         // The app itself, which draws recordings' videos on the GPU for the engine's export.
         if let me = Bundle.main.executablePath { env["SCREENSHOTTER_NATIVE"] = me }
         if let apiKey, !apiKey.isEmpty { env["ANTHROPIC_API_KEY"] = apiKey }
+        // Unsplash's access key, for photo search (Settings › Photos).
+        if let unsplash = Keychain.load("unsplash") { env["UNSPLASH_ACCESS_KEY"] = unsplash }
         env.removeValue(forKey: "SCREENSHOTTER_STUDIO_PORT")
         environment = env
 

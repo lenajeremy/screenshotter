@@ -105,14 +105,18 @@ import Combine
     /// The camera shows as soon as it's turned on in the bar (set to record), so you can place
     /// yourself and pick its look before recording; it goes when the bar does.
     private func syncPreview() {
-        guard recording == nil else { return }
+        guard recording == nil, !previewStarting else { return }
         let wanted = (barVisible || capturing) && model.mode == .record && model.cameraOn && !model.cameras.isEmpty
         if !wanted { return stopPreview() }
         if let preview, preview.camera.cameraID == model.cameraID { return }
         stopPreview()
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            startPreview()
+            Task {
+                await startPreview()
+                // Things may have changed while the camera set up (the bar closed, say).
+                syncPreview()
+            }
         case .notDetermined:
             guard !asking else { return }
             asking = true
@@ -128,9 +132,16 @@ import Combine
         }
     }
 
-    @discardableResult private func startPreview() -> Bool {
+    /// A camera's preview on the way (its setup runs off the main thread).
+    private var previewStarting = false
+
+    @discardableResult private func startPreview() async -> Bool {
+        if previewStarting { return false }
+        previewStarting = true
+        defer { previewStarting = false }
         do {
             let cam = try CameraRecorder(cameraID: model.cameraID)
+            await cam.configure()
             let screen = bar?.screen ?? NSScreen.main ?? NSScreen.screens[0]
             // The preview attaches to the camera before it starts (never while it's starting).
             let bubble = CameraBubble(session: cam.session, model: model, near: screen.visibleFrame, at: bubbleSpot,
@@ -254,6 +265,8 @@ import Combine
         var bubbleTracker: BubbleTracker?
         var cameraTurnedOff = false
         var pill: RecordingPill?
+        /// When the recording actually began (after the setup and any countdown).
+        var startedAt: CFTimeInterval?
         /// Opened in Screenshotter to edit when it stops (the files stay in the library, which the
         /// Studio works from), rather than saved as a finished video.
         var edit = false
@@ -288,9 +301,11 @@ import Combine
                 // The camera's preview carries on into the recording (started now if it wasn't up),
                 // so you can see yourself (and move the bubble) during the countdown.
                 if model.cameraOn {
+                    // A preview still setting up: wait for it.
+                    while previewStarting { try? await Task.sleep(nanoseconds: 50_000_000) }
                     if preview?.camera.cameraID != model.cameraID {
                         stopPreview()
-                        guard startPreview() else { return notStarted() }
+                        guard await startPreview() else { return notStarted() }
                     }
                     guard let p = preview else { return notStarted() }
                     preview = nil
@@ -298,7 +313,7 @@ import Combine
                     rec.bubble = p.bubble
                     p.bubble.keepOver(region.frame)
                     // Your voice goes with the camera (and survives it being turned off).
-                    if micOn, !p.camera.addMic(model.micID) { NSLog("Screenshotter: the microphone couldn't join the camera") }
+                    if micOn, !(await p.camera.addMic(model.micID)) { NSLog("Screenshotter: the microphone couldn't join the camera") }
                 }
                 recording = rec
                 capturing = false
@@ -315,6 +330,7 @@ import Combine
                 // Stopped or thrown away during the countdown.
                 guard recording === rec else { return }
                 try rec.camera?.startRecording(to: rec.parts.appendingPathComponent("camera.mov"), clock: rec.clock)
+                rec.startedAt = CACurrentMediaTime()
                 rec.cursor?.start()
                 if let bubble = rec.bubble {
                     let tracker = BubbleTracker(bubble: bubble)
@@ -624,19 +640,37 @@ import Combine
             record(.screen(screen))
             // Your own choices back before quitting (they're saved as they change).
             let restore = { (self.model.cameraOn, self.model.micOn, self.model.systemAudio, self.model.countdown) = saved }
+            // SCREENSHOTTER_CAPTURE_SELFTEST_SECONDS: how long to record (4 by default); the main
+            // thread's hiccups are timed meanwhile.
+            let seconds = Double(env["SCREENSHOTTER_CAPTURE_SELFTEST_SECONDS"] ?? "") ?? 4
+            let began = CACurrentMediaTime()
+            var last = began
+            var worst = 0.0
+            var hitches: [String] = []
+            let beat = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
+                let now = CACurrentMediaTime()
+                let gap = now - last
+                last = now
+                worst = max(worst, gap)
+                if gap > 0.05 { hitches.append(String(format: "%.0f ms at %.1f s", gap * 1000, now - began)) }
+            }
+            RunLoop.main.add(beat, forMode: .common)
             if env["SCREENSHOTTER_CAPTURE_SELFTEST_CAMERA_OFF"] == "1" {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 cameraOffPressed()
                 note("camera turned off")
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
             } else {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             }
+            beat.invalidate()
+            note(String(format: "main thread: longest gap %.0f ms; over 50 ms: ", worst * 1000) + hitches.joined(separator: ", "))
             guard let rec = recording else {
                 note("recording didn't start")
                 restore()
                 return NSApp.terminate(nil)
             }
+            if let started = rec.startedAt { note(String(format: "recording began at %.1f s", started - began)) }
             let output = rec.output
             stop()
             for _ in 0..<60 where !FileManager.default.fileExists(atPath: CaptureFiles.poster(for: output).path) {
@@ -651,6 +685,8 @@ import Combine
             if let data = try? Data(contentsOf: cursorFile), let log = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 note("cursor log: \((log["samples"] as? [Any])?.count ?? 0) points, \((log["clicks"] as? [Any])?.count ?? 0) clicks, cursors \(log["kinds"] ?? [])")
             } else { note("cursor log: none") }
+            if let w = rec.screen?.writer { note("screen frames: \(w.written[.video] ?? 0) written, \(w.dropped[.video] ?? 0) dropped (writer behind); sound: \(w.written[.audio1] ?? 0)/\(w.written[.audio2] ?? 0) written, \((w.dropped[.audio1] ?? 0) + (w.dropped[.audio2] ?? 0)) dropped") }
+            if let cam = rec.camera, let w = cam.lastWriter { note("camera frames: \(w.written[.video] ?? 0) written, \(w.dropped[.video] ?? 0) dropped (writer behind), \(cam.lateFrames) late; mic: \(w.written[.audio1] ?? 0) written, \(w.dropped[.audio1] ?? 0) dropped") }
             note("done")
             restore()
             NSApp.terminate(nil)

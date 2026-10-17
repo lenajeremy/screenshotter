@@ -653,7 +653,9 @@ function RenderView() {
           <button class="btn" onClick=${() => set({ view: "canvas" })}><${Icon} n="canvas" s=${14} />Back to editing</button>
         </div>
         ${nav && html`<${PreviewNav} />`}`
-      : html`<div class="render-empty">
+      : s.rendering
+        ? null
+        : html`<div class="render-empty">
           <div class="big"><${Icon} n="eye" s=${30} w=${1.4} /></div>
           <h2>${hasDesign(s.scene) ? "See the finished image" : "Nothing to preview yet"}</h2>
           <span>${hasDesign(s.scene) ? "Edit shows where things go. Preview shows the real device frame, lighting and effects." : "Add a screenshot, a headline or a picture first, then come back here."}</span>
@@ -1006,11 +1008,24 @@ function Settings() {
   const s = useStore();
   const [info, setInfo] = useState(null);
   const [key, setKey] = useState("");
+  const [unsplashKey, setUnsplashKey] = useState("");
   const [saving, setSaving] = useState(false);
   const ai = s.opts?.ai;
   useEffect(() => {
     native?.call("getSettings").then(setInfo).catch(() => setInfo({}));
   }, []);
+  const saveUnsplashKey = async (value) => {
+    setSaving(true);
+    try {
+      await native.call("setUnsplashKey", { key: value });
+      setUnsplashKey("");
+      toast({ kind: "ok", title: value ? "Unsplash key saved to Keychain" : "Unsplash key removed", text: "Restarting the engine…" });
+    } catch (e) {
+      fail(e, "Couldn't save the key");
+    } finally {
+      setSaving(false);
+    }
+  };
   const saveKey = async (value) => {
     setSaving(true);
     try {
@@ -1091,6 +1106,17 @@ function Settings() {
           <h4><${Icon} n="code" s=${15} />For developers</h4>
           <div class="note">Every design is plain JSON: exactly what an AI agent sends to make this image. You can read it, edit it and apply it.</div>
           <div class="hstack"><button class="btn sm" onClick=${() => set({ modal: null, jsonOpen: true })}>Show this design as JSON</button><span class="kbd">⌥⌘J</span></div>
+        </div>
+        <div class="card">
+          <h4><${Icon} n="image" s=${15} />Photos</h4>
+          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> for backdrop photos needs a free access key: at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a>, make a new app (any name) and copy its <b>Access Key</b>. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : "Photos you've already chosen keep working without one."}</div>
+          ${native
+            ? html`<div class="row"><label>Access key</label><div class="hstack">
+                <input class="input grow mono" type="password" placeholder=${info?.hasUnsplashKey ? "•••••••••• saved in Keychain" : "Unsplash Access Key"} value=${unsplashKey} onInput=${(e) => setUnsplashKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
+                <button class="btn" disabled=${!unsplashKey.trim() || saving} onClick=${() => saveUnsplashKey(unsplashKey.trim())}>Save</button>
+                ${info?.hasUnsplashKey && html`<button class="btn ghost" disabled=${saving} onClick=${() => saveUnsplashKey("")}>Remove</button>`}
+              </div></div>`
+            : html`<div class="note">Start the Studio with <code>UNSPLASH_ACCESS_KEY</code> set to use one.</div>`}
         </div>
         <div class="card">
           <h4><${Icon} n="wand" s=${15} />AI backgrounds</h4>

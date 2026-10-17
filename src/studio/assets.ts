@@ -7,6 +7,7 @@ import { createMockup } from "../render/mockup.js";
 import { run } from "../util/exec.js";
 import { cacheDir, outputRoot } from "../util/files.js";
 import { encodePng } from "../util/png.js";
+import { unsplashResults } from "../render/photos.js";
 
 const hash = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 16);
 
@@ -87,12 +88,8 @@ export async function searchUnsplash(query: string, page = 1): Promise<UnsplashH
   const key = `${query.toLowerCase()}|${page}`;
   const cached = searches.get(key);
   if (cached && Date.now() - cached.at < 30 * 60_000) return cached.hits;
-  const url = `https://unsplash.com/napi/search/photos?query=${encodeURIComponent(query)}&per_page=24&page=${page}`;
-  const res = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "screenshotter-mcp" }, signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Unsplash search failed (${res.status}).`);
-  const body = (await res.json()) as { results?: any[] };
-  const hits: UnsplashHit[] = (body.results ?? [])
-    .filter((r) => !r.premium && !r.plus && r.urls?.small)
+  const hits: UnsplashHit[] = (await unsplashResults(query, { perPage: 24, page }))
+    .filter((r) => r.urls?.small)
     .map((r) => ({
       id: r.id,
       thumb: r.urls.small,
