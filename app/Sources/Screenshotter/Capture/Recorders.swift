@@ -58,9 +58,31 @@ final class TrackWriter: @unchecked Sendable {
     /// Taking samples (false: the stream's running but the recording hasn't begun, as during a
     /// countdown, so it starts the moment it's let in).
     var open = true
+    /// The recording's end: nothing after it is kept (sound from before it still comes in).
+    var cutoff: CMTime?
     /// Whether the file waits for a picture to start. Off once the camera is turned off, so a
     /// recording whose camera went off before its first frame still keeps your voice.
     var waitsForVideo = true
+    /// The picture's over (the camera was turned off): the sound carries on without waiting for it.
+    private var videoEnded = false
+    /// Sound waiting for the writer. It's held, never let go: a gap in the sound would pull
+    /// everything after it early, out of step with the picture (your voice with your lips).
+    private var waiting: [Track: [CMSampleBuffer]] = [:]
+    /// Where each track's sound has reached in the file, and in what arrived.
+    private var soundEnd: [Track: CMTime] = [:]
+    private var heardEnd: [Track: CMTime] = [:]
+    /// Seconds missing from the sound as it arrived, and of silence put in their place, by track.
+    private(set) var gaps: [Track: Double] = [:]
+    private(set) var filled: [Track: Double] = [:]
+    /// Each sound track's span by its timestamps (first to last), and how much sound that held.
+    private(set) var soundSpan: [Track: (start: CMTime, end: CMTime)] = [:]
+    private(set) var soundHeld: [Track: Double] = [:]
+    /// The picture's span by its timestamps.
+    private(set) var pictureSpan: (start: CMTime, end: CMTime)?
+    /// How long sound took to arrive after its moment, on average (seconds).
+    private(set) var soundDelay: [Track: (total: Double, count: Int)] = [:]
+    /// A gap or overlap smaller than this is left be (the clocks' jitter).
+    private let slack = CMTime(value: 3, timescale: 1000)
 
     init(url: URL, size: CGSize, fps: Int, audioTracks: [(Track, Int)], clock: PauseClock) throws {
         self.url = url
@@ -108,24 +130,122 @@ final class TrackWriter: @unchecked Sendable {
     func append(_ sample: CMSampleBuffer, to track: Track) {
         guard open, !finished, CMSampleBufferDataIsReady(sample) else { return }
         let t = CMSampleBufferGetPresentationTimeStamp(sample)
+        if let cutoff, t > cutoff { return }
         guard let at = clock.shifted(t) else { return }
         if firstTime == nil {
             // Audio before the first frame has nothing to go with.
             guard track == .video || !waitsForVideo, writer.startWriting() else { return }
             writer.startSession(atSourceTime: at)
             firstTime = t
+            if videoEnded { video.markAsFinished() }
         }
         let input = track == .video ? video : audio[track]
-        guard let input else { return }
-        guard input.isReadyForMoreMediaData else {
-            dropped[track, default: 0] += 1
-            return
+        guard let input, let out = at == t ? sample : retimed(sample, by: t - at) else { return }
+        if track == .video {
+            if videoEnded { return }
+            if !input.isReadyForMoreMediaData {
+                dropped[track, default: 0] += 1
+            } else if input.append(out) {
+                lastTime = max(lastTime, at)
+                written[track, default: 0] += 1
+                pictureSpan = (pictureSpan?.start ?? at, at)
+            }
+        } else {
+            if let heard = heardEnd[track], t - heard > slack { gaps[track, default: 0] += (t - heard).seconds }
+            heardEnd[track] = t + Self.length(of: sample)
+            soundSpan[track] = (soundSpan[track]?.start ?? at, at + Self.length(of: sample))
+            soundHeld[track, default: 0] += Self.length(of: sample).seconds
+            let late = (CMClockGetTime(CMClockGetHostTimeClock()) - t).seconds
+            soundDelay[track] = ((soundDelay[track]?.total ?? 0) + late, (soundDelay[track]?.count ?? 0) + 1)
+            waiting[track, default: []].append(out)
+            // Seconds behind: the oldest goes (and the gap it leaves is filled with silence).
+            if waiting[track]!.count > 600 {
+                waiting[track]!.removeFirst()
+                dropped[track, default: 0] += 1
+            }
         }
-        let out = at == t ? sample : retimed(sample, by: t - at)
-        if let out, input.append(out) {
-            lastTime = max(lastTime, at)
-            written[track, default: 0] += 1
+        writeSound()
+    }
+
+    /// Whether the picture can take another frame (the sync test waits for it).
+    var readyForVideo: Bool { video.isReadyForMoreMediaData }
+
+    /// The camera's been turned off: no more picture, and the sound doesn't wait for any.
+    func endVideo() {
+        guard !videoEnded else { return }
+        videoEnded = true
+        waitsForVideo = false
+        if writer.status == .writing { video.markAsFinished() }
+    }
+
+    /// Writes the waiting sound, in order, as far as the writer will take it. A gap before a
+    /// sample is filled with silence and an overlap trimmed, so the sound keeps its time.
+    private func writeSound() {
+        guard writer.status == .writing else { return }
+        for (track, input) in audio {
+            while var next = waiting[track]?.first, input.isReadyForMoreMediaData {
+                let start = CMSampleBufferGetPresentationTimeStamp(next)
+                if let end = soundEnd[track] {
+                    if start - end > slack, let quiet = Self.silence(like: next, at: end, length: CMTimeMinimum(start - end, CMTime(value: 1, timescale: 1))) {
+                        guard input.append(quiet) else { break }
+                        soundEnd[track] = end + Self.length(of: quiet)
+                        filled[track, default: 0] += Self.length(of: quiet).seconds
+                        continue
+                    }
+                    if end - start > slack {
+                        waiting[track]!.removeFirst()
+                        guard let rest = Self.trimmed(next, from: end) else { continue }
+                        waiting[track]!.insert(rest, at: 0)
+                        next = rest
+                    }
+                }
+                waiting[track]!.removeFirst()
+                let at = CMSampleBufferGetPresentationTimeStamp(next)
+                guard input.append(next) else { break }
+                soundEnd[track] = at + Self.length(of: next)
+                lastTime = max(lastTime, at)
+                written[track, default: 0] += 1
+            }
         }
+    }
+
+    private static func length(of sample: CMSampleBuffer) -> CMTime {
+        let d = CMSampleBufferGetDuration(sample)
+        if d.isValid, d > .zero { return d }
+        guard let f = CMSampleBufferGetFormatDescription(sample), let rate = CMAudioFormatDescriptionGetStreamBasicDescription(f)?.pointee.mSampleRate, rate > 0 else { return .zero }
+        return CMTime(value: CMTimeValue(CMSampleBufferGetNumSamples(sample)), timescale: CMTimeScale(rate))
+    }
+
+    /// `length` of silence in a sample's own format (plain PCM), starting `at`.
+    static func silence(like sample: CMSampleBuffer, at start: CMTime, length: CMTime) -> CMSampleBuffer? {
+        guard let format = CMSampleBufferGetFormatDescription(sample),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM, asbd.mBytesPerFrame > 0, asbd.mSampleRate > 0 else { return nil }
+        let frames = Int((length.seconds * asbd.mSampleRate).rounded())
+        guard frames > 0 else { return nil }
+        let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 ? Int(asbd.mChannelsPerFrame) : 1
+        let bytes = frames * Int(asbd.mBytesPerFrame) * planes
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes, blockAllocator: kCFAllocatorDefault,
+                                                 customBlockSource: nil, offsetToData: 0, dataLength: bytes, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+              let block, CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) == noErr else { return nil }
+        var out: CMSampleBuffer?
+        let at = CMTimeConvertScale(start, timescale: CMTimeScale(asbd.mSampleRate), method: .roundHalfAwayFromZero)
+        guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format, sampleCount: frames,
+                                                                   presentationTimeStamp: at, packetDescriptions: nil, sampleBufferOut: &out) == noErr else { return nil }
+        return out
+    }
+
+    /// A sample of sound without what comes before `from` (nil if that's all of it).
+    private static func trimmed(_ sample: CMSampleBuffer, from: CMTime) -> CMSampleBuffer? {
+        guard let f = CMSampleBufferGetFormatDescription(sample), let rate = CMAudioFormatDescriptionGetStreamBasicDescription(f)?.pointee.mSampleRate, rate > 0 else { return sample }
+        let n = CMSampleBufferGetNumSamples(sample)
+        let skip = Int(((from - CMSampleBufferGetPresentationTimeStamp(sample)).seconds * rate).rounded())
+        guard skip < n else { return nil }
+        guard skip > 0 else { return sample }
+        var out: CMSampleBuffer?
+        guard CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: sample, sampleRange: CFRange(location: skip, length: n - skip), sampleBufferOut: &out) == noErr else { return sample }
+        return out
     }
 
     private func retimed(_ sample: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
@@ -149,7 +269,12 @@ final class TrackWriter: @unchecked Sendable {
             writer.cancelWriting()
             return false
         }
-        video.markAsFinished()
+        // The sound still waiting goes in (the writer catches up now nothing new arrives).
+        for _ in 0..<200 where waiting.values.contains(where: { !$0.isEmpty }) {
+            writeSound()
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        if !videoEnded { video.markAsFinished() }
         audio.values.forEach { $0.markAsFinished() }
         writer.endSession(atSourceTime: lastTime)
         await writer.finishWriting()
@@ -337,7 +462,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     func turnOffCamera() {
         queue.async {
             self.cameraOff = true
-            self.writer?.waitsForVideo = false
+            self.writer?.endVideo()
             self.session.beginConfiguration()
             self.session.removeOutput(self.videoOut)
             self.session.removeInput(self.videoIn)
@@ -368,8 +493,21 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     var firstTime: CMTime? { queue.sync { writer?.firstTime } }
 
+    /// The recording ends now. Sound arrives a moment after it's heard, so the file stays open a
+    /// little longer (in `stopRecording`) for the last of what was said, and nothing later.
+    func endNow() {
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        queue.async { self.writer?.cutoff = now }
+        endedAt = now
+    }
+    private var endedAt: CMTime?
+
     func stopRecording() async -> Bool {
-        await withCheckedContinuation { done in
+        if let end = endedAt {
+            let wait = (end + CMTime(value: 300, timescale: 1000) - CMClockGetTime(CMClockGetHostTimeClock())).seconds
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1e9)) }
+        }
+        return await withCheckedContinuation { done in
             queue.async {
                 guard let w = self.writer else { return done.resume(returning: false) }
                 self.writer = nil

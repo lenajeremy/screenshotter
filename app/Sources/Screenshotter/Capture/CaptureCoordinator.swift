@@ -393,6 +393,7 @@ import Combine
         recording = nil
         let elapsed = rec.pill?.elapsed ?? 0
         rec.pill?.end()
+        rec.camera?.endNow()
         let bubblePlacement = rec.bubblePlacement ?? rec.bubble?.placement(in: rec.region.frame)
         rec.cursor?.stop()
         rec.bubbleTracker?.stop()
@@ -712,7 +713,18 @@ import Combine
                 note("cursor log: \((log["samples"] as? [Any])?.count ?? 0) points, \((log["clicks"] as? [Any])?.count ?? 0) clicks, cursors \(log["kinds"] ?? [])")
             } else { note("cursor log: none") }
             if let w = rec.screen?.writer { note("screen frames: \(w.written[.video] ?? 0) written, \(w.dropped[.video] ?? 0) dropped (writer behind); sound: \(w.written[.audio1] ?? 0)/\(w.written[.audio2] ?? 0) written, \((w.dropped[.audio1] ?? 0) + (w.dropped[.audio2] ?? 0)) dropped") }
-            if let cam = rec.camera, let w = cam.lastWriter { note("camera frames: \(w.written[.video] ?? 0) written, \(w.dropped[.video] ?? 0) dropped (writer behind), \(cam.lateFrames) late; mic: \(w.written[.audio1] ?? 0) written, \(w.dropped[.audio1] ?? 0) dropped") }
+            for (name, w) in [("screen", rec.screen?.writer), ("camera", rec.camera?.lastWriter)] {
+                guard let w else { continue }
+                if let p = w.pictureSpan { note(String(format: "%@ picture spans %.3f s", name, (p.end - p.start).seconds)) }
+                for (track, span) in w.soundSpan {
+                    let held = w.soundHeld[track] ?? 0
+                    let d = w.soundDelay[track].map { $0.total / Double(max(1, $0.count)) } ?? 0
+                    note(String(format: "%@ sound %@: spans %.3f s by its timestamps, holds %.3f s of sound (%.2f%% short); arrives %.0f ms after its moment",
+                                name, "\(track)", (span.end - span.start).seconds, held, (1 - held / max(0.001, (span.end - span.start).seconds)) * 100, d * 1000))
+                }
+            }
+            if let mic = AVCaptureDevice(uniqueID: model.micID) ?? AVCaptureDevice.default(for: .audio) { note("microphone: \(mic.localizedName)") }
+            if let cam = rec.camera, let w = cam.lastWriter { note("camera frames: \(w.written[.video] ?? 0) written, \(w.dropped[.video] ?? 0) dropped (writer behind), \(cam.lateFrames) late; mic: \(w.written[.audio1] ?? 0) written, \(w.dropped[.audio1] ?? 0) dropped, \(String(format: "%.3f", w.gaps[.audio1] ?? 0)) s missing as it arrived, \(String(format: "%.3f", w.filled[.audio1] ?? 0)) s of silence put in") }
             note("done")
             restore()
             NSApp.terminate(nil)

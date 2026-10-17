@@ -207,6 +207,27 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
     expect(r.still.every((v) => v.paused && Math.abs(v.t - 2.5) < 0.05), `scrubbed ${JSON.stringify(r.still)}`);
   });
 
+  await check(`${pad} the webcam keeps in step with the recording as it plays (lips with the voice)`, async () => {
+    const offs = await S(page, async () => {
+      const tl = await import("/ui/timeline.js" as string);
+      tl.setPlayhead(0);
+      tl.play();
+      const master = document.querySelector<HTMLVideoElement>("video[data-master]")!;
+      const cam = document.querySelector<HTMLVideoElement>("video[data-follow]:not([data-master])")!;
+      const out: number[] = [];
+      await new Promise((r) => setTimeout(r, 700));
+      for (let k = 0; k < 20 && !master.paused; k++) {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 80)));
+        out.push(cam.currentTime - master.currentTime);
+      }
+      tl.pause();
+      return out;
+    });
+    const worst = Math.max(...offs.map(Math.abs));
+    expect(offs.length >= 10 && worst < 0.08, `the webcam is up to ${(worst * 1000).toFixed(0)} ms off the recording (${offs.map((o) => Math.round(o * 1000)).join(", ")} ms)`);
+    return `within ${(worst * 1000).toFixed(0)} ms`;
+  });
+
   if (name === "chromium") {
     await check(`${pad} exporting shows how far along it is, and about how long is left`, async () => {
       const seen = await S(page, async () => {
@@ -288,6 +309,12 @@ if (!nativeOnly) {
   });
 }
 if (native) {
+  await check("the voice stays with the picture through gaps in the sound (the app's writer)", async () => {
+    const r = spawnSync(native, ["--sync-test", path.join(tmp, "sync")], { encoding: "utf8", timeout: 120_000 });
+    const line = r.stdout.split("\n").find((l) => /^(PASS|FAIL) /.test(l)) ?? r.stderr.slice(-300);
+    expect(r.status === 0, line);
+    return line.replace(/^PASS [^:]+: /, "");
+  });
   await check("the fast export (the app, on the GPU) looks like the usual one, with its sound", async () => {
     if (!existsSync(usual)) await createVideo(input(usual) as never);
     process.env.SCREENSHOTTER_NATIVE = native;

@@ -27,6 +27,17 @@ MainActor.assumeIsolated {
         while done.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         exit(0)
     }
+    // `--sync-test <folder>`: check a recording's sound keeps time with its picture through gaps.
+    if let i = args.firstIndex(of: "--sync-test"), i + 1 < args.count {
+        let done = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var ok = false
+        Task.detached {
+            ok = await SyncTest.run(in: URL(fileURLWithPath: args[i + 1]))
+            done.signal()
+        }
+        while done.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        exit(ok ? 0 : 1)
+    }
     // `--render-recording <spec.json>`: draw a recording's video for the engine's export (on the GPU).
     if let i = args.firstIndex(of: "--render-recording"), i + 1 < args.count {
         exit(RecordingRenderer.run(URL(fileURLWithPath: args[i + 1])))

@@ -170,9 +170,19 @@ export function followVideo(v, t = playhead.t) {
     if (v.paused) {
       v.currentTime = at;
       v.play().catch(() => undefined);
-    } else if (Math.abs(v.currentTime - at) > 0.25) v.currentTime = at;
+      return;
+    }
+    // Kept in step with the playhead (a webcam with the voice in the recording, lips and all):
+    // well behind or ahead, it jumps; a little, it runs a touch faster or slower until it's back.
+    const off = v.currentTime - at;
+    if (Math.abs(off) > 0.3) {
+      v.currentTime = at;
+      v.playbackRate = 1;
+    } else if (Math.abs(off) > 0.03) v.playbackRate = off > 0 ? 0.93 : 1.07;
+    else if (Math.abs(off) < 0.01 && v.playbackRate !== 1) v.playbackRate = 1;
   } else {
     if (!v.paused) v.pause();
+    v.playbackRate = 1;
     if (Math.abs(v.currentTime - at) > 0.02) v.currentTime = at;
   }
 }
