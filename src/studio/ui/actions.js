@@ -223,6 +223,11 @@ export function addDevice(path, at = {}) {
   const d = { screenshot: path };
   const video = at.video ?? recordingFor(path);
   if (video) d.video = video;
+  // Its frame: as asked, else as the design's screenshots already have it (all frameless, say),
+  // else as the Screenshots panel says new ones come in.
+  const frames = [...new Set((S.scene.devices ?? []).map((x) => x.frame ?? "device"))];
+  const frame = at.frame ?? (frames.length === 1 ? frames[0] : S.capture.frame ?? "device");
+  if (frame !== "device") at = { ...at, frame };
   if (at.frame) d.frame = at.frame;
   if (at.x !== undefined) Object.assign(d, { x: at.x, y: at.y, anchor: "center" });
   const next = clone(S.scene);
@@ -2132,6 +2137,43 @@ function bubbleMoves(path) {
 }
 
 /**
+ * A screenshot from the capture bar, as a design of its own: the canvas is its size and it fills it
+ * (no device frame). The Frame settings pad it on a backdrop, round its corners and add a shadow.
+ */
+export async function openScreenshot(r) {
+  if (!r?.image) return;
+  await saveSceneNow();
+  set({
+    scene: { canvas: { width: r.width, height: r.height }, background: "#000000", devices: [{ label: "Screenshot", screenshot: r.image, frame: "none", x: 0.5, y: 0.5, height: 1, shadow: "none" }], plain: true },
+    shots: null,
+    shot: 0,
+    groups: null,
+    group: 0,
+    sceneId: null,
+    sceneStamp: null,
+    guide: null,
+    stillPick: null,
+    animSel: null,
+    animRows: [],
+    sceneName: r.name || "Screenshot",
+    appIcon: null,
+    past: [],
+    future: [],
+    selected: null,
+    render: null,
+    renderStale: false,
+    view: "canvas",
+    scenesOpen: false,
+    scenesPage: false,
+    timelineOpen: false,
+    ai: { ...S.ai, thread: [] },
+  });
+  scheduleLayout(0);
+  persist();
+  await saveSceneNow();
+}
+
+/**
  * A recording from the capture bar, as a design of its own and straight into Animate: the canvas is
  * the recording's size and the recording fills it (no device, no backdrop to see), the camera rides
  * on top as a round layer to move, resize or animate, and the video runs the recording's length
@@ -2154,6 +2196,7 @@ export async function openRecording(r) {
     scene: tidy({
       canvas: { width: r.width, height: r.height },
       background: "#000000",
+      plain: true,
       devices,
       animations: animations.length ? animations : undefined,
       // The cursor (logged beside the recording, so the editor draws it), smoothed, with ripples;

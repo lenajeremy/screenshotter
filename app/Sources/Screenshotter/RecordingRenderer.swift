@@ -2,12 +2,12 @@ import AVFoundation
 import CoreImage
 import Metal
 
-/// `Screenshotter --render-recording <spec.json>`: draws a screen recording's video on the GPU, for
-/// the engine's export. The engine works out every frame (the camera's zooms and follow, each
-/// layer's animation, the cursor's path) exactly as the Studio previews it, and draws what it
-/// can't hand over (the backdrop, text, stickers) once per look, as pictures; this puts it all
-/// together frame by frame: the recordings decoded in order by the hardware, composited with Core
-/// Image on the GPU, encoded by the media engine. The picture only: the engine adds the sound.
+/// `Screenshotter --render-recording <spec.json>`: draws a video's frames on the GPU, for the
+/// engine's export. The engine works out everything (each part of the design drawn once as a
+/// picture by the browser, where each part is on every frame, where the videos land, the cursor),
+/// exactly as the Studio previews it; this puts it together frame by frame: the videos decoded in
+/// order by the hardware, everything composited with Core Image, encoded by the media engine.
+/// The picture only: the engine adds the sound.
 enum RecordingRenderer {
     struct Spec: Decodable {
         var output: String
@@ -15,40 +15,56 @@ enum RecordingRenderer {
         var height: Int
         var fps: Int
         var frames: Int
+        /// "h264" (default), "hevc", "prores" (422 HQ) or "prores4444" (keeps transparency).
         var codec: String?
-        /// Per frame: zoom, focus x, focus y, move x, move y (output px, from the top left).
-        var camera: [[Double]]?
+        var bitrate: Int?
+        /// H.264 High 4.0, as Apple's app previews ask.
+        var appStore: Bool?
+        /// No backdrop under it all (a transparent design, written with its alpha).
+        var transparent: Bool?
         /// Bottom to top.
         var layers: [Layer]
     }
 
     struct Layer: Decodable {
-        /// "image" (one picture), "frames" (a picture per look, `index` per frame) or "video".
+        /// "picture", "video", "fill", "grain" or "blur".
         var type: String
+        // A picture: one file, or one per look (`files`, `index` per frame, -1 for none), placed at
+        // `rect` (or `rects`, one per file), moved per frame by `matrix` (a, b, c, d, tx, ty).
         var file: String?
         var files: [String]?
         var index: [Int]?
-        /// Moves with the camera (false: a webcam that stays put).
-        var camera: Bool?
-        /// x, y, width, height in output px from the top left.
         var rect: [Double]?
+        var rects: [[Double]]?
+        var matrix: [[Double]]?
+        /// Instead of `matrix`: the corners (top left, top right, bottom right, bottom left) the
+        /// picture lands on each frame (a device turned in 3D).
+        var quads: [[Double]]?
+        var opacity: [Double]?
+        var blur: [Double]?
+        var hue: [Double]?
+        var blend: String?
+        // A video: its box (width, height) before it's placed, the corners it lands on each frame
+        // (`quads`), its corners' rounding, the part of the
+        // source it shows, a colour matrix (the design's grade), and the cursor over it.
+        var box: [Double]?
+        /// Where the video itself sits in its box, top-left px (wider or taller than it, trimmed).
+        var inner: [Double]?
         var radius: Double?
-        var ring: Ring?
-        var shadow: Shadow?
-        /// Per frame: opacity, move x, move y, scale x, scale y, turn (degrees).
-        var states: [[Double]]?
+        var crop: [Double]?
+        var colorMatrix: [Double]?
         var cursor: Cursor?
-    }
-
-    struct Ring: Decodable {
-        var width: Double
-        var color: String
-    }
-
-    struct Shadow: Decodable {
-        var blur: Double
-        var dy: Double
-        var opacity: Double
+        // A fill (a grade's wash): one colour over the canvas, blended.
+        var color: String?
+        var amount: Double?
+        // Grain: a tile repeated across `rect`, moved each frame by `offsets`.
+        var tile: Double?
+        var offsets: [[Double]]?
+        // A blur band: blurs what's under `rect` by `radius`, fading out toward `toward` ("up"/"down"),
+        // fully blurred over the first `solid` share of the band.
+        var radiusPx: Double?
+        var toward: String?
+        var solid: Double?
     }
 
     struct Cursor: Decodable {
@@ -66,7 +82,7 @@ enum RecordingRenderer {
         var kind: String
     }
 
-    /// A picture of a cursor (its point at `hot`) or of the click ring, in output px.
+    /// A picture of a cursor (its point at `hot`) or of the click ring, in the box's px.
     struct Picture: Decodable {
         var file: String
         var hot: [Double]?
@@ -96,25 +112,30 @@ enum RecordingRenderer {
         // The video, written as frames are drawn.
         let out = URL(fileURLWithPath: spec.output)
         try? FileManager.default.removeItem(at: out)
-        let writer = try AVAssetWriter(outputURL: out, fileType: out.pathExtension.lowercased() == "mov" ? .mov : .mp4)
-        let hevc = spec.codec == "hevc" || W > 4096 || H > 2304
-        let bits = min(120_000_000, max(8_000_000, Int(W * H * CGFloat(spec.fps) * 0.14)))
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(W),
-            AVVideoHeightKey: Int(H),
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bits,
+        let codec = spec.codec ?? "h264"
+        let prores = codec.hasPrefix("prores")
+        let writer = try AVAssetWriter(outputURL: out, fileType: prores || out.pathExtension.lowercased() == "mov" ? .mov : .mp4)
+        var settings: [String: Any] = [AVVideoWidthKey: Int(W), AVVideoHeightKey: Int(H)]
+        if prores {
+            settings[AVVideoCodecKey] = codec == "prores4444" ? AVVideoCodecType.proRes4444 : AVVideoCodecType.proRes422HQ
+        } else {
+            let hevc = codec == "hevc" || W > 4096 || H > 2304
+            settings[AVVideoCodecKey] = hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264
+            var props: [String: Any] = [
+                AVVideoAverageBitRateKey: spec.bitrate ?? min(120_000_000, max(8_000_000, Int(W * H * CGFloat(spec.fps) * 0.14))),
                 AVVideoExpectedSourceFrameRateKey: spec.fps,
                 AVVideoMaxKeyFrameIntervalKey: spec.fps * 2,
-            ] as [String: Any],
-            // HD video's colours, said in the file, so every player shows them as drawn.
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-            ],
-        ])
+            ]
+            if spec.appStore == true, !hevc { props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264High40 }
+            settings[AVVideoCompressionPropertiesKey] = props
+        }
+        // HD video's colours, said in the file, so every player shows them as drawn.
+        settings[AVVideoColorPropertiesKey] = [
+            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -126,76 +147,96 @@ enum RecordingRenderer {
         guard writer.startWriting() else { throw writer.error ?? CaptureError.writeFailed("the video couldn't start") }
         writer.startSession(atSourceTime: .zero)
 
-        // Each layer's sources, opened once.
-        var pictures: [String: CIImage] = [:]
-        func picture(_ path: String) -> CIImage? {
-            if let p = pictures[path] { return p }
-            guard let img = CIImage(contentsOf: URL(fileURLWithPath: path)) else { return nil }
-            // Pictures come in at their own size, top-left first: placed on the canvas's grid.
-            let placed = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
-            pictures[path] = placed
-            return placed
-        }
         var videos: [Int: VideoSource] = [:]
         for (k, layer) in spec.layers.enumerated() where layer.type == "video" {
             if let f = layer.file { videos[k] = try VideoSource(url: URL(fileURLWithPath: f)) }
         }
-
+        let transparent = spec.transparent == true
         // From the top-left coordinates the engine uses to Core Image's (from the bottom left).
         let flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: H)
         func ci(_ t: CGAffineTransform) -> CGAffineTransform { flip.concatenating(t).concatenating(flip) }
         func box(_ r: [Double]) -> CGRect { CGRect(x: r[0], y: H - r[1] - r[3], width: r[2], height: r[3]) }
+        func at<T>(_ list: [T]?, _ i: Int) -> T? { list.flatMap { $0.isEmpty ? nil : $0[min(i, $0.count - 1)] } }
 
         for i in 0..<spec.frames {
             autoreleasepool {
                 let t = Double(i) / Double(spec.fps)
-                // The camera this frame (top-left coordinates).
-                var cam = CGAffineTransform.identity
-                if let c = spec.camera, i < c.count, c[i].count >= 5, c[i][0] > 1.0005 {
-                    let v = c[i]
-                    cam = CGAffineTransform(translationX: -v[1], y: -v[2])
-                        .concatenating(CGAffineTransform(scaleX: v[0], y: v[0]))
-                        .concatenating(CGAffineTransform(translationX: v[1] + v[3], y: v[2] + v[4]))
-                }
-                var frame = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: canvas)
+                var frame = transparent ? CIImage(color: .clear).cropped(to: canvas) : CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: canvas)
                 for (k, layer) in spec.layers.enumerated() {
-                    let moves = layer.camera ?? true
+                    let opacity = at(layer.opacity, i) ?? 1
+                    if opacity <= 0.001 { continue }
                     var img: CIImage?
-                    var own = CGAffineTransform.identity
-                    var opacity = 1.0
                     switch layer.type {
-                    case "image":
-                        img = layer.file.flatMap(picture)
-                    case "frames":
-                        if let files = layer.files, let index = layer.index, !index.isEmpty {
-                            let n = index[min(i, index.count - 1)]
-                            if n >= 0, n < files.count { img = picture(files[n]) }
+                    case "picture":
+                        var file = layer.file
+                        var rect = layer.rect
+                        if let files = layer.files {
+                            let n = at(layer.index, i) ?? 0
+                            if n < 0 || n >= files.count { continue }
+                            file = files[n]
+                            rect = layer.rects?[min(n, (layer.rects?.count ?? 1) - 1)] ?? rect
                         }
+                        guard let f = file, let r = rect, var pic = loaded(f) else { continue }
+                        // Drawn at its place (its own size scaled to the rect).
+                        let e = pic.extent
+                        pic = pic.transformed(by: CGAffineTransform(scaleX: r[2] / max(1, e.width), y: r[3] / max(1, e.height)))
+                        let place = box(r)
+                        pic = pic.transformed(by: CGAffineTransform(translationX: place.minX, y: place.minY))
+                        if let qd = at(layer.quads, i), qd.count == 8 {
+                            let p = { (x: Double, y: Double) in CIVector(x: x, y: H - y) }
+                            pic = pic.applyingFilter("CIPerspectiveTransform", parameters: [
+                                "inputTopLeft": p(qd[0], qd[1]), "inputTopRight": p(qd[2], qd[3]),
+                                "inputBottomRight": p(qd[4], qd[5]), "inputBottomLeft": p(qd[6], qd[7]),
+                            ])
+                        } else if let m = at(layer.matrix, i), m.count == 6 {
+                            pic = pic.transformed(by: ci(CGAffineTransform(a: m[0], b: m[1], c: m[2], d: m[3], tx: m[4], ty: m[5])))
+                        }
+                        if let hue = at(layer.hue, i), abs(hue) > 0.01 { pic = pic.applyingFilter("CIHueAdjust", parameters: [kCIInputAngleKey: hue * .pi / 180]) }
+                        if let b = at(layer.blur, i), b > 0.05 { pic = pic.clampedToExtent().applyingGaussianBlur(sigma: b).cropped(to: pic.extent.insetBy(dx: -b * 2, dy: -b * 2)) }
+                        img = pic
                     case "video":
-                        guard let r = layer.rect, r.count == 4 else { break }
-                        let rect = box(r)
-                        if let s = layer.states, i < s.count, s[i].count >= 6 {
-                            let st = s[i]
-                            opacity = st[0]
-                            // About the layer's middle, as CSS turns and scales it (top-left coordinates).
-                            let cx = r[0] + r[2] / 2
-                            let cy = r[1] + r[3] / 2
-                            own = CGAffineTransform(translationX: -cx, y: -cy)
-                                .concatenating(CGAffineTransform(scaleX: st[3], y: st[4]))
-                                .concatenating(CGAffineTransform(rotationAngle: st[5] * .pi / 180))
-                                .concatenating(CGAffineTransform(translationX: cx + st[1], y: cy + st[2]))
-                        }
-                        img = videoLayer(layer, rect: rect, source: videos[k]?.image(at: t), t: t, H: H)
+                        img = videoLayer(layer, frame: i, t: t, source: videos[k]?.image(at: t), H: H)
+                        // A device in soft focus: its video too.
+                        if let b = at(layer.blur, i), b > 0.05, let v = img { img = v.clampedToExtent().applyingGaussianBlur(sigma: b).cropped(to: v.extent.insetBy(dx: -b * 2, dy: -b * 2)) }
+                    case "fill":
+                        let a = CGFloat(layer.amount ?? 1)
+                        let fill = CIImage(color: color(layer.color ?? "#000")).cropped(to: layer.rect.map(box) ?? canvas)
+                        frame = blended(fill, over: frame, mode: layer.blend, amount: a * CGFloat(opacity))
+                        continue
+                    case "grain":
+                        guard let f = layer.file, let tilePic = loaded(f) else { continue }
+                        let size = CGFloat(layer.tile ?? 220)
+                        let e = tilePic.extent
+                        var g = tilePic.transformed(by: CGAffineTransform(scaleX: size / max(1, e.width), y: size / max(1, e.height)))
+                            .applyingFilter("CIAffineTile", parameters: [kCIInputTransformKey: NSValue(caTransform3D: CATransform3DIdentity)])
+                        let off = at(layer.offsets, i) ?? [0, 0]
+                        g = g.transformed(by: CGAffineTransform(translationX: off[0], y: -off[1]))
+                        let area = layer.rect.map(box) ?? canvas
+                        frame = blended(g.cropped(to: area), over: frame, mode: layer.blend ?? "overlay", amount: CGFloat(opacity))
+                        continue
+                    case "blur":
+                        guard let r = layer.rect, let radius = layer.radiusPx, radius > 0.05 else { continue }
+                        let band = box(r)
+                        let blurred = frame.clampedToExtent().applyingGaussianBlur(sigma: radius).cropped(to: canvas)
+                        // Opaque from the canvas edge, fading toward the middle.
+                        let solid = CGFloat(layer.solid ?? 0)
+                        let up = layer.toward == "up"
+                        let from = up ? band.minY + band.height * solid : band.maxY - band.height * solid
+                        let to = up ? band.maxY : band.minY
+                        let mask = CIFilter(name: "CILinearGradient", parameters: [
+                            "inputPoint0": CIVector(x: band.midX, y: from), "inputColor0": CIColor.white,
+                            "inputPoint1": CIVector(x: band.midX, y: to), "inputColor1": CIColor.clear,
+                        ])?.outputImage?.cropped(to: band) ?? CIImage.empty()
+                        frame = blurred.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: frame, kCIInputMaskImageKey: mask]).cropped(to: canvas)
+                        continue
                     default:
-                        break
+                        continue
                     }
-                    guard var layerImage = img, opacity > 0.001 else { continue }
+                    guard var layerImage = img else { continue }
                     if opacity < 0.999 {
                         layerImage = layerImage.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))])
                     }
-                    let whole = moves ? own.concatenating(cam) : own
-                    if !whole.isIdentity { layerImage = layerImage.transformed(by: ci(whole)) }
-                    frame = layerImage.composited(over: frame)
+                    frame = layer.blend.map { blended(layerImage, over: frame, mode: $0, amount: 1) } ?? layerImage.composited(over: frame)
                 }
                 frame = frame.cropped(to: canvas)
                 while !input.isReadyForMoreMediaData { usleep(2000) }
@@ -217,38 +258,67 @@ enum RecordingRenderer {
         if writer.status != .completed { throw writer.error ?? CaptureError.writeFailed("the video didn't finish") }
     }
 
-    /// A video layer: the frame filling its box (trimmed to its shape), its ring and shadow, and the
-    /// recording's cursor drawn over it.
-    private static func videoLayer(_ layer: Layer, rect: CGRect, source: CIImage?, t: Double, H: CGFloat) -> CIImage? {
-        guard let src = source else { return nil }
+    /// `top` over `bottom` in a CSS blend mode, `amount` of the way (an element's opacity).
+    private static func blended(_ top: CIImage, over bottom: CIImage, mode: String?, amount: CGFloat) -> CIImage {
+        let filters = ["overlay": "CIOverlayBlendMode", "soft-light": "CISoftLightBlendMode", "lighten": "CILightenBlendMode", "darken": "CIDarkenBlendMode",
+                       "multiply": "CIMultiplyBlendMode", "screen": "CIScreenBlendMode", "color": "CIColorBlendMode", "luminosity": "CILuminosityBlendMode",
+                       "hard-light": "CIHardLightBlendMode", "color-dodge": "CIColorDodgeBlendMode", "color-burn": "CIColorBurnBlendMode", "difference": "CIDifferenceBlendMode"]
+        let mixed: CIImage
+        if let name = mode.flatMap({ filters[$0] }) {
+            mixed = top.applyingFilter(name, parameters: [kCIInputBackgroundImageKey: bottom])
+        } else {
+            mixed = top.composited(over: bottom)
+        }
+        if amount >= 0.999 { return mixed.cropped(to: bottom.extent) }
+        return bottom.applyingFilter("CIDissolveTransition", parameters: [kCIInputTargetImageKey: mixed, kCIInputTimeKey: amount]).cropped(to: bottom.extent)
+    }
+
+    /// A video: the frame filling its box (trimmed to its corners, graded, the cursor over it),
+    /// then put on the four corners it lands on this frame.
+    private static func videoLayer(_ layer: Layer, frame i: Int, t: Double, source: CIImage?, H: CGFloat) -> CIImage? {
+        guard var src = source, let size = layer.box, size.count == 2, let quads = layer.quads, !quads.isEmpty else { return nil }
+        let q = quads[min(i, quads.count - 1)]
+        guard q.count == 8 else { return nil }
+        let w = CGFloat(size[0])
+        let h = CGFloat(size[1])
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        if let c = layer.crop, c.count == 4 {
+            // The part asked for (source px from its top left).
+            let e = src.extent
+            src = src.cropped(to: CGRect(x: e.minX + c[0], y: e.maxY - c[1] - c[3], width: c[2], height: c[3]))
+        }
+        // The video fills its own box (as the page fits it), which the screen's box trims.
+        let ir = layer.inner.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: h - $0[1] - $0[3], width: $0[2], height: $0[3]) : nil } ?? rect
         let e = src.extent
-        let s = max(rect.width / e.width, rect.height / e.height)
+        let s = max(ir.width / e.width, ir.height / e.height)
         var img = src.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY).concatenating(CGAffineTransform(scaleX: s, y: s)))
-        img = img.transformed(by: CGAffineTransform(translationX: rect.midX - e.width * s / 2, y: rect.midY - e.height * s / 2)).cropped(to: rect)
-        let radius = min(CGFloat(layer.radius ?? 0), min(rect.width, rect.height) / 2)
+        img = img.transformed(by: CGAffineTransform(translationX: ir.midX - e.width * s / 2, y: ir.midY - e.height * s / 2)).cropped(to: ir.intersection(rect))
+        if let m = layer.colorMatrix, m.count == 20 {
+            img = img.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: m[0], y: m[1], z: m[2], w: m[3]),
+                "inputGVector": CIVector(x: m[5], y: m[6], z: m[7], w: m[8]),
+                "inputBVector": CIVector(x: m[10], y: m[11], z: m[12], w: m[13]),
+                "inputAVector": CIVector(x: m[15], y: m[16], z: m[17], w: m[18]),
+                "inputBiasVector": CIVector(x: m[4], y: m[9], z: m[14], w: m[19]),
+            ])
+        }
+        if let c = layer.cursor, let drawn = cursor(c, rect: ir, t: t) { img = drawn.cropped(to: rect).composited(over: img) }
+        let radius = min(CGFloat(layer.radius ?? 0), min(w, h) / 2)
         if radius > 0.5 {
             img = img.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: rounded(rect, radius, .white)])
         }
-        // The cursor over the recording, kept within it.
-        if let c = layer.cursor, let drawn = cursor(c, rect: rect, t: t, H: H) { img = drawn.cropped(to: rect).composited(over: img) }
-        if let ring = layer.ring, ring.width > 0 {
-            let w = CGFloat(ring.width)
-            let outer = rounded(rect, radius, color(ring.color))
-            let inner = rounded(rect.insetBy(dx: w, dy: w), max(0, radius - w), .white)
-            img = outer.applyingFilter("CISourceOutCompositing", parameters: [kCIInputBackgroundImageKey: inner]).composited(over: img)
-        }
-        if let sh = layer.shadow, sh.opacity > 0 {
-            let shade = rounded(rect, radius, CIColor(red: 0, green: 0, blue: 0, alpha: CGFloat(sh.opacity)))
-                .applyingGaussianBlur(sigma: max(0.1, sh.blur / 2))
-                .transformed(by: CGAffineTransform(translationX: 0, y: -CGFloat(sh.dy)))
-            img = img.composited(over: shade)
-        }
+        // Onto its corners (Core Image counts up from the bottom).
+        let p = { (x: Double, y: Double) in CIVector(x: x, y: H - y) }
+        img = img.applyingFilter("CIPerspectiveTransform", parameters: [
+            "inputTopLeft": p(q[0], q[1]), "inputTopRight": p(q[2], q[3]),
+            "inputBottomRight": p(q[4], q[5]), "inputBottomLeft": p(q[6], q[7]),
+        ])
         return img
     }
 
     /// The cursor where its path has it at `t` (the cursor macOS showed, dipping as it clicks), and
     /// the ring where the latest click landed.
-    private static func cursor(_ c: Cursor, rect: CGRect, t: Double, H: CGFloat) -> CIImage? {
+    private static func cursor(_ c: Cursor, rect: CGRect, t: Double) -> CIImage? {
         let n = c.xs.count
         guard n > 0 else { return nil }
         let f = max(0, t / c.step)
@@ -295,10 +365,12 @@ enum RecordingRenderer {
     }
 
     private nonisolated(unsafe) static var cache: [String: CIImage] = [:]
+    /// A picture, from the bottom left of its own extent; kept, as pictures come round again.
     private static func loaded(_ path: String) -> CIImage? {
         if let c = cache[path] { return c }
         guard let img = CIImage(contentsOf: URL(fileURLWithPath: path)) else { return nil }
         let placed = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
+        if cache.count > 400 { cache.removeAll() }
         cache[path] = placed
         return placed
     }
@@ -308,11 +380,15 @@ enum RecordingRenderer {
         return f?.outputImage?.cropped(to: r) ?? CIImage.empty()
     }
 
-    /// "#rrggbb" (or "#rgb", "white", "black").
+    /// "#rrggbb" (or "#rgb", "rgb(r,g,b)", "white", "black").
     private static func color(_ s: String) -> CIColor {
         var hex = s.trimmingCharacters(in: .whitespaces).lowercased()
         if hex == "white" { return .white }
         if hex == "black" { return .black }
+        if hex.hasPrefix("rgb") {
+            let n = hex.split(whereSeparator: { !"0123456789.".contains($0) }).compactMap { Double($0) }
+            if n.count >= 3 { return CIColor(red: n[0] / 255, green: n[1] / 255, blue: n[2] / 255) }
+        }
         hex = hex.replacingOccurrences(of: "#", with: "")
         if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
         guard hex.count >= 6, let v = UInt32(hex.prefix(6), radix: 16) else { return .white }

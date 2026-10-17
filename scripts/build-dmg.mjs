@@ -59,8 +59,10 @@ const app = path.join(root, "build", "Screenshotter.app");
 if (!existsSync(app)) throw new Error("build/Screenshotter.app is missing");
 // The app just built draws recordings' videos itself: check it against the usual export.
 if (!process.env.SCREENSHOTTER_SKIP_TESTS) {
-  const r = spawnSync("npm", ["run", "test:recording", "--", "--native-only"], { cwd: root, stdio: "inherit", env: { ...process.env, SCREENSHOTTER_NATIVE: path.join(app, "Contents", "MacOS", "Screenshotter") } });
-  if (r.status !== 0) throw new Error("The app's fast export of recordings failed its check: the release stops here.");
+  for (const args of [["run", "test:recording", "--", "--native-only"], ["run", "test:fast"]]) {
+    const r = spawnSync("npm", args, { cwd: root, stdio: "inherit", env: { ...process.env, SCREENSHOTTER_NATIVE: path.join(app, "Contents", "MacOS", "Screenshotter") } });
+    if (r.status !== 0) throw new Error(`The app's fast export failed its check (npm ${args.slice(1).join(" ")}): the release stops here.`);
+  }
 }
 
 // Stage the app next to an Applications shortcut, so the window says what to do.

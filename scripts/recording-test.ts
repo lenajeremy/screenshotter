@@ -227,6 +227,33 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
     });
   }
 
+  await check(`${pad} a screenshot opens as a design of its own, without a frame; more added come in frameless too`, async () => {
+    const r = await S(page, async (img: string) => {
+      const st = (window as any).studio.state;
+      await (window as any).studio.command("openRecording", { image: img, width: 1280, height: 720, name: "Screenshot test" });
+      await new Promise((r) => setTimeout(r, 800));
+      const opened = { canvas: st.scene.canvas, frame: st.scene.devices[0].frame, plain: st.scene.plain, panel: document.querySelector(".panel.right h2")?.textContent };
+      const rec = await import("/ui/recording.js" as string);
+      await rec.setFrame({ padding: 0.06 });
+      const padded = { height: st.scene.devices[0].height, background: st.scene.background };
+      const a = await import("/ui/actions.js" as string);
+      a.addDevice(img);
+      await new Promise((r) => setTimeout(r, 300));
+      const second = st.scene.devices[1]?.frame;
+      // A fresh design, with the Screenshots panel set to add them without a frame.
+      await a.newScene();
+      (await import("/ui/store.js" as string)).set({ capture: { ...st.capture, frame: "none" } });
+      a.addDevice(img);
+      await new Promise((r) => setTimeout(r, 300));
+      const fresh = { frame: st.scene.devices[0]?.frame, guide: st.guide };
+      return { opened, padded, second, fresh };
+    }, poster);
+    expect(r.opened.canvas?.width === 1280 && r.opened.frame === "none" && r.opened.plain && r.opened.panel === "Screenshot", `opened ${JSON.stringify(r.opened)}`);
+    expect(r.padded.height < 1 && r.padded.background !== "#000000", `padded ${JSON.stringify(r.padded)}`);
+    expect(r.second === "none", `the second came in with frame ${r.second}`);
+    expect(r.fresh.frame === "none" && r.fresh.guide !== "design", `fresh ${JSON.stringify(r.fresh)}`);
+  });
+
   await check(`${pad} no page errors`, async () => expect(!errors.length, errors.join(" | ")));
   await browser.close();
 }

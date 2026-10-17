@@ -6,7 +6,7 @@ import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, picture
 import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector } from "./timeline.js";
 import { LayersList, bgObj } from "./panels.js";
-import { setAutoZoom, setRecording } from "./recording.js";
+import { setAutoZoom, setFrame, setRecording } from "./recording.js";
 
 const FONTS = [
   { value: "", label: "SF Pro", font: "-apple-system" },
@@ -826,6 +826,31 @@ export function sizeOptions(presets) {
   return out;
 }
 /**
+ * A recording's or a screenshot's frame, as Screen Studio has it: padding (its backdrop showing
+ * round it), rounded corners, a shadow, and the backdrop.
+ */
+function FrameSection() {
+  const s = useStore();
+  return html`
+    <${Section} title="Frame">
+      <div class="row"><label>Padding</label><${Slider} value=${Math.max(0, (1 - (s.scene.devices[0]?.height ?? 1)) / 2)} min=${0} max=${0.25} step=${0.005} reset=${0} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setFrame({ padding: v ?? 0 })} /></div>
+      <div class="row"><label>Corners</label><${Slider} value=${s.scene.devices[0]?.radius ?? 0} min=${0} max=${0.12} step=${0.002} reset=${0} format=${(v) => (v ? Math.round(v * 1000) / 10 + "%" : "Square")} onChange=${(v) => setFrame({ radius: v ?? 0 })} /></div>
+      <div class="row"><label>Shadow</label><${Seg} value=${s.scene.devices[0]?.shadow ?? "none"} options=${[["none", "None"], ["soft", "Soft"], ["medium", "Medium"], ["strong", "Strong"]]} onChange=${(v) => setFrame({ shadow: v })} /></div>
+      <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
+        <span class="sw" style=${{ background: "var(--check)" }}></span>
+        <span class="grow"><b style=${{ display: "block" }}>Background</b><span class="note">${(s.scene.devices[0]?.height ?? 1) < 1 ? "Shows round the recording" : "Add padding to see it round the recording"}</span></span>
+        <${Icon} n="right" s=${14} />
+      </button>
+    <//>
+`;
+}
+
+/** A screenshot from the capture bar, as a design of its own: its frame. */
+function PlainInspector() {
+  return html`<${FrameSection} />`;
+}
+
+/**
  * A screen recording's own settings, each one a switch: its cursor (drawn from the log the
  * capture bar kept, so it can be smoothed, sized or hidden), the click ripple, zooms onto the
  * clicks, the camera following the cursor when zoomed, and the sound.
@@ -853,6 +878,7 @@ function RecordingInspector() {
       <div class="note">${rec.autoZoom ? "Its zooms are on the Camera row: drag, change or delete any. Turning this off removes only the ones it made." : "Zoom in where you click, and back out after."}</div>
       <${Switch} checked=${Boolean(rec.follow)} label="Follow the cursor when zoomed in" onChange=${(v) => setRecording({ follow: v })} />
     <//>`}
+    <${FrameSection} />
     <${Section} title="Sound">
       <${Switch} checked=${rec.sound !== false} label="Keep the recording's sound" onChange=${(v) => setRecording({ sound: v })} />
     <//>`;
@@ -870,9 +896,9 @@ function SceneInspector() {
   const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
   const bgStill = sc.background && !o.generate && o.type !== "transparent" ? `/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(sc.background))}&w=120&h=120` : null;
   return html`
-    <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
+    <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : sc.plain && sc.devices?.length === 1 ? "Screenshot" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
     <div class="panel-body">
-      ${sc.recording?.duration ? html`<${RecordingInspector} />` : html`<div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>`}
+      ${sc.recording?.duration ? html`<${RecordingInspector} />` : sc.plain && sc.devices?.length === 1 ? html`<${PlainInspector} />` : html`<div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>`}
       <${Section} title="Image size">
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;

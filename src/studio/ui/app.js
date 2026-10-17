@@ -16,6 +16,7 @@ import {
   duplicateSavedScene,
   openScene,
   openRecording,
+  openScreenshot,
   renameSavedScene,
   saveNow,
   canRevertAI,
@@ -1706,7 +1707,9 @@ const commands = {
   // A recording from the capture bar: a design of its own, open in Animate.
   openRecording: async (r) => {
     await booted;
-    await openRecording(r);
+    // A screenshot comes the same way, as a design of its own.
+    if (r?.image) await openScreenshot(r);
+    else await openRecording(r);
     await refreshFiles().catch(() => undefined);
   },
   save: () => saveNow(),

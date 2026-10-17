@@ -505,11 +505,27 @@ import Combine
         let hud = CaptureHUD(on: screen, actions: CaptureHUD.Actions(
             edit: { [weak self] original in
                 guard let self else { return }
+                // A design of its own, the capture filling a canvas its size (no device frame).
                 let url = self.libraryCopy(of: original)
-                let poster = url.pathExtension.lowercased() == "mp4" ? CaptureFiles.poster(for: url) : nil
-                let image = NSImage(contentsOf: poster ?? url)
-                let size = image?.representations.first.map { CGSize(width: $0.pixelsWide, height: $0.pixelsHigh) }
-                self.editInStudio(url, poster, size)
+                let video = url.pathExtension.lowercased() == "mp4"
+                let poster = video ? CaptureFiles.poster(for: url) : nil
+                let rep = NSImage(contentsOf: poster ?? url)?.representations.first
+                let t = DateFormatter()
+                t.dateFormat = "HH:mm"
+                var spec: [String: Any] = ["width": rep?.pixelsWide ?? 1920, "height": rep?.pixelsHigh ?? 1080]
+                if video {
+                    Task {
+                        spec["video"] = url.path
+                        spec["poster"] = poster?.path
+                        spec["duration"] = (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 6
+                        spec["name"] = "Recording \(t.string(from: Date()))"
+                        self.openRecording(spec)
+                    }
+                } else {
+                    spec["image"] = url.path
+                    spec["name"] = "Screenshot \(t.string(from: Date()))"
+                    self.openRecording(spec)
+                }
             },
             copy: { url in
                 let pb = NSPasteboard.general

@@ -9,6 +9,7 @@ import { cacheDir, formatFor, outputPathFor } from "../util/files.js";
 import { newPage } from "./browser.js";
 import { BACKDROP, CALLOUT, animatedIds, backdropStyle, cameraTransform, evaluate, evaluateBackdrop, evaluateCallouts, evaluateCamera, keyMoments, targetsOf, timelineEnd, uses3d, type AnimEntity } from "./animate.js";
 import { CURSOR_ART, cursorAt, readLog, trackOf } from "./cursor.js";
+import { fastAvailable, renderFast, type FastStage } from "./fast.js";
 import { buildScene, layoutScene, renderHtml, type MockupResult, type SceneEntity, type SceneFrame } from "./mockup.js";
 import { MockupInputShape, type MockupInput } from "./schema.js";
 import { renderShape } from "./shapes.js";
@@ -218,7 +219,7 @@ export function cameraKeys(zooms: Array<{ start: number; end: number; scale: num
 }
 
 /** One frame of the scene's animations: values for devices and text, and animated shapes redrawn. */
-interface AnimFrame {
+export interface AnimFrame {
   /** `units`: a text's words or letters in reading order, each [opacity, dx, dy, scaleX, scaleY, turn, blur]. */
   els: Array<{ id: string; dx: number; dy: number; sx: number; sy: number; r: number; rx: number; ry: number; o: number; color?: string; blur?: number; mark?: number; units?: number[][] }>;
   /** Call-outs with their own timing: how far each is shown (0–1), by device and index from 0. */
@@ -413,11 +414,14 @@ function installTimeline(cfg: {
       const pointer = c.style === "pointer";
       const size = (pointer ? w * 0.016 : w * 0.105) * c.size;
       cursorEl = document.createElement("div");
+      // The fast export draws the cursor itself: it leaves these out (.nx-cursor).
+      cursorEl.className = "nx-cursor";
       cursorEl.style.cssText = `position:absolute;left:0;top:0;width:${size}px;height:${size}px;pointer-events:none;z-index:5;will-change:transform`;
       cursorEl.innerHTML = pointer
         ? `<svg viewBox="0 0 12 19" width="${size * 0.64}" height="${size}" style="display:block;overflow:visible;filter:drop-shadow(0 ${size * 0.04}px ${size * 0.08}px rgba(0,0,0,.35))"><path d="M0.6 0.6 L0.6 15.6 L4.2 12.2 L6.6 17.8 L9 16.8 L6.7 11.3 L11.4 11.3 Z" fill="#000" stroke="#fff" stroke-width="1.1" stroke-linejoin="round"/></svg>`
         : `<div class="dot" style="width:100%;height:100%;border-radius:50%;background:rgba(255,255,255,.55);box-shadow:0 0 0 ${size * 0.05}px rgba(0,0,0,.18), 0 ${size * 0.06}px ${size * 0.2}px rgba(0,0,0,.25);transform:translate(-50%,-50%)"></div>`;
       ripple = document.createElement("div");
+      ripple.className = "nx-cursor";
       ripple.style.cssText = `position:absolute;left:0;top:0;width:${size * (pointer ? 2.2 : 1.4)}px;height:${size * (pointer ? 2.2 : 1.4)}px;border-radius:50%;border:${Math.max(1, size * (pointer ? 0.1 : 0.05))}px solid rgba(255,255,255,.95);box-shadow:0 0 ${size * 0.2}px rgba(0,0,0,.25);pointer-events:none;z-index:4;opacity:0`;
       host.append(ripple, cursorEl);
       if (c.track) {
@@ -638,6 +642,8 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
   // A recording's camera gliding after its cursor (`follow`), and its cursor (for the fast export).
   let follow: ((t: number) => { x: number; y: number } | undefined) | undefined;
   let cursorTrack: NonNullable<Parameters<typeof installTimeline>[0]["cursor"]>["track"];
+  // What the page was given to play the timeline (the fast export works the same things out).
+  let timeline: Parameters<typeof installTimeline>[0] | undefined;
   try {
     await page.setViewport({ width: Math.round(view.width), height: Math.round(view.height), deviceScaleFactor: scale });
     await page.goto(pathToFileURL(htmlFile).href, { waitUntil: "load", timeout: 90_000 });
@@ -700,7 +706,7 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
       }
     }
 
-    await page.evaluate(installTimeline, {
+    timeline = {
       animated: [...animatedIds(animations)],
       duration,
       W,
@@ -717,7 +723,8 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
       fade: opts.fade ?? 0.4,
       grainFps: opts.grainFps ?? 24,
       s: view.scale,
-    });
+    };
+    await page.evaluate(installTimeline, timeline);
   } catch (e) {
     await close();
     throw e;
@@ -726,7 +733,7 @@ export async function openStage(input: VideoInput, scale: number, o: { frame?: S
   const setTime = (t: number) => page.evaluate((t, f) => (window as any).__setTime(t, f), t, animFrame(animations, ents, t, W, H, backdrop, follow));
   // What to photograph: the whole page.
   const clip = { x: 0, y: 0, width: Math.round(view.width), height: Math.round(view.height) };
-  return { page, dir, scene, ents, animations, W, H, view, clip, duration, natural, setTime, close, backdrop, follow, cursorTrack, scale };
+  return { page, dir, scene, ents, animations, W, H, view, clip, duration, natural, setTime, close, backdrop, follow, cursorTrack, scale, timeline: timeline!, frameAt: (t: number) => animFrame(animations, ents, t, W, H, backdrop, follow) };
 }
 
 /** A moment's label: as precise as it was asked for (1 s, 1.5 s, 1.25 s, 1.125 s). */
@@ -880,233 +887,25 @@ async function addSound(out: string, format: string, videos: string[], duration:
   renameSync(tmp, out);
 }
 
-// ---------------------------------------------------------------------------------------------
-// The fast export: a screen recording's video drawn by the Mac app on the GPU
-
-type Stage = Awaited<ReturnType<typeof openStage>>;
-
-/** The devices the app draws itself (by index): each plays a recording in a plain or rounded frame. */
-interface NativePlan {
-  devices: number[];
-}
-
-/**
- * Whether the Mac app (SCREENSHOTTER_NATIVE, set when it runs the engine) can draw this video
- * itself: recordings in plain or rounded frames (a webcam too), with their camera moves, fades and
- * cursor, over a backdrop that stays still, everything else drawn once per look. Anything else
- * (devices' hardware, 3D, ambient motion, film effects, a moving backdrop) keeps the usual export.
- */
-function nativePlan(input: VideoInput, format: string, o: RenderOptions): NativePlan | undefined {
-  const app = process.env.SCREENSHOTTER_NATIVE;
-  if (!app || !existsSync(app) || process.env.SCREENSHOTTER_NO_NATIVE) return undefined;
-  const opts = input.video ?? {};
-  if (o.shot || o.appStore || o.frame || format !== "mp4" || input.deliveryWidth || input.camera) return undefined;
-  if ((opts.motion ?? "subtle") !== "none" || opts.zoom || opts.zooms?.length) return undefined;
-  if (opts.cursor && !opts.cursor.log) return undefined;
-  if (input.effects && Object.values(input.effects).some((v) => v !== undefined && v !== false)) return undefined;
-  const anims = input.animations ?? [];
-  if (anims.some((a) => targetsOf(a).includes(BACKDROP))) return undefined;
-  const devices: number[] = [];
-  for (const [i, d] of input.devices.entries()) {
-    if (!d.video) continue;
-    const plain = (d.frame === "none" || d.frame === "card") && !d.rotate && !d.rotateX && !d.rotateY && !d.blur && !d.fade && !d.highlights?.length && !d.clay && !d.crop;
-    // A recording the app can't draw: the whole video takes the usual way.
-    if (!plain || anims.some((a) => a.path && targetsOf(a).includes(`device-${i + 1}`))) return undefined;
-    devices.push(i);
-  }
-  if (!devices.length) return undefined;
-  if (opts.cursor && !devices.includes(opts.cursor.device ?? 0)) return undefined;
-  return { devices };
-}
-
-/** A device's shadow, roughly as the page draws it: blur, drop and darkness, as shares of its shorter side. */
-const NATIVE_SHADOWS: Record<string, [number, number, number]> = { soft: [0.05, 0.02, 0.26], medium: [0.07, 0.03, 0.36], strong: [0.1, 0.045, 0.5], studio: [0.12, 0.05, 0.42] };
-
-/**
- * The app draws the video: the backdrop drawn once, the rest of the design (text, stickers,
- * shapes) once for each look it has, the cursor's pictures, and every frame's camera and layer
- * moves worked out here, exactly as the Studio previews them. Then the sound goes in.
- */
-async function renderNative(input: VideoInput, stage: Stage, plan: NativePlan, out: string, fps: number, warnings: string[], progress?: Progress): Promise<VideoResult> {
-  const opts = input.video ?? {};
-  const { page, dir, scene, ents, animations, clip, duration, W, H, scale } = stage;
-  const OW = Math.round((clip.width * scale) / 2) * 2;
-  const OH = Math.round((clip.height * scale) / 2) * 2;
-  const k = OW / W;
-  const total = Math.max(1, Math.round(duration * fps));
-  const ids = new Set(plan.devices.map((i) => `device-${i + 1}`));
-  const frameAt = (t: number) => animFrame(animations, ents, t, W, H, stage.backdrop, stage.follow);
-
-  // What the app draws, hidden from the page (and its videos no longer sought frame by frame).
-  const hide = [...ids].map((id) => `[data-ent="${id}"]`).join(",");
-  await page.addStyleTag({
-    content: `${hide}{visibility:hidden!important} .nx-under #canvas *{visibility:hidden!important} .nx-under .bg-group,.nx-under .bg-group *{visibility:visible!important} .nx-over .bg-group{visibility:hidden!important}`,
-  });
-  await page.evaluate((sel: string) => document.querySelectorAll<HTMLVideoElement>(sel.split(",").map((s) => `${s} video`).join(",")).forEach((v) => {
-    v.removeAttribute("src");
-    v.load();
-  }), hide);
-  const shoot = async (t: number, frame: AnimFrame, file: string, transparent: boolean) => {
-    await page.evaluate((t, f) => (window as any).__setTime(t, f), t, { ...frame, camera: undefined });
-    await page.screenshot({ path: file as `${string}.png`, type: "png", clip, omitBackground: transparent });
-  };
-
-  // The backdrop, once.
-  const under = path.join(dir, "under.png");
-  await page.evaluate(() => document.body.classList.add("nx-under"));
-  await shoot(0, frameAt(0), under, false);
-  await page.evaluate(() => document.body.classList.remove("nx-under"));
-
-  // The rest of the design, once for each look it has (none: no layer).
-  const others = (scene.result.entities ?? []).filter((e) => !ids.has(e.id));
-  const layers: Array<Record<string, unknown>> = [{ type: "image", file: under, camera: true }];
-  const camera: number[][] = [];
-  const states = new Map<string, number[][]>([...ids].map((id) => [id, []]));
-  const looks = new Map<string, number>();
-  const firstAt: number[] = [];
-  const index: number[] = [];
-  for (let i = 0; i < total; i++) {
-    const t = i / fps;
-    const f = frameAt(t);
-    const cam = f.camera && f.camera.s > 1.0005 ? cameraTransform({ zoom: f.camera.s, x: f.camera.x, y: f.camera.y }, W, H) : null;
-    camera.push(cam ? [cam.zoom, cam.fx * k, cam.fy * k, cam.tx * k, cam.ty * k] : [1, 0, 0, 0, 0]);
-    for (const id of ids) {
-      const el = f.els.find((e) => e.id === id);
-      if (el && ((el.blur ?? 0) > 0.01 || el.rx || el.ry)) throw new Error(`${id}'s animation blurs or tilts it`);
-      states.get(id)!.push(el ? [el.o ?? 1, (el.dx ?? 0) * k, (el.dy ?? 0) * k, el.sx ?? 1, el.sy ?? 1, el.r ?? 0] : [1, 0, 0, 1, 1, 0]);
-    }
-    if (others.length || input.menuBar) {
-      const key = JSON.stringify([f.els.filter((e) => !ids.has(e.id)), f.callouts, f.backdrop]);
-      if (!looks.has(key)) {
-        looks.set(key, looks.size);
-        firstAt.push(t);
-      }
-      index.push(looks.get(key)!);
-    }
-  }
-  if (looks.size) {
-    await page.evaluate(() => document.body.classList.add("nx-over"));
-    const files: string[] = [];
-    for (const [key, n] of looks) {
-      const file = path.join(dir, `over-${n}.png`);
-      await shoot(firstAt[n], frameAt(firstAt[n]), file, true);
-      files[n] = file;
-      void key;
-    }
-    layers.push({ type: "frames", files, index, camera: true });
-  }
-
-  // Each recording: where it sits, its corners, ring and shadow, its moves, and the cursor over it.
-  for (const i of plan.devices) {
-    const d = input.devices[i];
-    const id = `device-${i + 1}`;
-    const e = scene.result.entities?.find((x) => x.id === id);
-    if (!e) continue;
-    const w = (e.width ?? 0) * W * k;
-    const h = (e.height ?? 0) * H * k;
-    const rect = [(e.x - (e.width ?? 0) / 2) * W * k, (e.y - (e.height ?? 0) / 2) * H * k, w, h];
-    const short = Math.min(w, h);
-    const radius = d.radius !== undefined ? (d.radius <= 0.5 ? d.radius * short : d.radius * k) : d.frame === "card" ? short * 0.035 : 0;
-    const ring = d.ring ? { width: (typeof d.ring === "object" ? d.ring.width : undefined) ?? 0.018, color: (typeof d.ring === "object" ? d.ring.color : undefined) ?? "#ffffff" } : undefined;
-    const sh = d.shadow === "none" ? undefined : NATIVE_SHADOWS[typeof d.shadow === "string" ? d.shadow : "medium"] ?? NATIVE_SHADOWS.medium;
-    const layer: Record<string, unknown> = {
-      type: "video",
-      file: d.video,
-      rect,
-      radius,
-      ring: ring && { width: Math.max(1, ring.width * short), color: ring.color },
-      shadow: sh && { blur: sh[0] * short, dy: sh[1] * short, opacity: sh[2] },
-      camera: !d.fixed,
-      states: states.get(id),
-    };
-    const c = stage.cursorTrack;
-    if (c && (opts.cursor?.device ?? 0) === i) {
-      // The cursor's pictures, at the size it's drawn.
-      const size = w * 0.016 * (opts.cursor?.size ?? 1);
-      const pad = Math.ceil(size * 0.3);
-      const art = await newPage();
-      const images: Record<string, { file: string; hot: number[] }> = {};
-      try {
-        for (const [kind, a] of Object.entries(c.art)) {
-          const sc = size / a.box[1];
-          const pw = Math.ceil(a.box[0] * sc + pad * 2);
-          const ph = Math.ceil(size + pad * 2);
-          await art.setViewport({ width: pw, height: ph, deviceScaleFactor: 1 });
-          await art.setContent(`<html><body style="margin:0;background:transparent"><svg viewBox="0 0 ${a.box[0]} ${a.box[1]}" width="${a.box[0] * sc}" height="${size}" style="position:absolute;left:${pad}px;top:${pad}px;overflow:visible;filter:drop-shadow(0 ${size * 0.04}px ${size * 0.08}px rgba(0,0,0,.35))">${a.svg}</svg></body></html>`);
-          const file = path.join(dir, `cursor-${kind}.png`);
-          await art.screenshot({ path: file as `${string}.png`, type: "png", omitBackground: true, clip: { x: 0, y: 0, width: pw, height: ph } });
-          images[kind] = { file, hot: [pad + a.hot[0] * sc, pad + a.hot[1] * sc] };
-        }
-        let ripple: { file: string } | undefined;
-        if (c.ripple) {
-          const D = size * 2.2;
-          const rp = Math.ceil(size * 0.4);
-          const side = Math.ceil(D + rp * 2);
-          await art.setViewport({ width: side, height: side, deviceScaleFactor: 1 });
-          await art.setContent(`<html><body style="margin:0;background:transparent"><div style="position:absolute;left:${rp}px;top:${rp}px;width:${D}px;height:${D}px;box-sizing:border-box;border-radius:50%;border:${Math.max(1, size * 0.1)}px solid rgba(255,255,255,.95);box-shadow:0 0 ${size * 0.2}px rgba(0,0,0,.25)"></div></body></html>`);
-          const file = path.join(dir, "ripple.png");
-          await art.screenshot({ path: file as `${string}.png`, type: "png", omitBackground: true, clip: { x: 0, y: 0, width: side, height: side } });
-          ripple = { file };
-        }
-        layer.cursor = { step: c.step, xs: c.xs, ys: c.ys, kinds: c.kinds.map(([t, kind]) => ({ t, kind })), clicks: c.clicks, images, ripple };
-      } finally {
-        await art.close().catch(() => undefined);
-      }
-    }
-    layers.push(layer);
-  }
-  // Fixed layers (a webcam) go over what the camera moves, as the page has them.
-  layers.sort((a, b) => Number(a.camera === false) - Number(b.camera === false));
-
-  const specFile = path.join(dir, "native.json");
-  writeFileSync(specFile, JSON.stringify({ output: out, width: OW, height: OH, fps, frames: total, camera, layers }));
+/** A silent stereo track under a video (Apple's app previews must have one). */
+async function silentTrack(out: string): Promise<void> {
+  const tmp = out.replace(/(\.[a-z0-9]+)$/i, ".audio$1");
   await new Promise<void>((resolve, reject) => {
-    const p = spawn(process.env.SCREENSHOTTER_NATIVE!, ["--render-recording", specFile], { stdio: ["ignore", "pipe", "pipe"] });
-    let err = "";
-    let last = Date.now();
-    p.stdout.on("data", (d) => {
-      last = Date.now();
-      const m = /progress (\d+)\/(\d+)\s*$/.exec(String(d).trim());
-      if (m) progress?.(Number(m[1]) / Math.max(1, Number(m[2])));
-    });
-    p.stderr.on("data", (d) => (err += d));
-    // macOS's video encoder can get stuck: give up when nothing moves for a minute.
-    const watch = setInterval(() => {
-      if (Date.now() - last > 60_000) {
-        p.kill("SIGKILL");
-        reject(new Error("the video encoder stopped responding"));
-      }
-    }, 2000);
-    p.on("error", (e) => (clearInterval(watch), reject(e)));
-    p.on("exit", (code) => {
-      clearInterval(watch);
-      if (code === 0) resolve();
-      else reject(new Error(err.trim().split("\n").slice(-2).join(" ") || `the renderer stopped (${code})`));
-    });
+    const p = spawn("ffmpeg", ["-y", "-loglevel", "error", "-i", out, "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000", "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-ac", "2", "-shortest", "-movflags", "+faststart", tmp], { stdio: ["ignore", "ignore", "pipe"] });
+    p.on("error", reject);
+    p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg couldn't add the sound track (${c})`))));
   });
-  if (opts.sound) await addSound(out, "mp4", input.devices.map((d) => d.video).filter((v): v is string => Boolean(v)), duration, warnings);
-
-  // Poster and filmstrip from the finished video.
-  const still = (t: number, file: string) =>
-    new Promise<void>((resolve, reject) => {
-      const p = spawn("ffmpeg", ["-y", "-loglevel", "error", "-ss", Math.max(0, Math.min(duration - 0.05, t)).toFixed(3), "-i", out, "-frames:v", "1", "-q:v", "3", file], { stdio: ["ignore", "ignore", "pipe"] });
-      p.on("error", reject);
-      p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg couldn't take a still (${c})`))));
-    });
-  const poster = out.replace(/\.[a-z0-9]+$/i, ".poster.jpg");
-  await still(animations.length ? Math.min(duration, timelineEnd(animations, ents)) : duration * 0.5, poster);
-  const times = animations.length ? keyMoments(animations, ents, duration) : [0.1, 0.3, 0.5, 0.7, 0.9].map((p) => p * duration);
-  const strip: string[] = [];
-  for (const [n, t] of times.entries()) {
-    const f = path.join(dir, `strip-${n}.jpg`);
-    await still(t, f);
-    strip.push(f);
-  }
-  const filmstrip = out.replace(/\.[a-z0-9]+$/i, ".filmstrip.jpg");
-  await composeSheet(strip, times.map(clock), W / H, filmstrip, animations.length > 0);
-  writeFileSync(`${out}.mockup.json`, JSON.stringify({ ...input, output: out }, null, 2));
-  return { path: out, poster, filmstrip, width: OW, height: OH, duration, fps, frames: total, ...scene.result, warnings };
+  const { renameSync } = await import("node:fs");
+  renameSync(tmp, out);
 }
+
+/** A still of a finished video at `t`. */
+const stillOf = (video: string, t: number, file: string, duration: number) =>
+  new Promise<void>((resolve, reject) => {
+    const p = spawn("ffmpeg", ["-y", "-loglevel", "error", "-ss", Math.max(0, Math.min(duration - 0.05, t)).toFixed(3), "-i", video, "-frames:v", "1", "-q:v", "3", file], { stdio: ["ignore", "ignore", "pipe"] });
+    p.on("error", reject);
+    p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg couldn't take a still (${c})`))));
+  });
 
 /** Render one video: the design at its own size, or in a frame, as a delivery file or a sequence's shot. */
 export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Promise<VideoResult> {
@@ -1115,14 +914,37 @@ export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Pro
   const fps = o.appStore ? 30 : (opts.fps ?? 30);
   const preview = input.quality === "preview" && !o.appStore;
   let stage = await openStage(input, preview ? 0.5 : 1, { frame: o.frame, length: o.length });
-  const plan = nativePlan(input, format, o);
-  if (plan) {
+  // The fast way first: the Mac app draws it on the GPU (when it runs the engine).
+  if (fastAvailable(input)) {
     const out = o.output ?? outputPathFor(input.output, "videos", `video-${stage.scene.layout}`, format);
     const warnings = [...(stage.scene.result.warnings ?? [])];
     try {
-      const done = await renderNative(input, stage, plan, out, fps, warnings, o.progress);
+      const { scene, ents, animations, duration } = stage;
+      const r = await renderFast(input, stage as unknown as FastStage, out, fps, { format, shot: o.shot, appStore: o.appStore, deliveryWidth: o.appStore || o.shot ? undefined : input.deliveryWidth, progress: o.progress });
+      if (o.appStore) await silentTrack(out);
+      else if (opts.sound && format !== "gif" && !o.shot) await addSound(out, format, input.devices.map((d) => d.video).filter((v): v is string => Boolean(v)), duration, warnings);
+      const size = { width: r.width, height: r.height };
+      if (o.shot) {
+        await stage.close();
+        return { path: out, poster: "", filmstrip: "", ...size, duration, fps, frames: r.frames, ...scene.result, warnings };
+      }
+      // Poster and filmstrip from the finished video.
+      const poster = out.replace(/\.[a-z0-9]+$/i, ".poster.jpg");
+      const from = out;
+      await stillOf(from, animations.length ? Math.min(duration, timelineEnd(animations, ents)) : duration * 0.5, poster, duration);
+      const times = animations.length ? keyMoments(animations, ents, duration) : [0.1, 0.3, 0.5, 0.7, 0.9].map((p) => p * duration);
+      const strip: string[] = [];
+      for (const [n, t] of times.entries()) {
+        const f = path.join(stage.dir, `strip-${n}.jpg`);
+        await stillOf(from, t, f, duration);
+        strip.push(f);
+      }
+      const filmstrip = out.replace(/\.[a-z0-9]+$/i, ".filmstrip.jpg");
+      await composeSheet(strip, times.map(clock), r.width / r.height, filmstrip, animations.length > 0);
+      writeFileSync(`${out}.mockup.json`, JSON.stringify({ ...input, output: out }, null, 2));
+      o.progress?.(1);
       await stage.close();
-      return done;
+      return { path: out, poster, filmstrip, ...size, duration, fps, frames: r.frames, ...scene.result, warnings };
     } catch (e) {
       // The usual export instead, on a fresh page.
       rmSync(out, { force: true });

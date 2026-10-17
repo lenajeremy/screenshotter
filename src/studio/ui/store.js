@@ -113,7 +113,7 @@ export const S = {
   renderStale: false,
   exportOpen: false,
   exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4", screens: "all", picked: [], join: true }, set: { format: "png", folders: "size", sheets: true } },
-  capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false },
+  capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false, frame: "device" },
   apps: { list: [], loading: false, for: "" },
   stillPick: null,
   /** Animate: the timeline under the canvas, the selected animation, the rows chosen to animate. */

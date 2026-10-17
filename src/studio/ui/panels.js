@@ -205,6 +205,7 @@ export function CapturesPanel() {
     </div>
     <div class="panel-body">
       <div class="intro">Bring in a screenshot of your app, then click it to put it in the design.</div>
+      <div class="row"><label>Add them</label><${Seg} value=${c.frame ?? "device"} options=${[["device", "In a device"], ["none", "No frame"], ["card", "Rounded"]]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
       ${s.replacing &&
       html`<div class="insp-hero" style=${{ boxShadow: "inset 0 0 0 1px var(--iris)", background: "var(--iris-soft)" }}>
         <${Icon} n="replace" s=${16} />
