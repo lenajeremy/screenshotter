@@ -260,8 +260,9 @@ export function play(until) {
 }
 
 export function openTimeline() {
-  set({ timelineOpen: true, view: "canvas", stillPick: null });
+  set({ timelineOpen: true, stillPick: null });
 }
+export const toggleTimeline = () => (S.timelineOpen ? closeTimeline() : openTimeline());
 export function closeTimeline() {
   pause();
   set({ timelineOpen: false, animSel: null, soundSel: null, animRows: [] });

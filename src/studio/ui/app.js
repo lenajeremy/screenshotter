@@ -12,6 +12,7 @@ import {
   pickUpAgentChanges,
   toggleFocus,
   openExport,
+  openViewer,
   togglePanel,
   deleteSavedScene,
   duplicateSavedScene,
@@ -46,7 +47,6 @@ import {
   newScene,
   openAI,
   dockAI,
-  renderPreview,
   reveal,
   uploadFiles,
   addPicture,
@@ -58,9 +58,6 @@ import {
   goToShot,
   STYLE_PARTS,
   copyStyle,
-  previewScreen,
-  previewSet,
-  setPreviewAll,
   exportWholeSet,
   setSizes,
   screenName,
@@ -70,39 +67,12 @@ import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from ".
 import { ContextMenu, openMenu } from "./menu.js";
 import { BackgroundsPanel, CapturesPanel, DesignForMe, DesignsPanel, ElementsPanel, isElementsTab } from "./panels.js";
 import { Inspector } from "./inspector.js";
-import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play, videoLength } from "./timeline.js";
+import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play, toggleTimeline, videoLength } from "./timeline.js";
 import { deleteSound, hasSoundRow, nudgeSound } from "./sound.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
 // =============================================================================================
 // Top bar
-
-/** Edit shows placement; Preview shows the finished render, re-rendering when the design changed. */
-export function showPreview() {
-  if (!hasDesign(S.scene)) return set({ view: "render" });
-  if (!S.render || S.renderStale) renderPreview();
-  else set({ view: "render" });
-}
-
-function ViewSwitch() {
-  const s = useStore();
-  const ref = useRef();
-  const [knob, setKnob] = useState(null);
-  useLayoutEffect(() => {
-    const on = ref.current.querySelector("button.on");
-    if (on) setKnob({ left: on.offsetLeft, width: on.offsetWidth });
-  }, [s.view, s.timelineOpen]);
-  const animating = s.view === "canvas" && s.timelineOpen;
-  return html`<div class="viewswitch" ref=${ref} data-nodrag>
-    ${knob && html`<div class="knob" style=${{ left: knob.left + "px", width: knob.width + "px" }}></div>`}
-    <button class=${s.view === "canvas" && !animating ? "on" : ""} onClick=${() => {
-      closeTimeline();
-      set({ view: "canvas" });
-    }} title="Arrange things by dragging (⌘1)"><${Icon} n="canvas" s=${14} />Edit</button>
-    <button class=${animating ? "on" : ""} onClick=${openTimeline} title="Set when and how each thing appears in a video (⌘3)"><${Icon} n="animate" s=${14} />Animate</button>
-    <button class=${s.view === "render" ? "on" : ""} onClick=${showPreview} title="See the finished image with lighting and effects (⌘2)"><${Icon} n="eye" s=${14} />Preview</button>
-  </div>`;
-}
 
 function Topbar() {
   const s = useStore();
@@ -129,7 +99,6 @@ function Topbar() {
     </div>
     ${s.scenesOpen && html`<${ScenesPopover} anchor=${scenesBtn.current} />`}
     <div class="topbar-center">
-      <${ViewSwitch} />
       ${(s.busy || s.rendering) && html`<div class="activity" data-nodrag><span class="spinner"></span><span>${(s.busy ?? s.rendering).label}</span></div>`}
     </div>
     <span class="spacer"></span>
@@ -425,72 +394,21 @@ function StillPicker() {
   </div>`;
 }
 
-/** Previewing a set: which screen this is, a dot for each, and the way to the ones either side (← →). */
-function PreviewNav() {
-  const s = useStore();
-  const n = s.shots.length;
-  const num = (i) => String(i + 1).padStart(2, "0");
-  return html`<div class="preview-nav">
-    <button class="pn-side l" disabled=${s.shot === 0} title=${s.shot > 0 ? `${num(s.shot - 1)} · ${screenName(s.shot - 1)} (←)` : ""} onClick=${() => previewScreen(s.shot - 1)}><${Icon} n="left" s=${22} w=${2} /></button>
-    <button class="pn-side r" disabled=${s.shot === n - 1} title=${s.shot < n - 1 ? `${num(s.shot + 1)} · ${screenName(s.shot + 1)} (→)` : ""} onClick=${() => previewScreen(s.shot + 1)}><${Icon} n="right" s=${22} w=${2} /></button>
-    <div class="float pn-bar">
-      <span class="pn-name"><b>${num(s.shot)}</b>${screenName(s.shot)}<span class="pn-of">of ${n}</span></span>
-      <span class="pn-dots">${s.shots.map((_, i) => html`<button class=${`pn-dot ${i === s.shot ? "on" : ""}`} title=${`${num(i)} · ${screenName(i)}`} onClick=${() => previewScreen(i)}></button>`)}</span>
-    </div>
-  </div>`;
-}
-
-/**
- * Preview's whole-set view: every screen of the size in a row, as the store shows them (its spacing,
- * so a backdrop or device across the set meets itself), as big as the window allows. Click one to
- * preview it alone.
- */
-function SetPreview() {
-  const s = useStore();
-  const shots = s.shots.map((x, i) => (i === s.shot ? s.scene : x.scene));
-  const key = shots.map((x) => JSON.stringify(x)).join("|");
-  const [imgs, setImgs] = useState({});
-  useEffect(() => {
-    let alive = true;
-    setImgs({});
-    previewSet((i, r) => alive && setImgs((m) => ({ ...m, [i]: r })));
-    return () => (alive = false);
-  }, [key]);
-  const box = useRef();
-  const [room, setRoom] = useState({ w: 1000, h: 600 });
-  useLayoutEffect(() => {
-    const el = box.current;
-    const ro = new ResizeObserver(() => setRoom({ w: el.clientWidth, h: el.clientHeight }));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const c = s.layout?.canvas ?? { width: 1320, height: 2868 };
-  const n = shots.length;
-  const aspect = c.width / c.height;
-  // As tall as fits, and every screen in view when they fit at a readable size; else the row scrolls.
-  const fitAll = (room.w - 48) / (n + (n - 1) * STORE_GAP) / aspect;
-  const tileH = Math.max(Math.min(room.h - 70, Math.max(fitAll, 260)), 120);
-  const tileW = tileH * aspect;
-  const num = (i) => String(i + 1).padStart(2, "0");
-  return html`<div class="set-preview" ref=${box}>
-    <div class="spv-row" style=${{ gap: tileW * STORE_GAP + "px" }}>
-      ${shots.map(
-        (x, i) => html`<button class="spv-tile" key=${i} title=${`${num(i)} · ${screenName(i)}: preview it alone`} onClick=${() => (set({ previewAll: false }), i === s.shot ? renderPreview() : previewScreen(i))}>
-          <span class="spv-img" style=${{ width: tileW + "px", height: tileH + "px" }}>${imgs[i] ? html`<img src=${fileUrl(imgs[i].path, imgs[i].at)} draggable=${false} />` : html`<span class="spinner"></span>`}</span>
-          <span class=${`spv-label ${i === s.shot ? "on" : ""}`} style=${{ width: tileW + "px" }}><b>${num(i)}</b>${screenName(i)}</span>
-        </button>`,
-      )}
-    </div>
-  </div>`;
-}
-
-function RenderView() {
+/** A file you exported or opened from My designs, over the app: Esc or Done goes back to the design. */
+function Viewer() {
   const s = useStore();
   const r = s.render;
-  // Drag the finished file out to Finder, Slack, Figma… once the pointer actually moves, so a
-  // plain click doesn't start a drag.
+  const close = () => set({ modal: null });
+  useEffect(() => {
+    const key = (e) => e.key === "Escape" && (e.preventDefault(), close());
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, []);
+  if (!r) return null;
+  // Drag the file out to Finder, Slack, Figma… once the pointer actually moves, so a plain click
+  // doesn't start a drag.
   const dragOut = (e) => {
-    if (!native || !r || e.button !== 0) return;
+    if (!native || e.button !== 0) return;
     e.preventDefault();
     const x0 = e.clientX;
     const y0 = e.clientY;
@@ -506,55 +424,42 @@ function RenderView() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
   };
-  const nav = s.shots?.length > 1 && r && !r.sheet && !r.isVideo;
-  const all = s.previewAll && s.shots?.length > 1;
-  const modes = s.shots?.length > 1 && html`<div class="preview-modes"><${Seg} value=${all ? "all" : "one"} onChange=${(v) => setPreviewAll(v === "all")}
-    options=${[{ value: "one", label: "Screen", title: "One screen at a time (← → step through them)" }, { value: "all", label: "Whole set", title: "Every screen side by side, as the store shows them" }]} /></div>`;
-  if (all)
-    return html`<div class="render-view whole">
-      ${modes}
-      <${SetPreview} />
-      <div class="float render-actions">
-        <button class="btn" onClick=${() => set({ exportOpts: { ...S.exportOpts, tab: "set" }, exportOpen: true })}><${Icon} n="export" s=${14} />Export the set…</button>
-        <span style=${{ width: "1px", height: "18px", background: "var(--line-2)", margin: "0 4px" }}></span>
-        <button class="btn" onClick=${() => set({ view: "canvas" })}><${Icon} n="canvas" s=${14} />Back to editing</button>
+  return html`<div class="scrim viewer" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
+    <div class="viewer-box">
+      <div class="viewer-head">
+        <b title=${r.path}>${base(r.path)}</b>
+        ${r.width > 0 && html`<span class="meta-chip">${r.width} × ${r.height}</span>`}
+        ${r.duration > 0 && html`<span class="meta-chip">${r.duration.toFixed(1)} s</span>`}
+        <span class="grow"></span>
+        <button class="btn sm" onClick=${() => reveal(r.path)}><${Icon} n="folder" s=${13} />Show in Finder</button>
+        ${!r.isVideo && !r.sheet && html`<button class="btn sm" onClick=${() => copyImage(r.path)}><${Icon} n="copy" s=${13} />Copy</button>`}
+        ${!r.sheet && html`<button class="btn sm danger" onClick=${() => deleteFile(r.path)}><${Icon} n="trash" s=${13} />Delete</button>`}
+        <button class="btn sm primary" onClick=${close}>Done</button>
       </div>
-    </div>`;
-  return html`<div class=${`render-view ${nav ? "with-nav" : ""}`}>
-    ${modes}
-    ${r
-      ? html`
-        <div class="render-meta">
-          <span class="meta-chip">${r.sheet ? `Every shot · ${r.duration?.toFixed?.(1) ?? ""} s` : r.preview ? "Preview · half size" : r.isVideo ? "Video" : (r.path.split(".").pop() ?? "").toUpperCase()}</span>
-          ${r.width > 0 && html`<span class="meta-chip">${r.width} × ${r.height}</span>`}
-          ${r.ms && html`<span class="meta-chip">${r.ms > 2000 ? (r.ms / 1000).toFixed(1) + " s" : Math.round(r.ms) + " ms"}</span>`}
-          ${s.renderStale && html`<button class="meta-chip stale" onClick=${renderPreview} style=${{ border: 0 }}><${Icon} n="refresh" s=${12} />You changed the design · update preview</button>`}
-        </div>
-        <div class="render-frame">
-          ${r.isVideo
-            ? html`<video key=${r.path} src=${fileUrl(r.path, r.at)} autoplay loop muted playsinline controls></video>`
-            : html`<img key=${r.path + r.at} src=${fileUrl(r.path, r.at)} draggable=${!native} onMouseDown=${native ? dragOut : undefined} class=${native ? "drag-out" : ""} title=${native ? "Drag into Finder, Slack, Figma…" : ""} />`}
-        </div>
-        <div class="float render-actions">
-          ${r.preview
-            ? html`<button class="btn" onClick=${() => set({ exportOpen: true })}><${Icon} n="export" s=${14} />Export full size…</button>`
-            : html`<button class="btn" onClick=${() => reveal(r.path)}><${Icon} n="folder" s=${14} />Show in Finder</button>
-                ${!r.isVideo && html`<button class="btn" onClick=${() => copyImage(r.path)}><${Icon} n="copy" s=${14} />Copy</button>`}
-                <button class="btn danger" onClick=${() => deleteFile(r.path)}><${Icon} n="trash" s=${14} />Delete</button>`}
-          <span style=${{ width: "1px", height: "18px", background: "var(--line-2)", margin: "0 4px" }}></span>
-          <button class="btn" onClick=${() => set({ view: "canvas" })}><${Icon} n="canvas" s=${14} />Back to editing</button>
-        </div>
-        ${nav && html`<${PreviewNav} />`}`
-      : s.rendering
-        ? null
-        : html`<div class="render-empty">
-          <div class="big"><${Icon} n="eye" s=${30} w=${1.4} /></div>
-          <h2>${hasDesign(s.scene) ? "See the finished image" : "Nothing to preview yet"}</h2>
-          <span>${hasDesign(s.scene) ? "Edit shows where things go. Preview shows the real device frame, lighting and effects." : "Add a screenshot, a headline or a picture first, then come back here."}</span>
-          <div class="hstack"><button class="btn" onClick=${renderPreview} disabled=${!hasDesign(s.scene)}>Show preview <span class="kbd">⌘R</span></button>
-          <button class="btn primary" onClick=${exportImage} disabled=${!hasDesign(s.scene)}>Export image <span class="kbd">⌘E</span></button></div>
-        </div>`}
-    ${s.rendering && html`<div class="rendering-overlay"><div><div class="orb" style=${{ margin: "0 auto" }}></div><div class="label">${s.rendering.label}</div>${s.rendering.progress !== undefined && html`<${RenderProgress} r=${s.rendering} />`}</div></div>`}
+      <div class="viewer-frame">
+        ${r.isVideo
+          ? html`<video key=${r.path} src=${fileUrl(r.path, r.at)} autoplay loop playsinline controls></video>`
+          : html`<img key=${r.path + r.at} src=${fileUrl(r.path, r.at)} draggable=${!native} onMouseDown=${native ? dragOut : undefined} class=${native ? "drag-out" : ""} title=${native ? "Drag into Finder, Slack, Figma…" : ""} />`}
+      </div>
+    </div>
+  </div>`;
+}
+
+/** An export under way: what it's making and how far along, over the bottom of the canvas. */
+function ExportProgress() {
+  const s = useStore();
+  const r = s.rendering;
+  if (!r) return null;
+  return html`<div class="float export-progress" onPointerDown=${stop}>
+    <div class="ep-head"><span class="spinner"></span><b>${r.label}</b></div>
+    ${r.progress !== undefined && html`<${RenderProgress} r=${r} />`}
+  </div>`;
+}
+
+/** Opens and closes the timeline under the design. */
+function TimelineButton() {
+  return html`<div class="float timeline-btn" onPointerDown=${stop}>
+    <button class="btn sm" title="Animate it for a video: open the timeline (⌘T)" onClick=${openTimeline}><${Icon} n="animate" s=${14} />Timeline<span class="kbd">⌘T</span></button>
   </div>`;
 }
 
@@ -562,12 +467,14 @@ function Stage() {
   const s = useStore();
   // The start screen is for a design with nothing in it; a screen of a set waiting for its screenshot stays in the set.
   const empty = !hasDesign(s.scene) && !s.shots;
-  return html`<main class="stage ${s.timelineOpen && s.view === "canvas" && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
+  return html`<main class="stage ${s.timelineOpen && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
     <div class="stage-glow"></div>
-    ${s.view === "render" ? html`<${RenderView} />` : empty ? html`<div class="dots"></div><${Welcome} />` : html`<${CanvasView} />`}
-    ${s.view === "canvas" && !empty && s.timelineOpen && html`<${TimelineDock} />`}
-    ${s.view === "canvas" && !empty && !s.timelineOpen && s.stillPick && html`<${StillPicker} key=${s.stillPick.video} />`}
-    ${s.view === "canvas" && !empty && s.ai.open && !(s.ai.docked && s.rightOpen) && html`<${AIChat} />`}
+    ${empty ? html`<div class="dots"></div><${Welcome} />` : html`<${CanvasView} />`}
+    ${!empty && s.timelineOpen && html`<${TimelineDock} />`}
+    ${!empty && !s.timelineOpen && !s.stillPick && html`<${TimelineButton} />`}
+    ${!empty && !s.timelineOpen && s.stillPick && html`<${StillPicker} key=${s.stillPick.video} />`}
+    ${!empty && s.ai.open && !(s.ai.docked && s.rightOpen) && html`<${AIChat} />`}
+    <${ExportProgress} />
     ${s.jsonOpen && html`<${JsonDrawer} />`}
   </main>`;
 }
@@ -782,7 +689,6 @@ function AIChat({ docked }) {
                 html`<div class="msg-changes">
                   ${(m.reverted || !m.ops?.length) && html`<span>${m.reverted ? "Reverted" : `${m.changes} change${m.changes === 1 ? "" : "s"}${m.changed?.length ? ` · ${m.changed.slice(0, 3).join(", ")}` : ""}`}</span>`}
                   ${!m.reverted && canRevertAI(m.id) && html`<button class="link" onClick=${() => revertAI(m.id)}>Revert</button>`}
-                  ${!m.reverted && html`<button class="link" onClick=${renderPreview}>Preview</button>`}
                 </div>`}
               </div>`,
       )}
@@ -1080,7 +986,6 @@ function DeviceArt() {
     const opts = await api("/api/options").catch(() => null);
     if (opts) set({ opts });
     scheduleLayout(0);
-    if (S.render) set({ renderStale: true });
   };
   useEffect(() => {
     load();
@@ -1194,14 +1099,15 @@ function Help() {
   const close = () => set({ modal: null });
   const steps = [
     ["sim", "1 · Add a screenshot", "Drop in an image, or capture your app from the iOS Simulator, a website or a Mac window. They collect under Screenshots."],
-    ["wand", "2 · Pick a design", `You get finished designs made from your screenshot. Pick one, or open Templates for more. ${aiName()} can make three for you there too.`],
-    ["text", "3 · Write your headline", "Double-click the headline to retype it. Put **stars** around words to colour them."],
-    ["canvas", "Make it yours", "Click anything to select it, then drag to move, pull a corner to resize and use the round handle to rotate. The bar above a selection has the everyday edits (words, colours, Replace); Settings opens the rest. Backdrop, Text and Shapes are in the rail."],
-    ["animate", "Animate it for a video", "Animate (⌘3) opens a timeline: choose an item, set when it arrives and how (fade, zoom, slide…), and press Play. Things can change part way through too, and several can move together. Export video renders it."],
+    ["wand", "2 · Pick a look", `Templates has finished designs made from your screenshot; Backgrounds has macOS wallpapers, looks, colours and photos. ${aiName()} can design three for you in Ask AI.`],
+    ["canvas", "3 · Make it yours", "Click anything in the design and its settings show on the right; with nothing selected, they're the whole design's. Drag to move, pull a corner to resize, use the round handle to rotate, double-click text to retype it. Right-click for more."],
+    ["shapes", "Add more", "Elements has text, badges, arrows, shapes, stickers and pictures. Drag one onto the design, or click it."],
+    ["animate", "Make it move", "The timeline (⌘T) opens under the design. Choose a row, move the playhead to when it should happen, and add how it moves. Space plays."],
     ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset background”. Undo (⌘Z) reverts anything."],
-    ["export", "4 · Export", "Export saves a full-size PNG, JPEG or WebP, or a video with gentle camera motion. Preview shows the finished look first."],
+    ["export", "4 · Export", "Export saves the image (PNG, JPEG or WebP), the whole set, or a video when the design moves. As you work, the design shows its finished look: grain, finishes and colour."],
     ["grid", "My designs", "Every design saves itself as you work. My designs (⇧⌘O) has them all, and everything you've exported."],
   ];
+
 
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
     <div class="sheet">
@@ -1522,6 +1428,7 @@ function App() {
     ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
     ${s.modal?.kind === "copyStyle" && html`<${CopyStyle} />`}
     ${s.modal?.kind === "storePage" && html`<${StorePage} />`}
+    ${s.modal?.kind === "viewer" && html`<${Viewer} />`}
     <${Toasts} />
     <${ContextMenu} />
     ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new design" : "Drop to add to the design"}</div></div>`}
@@ -1584,16 +1491,14 @@ const commands = {
   undo: () => (typing() ? document.execCommand("undo") : undo()),
   redo: () => (typing() ? document.execCommand("redo") : redo()),
   ai: () => (S.ai.open ? set({ ai: { ...S.ai, open: false } }) : openAI()),
-  preview: renderPreview,
-  showPreview: () => showPreview(),
+  preview: () => canvasApi.finishNow(),
+  showPreview: () => canvasApi.finishNow(),
   exportImage,
   exportVideo,
-  canvas: () => {
-    closeTimeline();
-    set({ view: "canvas" });
-  },
-  animate: openTimeline,
-  render: () => showPreview(),
+  canvas: () => closeTimeline(),
+  animate: () => toggleTimeline(),
+  timeline: () => toggleTimeline(),
+  render: () => canvasApi.finishNow(),
   zoomIn: () => canvasApi.zoomBy(1.25),
   zoomOut: () => canvasApi.zoomBy(1 / 1.25),
   fit: () => canvasApi.fit(),
@@ -1661,11 +1566,12 @@ window.addEventListener("keydown", (e) => {
   if (S.modal) return;
   if (mod && !e.shiftKey && k === "z") return e.preventDefault(), undo();
   if (mod && ((e.shiftKey && k === "z") || k === "y")) return e.preventDefault(), redo();
-  if (mod && k === "r") return e.preventDefault(), renderPreview();
+  if (mod && k === "r") return e.preventDefault(), canvasApi.finishNow();
   if (mod && k === "e") return e.preventDefault(), e.shiftKey ? exportVideo() : exportImage();
   if (mod && k === "1") return e.preventDefault(), commands.canvas();
-  if (mod && k === "2") return e.preventDefault(), showPreview();
-  if (mod && k === "3") return e.preventDefault(), openTimeline();
+  if (mod && k === "2") return e.preventDefault(), canvasApi.finishNow();
+  // ⌘T opens and closes the timeline (⌘3 too, as Animate did).
+  if (mod && (k === "t" || k === "3")) return e.preventDefault(), toggleTimeline();
   if (mod && (k === "=" || k === "+")) return e.preventDefault(), commands.zoomIn();
   if (mod && k === "-") return e.preventDefault(), commands.zoomOut();
   if (mod && (k === "0" || e.code === "Digit0")) {
@@ -1675,7 +1581,7 @@ window.addEventListener("keydown", (e) => {
     return e.shiftKey && inSet ? canvasApi.fitSet() : inSet ? canvasApi.fitScreen() : commands.fit();
   }
   // Animate: ⌘B cuts the sound at the playhead.
-  if (mod && k === "b" && S.view === "canvas" && S.timelineOpen && hasSoundRow()) return e.preventDefault(), cutSoundHere();
+  if (mod && k === "b" && S.timelineOpen && hasSoundRow()) return e.preventDefault(), cutSoundHere();
   if (mod && k === "d") return e.preventDefault(), commands.duplicate();
   if (mod && k === "o") return e.preventDefault(), commands.import();
   if (mod && k === ",") return e.preventDefault(), commands.settings();
@@ -1685,7 +1591,7 @@ window.addEventListener("keydown", (e) => {
   if (mod && e.altKey && e.code === "KeyJ") return e.preventDefault(), commands.json();
   if (mod) return;
   // Animate: Space plays, ⌫ deletes the selected animation, Esc lets go of it.
-  if (S.view === "canvas" && S.timelineOpen) {
+  if (S.timelineOpen) {
     if (e.key === " ") return e.preventDefault(), play();
     if (S.animSel !== null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteAnimation(S.animSel);
     if (S.animSel !== null && e.key === "Escape") return set({ animSel: null });
@@ -1701,18 +1607,11 @@ window.addEventListener("keydown", (e) => {
     if (S.replacing) return set({ replacing: null });
     return set({ selected: null });
   }
-  if (S.view !== "canvas" || !S.selected) {
+  if (!S.selected) {
     // A set with nothing selected: ← and → step through its screens.
-    if (S.view === "canvas" && !S.selected && !S.timelineOpen && S.shots?.length > 1 && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (!S.timelineOpen && S.shots?.length > 1 && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       return goToShot(Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1))));
-    }
-    // In Preview, they step through the set's screens, each previewed.
-    if (S.view === "render" && S.shots?.length > 1 && (S.previewAll || (!S.render?.sheet && !S.render?.isVideo)) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
-      e.preventDefault();
-      const to = Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1)));
-      // Seeing the whole set, they move which screen is the one in hand; seeing one, they preview the next.
-      return S.previewAll ? goToShot(to) : previewScreen(to);
     }
     if (e.key === "Tab" && S.layout?.entities.length) {
       e.preventDefault();
@@ -1813,7 +1712,6 @@ function canvasMenu() {
     { label: "Change background…", icon: "background", run: () => set({ leftTab: "backgrounds", leftOpen: true }) },
     has && !S.scene.recording && { label: "Add a screen", icon: "plus", run: () => addShot("copy", S.shots?.length > 1 ? { at: S.shots.length, copyOf: S.shots.length - 1 } : {}) },
     "-",
-    has && { label: "Preview", icon: "eye", kbd: "⌘R", run: renderPreview },
     has && { label: "Export image", icon: "export", kbd: "⌘E", run: exportImage },
     has && { label: "Zoom to fit", icon: "fit", kbd: "⌘0", run: () => canvasApi.fit() },
   ];
@@ -1823,7 +1721,7 @@ function fileMenu(p, kind) {
   const image = !isVideo(p);
   if (kind === "saved") {
     return [
-      { label: "Open", icon: "eye", run: () => set({ render: { path: p, isVideo: !image, preview: false, at: Date.now() }, renderStale: false, view: "render" }) },
+      { label: "Open", icon: "eye", run: () => openViewer(p) },
       { label: "Show in Finder", icon: "folder", run: () => reveal(p) },
       image && { label: "Copy", icon: "copy", run: () => copyImage(p) },
       "-",
@@ -1865,11 +1763,8 @@ window.addEventListener("contextmenu", (e) => {
     items = fileMenu(shot.dataset.file, shot.dataset.kind);
   } else if (t.closest?.(".viewport")) {
     items = canvasMenu();
-  } else if (t.closest?.(".render-frame") && S.render) {
-    const r = S.render;
-    items = r.preview
-      ? [{ label: "Export full size…", icon: "export", run: () => set({ exportOpen: true }) }, { label: "Back to editing", icon: "canvas", kbd: "⌘1", run: () => set({ view: "canvas" }) }]
-      : fileMenu(r.path, "saved").slice(1);
+  } else if (t.closest?.(".viewer-frame") && S.render && !S.render.sheet) {
+    items = fileMenu(S.render.path, "saved").slice(1);
   }
   if (items) openMenu(e.clientX, e.clientY, items);
 });

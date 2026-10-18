@@ -205,7 +205,7 @@ const CHECKS: Record<string, Check> = {
     const relisted = await listed(used);
     return existsSync(used) && !inList && shown && /Removed/.test(said) && relisted ? "ok" : `file ${existsSync(used)}, listed ${inList}, on the design ${shown}, "${said.slice(0, 70)}", listed after Undo ${relisted}`;
   },
-  async "a design of just words and doodles starts, exports and previews"(page) {
+  async "a design of just words and doodles starts, exports and shows its finished look"(page) {
     await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
     await page.waitForTimeout(1000);
     const welcome = await S(page, () => Boolean(document.querySelector(".welcome")));
@@ -218,11 +218,15 @@ const CHECKS: Record<string, Check> = {
       await a.exportImage();
       for (let i = 0; i < 100 && st.S.rendering; i++) await new Promise((r) => setTimeout(r, 400));
       const exported = st.S.toasts.some((t: { title: string }) => /exported/i.test(t.title));
-      await a.renderPreview();
-      for (let i = 0; i < 100 && st.S.rendering; i++) await new Promise((r) => setTimeout(r, 400));
-      return { exportOn, exported, preview: Boolean(st.S.render), layout: Boolean(st.S.layout) };
+      // The editor stays put; the finished look settles over the design.
+      let finished = false;
+      for (let i = 0; i < 60 && !finished; i++) {
+        await new Promise((r) => setTimeout(r, 400));
+        finished = Boolean(document.querySelector(".stage .artboard > img.finished.on"));
+      }
+      return { exportOn, exported, finished, stayed: !st.S.modal, layout: Boolean(st.S.layout) };
     });
-    return welcome && r.exportOn && r.exported && r.preview && r.layout ? "ok" : `start screen ${welcome}, ${JSON.stringify(r)}`;
+    return welcome && r.exportOn && r.exported && r.finished && r.stayed && r.layout ? "ok" : `start screen ${welcome}, ${JSON.stringify(r)}`;
   },
   async "a design of just words comes back after a reload"(page) {
     await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
@@ -275,8 +279,14 @@ const CHECKS: Record<string, Check> = {
   },
   async "the Templates panel's set previews load, with the ones made for the screenshot first"(page) {
     await setDesign(page, { shots: null, groups: null, scene: { devices: [{ screenshot: ipad }], background: "cream-grain", canvas: "ipad-13" }, leftTab: "designs", leftOpen: true });
-    await page.waitForTimeout(1000);
-    const first = await S(page, () => document.querySelector(".set-template b")?.textContent ?? "");
+    // Which screenshot it is (iPad here) comes from the engine: give it a moment to reorder them.
+    let first = "";
+    const f0 = Date.now();
+    while (!/iPad spread/.test(first) && Date.now() - f0 < 15_000) {
+      await page.waitForTimeout(250);
+      first = await S(page, () => document.querySelector(".set-template b")?.textContent ?? "");
+    }
+    if (process.env.UI_TEST_TIMES) console.log(`    (made-for order: ${Date.now() - f0} ms)`);
     // Each preview draws five screens, and all sixteen are asked for at once: give them time.
     const t0 = Date.now();
     let loaded = 0;

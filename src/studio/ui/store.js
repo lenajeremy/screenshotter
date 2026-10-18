@@ -69,8 +69,6 @@ export const S = {
    */
   groups: null,
   group: 0,
-  /** Preview shows every screen of the set side by side, instead of the one being edited. */
-  previewAll: false,
   /** Shots an AI change just touched, highlighted in the strip for a moment. */
   shotPulse: [],
   scenes: [],
@@ -101,14 +99,12 @@ export const S = {
   filesAt: 0,
   selected: null,
   hover: null,
-  view: "canvas",
   leftTab: "captures",
   // The left panel (things to add) opens from the rail; the right one (settings) is always there.
   leftOpen: false,
   busy: null,
   rendering: null,
   render: null,
-  renderStale: false,
   exportOpen: false,
   exportOpts: { tab: "image", format: "png", size: "full", width: 1080, jpegQuality: 90, video: { motion: "subtle", duration: 6, zoom: false, format: "mp4", screens: "all", picked: [], join: true }, set: { format: "png", folders: "size", sheets: true } },
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false, frame: "device" },
@@ -184,7 +180,7 @@ export function tidy(v) {
  * Replace the scene. `key` groups rapid edits of the same control (a slider drag, typing) into one
  * undo step.
  */
-export function setScene(next, { key = null, keepRender = false } = {}) {
+export function setScene(next, { key = null } = {}) {
   next = tidy(next);
   if (JSON.stringify(next) === JSON.stringify(S.scene)) return;
   const now = performance.now();
@@ -195,7 +191,6 @@ export function setScene(next, { key = null, keepRender = false } = {}) {
     past: coalesce ? S.past : [...S.past.slice(-99), { screen: { ...where(), scene: S.scene } }],
     future: [],
     scene: next,
-    renderStale: keepRender ? S.renderStale : Boolean(S.render),
   });
   scheduleLayout();
   persist();
@@ -228,7 +223,7 @@ export function checkpoint(key = null) {
 function restoreDesign(d) {
   const groups = d.groups && d.groups.length > 1 ? d.groups : null;
   const shots = d.shots && d.shots.length > 1 ? d.shots : null;
-  set({ groups, group: groups ? d.group : 0, shots, shot: shots ? Math.min(d.shot, shots.length - 1) : 0, scene: d.scene, selected: null, animSel: null, animRows: [], renderStale: Boolean(S.render) });
+  set({ groups, group: groups ? d.group : 0, shots, shot: shots ? Math.min(d.shot, shots.length - 1) : 0, scene: d.scene, selected: null, animSel: null, animRows: [] });
 }
 
 /** Put another screen on the canvas without touching the history (undo going to where a change was). */
@@ -258,7 +253,7 @@ function step(back) {
     const { group, shot, scene } = e.screen ?? { ...where(), scene: e };
     showScreen(group, shot);
     mirror = { screen: { ...where(), scene: S.scene } };
-    set({ scene, renderStale: Boolean(S.render) });
+    set({ scene });
   }
   set(back ? { past: rest, future: [mirror, ...S.future] } : { future: rest, past: [...S.past, mirror] });
   fixSelection();

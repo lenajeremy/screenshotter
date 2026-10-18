@@ -9,7 +9,7 @@ import { textPieces, unitMode } from "./animate.js";
 import { CURSOR_ART, clickAt, cursorAt, cursorKindAt } from "./cursor.js";
 import { cursorTrack } from "./recording.js";
 import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout, hasDesign } from "./store.js";
-import { addDevice, addShot, addSize, carryDeviceOver, moveShotTo, openCopyStyle, setInVideo, deleteShot, goToShot, goToSize, moveShot, recordingFor, removeSize, replaceMode, screenName, sizeLabel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, carryDeviceOver, finishedAsked, finishedLook, moveShotTo, openCopyStyle, setInVideo, deleteShot, goToShot, goToSize, moveShot, recordingFor, removeSize, replaceMode, screenName, sizeLabel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -545,12 +545,13 @@ function useShotLayouts(on) {
 }
 
 /** Another shot, as it looks (fitted into the frame): click it to edit it. */
-function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging = false, dropping = false, onGrab }) {
+function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, quiet = false, dragging = false, dropping = false, onGrab }) {
   const gW0 = layout.canvas.width;
   const gH0 = layout.canvas.height;
   const k = Math.min(W / gW0, H / gH0);
   const gw = gW0 * k;
   const gh = gH0 * k;
+  const finished = useFinished(scene, inSet && quiet);
   return html`<div class="ghost-wrap ${inSet ? "set" : ""} ${dragging ? "dragging" : ""} ${dropping ? "drop-over" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it, drag to move it` : `Shot ${index + 1}: click to edit it`}
       onPointerDown=${(ev) => {
         if (ev.button !== 0) return;
@@ -572,6 +573,7 @@ function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, dragging 
             ${e.kind === "shape" ? html`<${ShapeEnt} e=${e} W=${gw} H=${gh} />` : e.kind === "device" ? html`<${DeviceEnt} e=${e} W=${gw} H=${gh} />` : e.kind === "image" ? html`<${ImageEnt} e=${e} W=${gw} H=${gh} />` : html`<${TextEnt} e=${e} H=${gh} editing=${null} onDone=${() => undefined} />`}
           </div>`,
         )}
+        <${FinishedLook} got=${finished} show=${inSet && quiet && finished && gw <= finished.w * 1.3} />
       </div>
     <//>
   </div>`;
@@ -624,6 +626,39 @@ function composite(world, art, T, plan, ghosts) {
   if (frameClip) frameClip.style.visibility = joining ? "visible" : "hidden";
 }
 
+/**
+ * The design's finished look (its effects, finishes and lighting), drawn by the engine once edits
+ * have settled for a moment. The canvas lays it over the design until the next change or drag.
+ * `kick` changing asks for it straight away (⌘R).
+ */
+function useFinished(scene, quiet, kick = 0) {
+  const key = useMemo(() => JSON.stringify(scene), [scene]);
+  const [got, setGot] = useState(null);
+  const last = useRef(kick);
+  useEffect(() => {
+    const now = kick !== last.current;
+    last.current = kick;
+    if (!quiet) return;
+    let alive = true;
+    const t = setTimeout(
+      () => finishedLook(scene).then((r) => alive && setGot({ key, src: fileUrl(r.path), w: r.width }), () => undefined),
+      now || finishedAsked(key) ? 0 : 900,
+    );
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [key, quiet, kick]);
+  return got?.key === key ? got : null;
+}
+
+/** The finished look over an artboard: it fades in once loaded and goes at once when hidden. */
+function FinishedLook({ got, show }) {
+  const [loaded, setLoaded] = useState(null);
+  if (!got) return null;
+  return html`<img class="finished ${show && loaded === got.src ? "on" : ""}" src=${got.src} alt="" draggable=${false} onLoad=${() => setLoaded(got.src)} />`;
+}
+
 export function CanvasView() {
   const s = useStore();
   const layout = s.layout;
@@ -640,6 +675,7 @@ export function CanvasView() {
   const [editing, setEditing] = useState(null); // {id, part}
   const [space, setSpace] = useState(false);
   const [dropOver, setDropOver] = useState(false);
+  const [kick, setKick] = useState(0);
   const pending = useRef(null);
 
   useLayoutEffect(() => {
@@ -673,7 +709,7 @@ export function CanvasView() {
   const bottom = s.timelineOpen ? Math.max(0, Math.min(s.tlH ?? Math.min(size.h * 0.44, 320), size.h - 150)) + 30 : s.stillPick ? Math.min(size.h * 0.46, 290) : BOTTOM;
   const TOP = s.groups?.length > 1 || (!s.timelineOpen && manyShots()) ? TOP_TABS : TOP_PLAIN;
   // A set of screens sits in a row in Edit: fit the whole row, or just the screen being edited.
-  const setMode = !s.timelineOpen && s.view === "canvas" && manyShots();
+  const setMode = !s.timelineOpen && manyShots();
   const count = setMode ? s.shots.length : 1;
   const G0 = Math.round(W0 * SET_GAP);
   const fitAll = setMode && fit === "set";
@@ -741,6 +777,7 @@ export function CanvasView() {
   canvasApi.zoomTo = (z) => zoomAt(z);
   canvasApi.editText = (id, part) => setEditing({ id, part: part ?? (id === "caption" ? "headline" : "text") });
   canvasApi.scale = scale;
+  canvasApi.finishNow = () => setKick((n) => n + 1);
 
   // Trackpad: two-finger scroll pans, pinch zooms around the pointer, from wherever the zoom is.
   // WebKit reports a pinch as gesture events (scale relative to where the pinch began); Chrome
@@ -1106,6 +1143,13 @@ export function CanvasView() {
 
   // ------------------------------------------------------------------ render
 
+  // Quiet: nothing being dragged, typed, animated or redone by AI, so the finished look can show.
+  // A design with a recording in it keeps playing on the canvas instead.
+  const quiet = Boolean(layout) && hasDesign(s.scene) && !s.scene.devices.some((d) => d.video) && !s.timelineOpen && !live && !editing && !s.stillPick && !s.ai.busy && !s.designing && !s.dropping && !dropOver;
+  const finished = useFinished(s.scene, quiet, kick);
+  // Zoomed in past the drawing's own size, the canvas itself is sharper.
+  const finishedShows = quiet && finished && W <= finished.w * 1.3;
+
   const sel = entities.find((e) => e.id === s.selected);
   const selEl = sel && art.current?.querySelector(`.ent[data-id="${sel.id}"]`);
   const selBox = sel ? selectionBox(sel, W, H, selEl) : null;
@@ -1144,7 +1188,7 @@ export function CanvasView() {
     html`<div class="world" ref=${world} style=${{ transform: `translate(${ox}px, ${oy}px)` }}>
       ${multi && html`<div class="join-matte" style=${{ width: W + "px", height: H + "px" }}></div>`}
       ${multi && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`g${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} />`)}
-      ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} dragging=${reorder?.from === i} dropping=${dropOver === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
+      ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} quiet=${quiet && !reorder} dragging=${reorder?.from === i} dropping=${dropOver === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
       ${setMode && s.shots.map((x, i) => html`<${SetLabel} key=${`l${i}`} i=${i} x=${(i - s.shot) * (W + G)} w=${W} on=${i === s.shot} dragging=${reorder?.from === i} renaming=${renaming === i} onDone=${() => setRenaming(null)} onGrab=${(ev) => dragScreen(ev, i)} />`)}
       ${setMode && reorder && html`<div class="set-drop" style=${{ left: (reorder.to - s.shot) * (W + G) - G / 2 + "px", height: H + "px" }}></div>`}
       ${setMode && html`<button class="set-add" style=${{ left: (s.shots.length - s.shot) * (W + G) + "px", width: W * SET_ADD + "px", height: H + "px" }} title="Add a screen at the end: a copy of the last one"
@@ -1165,6 +1209,7 @@ export function CanvasView() {
               : html`<${TextEnt} e=${e} H=${H} editing=${editing?.id === e.id ? editing.part : null} onDone=${finishEdit} />`}
           </div>`,
         )}
+        <${FinishedLook} got=${finished} show=${finishedShows} />
         <div class="clip"></div>
         ${!s.scene.devices.length &&
         (bare(s.scene)
@@ -1194,7 +1239,7 @@ export function CanvasView() {
         </div>`}
       </div>
     </div>`}
-    ${layout && !s.timelineOpen && s.view === "canvas" && s.groups?.length > 1 && html`<${SizeSwitch} />`}
+    ${layout && !s.timelineOpen && s.groups?.length > 1 && html`<${SizeSwitch} />`}
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>

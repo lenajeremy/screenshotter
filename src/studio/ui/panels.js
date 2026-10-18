@@ -18,7 +18,6 @@ import {
   replaceImage,
   uploadImages,
   addShape,
-  setBackdropAcross,
   deleteEntity,
   addCaption,
   addDevice,
@@ -30,6 +29,7 @@ import {
   recordSimulator,
   recordingFor,
   restoreVersion,
+  openViewer,
   applyRecipe,
   applySetTemplate,
   applyMyTemplate,
@@ -695,7 +695,7 @@ export function LayersList() {
   if (!ents.length) return html`<div class="empty-note">Add a screenshot to start the design.</div>`;
   return html`<div class="layers">
     ${ents.map(
-      (e) => html`<div class="layer ${s.selected === e.id ? "on" : ""}" onClick=${() => set({ selected: e.id, view: "canvas" })} onMouseEnter=${() => set({ hover: e.id })} onMouseLeave=${() => set({ hover: null })}>
+      (e) => html`<div class="layer ${s.selected === e.id ? "on" : ""}" onClick=${() => set({ selected: e.id })} onMouseEnter=${() => set({ hover: e.id })} onMouseLeave=${() => set({ hover: null })}>
         <span class="thumb">${e.kind === "device" ? html`<img src=${thumbUrl(e.screenshot, 80)} />` : html`<${Icon} n=${e.kind === "shape" ? "shapes" : "text"} s=${13} />`}</span>
         <span class="nm">${entityLabel(e.id)}</span>
       </div>`,
@@ -882,7 +882,7 @@ export function ShapesPanel({ tabs }) {
         ${shapes.map((sh, i) => {
           const id = `shape-${i + 1}`;
           const icon = { arrow: "arrow", line: "line", ellipse: sh.sketch ? "circled" : "ellipse", rect: "square", triangle: "triangle", star: "star", badge: "badge" }[sh.type] ?? "star";
-          return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
+          return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
             <span class="thumb" style=${{ color: sh.stroke && sh.stroke !== "none" ? sh.stroke : sh.fill && sh.fill !== "none" ? sh.fill : undefined }}><${Icon} n=${icon} s=${13} /></span>
             <span class="nm">${entityLabel(id)}${sh.around ? html` <span class="faint">on “${sh.around.text}”</span>` : ""}</span>
             <button class="icon-btn sm" title="Remove" onClick=${(e) => {
@@ -1005,7 +1005,7 @@ export function ImagesPanel({ tabs }) {
       html`<${Section} title="In this design" count=${images.length}>
         ${images.map((b, i) => {
           const id = `image-${i + 1}`;
-          return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id, view: "canvas" })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
+          return html`<div class="layer ${s.selected === id ? "on" : ""}" onClick=${() => set({ selected: id })} onMouseEnter=${() => set({ hover: id })} onMouseLeave=${() => set({ hover: null })}>
             <span class="thumb img"><img src=${pictureUrl(b.src)} /></span>
             <span class="nm">${entityLabel(id)}</span>
             <button class="icon-btn sm" title="Remove" onClick=${(e) => {
@@ -1048,7 +1048,7 @@ export function ExportsGrid() {
       groups.push(g);
     }
   }
-  const view = (f) => set({ render: { path: f.path, isVideo: isVideo(f.path), preview: false, at: f.mtime }, renderStale: false, view: "render", scenesPage: false });
+  const view = (f) => openViewer(f.path, f.mtime);
   const tile = (f, g) => html`<div class="shot wide" key=${f.path} data-file=${f.path} data-kind="saved" title=${base(f.path)} onClick=${() => view(f)}>
     ${isVideo(f.path) ? html`<video src=${`/file?path=${encodeURIComponent(f.path)}#t=0.5`} muted preload="metadata" style=${{ width: "100%", height: "100%", objectFit: "contain" }}></video>` : html`<img loading="lazy" src=${thumbUrl(f.path, 360)} />`}
     <div class="veil"></div>

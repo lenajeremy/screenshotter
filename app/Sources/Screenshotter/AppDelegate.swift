@@ -86,7 +86,7 @@ import WebKit
     private var pendingImports: [[String: Any]] = []
     private var pendingRecording: [String: Any]?
 
-    /// A recording from the capture bar, opened in the Studio as a design of its own, in Animate.
+    /// A recording from the capture bar, opened in the Studio as a design of its own, with its timeline open.
     func openRecording(_ spec: [String: Any]) {
         showStudio()
         if pageReady { sendRecording(spec) } else { pendingRecording = spec }
@@ -511,17 +511,15 @@ import WebKit
             item("Duplicate", "duplicate", "d"),
         ])
         _ = submenu("View", [
-            item("Edit", "canvas", "1"),
-            item("Animate", "animate", "3"),
-            item("Preview", "showPreview", "2"),
-            item("Update Preview", "preview", "r"),
+            item("Timeline", "timeline", "t"),
+            item("Show the Finished Look Now", "preview", "r"),
             .separator(),
             item("Zoom In", "zoomIn", "="),
             item("Zoom Out", "zoomOut", "-"),
             item("Zoom to Fit", "fit", "0"),
             .separator(),
-            item("Toggle Side Panel", "toggleLeft", "s", [.command, .option]),
-            item("Toggle Inspector", "toggleRight", "i", [.command, .option]),
+            item("Show or Hide the Left Panel", "toggleLeft", "s", [.command, .option]),
+            item("Show or Hide Settings", "toggleRight", "i", [.command, .option]),
             item("Focus Mode", "focus", "\\"),
             item("Design as JSON", "json", "j", [.command, .option]),
             .separator(),

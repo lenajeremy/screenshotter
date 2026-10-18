@@ -40,7 +40,7 @@ export async function applyRecipe(id, { quiet = false, silent = false } = {}) {
     if (body.headline && !scene.headline) Object.assign(scene, { headline: body.headline, subheadline: body.subheadline });
     setScene(scene);
     touch("backdrop");
-    set({ view: "canvas", selected: null });
+    set({ selected: null });
     const name = S.recipes?.find((r) => r.id === id)?.name ?? "the design";
     // While the person is trying templates one after another, the canvas is the feedback.
     if (!silent) toast({ kind: "ok", title: quiet ? `Started you off with ${name}` : `Applied ${name}`, text: quiet ? "Undo (⌘Z) for a plain layout, or pick another in Templates." : "Undo (⌘Z) goes back.", timeout: 3200 });
@@ -96,8 +96,8 @@ async function applyTemplateFrom(url, id, name) {
     };
     const shots = screens.map((x, i) => ({ scene: fit(x.scene), name: !x.name || x.name === "Feature" ? undefined : x.name, ...(i ? { transition: { type: "fade", duration: 0.5 } } : {}) }));
     // One screen stays a single design; several make a set.
-    if (shots.length === 1) set({ shots: null, shot: 0, scene: shots[0].scene, selected: null, view: "canvas" });
-    else set({ shots, shot: 0, scene: shots[0].scene, selected: null, view: "canvas" });
+    if (shots.length === 1) set({ shots: null, shot: 0, scene: shots[0].scene, selected: null });
+    else set({ shots, shot: 0, scene: shots[0].scene, selected: null });
     scheduleLayout(0);
     persist();
     const fewer = new Set(body.devices.map((d) => d.screenshot)).size < screens.length;
@@ -215,7 +215,7 @@ export function applyDirection(i) {
   if (!d) return;
   setScene(d.request);
   touch("backdrop");
-  set({ view: "canvas", selected: null, directions: { ...S.directions, picked: i } });
+  set({ selected: null, directions: { ...S.directions, picked: i } });
   toast({ kind: "ok", title: d.name, text: "Undo (⌘Z) goes back, or pick another.", timeout: 2600 });
 }
 
@@ -239,7 +239,7 @@ export function addDevice(path, at = {}) {
   // A fresh scene's first screen starts from a design that works, not a plain layout.
   const pristine = !S.scene.devices?.length && !S.scene.headline && !S.scene.layout && !S.scene.effects && S.scene.background === DEFAULT_SCENE.background && at.x === undefined && !at.frame;
   setScene(next);
-  set({ selected: `device-${next.devices.length}`, view: "canvas", replacing: null });
+  set({ selected: `device-${next.devices.length}`, replacing: null });
   // A recording: first choose the moment it shows (its first frame is often blank).
   if (video) openStills(`device-${next.devices.length}`);
   if (pristine) {
@@ -299,7 +299,7 @@ export function closeStills(cancel = false) {
  */
 export function startWithWords() {
   setScene({ ...S.scene, canvas: S.scene.canvas ?? "iphone-6.9", layout: "custom", background: "cream-grain", headline: "Say what it does,\n**in a few words**", textStyle: { font: "Caveat", headlineWeight: 700, color: "#22314d", accentMark: "squiggle", accentMarkColor: "#2f6fd6", x: 0.5, y: 0.4, anchor: "middle", headlineSize: 0.075, width: 0.86 } });
-  set({ leftTab: "images", leftOpen: true, view: "canvas" });
+  set({ leftTab: "images", leftOpen: true });
   scheduleLayout(0);
 }
 
@@ -330,7 +330,7 @@ export function useCapture(path, { frame, video } = {}) {
     }
   });
   const id = `device-${Math.min(i, S.scene.devices.length - 1) + 1}`;
-  set({ selected: id, replacing: null, view: "canvas" });
+  set({ selected: id, replacing: null });
   if (S.scene.devices[idx(id)]?.video) openStills(id);
 }
 
@@ -522,7 +522,7 @@ export function addPresetShape(spec, { at } = {}) {
   const c = at ?? { x: 0.5 + off, y: 0.16 + off };
   edit((d) => (d.shapes = [...(d.shapes ?? []), { ...clone(spec), x: r4(c.x), y: r4(c.y) }]));
   touch("shape");
-  set({ selected: `shape-${shapes.length + 1}`, view: "canvas" });
+  set({ selected: `shape-${shapes.length + 1}` });
 }
 
 function awardTint(tint, gold) {
@@ -556,7 +556,7 @@ export function addShape(kind, { tint = "#ff3b30", at, around } = {}) {
   }
   edit((d) => (d.shapes = [...(d.shapes ?? []), sh]));
   touch("shape");
-  set({ selected: `shape-${shapes.length + 1}`, view: "canvas" });
+  set({ selected: `shape-${shapes.length + 1}` });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -713,7 +713,7 @@ export function addImage(src, { at, look = {} } = {}) {
   const c = at ?? { x: look.x ?? 0.5 + off, y: look.y ?? 0.2 + off };
   edit((d) => (d.images = [...(d.images ?? []), { src, height: 0.1, ...look, x: r4(c.x), y: r4(c.y) }]));
   touch("image");
-  set({ selected: `image-${images.length + 1}`, view: "canvas" });
+  set({ selected: `image-${images.length + 1}` });
 }
 
 /** Show another picture in an image block, keeping where it is and how it looks. */
@@ -741,7 +741,7 @@ export function addText(kind = "label") {
   edit((d) => {
     d.texts = [...(d.texts ?? []), item];
   });
-  set({ selected: `text-${n}`, view: "canvas" });
+  set({ selected: `text-${n}` });
 }
 
 /**
@@ -958,7 +958,7 @@ export async function deleteFile(p) {
       scheduleLayout(0);
       persist();
     }
-    if (S.render?.path === p) set({ render: null, renderStale: false });
+    if (S.render?.path === p) set({ render: null, ...(S.modal?.kind === "viewer" ? { modal: null } : {}) });
     await refreshFiles();
     toast({ kind: "ok", title: "Deleted", text: base(p) });
   } catch (e) {
@@ -978,12 +978,31 @@ function deliveryRequest() {
   return req;
 }
 
-function renderResult(r, extra) {
-  set({ render: { ...r, ...extra, at: Date.now(), scene: JSON.stringify(S.scene) }, renderStale: false, view: "render" });
+/** Keep what an export made, to open in the viewer; `open` shows it there now. */
+function renderResult(r, extra, open = false) {
+  set({ render: { ...r, ...extra, at: Date.now() }, ...(open ? { modal: { kind: "viewer" } } : {}) });
 }
 
-/** Previews by what they show, so stepping back and forth through a set in Preview is instant. */
+/** Open a file in the viewer (an export, or one from My designs). */
+export function openViewer(path, at = Date.now()) {
+  set({ render: { path, isVideo: isVideo(path), preview: false, at }, modal: { kind: "viewer" }, scenesPage: false });
+}
+
+/** What an export toast offers: open it here, show it in Finder, and copy an image. */
+const resultActions = (r, image) => [
+  { label: "Open", run: () => openViewer(r.path, Date.now()) },
+  { label: "Show in Finder", run: () => reveal(r.path) },
+  ...(image ? [{ label: "Copy", run: () => copyImage(r.path) }] : []),
+];
+
+/**
+ * The design's finished look (its effects, finishes and lighting), drawn by the engine at half size
+ * and remembered by what it shows: the canvas lays it over the design once edits settle.
+ */
 const previews = new Map();
+export const finishedLook = (scene) => previewOf(scene);
+/** Whether the finished look of this scene (by its JSON) has been asked for already. */
+export const finishedAsked = (key) => previews.has(key);
 function previewOf(scene) {
   const key = JSON.stringify(scene);
   if (!previews.has(key)) {
@@ -993,48 +1012,6 @@ function previewOf(scene) {
     if (previews.size > 20) previews.delete(previews.keys().next().value);
   }
   return previews.get(key);
-}
-
-export async function renderPreview() {
-  if (!hasDesign(S.scene) && !S.shots) return toast({ kind: "warn", title: "Nothing to preview yet", text: "Add a screenshot, a headline or a picture first." });
-  if (S.rendering) return;
-  const started = performance.now();
-  const known = previews.has(JSON.stringify(S.scene));
-  set(known ? { view: "render" } : { rendering: { label: "Rendering preview…" }, view: "render" });
-  try {
-    const r = await previewOf(S.scene);
-    renderResult(r, { preview: true, ms: known ? undefined : performance.now() - started });
-  } catch (e) {
-    fail(e, "Preview failed");
-  } finally {
-    set({ rendering: null });
-  }
-  // The screens either side are next: have them ready.
-  const shots = allShots();
-  if (shots) for (const j of [S.shot + 1, S.shot - 1]) if (shots[j]) previewOf(shots[j].scene).catch(() => undefined);
-}
-
-/** Every screen's preview for Preview's whole-set view, each handed over as it's ready (from memory when seen). */
-export function previewSet(onEach) {
-  const shots = allShots() ?? [{ scene: S.scene }];
-  shots.forEach((x, i) => previewOf(x.scene).then((r) => onEach(i, r), () => onEach(i, null)));
-}
-
-/** Preview one screen, or the whole set side by side as the store shows it. */
-export function setPreviewAll(on) {
-  set({ previewAll: on, view: "render" });
-  if (!on && !S.render) renderPreview();
-}
-
-/** In Preview, show another screen of the set: its preview, at once if it's been seen. */
-export function previewScreen(i) {
-  const shots = allShots();
-  if (!shots?.[i] || i === S.shot || S.rendering) return;
-  const shown = S.render;
-  goToShot(i);
-  // Until its preview is ready, the last one stays up under the "Rendering" veil.
-  if (!previews.has(JSON.stringify(S.scene))) set({ render: shown, renderStale: false });
-  renderPreview();
 }
 
 /** Exports carry the scene they came from, so the library can show each scene's versions. */
@@ -1065,7 +1042,7 @@ export async function restoreVersion(file) {
     const req = await res.json();
     for (const k of ["output", "preview", "quality", "format", "jpegQuality", "deliveryWidth", "studio", "video"]) delete req[k];
     setScene(req);
-    set({ view: "edit" });
+    set({ modal: null });
     toast({ kind: "ok", title: "Version restored", text: "Undo (⌘Z) goes back to what you had." });
   } catch (e) {
     fail(e, "Couldn't restore this version");
@@ -1076,21 +1053,13 @@ export async function exportImage() {
   if (!hasDesign(S.scene)) return toast({ kind: "warn", title: "Nothing to export yet", text: "Add a screenshot, a headline or a picture first." });
   if (S.rendering) return;
   const started = performance.now();
-  set({ rendering: { label: "Rendering full resolution…" }, view: "render", exportOpen: false });
+  set({ rendering: { label: "Exporting the image…" }, exportOpen: false });
   try {
     const r = await api(`/api/mockup${historyQuery()}`, deliveryRequest());
     renderResult(r, { preview: false, ms: performance.now() - started });
     touch("exported");
     refreshFiles();
-    toast({
-      kind: "ok",
-      title: "Image exported",
-      text: `${base(r.path)} · ${r.width}×${r.height}`,
-      actions: [
-        { label: "Show in Finder", run: () => reveal(r.path) },
-        { label: "Copy", run: () => copyImage(r.path) },
-      ],
-    });
+    toast({ kind: "ok", title: "Image exported", text: `${base(r.path)} · ${r.width}×${r.height}`, timeout: 9000, actions: resultActions(r, true) });
     for (const w of r.warnings ?? []) toast({ kind: "warn", title: "Note", text: w });
   } catch (e) {
     fail(e, "Export failed");
@@ -1118,6 +1087,7 @@ export async function exportWholeSet() {
     const r = await api(`/api/export-set${historyQuery()}`, { name: S.sceneName, sizes: sizes.map((z) => ({ label: z.label, screens: z.screens.map((x) => ({ scene: clone(x.scene), name: x.name })) })), folders: o.folders, format: o.format, jpegQuality: o.format === "jpeg" ? S.exportOpts.jpegQuality : undefined, contactSheets: o.sheets });
     const sheet = r.sizes.find((z) => z.contactSheet)?.contactSheet;
     if (sheet) renderResult({ path: sheet, width: 0, height: 0, sheet: true }, { preview: false, ms: performance.now() - started });
+    const opened = sheet ? [{ label: "Open the sheet", run: () => openViewer(sheet) }] : [];
     touch("exported");
     refreshFiles();
     toast({
@@ -1125,7 +1095,7 @@ export async function exportWholeSet() {
       title: `${n} images exported`,
       text: `${sizes.map((z) => `${z.label} · ${z.screens.length}`).join(", ")}. In ${base(r.directory)}${o.folders === "fastlane" ? ": give fastlane deliver its screenshots folder" : ""}.`,
       timeout: 9000,
-      actions: [{ label: "Show in Finder", run: () => reveal(o.folders === "fastlane" ? r.screenshots : r.directory) }],
+      actions: [...opened, { label: "Show in Finder", run: () => reveal(o.folders === "fastlane" ? r.screenshots : r.directory) }],
     });
   } catch (e) {
     fail(e, "Set export failed");
@@ -1226,7 +1196,7 @@ export async function exportVideo() {
   const versions = rest.map((size) => (fit ? { size, fit } : size));
   const started = performance.now();
   const what = shots ? `${shots.length} shot${shots.length === 1 ? "" : "s"}` : "video";
-  set({ rendering: { label: `Rendering the ${what}${sizes.length > 1 ? ` at ${sizes.length} sizes` : ""}…`, progress: 0 }, view: "render", exportOpen: false });
+  set({ rendering: { label: `Exporting the ${what}${sizes.length > 1 ? ` at ${sizes.length} sizes` : ""}…`, progress: 0 }, exportOpen: false });
   const job = followExport();
   try {
     let r;
@@ -1250,7 +1220,7 @@ export async function exportVideo() {
       }
     }
     const extra = r.versions?.length ? ` + ${r.versions.map((v) => v.label.split(" · ")[0] === "App Store" ? v.label : v.label.split(" · ")[0]).join(", ")}` : "";
-    toast({ kind: "ok", title: !shots ? "Video exported" : shots.length === 1 && allShots().length > 1 ? `Screen ${shots[0].at + 1}'s video exported` : `${shots.length}-shot video exported`, text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, actions: [{ label: "Show in Finder", run: () => reveal(r.path) }] });
+    toast({ kind: "ok", title: !shots ? "Video exported" : shots.length === 1 && allShots().length > 1 ? `Screen ${shots[0].at + 1}'s video exported` : `${shots.length}-screen video exported`, text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, timeout: 9000, actions: resultActions(r, false) });
     const notes = [...(r.warnings ?? []), ...(r.versions ?? []).flatMap((v) => (v.warnings ?? []).map((w) => `${v.label}: ${w}`))];
     if (notes.length) toast({ kind: "warn", title: "Worth knowing", text: notes.slice(0, 3).join(" "), timeout: 12000 });
   } catch (e) {
@@ -1270,11 +1240,11 @@ async function exportEachVideo(shots) {
   const versions = rest.map((size) => (fit ? { size, fit } : size));
   const started = performance.now();
   const done = [];
-  set({ view: "render", exportOpen: false });
+  set({ exportOpen: false });
   try {
     for (const [k, x] of shots.entries()) {
       const n = x.at + 1;
-      set({ rendering: { label: `Rendering screen ${n} (${k + 1} of ${shots.length})…`, progress: 0 } });
+      set({ rendering: { label: `Exporting screen ${n} (${k + 1} of ${shots.length})…`, progress: 0 } });
       const job = followExport();
       let r;
       try {
@@ -1288,7 +1258,7 @@ async function exportEachVideo(shots) {
     touch("exported");
     refreshFiles();
     const last = done[done.length - 1];
-    toast({ kind: "ok", title: `${done.length} videos exported`, text: `One for each screen${sizes.length > 1 ? `, at ${sizes.length} sizes` : ""}.`, actions: [{ label: "Show in Finder", run: () => reveal(last.path) }] });
+    toast({ kind: "ok", title: `${done.length} videos exported`, text: `One for each screen${sizes.length > 1 ? `, at ${sizes.length} sizes` : ""}.`, timeout: 9000, actions: resultActions(last, false) });
   } catch (e) {
     fail(e, done.length ? `Video export stopped after ${done.length} of ${shots.length}` : "Video export failed");
     if (done.length) refreshFiles();
@@ -1302,10 +1272,10 @@ export async function previewShots() {
   const shots = allShots();
   if (!shots || S.rendering) return;
   const started = performance.now();
-  set({ rendering: { label: `Looking at ${shots.length} shots…` }, view: "render" });
+  set({ rendering: { label: `Looking at ${shots.length} screens…` } });
   try {
     const r = await api("/api/sequence-board", { shots: sequenceShots(), size: (S.exportOpts.video.sizes ?? ["design"])[0] === "design" ? undefined : S.exportOpts.video.sizes[0] });
-    renderResult({ path: r.path, width: 0, height: 0, sheet: true, duration: r.duration }, { preview: true, ms: performance.now() - started });
+    renderResult({ path: r.path, width: 0, height: 0, sheet: true, duration: r.duration }, { preview: true, ms: performance.now() - started }, true);
   } catch (e) {
     fail(e, "Couldn't make the contact sheet");
   } finally {
@@ -1396,7 +1366,7 @@ export async function setCanvasSize(value) {
     return { ...x, scene };
   });
   checkpoint();
-  set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
+  set({ shots: next, scene: next[S.shot].scene });
   scheduleLayout(0);
   persist();
   toast({ kind: "ok", icon: "replace", title: `All ${next.length} screens are ${label}`, text: `${swapNote(value, n) || "The size is the set's: every screen has it."} Undo (⌘Z) puts every screen back.`, timeout: 6000, actions: [{ label: "Undo", run: undo }] });
@@ -1411,7 +1381,7 @@ export function setBackdropAcross(on) {
   if (!shots) return;
   checkpoint();
   const next = shots.map((x, i) => ({ ...x, scene: tidy({ ...x.scene, background: on ? S.scene.background : x.scene.background, backgroundSpan: on ? { count: shots.length, index: i } : undefined }) }));
-  set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
+  set({ shots: next, scene: next[S.shot].scene });
   scheduleLayout(0);
   persist();
   if (on) toast({ kind: "ok", icon: "image", title: `The background goes across all ${shots.length} screens`, text: "Each shows its slice, so swiping between them on the App Store reads as one picture. A device can carry on across them too (its Size & tilt). ⌘Z undoes it.", timeout: 7000 });
@@ -1423,7 +1393,7 @@ export function setLandscape(on) {
   if (!shots) return edit((d) => (d.landscape = on || undefined));
   const next = shots.map((x) => ({ ...x, scene: { ...x.scene, landscape: on || undefined } }));
   checkpoint();
-  set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
+  set({ shots: next, scene: next[S.shot].scene });
   scheduleLayout(0);
   persist();
 }
@@ -1447,7 +1417,7 @@ export function goToSize(i) {
   const groups = allGroups();
   if (!groups || i === S.group || !groups[i]) return;
   const shots = groups[i].shots;
-  set({ groups, group: i, shots: shots.length > 1 ? shots : null, shot: 0, scene: shots[0].scene, selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  set({ groups, group: i, shots: shots.length > 1 ? shots : null, shot: 0, scene: shots[0].scene, selected: null, animSel: null, animRows: [], render: null, stillPick: null });
   scheduleLayout(0);
   persist();
 }
@@ -1556,7 +1526,7 @@ export function goToShot(i) {
   // The screen being left keeps its layout for the row; the one opened starts from the row's.
   rememberLayout(S.scene, S.layout);
   const known = knownLayout(shots[i].scene);
-  set({ shots, shot: i, scene: shots[i].scene, ...(known ? { layout: known } : {}), selected: null, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  set({ shots, shot: i, scene: shots[i].scene, ...(known ? { layout: known } : {}), selected: null, animSel: null, animRows: [], render: null, stillPick: null });
   scheduleLayout(0);
   persist();
 }
@@ -1586,7 +1556,7 @@ export function carryDeviceOver(index) {
   const target = shots[to].scene;
   target.devices = [...(target.devices ?? []), { ...dev, x: r4(dev.x - dir) }];
   rememberLayout(S.scene, S.layout);
-  set({ shots, shot: to, scene: target, selected: `device-${target.devices.length}`, animSel: null, animRows: [], render: null, renderStale: false, stillPick: null });
+  set({ shots, shot: to, scene: target, selected: `device-${target.devices.length}`, animSel: null, animRows: [], render: null, stillPick: null });
   scheduleLayout(0);
   persist();
   return true;
@@ -1611,7 +1581,7 @@ export async function addShot(from = "copy", { at, copyOf } = {}) {
   shots.splice(at, 0, { scene, transition: { type: "fade", duration: 0.5 } });
   set({ shots, shot: S.shots ? (S.shot >= at ? S.shot + 1 : S.shot) : at === 0 ? 1 : 0 });
   goToShot(at);
-  toast({ kind: "ok", title: `Screen ${at + 1} added`, text: from === "copy" ? "A copy to change. In Animate the screens play in order as a video." : "Change it here: it's its own copy.", timeout: 3200 });
+  toast({ kind: "ok", title: `Screen ${at + 1} added`, text: from === "copy" ? "A copy to change. On the timeline (⌘T) the screens play in order as a video." : "Change it here: it's its own copy.", timeout: 3200 });
 }
 
 /** A screen's name: the one it was given, else its headline, else its number. */
@@ -1708,7 +1678,7 @@ async function toPng(blob) {
 
 export function openAI(context) {
   // Docked, it opens in the right-hand panel (shown if it was hidden).
-  set({ ai: { ...S.ai, open: true, error: null, context: context !== false }, selected: typeof context === "string" ? context : S.selected, view: "canvas", ...(S.ai.docked ? { rightOpen: true } : {}) });
+  set({ ai: { ...S.ai, open: true, error: null, context: context !== false }, selected: typeof context === "string" ? context : S.selected, ...(S.ai.docked ? { rightOpen: true } : {}) });
   setTimeout(() => document.querySelector(".ai-chat textarea")?.focus(), 30);
 }
 
@@ -1807,7 +1777,7 @@ export async function aiEdit(text) {
     const pulse = r.changed.filter((c) => !["background", "canvas"].includes(c));
     // A change to the timeline shows in Animate.
     const timeline = r.operations.some((o) => o.path.startsWith("/animations"));
-    set({ ai: { ...S.ai, busy: false, work: null, error: null, last: r, thread: [...S.ai.thread, reply] }, pulse, view: "canvas", ...(timeline ? { timelineOpen: true, animSel: null } : {}) });
+    set({ ai: { ...S.ai, busy: false, work: null, error: null, last: r, thread: [...S.ai.thread, reply] }, pulse, ...(timeline ? { timelineOpen: true, animSel: null } : {}) });
     setTimeout(() => set({ pulse: [] }), 1700);
     settle(reply.id);
     persist();
@@ -2095,8 +2065,6 @@ export async function newScene() {
     future: [],
     selected: null,
     render: null,
-    renderStale: false,
-    view: "canvas",
     scenesOpen: false,
     ai: { ...S.ai, thread: [] },
   });
@@ -2193,8 +2161,6 @@ export async function openScreenshot(r) {
     future: [],
     selected: null,
     render: null,
-    renderStale: false,
-    view: "canvas",
     scenesOpen: false,
     scenesPage: false,
     timelineOpen: false,
@@ -2264,8 +2230,6 @@ export async function openRecording(r) {
     future: [],
     selected: null,
     render: null,
-    renderStale: false,
-    view: "canvas",
     scenesOpen: false,
     scenesPage: false,
     timelineOpen: true,
@@ -2288,7 +2252,7 @@ export async function openScene(id) {
     // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
     const groups = saved.groups?.length > 1 ? saved.groups : null;
-    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
@@ -2325,7 +2289,7 @@ export async function pickUpAgentChanges(scenes, known) {
           const shots = theirSizes ? theirSizes[group].shots : saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : [{ scene: saved.scene }];
           const shot = Math.min(group === S.group ? S.shot : 0, shots.length - 1);
           checkpoint();
-          set({ sceneStamp: saved.updatedAt, groups: theirSizes, group, shots: shots.length > 1 ? shots : null, shot: shots.length > 1 ? shot : 0, scene: shots[shot].scene, sceneName: saved.name, selected: null, render: null, renderStale: false });
+          set({ sceneStamp: saved.updatedAt, groups: theirSizes, group, shots: shots.length > 1 ? shots : null, shot: shots.length > 1 ? shot : 0, scene: shots[shot].scene, sceneName: saved.name, selected: null, render: null });
           scheduleLayout(0);
           toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: theirSizes ? `${theirSizes.length} sizes.` : undefined, timeout: 9000, actions: [{ label: "Undo", run: undo }] });
         } else set({ sceneStamp: saved.updatedAt });
@@ -2337,7 +2301,7 @@ export async function pickUpAgentChanges(scenes, known) {
       if ((theirs || ours) && JSON.stringify(theirs?.map((x) => [x.scene, x.length, x.transition])) !== JSON.stringify(ours?.map((x) => [x.scene, x.length, x.transition]))) {
         const shot = theirs ? Math.min(S.shot, theirs.length - 1) : 0;
         checkpoint();
-        set({ sceneStamp: saved.updatedAt, shots: theirs, shot, scene: theirs ? theirs[shot].scene : saved.scene, sceneName: saved.name, selected: null, render: null, renderStale: false });
+        set({ sceneStamp: saved.updatedAt, shots: theirs, shot, scene: theirs ? theirs[shot].scene : saved.scene, sceneName: saved.name, selected: null, render: null });
         scheduleLayout(0);
         toast({ kind: "ok", icon: "spark", title: theirs ? `An agent updated this video (${theirs.length} shots)` : "An agent updated this design", timeout: 9000, actions: [{ label: "Undo", run: undo }] });
         return;
@@ -2351,7 +2315,7 @@ export async function pickUpAgentChanges(scenes, known) {
         toast({ kind: "ok", icon: "spark", title: "An agent updated shot 1", timeout: 9000, actions: [{ label: "Show it", run: () => goToShot(0) }] });
       } else if (differs) {
         setScene(saved.scene);
-        set({ sceneName: saved.name, selected: null, render: null, renderStale: false });
+        set({ sceneName: saved.name, selected: null, render: null });
         toast({ kind: "ok", icon: "spark", title: "An agent updated this design", text: "Its version is on the canvas.", timeout: 9000, actions: [{ label: "Undo", run: () => undo() }] });
       }
     } catch {
