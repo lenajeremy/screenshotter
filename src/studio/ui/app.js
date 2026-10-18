@@ -263,6 +263,9 @@ const TABS = [
 /** Which rail tab the left panel's tab belongs to (Text, Shapes and Pictures are all Elements). */
 const railOf = (tab) => (isElementsTab(tab) ? "elements" : tab);
 
+/** The rail's tabs that apply to the design: a recording has no screenshots or templates to choose. */
+const tabsFor = (scene) => (scene.recording?.duration ? TABS.filter((t) => t.id === "backgrounds" || t.id === "elements") : TABS);
+
 function Rail() {
   const s = useStore();
   const pick = (id) => {
@@ -273,7 +276,7 @@ function Rail() {
     persistPrefs();
   };
   return html`<nav class="rail">
-    ${TABS.map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && railOf(s.leftTab) === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
+    ${tabsFor(s.scene).map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && railOf(s.leftTab) === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
       <span class="ico"><${Icon} n=${t.icon} s=${18} /></span>
       <span class="rl">${t.label}</span>
       <span class="tip">${t.tip}</span>
@@ -289,7 +292,9 @@ function Rail() {
 function LeftPanel() {
   const s = useStore();
   if (isElementsTab(s.leftTab)) return html`<${ElementsPanel} />`;
-  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel }[s.leftTab] ?? CapturesPanel;
+  // A recording: its Backgrounds stand in for a tab it doesn't have.
+  const tab = tabsFor(s.scene).some((t) => t.id === s.leftTab) ? s.leftTab : "backgrounds";
+  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel }[tab] ?? CapturesPanel;
   return html`<${P} />`;
 }
 

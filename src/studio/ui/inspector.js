@@ -843,7 +843,7 @@ function FrameSection() {
   const bg = s.scene.background;
   const still = bg && !bgObj(bg).generate && bgObj(bg).type !== "transparent" ? `url("/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(bg))}&w=120&h=120")` : null;
   return html`
-    <${Section} title="Frame">
+    <${Section} title="Look">
       <div class="row"><label>Padding</label><${Slider} value=${Math.max(0, (1 - (s.scene.devices[0]?.height ?? 1)) / 2)} min=${0} max=${0.25} step=${0.005} reset=${0} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setFrame({ padding: v ?? 0 })} /></div>
       <div class="row"><label>Corners</label><${Slider} value=${s.scene.devices[0]?.radius ?? 0} min=${0} max=${0.12} step=${0.002} reset=${0} format=${(v) => (v ? Math.round(v * 1000) / 10 + "%" : "Square")} onChange=${(v) => setFrame({ radius: v ?? 0 })} /></div>
       <div class="row"><label>Shadow</label><div class="chips">${["none", "soft", "medium", "strong"].map((sh) => html`<button class="chip sm ${(s.scene.devices[0]?.shadow ?? "none") === sh ? "on" : ""}" onClick=${() => setFrame({ shadow: sh })}>${sh[0].toUpperCase() + sh.slice(1)}</button>`)}</div></div>
@@ -862,9 +862,10 @@ function PlainInspector() {
 }
 
 /**
- * A screen recording's own settings, each one a switch: its cursor (drawn from the log the
- * capture bar kept, so it can be smoothed, sized or hidden), the click ripple, zooms onto the
- * clicks, the camera following the cursor when zoomed, and the sound.
+ * A screen recording's own settings, in the order they're used: its look (padding, corners,
+ * shadow, background), the camera bubble, the cursor (drawn from the log the capture bar kept,
+ * so it can be smoothed, sized or hidden, with a ripple on clicks), zooms onto the clicks with
+ * the camera following the cursor, and the sound.
  */
 function RecordingInspector() {
   const s = useStore();
@@ -872,6 +873,8 @@ function RecordingInspector() {
   const c = rec.cursor;
   const cursor = (patch) => setRecording({ cursor: patch });
   return html`
+    <${FrameSection} />
+    <${BubbleSection} />
     <${Section} title="Cursor">
       ${c?.log
         ? html`<${Switch} checked=${c.show !== false} label="Show the cursor" onChange=${(v) => cursor({ show: v })} />
@@ -889,10 +892,27 @@ function RecordingInspector() {
       <div class="note">${rec.autoZoom ? "Its zooms are on the Camera row: drag, change or delete any. Turning this off removes only the ones it made." : "Zoom in where you click, and back out after."}</div>
       <${Switch} checked=${Boolean(rec.follow)} label="Follow the cursor when zoomed in" onChange=${(v) => setRecording({ follow: v })} />
     <//>`}
-    <${FrameSection} />
     <${Section} title="Sound">
       <${Switch} checked=${rec.sound !== false} label="Keep the recording's sound" onChange=${(v) => setRecording({ sound: v })} />
+      <div class="note">Cut, move or quieten it on the Sound row of the timeline. ⌘B cuts the footage, sound and all.</div>
     <//>`;
+}
+
+/** The webcam's bubble over a recording: its shape, its size and a ring. It's moved on the design. */
+function BubbleSection() {
+  const s = useStore();
+  const i = s.scene.devices.findIndex((d) => d.fixed && d.video);
+  if (i < 0) return null;
+  const d = s.scene.devices[i];
+  const upd = (fn, key) => edit((sc) => fn(sc.devices[i]), key && `bubble.${key}`);
+  const r = d.radius ?? 0;
+  const shape = r >= 0.45 ? "circle" : r > 0.01 ? "rounded" : "square";
+  return html`<${Section} title="Webcam">
+    <div class="row"><label>Shape</label><${Seg} value=${shape} options=${[{ value: "circle", label: "Circle" }, { value: "rounded", label: "Rounded" }, { value: "square", label: "Square" }]} onChange=${(v) => upd((x) => (x.radius = v === "circle" ? 0.5 : v === "rounded" ? 0.18 : 0))} /></div>
+    <div class="row"><label>Size</label><${Slider} value=${d.height} min=${0.08} max=${0.6} step=${0.005} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => v && upd((x) => (x.height = Math.round(v * 1000) / 1000), "size")} /></div>
+    <${Switch} checked=${Boolean(d.ring)} label="A white ring round it" onChange=${(v) => upd((x) => (x.ring = v || undefined))} />
+    <div class="note">Drag it on the design to move it. Moves you made while recording are on its row of the timeline.</div>
+  <//>`;
 }
 
 function SceneInspector() {
