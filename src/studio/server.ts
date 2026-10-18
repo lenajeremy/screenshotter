@@ -23,7 +23,7 @@ import { madeBackdrop } from "../render/background.js";
 import { setImageQuality } from "../render/photos.js";
 import { STILL, isRecording, momentThumb, saveStill, stillMoments } from "./stills.js";
 import { waveform } from "./waveform.js";
-import { asJpeg, findWallpaper, macWallpapers } from "../render/wallpapers.js";
+import { asJpeg, downloadWallpaper, findWallpaper, macWallpapers } from "../render/wallpapers.js";
 import { createVideo, VideoInputSchema } from "../render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputSchema } from "../render/sequence.js";
 import { captureScreenshot } from "../simulator/capture.js";
@@ -496,7 +496,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   }
   // macOS's own wallpapers: those on this Mac, and the rest of Apple's set to download.
   if (req.method === "GET" && url.pathname === "/api/wallpapers") {
-    return send(200, (await macWallpapers()).map((w) => ({ name: w.name, here: Boolean(w.file), thumb: `/api/wallpaper-thumb?name=${encodeURIComponent(w.name)}` })));
+    return send(200, (await macWallpapers()).map((w) => ({ name: w.name, here: Boolean(w.file), download: w.download, thumb: w.thumb || w.file ? `/api/wallpaper-thumb?name=${encodeURIComponent(w.name)}` : null })));
   }
   if (req.method === "GET" && url.pathname === "/api/wallpaper-thumb") {
     const w = await findWallpaper(url.searchParams.get("name") ?? "");
@@ -872,9 +872,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       if (!path.resolve(p).startsWith(root + path.sep)) throw new HttpError(403, "Only files in the output folder can be deleted");
       return send(200, { deleted: deleteWithCompanions(p) });
     }
-    case "/api/wallpaper-settings": {
-      // System Settings › Wallpaper, where Apple's other wallpapers download.
-      await run("open", ["x-apple.systempreferences:com.apple.Wallpaper-Settings.extension"], { timeoutMs: 10_000 });
+    case "/api/wallpaper-download": {
+      // One of Apple's wallpapers, from Apple, kept on this Mac.
+      const { name } = await json<{ name: string }>(req);
+      if (typeof name !== "string" || !name.trim()) throw new HttpError(400, "Which wallpaper?");
+      await downloadWallpaper(name);
       return send(200, { ok: true });
     }
     case "/api/open-simulator": {

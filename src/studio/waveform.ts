@@ -3,7 +3,10 @@
  * (0 to 100, on a square-root scale so quiet speech still shows), read once per file.
  */
 import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { cacheDir } from "../util/files.js";
 
 export interface Waveform {
   /** Seconds of sound (0: the file has none). */
@@ -18,10 +21,18 @@ const SAMPLE_RATE = 4000;
 const cache = new Map<string, Promise<Waveform>>();
 
 export function waveform(file: string): Promise<Waveform> {
-  const key = `${file}:${statSync(file).mtimeMs}`;
+  const st = statSync(file);
+  const key = `${file}:${st.size}:${st.mtimeMs}`;
   let w = cache.get(key);
   if (!w) {
-    w = read(file);
+    // Read once, and kept on disk too: a long recording's takes a while to read.
+    const saved = path.join(cacheDir("waveforms"), `${createHash("sha1").update(key).digest("hex").slice(0, 20)}.json`);
+    w = existsSync(saved)
+      ? Promise.resolve(JSON.parse(readFileSync(saved, "utf8")) as Waveform)
+      : read(file).then((v) => {
+          writeFileSync(saved, JSON.stringify(v));
+          return v;
+        });
     cache.set(key, w);
     w.catch(() => cache.delete(key));
   }

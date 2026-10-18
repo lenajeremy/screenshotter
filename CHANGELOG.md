@@ -11,8 +11,8 @@
 - **The Screen Studio look.** A recording's (or a screenshot's) **Frame**: padding over any backdrop, rounded corners, a shadow.
 - **Screenshots without a frame.** **Edit in Screenshotter** opens a capture as a design of its own, filling a canvas its size. In the Screenshots panel, **Add them** chooses how new screenshots come in (in a device, with no frame, or rounded), and a design whose screenshots are frameless keeps adding them that way.
 - **The timeline zooms.** Stretch it out (the slider, ⌘-scroll or a pinch) to work on a long recording; it scrolls, and Fit shows it all again. Moving the camera bubble while recording now moves it in the video.
-- **Edit the sound.** A recording's sound is a row of its own in Animate, its waveform drawn: drag a piece to move it, drag its ends to trim it, **Cut at the playhead** (⌘B) and delete what you don't want (⌫). Each piece has its own volume and fades in and out, and the export plays exactly what the row shows.
-- **macOS wallpapers as backdrops.** The Backdrop panel shows the wallpapers this Mac has (Sonoma, the iMac colours…), read from macOS and working offline, and lists Apple's others to download once in System Settings › Wallpaper.
+- **Edit the sound.** A recording's sound is a row of its own in Animate, its waveform drawn: drag a piece to move it, drag its ends to trim it, **Cut at the playhead** (⌘B) and delete what you don't want (⌫), or right-click a piece. Pieces never overlap; ← and → nudge one; one moved near where it was recorded snaps back in step. Each piece has its own volume and fades, cuts don't click, and the export plays exactly what the row shows (videos of several shots keep each shot's sound too).
+- **macOS wallpapers as backdrops.** The Backdrop panel has all of Apple's: the ones on this Mac (Sonoma, the iMac colours…), and the rest download from Apple the first time you pick one (or all at once), then work offline.
 - **Pretty from the start.** A recording or screenshot opens with room round it (5%), rounded corners (3%) and a soft shadow, on this Mac's newest wallpaper.
 
 ### Fixes
@@ -20,6 +20,7 @@
 - The editor keeps the webcam within a few hundredths of a second of the recording as it plays (it could drift a quarter of a second).
 - A round webcam stays round in a fast export (it played as a square behind its ring).
 - Starting a recording no longer freezes the bar, bubble and pill while the camera and microphone get ready; the screen and camera record in the encoder's own format, lighter on the Mac.
+- The Screenshots panel's **Add them** choices show their names again, and the timeline's ruler reads 1s, not 1.s.
 - The countdown says "Recording starts in", fills a ring as it runs out, and ticks (the bar's ⋯ menu turns the sound off).
 
 ## 0.11.6 · 3 October 2026

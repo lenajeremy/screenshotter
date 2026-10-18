@@ -67,8 +67,8 @@ import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from ".
 import { ContextMenu, openMenu } from "./menu.js";
 import { BackgroundsPanel, CapturesPanel, DesignsPanel, ImagesPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
-import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play } from "./timeline.js";
-import { deleteSound, hasSoundRow } from "./sound.js";
+import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play, videoLength } from "./timeline.js";
+import { deleteSound, hasSoundRow, nudgeSound } from "./sound.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
 // =============================================================================================
@@ -1818,6 +1818,7 @@ window.addEventListener("keydown", (e) => {
     if (S.animSel !== null && e.key === "Escape") return set({ animSel: null });
     if (S.soundSel != null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteSound(S.soundSel);
     if (S.soundSel != null && e.key === "Escape") return set({ soundSel: null });
+    if (S.soundSel != null && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return e.preventDefault(), nudgeSound((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 0.1), videoLength());
   }
   if (e.key === "Escape") {
     if (S.stillPick) return closeStills(true);

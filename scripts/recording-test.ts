@@ -33,6 +33,8 @@ mkdirSync(PARTS, { recursive: true });
 writeFileSync(path.join(tmp, "studio.json"), JSON.stringify({ folder: LIB }));
 process.env.SCREENSHOTTER_STUDIO_FILE = path.join(tmp, "studio.json");
 process.env.SCREENSHOTTER_SEEN_FILE = path.join(tmp, "seen.json");
+// What's new never opens over the tests.
+writeFileSync(path.join(tmp, "seen.json"), JSON.stringify({ seen: "999.0.0" }));
 process.env.SCREENSHOTTER_STYLE_FILE = path.join(tmp, "style.json");
 process.env.SCREENSHOTTER_OUTPUT_DIR = LIB;
 

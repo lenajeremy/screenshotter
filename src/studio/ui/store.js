@@ -279,6 +279,8 @@ export function edit(fn, key) {
 export const undo = () => step(true);
 export const redo = () => step(false);
 function fixSelection() {
+  // A piece of sound is chosen by its place in the list, which an undo may have changed.
+  if (S.soundSel != null) set({ soundSel: null });
   const s = S.selected;
   if (!s) return;
   const [kind, n] = s.split("-");

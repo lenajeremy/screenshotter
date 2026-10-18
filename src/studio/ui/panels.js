@@ -205,7 +205,7 @@ export function CapturesPanel() {
     </div>
     <div class="panel-body">
       <div class="intro">Bring in a screenshot of your app, then click it to put it in the design.</div>
-      <div class="row"><label>Add them</label><${Seg} value=${c.frame ?? "device"} options=${[["device", "In a device"], ["none", "No frame"], ["card", "Rounded"]]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
+      <div class="row"><label>Add them</label><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "In a device" }, { value: "none", label: "No frame" }, { value: "card", label: "Rounded" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
       ${s.replacing &&
       html`<div class="insp-hero" style=${{ boxShadow: "inset 0 0 0 1px var(--iris)", background: "var(--iris-soft)" }}>
         <${Icon} n="replace" s=${16} />
@@ -323,39 +323,81 @@ function LookTile({ l, on }) {
   </button>`;
 }
 
-/** macOS's own wallpapers, read from this Mac; Apple's others download in System Settings › Wallpaper. */
+/**
+ * macOS's wallpapers: the ones on this Mac, then the rest of Apple's set, each downloaded from Apple
+ * the first time it's chosen (and kept, for use offline).
+ */
 function MacWallpapers() {
   const s = useStore();
   const o = bgObj(s.scene.background);
   const [list, setList] = useState(null);
   const [all, setAll] = useState(false);
+  const [getting, setGetting] = useState({});
+  const [bulk, setBulk] = useState(null);
+  const stop = useRef(false);
+  const refresh = () => api("/api/wallpapers").then(setList, () => setList([]));
   useEffect(() => {
-    api("/api/wallpapers").then(setList, () => setList([]));
+    refresh();
+    return () => (stop.current = true);
   }, []);
   if (!list?.length) return null;
   const here = list.filter((w) => w.here);
   const more = list.filter((w) => !w.here);
-  const pick = (w) => {
-    if (!w.here) {
-      api("/api/wallpaper-settings", {}).catch(() => undefined);
-      return toast({ kind: "info", icon: "image", title: `Get “${w.name}” from Apple`, text: "System Settings › Wallpaper is opening: choose it there once to download it, and it'll be here." });
+  const mb = (b) => `${Math.max(1, Math.round(b / 1e6))} MB`;
+  const fetchOne = async (w) => {
+    setGetting((g) => ({ ...g, [w.name]: true }));
+    try {
+      await api("/api/wallpaper-download", { name: w.name });
+      return true;
+    } catch (e) {
+      fail(e, `Couldn't download ${w.name}`);
+      return false;
+    } finally {
+      setGetting((g) => ({ ...g, [w.name]: false }));
     }
+  };
+  const use = (w) => {
     const t = keepTreatment(S.scene.background);
     setBackground({ photo: `macos:${w.name}`, ...t });
   };
-  return html`<${Section} title="macOS wallpapers" count=${here.length}>
-    <div class="looks">${(all ? list : here).map((w) => html`<${WallpaperTile} key=${w.name} w=${w} on=${o.photo === `macos:${w.name}`} pick=${pick} />`)}</div>
-    ${more.length > 0 && html`<button class="btn sm ghost wall-more" onClick=${() => setAll(!all)}><${Icon} n=${all ? "up" : "down"} s=${12} />${all ? "Just the ones on this Mac" : `${more.length} more of Apple's, to download`}</button>`}
+  const pick = async (w) => {
+    if (getting[w.name] || bulk) return;
+    if (!w.here && !(await fetchOne(w))) return;
+    use(w);
+    if (!w.here) refresh();
+  };
+  const getAll = async () => {
+    if (bulk) return (stop.current = true);
+    stop.current = false;
+    const todo = more.slice();
+    for (let k = 0; k < todo.length && !stop.current; k++) {
+      setBulk({ done: k, total: todo.length });
+      await fetchOne(todo[k]);
+    }
+    setBulk(null);
+    stop.current = false;
+    refresh();
+  };
+  const left = more.reduce((n, w) => n + (w.download ?? 0), 0);
+  return html`<${Section} title="macOS wallpapers" count=${list.length}>
+    <div class="looks">${(all ? list : here).map((w) => html`<${WallpaperTile} key=${w.name} w=${w} on=${o.photo === `macos:${w.name}`} busy=${getting[w.name]} size=${w.download && mb(w.download)} pick=${pick} />`)}</div>
+    ${more.length > 0 &&
+    html`<div class="hstack wall-more">
+      <button class="btn sm ghost" onClick=${() => setAll(!all)}><${Icon} n=${all ? "up" : "down"} s=${12} />${all ? "Only the ones on this Mac" : `${more.length} more from Apple`}</button>
+      <span class="grow"></span>
+      ${all && html`<button class="btn sm" title="Download every one of Apple's wallpapers now, for use offline" onClick=${getAll}>${bulk ? `Stop (${bulk.done} of ${bulk.total})` : `Download all · ${(left / 1e9).toFixed(1)} GB`}</button>`}
+    </div>`}
   <//>`;
 }
 
-function WallpaperTile({ w, on, pick }) {
+function WallpaperTile({ w, on, busy, size, pick }) {
   const [ready, setReady] = useState(false);
-  return html`<button class="look ${on ? "on" : ""} ${w.here ? "" : "fetch"}" title=${w.here ? w.name : `${w.name}: download it once in System Settings › Wallpaper`} onClick=${() => pick(w)}>
+  return html`<button class="look wall ${on ? "on" : ""} ${w.here ? "" : "fetch"}" title=${w.here ? w.name : `${w.name}: click to download it from Apple (${size}), then it's here for good`} onClick=${() => pick(w)}>
     <div class="sw"></div>
-    <img class=${ready ? "ready" : ""} loading="lazy" src=${w.thumb} onLoad=${() => setReady(true)} />
+    ${w.thumb && html`<img class=${ready ? "ready" : ""} loading="lazy" src=${w.thumb} onLoad=${() => setReady(true)} />`}
     <div class="name">${w.name}</div>
-    ${!w.here && html`<span class="get" title="Download in System Settings"><${Icon} n="down" s=${12} w=${2.4} /></span>`}
+    ${!w.here && html`<span class="get">${busy ? html`<i class="spin"></i>` : html`<${Icon} n="down" s=${12} w=${2.4} />`}</span>`}
+    ${!w.here && size && !busy && html`<span class="size">${size}</span>`}
     ${on && html`<span class="check"><${Icon} n="check" s=${12} w=${2.6} /></span>`}
   </button>`;
 }

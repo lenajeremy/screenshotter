@@ -2226,6 +2226,8 @@ export async function openRecording(r) {
       // zooms onto the clicks; following it when zoomed: each can be turned off.
       recording: tidy({
         duration: r.duration,
+        // Its video, where its sound is (for the Sound row, whatever happens to the layers).
+        video: r.video,
         sound: true,
         saveTo: r.saveTo,
         saveName: r.saveName,

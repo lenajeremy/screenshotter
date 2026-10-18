@@ -1,69 +1,137 @@
 // The video's sound, on its own row of the timeline: pieces of sound to move, trim, cut and turn
-// down, each a stretch of a file (a recording's voice, to start with) placed at a time. The export
-// plays exactly these; the editor plays them in step with the playhead, each on an <audio> of its own.
+// down, each a stretch of a file (a recording's voice, to start with) placed at a time. One row, so
+// pieces never overlap: each moves and stretches only into the room beside it. The export plays
+// exactly these pieces; the editor plays them in step with the playhead.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "./controls.js";
+import { openMenu } from "./menu.js";
 import { S, api, clamp, edit, fileUrl, set, useStore } from "./store.js";
 
 export const SOUND = "sound";
+/** The shortest a piece can be, in seconds. */
+const MIN = 0.1;
 const r3 = (v) => Math.round(v * 1000) / 1000;
-export const pieceLength = (c) => Math.max(0, (c.to ?? 0) - (c.from ?? 0));
 
-/** The pieces: the design's own, or (until one's changed) a recording's whole sound from the start. */
+/** The recording's video, where its sound is (remembered by the design; older ones: the first device's). */
+export const recordingVideo = (scene = S.scene) => scene.recording?.video ?? scene.devices?.[0]?.video;
+/** The video the canvas plays as the recording, whose own sound the editor plays. */
+const masterVideo = (scene = S.scene) => (scene.recording ? scene.devices?.[0]?.video : undefined);
+
+// Each file's waveform ({ duration, rate, peaks }), fetched once: { promise, value, missing }.
+const waves = new Map();
+
+/** How long a file's sound runs: its waveform's length once read, else the recording's; unknown: undefined. */
+export function sourceLength(src, scene = S.scene) {
+  const w = waves.get(src)?.value;
+  if (w?.duration > 0) return w.duration;
+  if (src === recordingVideo(scene) && scene.recording?.duration) return scene.recording.duration;
+  return undefined;
+}
+
+/** Where a piece ends in its file: as given, else the file's end (until that's known, the video's). */
+export const toOf = (c, scene = S.scene) => c.to ?? sourceLength(c.src, scene) ?? (c.from ?? 0) + Math.max(MIN, (scene.recording?.duration ?? 10) - c.at);
+export const pieceLength = (c, scene = S.scene) => Math.max(0, toOf(c, scene) - (c.from ?? 0));
+const endOf = (c, scene = S.scene) => c.at + pieceLength(c, scene);
+
+/** The pieces: the design's own, or (until one's changed) the recording's whole sound from the start. */
 export function soundClips(scene = S.scene) {
   if (scene.sounds) return scene.sounds;
-  const rec = scene.recording;
-  const src = scene.devices?.[0]?.video;
-  return rec?.duration && src ? [{ src, at: 0, from: 0, to: rec.duration }] : [];
+  const src = recordingVideo(scene);
+  return scene.recording?.duration && src ? [{ src, at: 0, from: 0, to: scene.recording.duration }] : [];
 }
 
 /** Whether the design has a Sound row: a recording does, and so does a design with sound of its own. */
-export const hasSoundRow = (scene = S.scene) => Boolean(scene.sounds || (scene.recording?.duration && scene.devices?.[0]?.video));
+export const hasSoundRow = (scene = S.scene) => Boolean(scene.sounds || (scene.recording?.duration && recordingVideo(scene)));
 
 /** Whether the sound plays at all (a recording's can be turned off in its panel). */
 const soundOn = (scene = S.scene) => scene.recording?.sound !== false;
 
-/** Change the pieces. The first change makes the recording's own sound a piece of the design. */
+/**
+ * Change the pieces. They're made the design's own first (each with its end written down), then
+ * kept in time order with the chosen piece still chosen. `fn` may return a piece to choose instead.
+ */
 export function editSounds(fn, key) {
+  const chosen = S.soundSel;
+  let pick = chosen;
   const start = soundClips(S.scene).map((c) => ({ ...c }));
   edit((d) => {
-    d.sounds = d.sounds ?? start;
-    fn(d.sounds);
+    d.sounds = (d.sounds ?? start).map((c) => ({ ...c, from: c.from ?? 0, to: c.to ?? r3(toOf(c, d)) }));
+    const was = chosen != null ? d.sounds[chosen] : undefined;
+    const now = fn(d.sounds);
+    d.sounds.sort((a, b) => a.at - b.at);
+    const want = now ?? was;
+    pick = want ? d.sounds.indexOf(want) : null;
   }, key);
+  if (pick !== chosen) set({ soundSel: pick != null && pick >= 0 ? pick : null });
 }
 
 export const selectSound = (i) => set({ soundSel: i, animSel: null, animRows: [SOUND], rightOpen: true });
 
-const inside = (c, t) => Boolean(c) && t > c.at + 0.05 && t < c.at + pieceLength(c) - 0.05;
+const inside = (c, t) => Boolean(c) && t > c.at + 0.05 && t < endOf(c) - 0.05;
 
-/** The piece sounding at `t` (the one added last, where they overlap); -1 for none. */
+/** The piece sounding at `t` (the later one, where they overlap); -1 for none. */
 export function pieceAt(t, list = soundClips()) {
   for (let i = list.length - 1; i >= 0; i--) if (inside(list[i], t)) return i;
   return -1;
 }
 
-/** Cut a piece in two at `t`: the selected one, or the one sounding then. Whether it could. */
+/**
+ * The room piece `i` has on the row: from the end of the piece before it to the start of the one
+ * after. Pieces that already overlap (written that way by hand) aren't pushed apart.
+ */
+function room(list, i) {
+  const c = list[i];
+  let lo = 0;
+  let hi = Infinity;
+  list.forEach((o, k) => {
+    if (k === i) return;
+    if (o.at < c.at || (o.at === c.at && k < i)) lo = Math.max(lo, endOf(o));
+    else hi = Math.min(hi, o.at);
+  });
+  return { lo: Math.min(lo, c.at), hi: Math.max(hi, endOf(c)) };
+}
+
+/** Cut a piece in two at `t`: the chosen one, or the one sounding then. Whether it could. */
 export function splitSound(t) {
   const list = soundClips();
-  const i = S.soundSel !== null && inside(list[S.soundSel], t) ? S.soundSel : pieceAt(t, list);
+  const i = S.soundSel != null && inside(list[S.soundSel], t) ? S.soundSel : pieceAt(t, list);
   if (i < 0) return false;
-  const cut = r3(list[i].from + (t - list[i].at));
   editSounds((l) => {
     const a = l[i];
+    const cut = r3(a.from + (t - a.at));
     const b = { ...a, at: r3(t), from: cut };
     // The fades stay at the outer ends.
     delete b.fadeIn;
     a.to = cut;
     delete a.fadeOut;
     l.splice(i + 1, 0, b);
+    return b;
   });
-  set({ soundSel: i + 1, animSel: null, animRows: [SOUND] });
+  set({ animSel: null, animRows: [SOUND] });
   return true;
 }
 
 export function deleteSound(i) {
-  editSounds((l) => l.splice(i, 1));
+  if (!soundClips()[i]) return;
+  editSounds((l) => void l.splice(i, 1));
   set({ soundSel: null });
+}
+
+/** Move piece `i` to start at `at`, as far as its room allows (and never past the video's end). */
+export function placeSound(i, at, len = Infinity, key) {
+  const list = soundClips();
+  const c = list[i];
+  if (!c) return;
+  const { lo, hi } = room(list, i);
+  const next = r3(clamp(at, Math.max(0, lo), Math.max(lo, Math.min(hi - pieceLength(c), len - MIN))));
+  if (next !== c.at) editSounds((l) => void (l[i].at = next), key);
+}
+
+/** Nudge the chosen piece by `dt` seconds (the arrow keys). */
+export function nudgeSound(dt, len) {
+  const i = S.soundSel;
+  const c = soundClips()[i];
+  if (c) placeSound(i, c.at + dt, len, `sound${i}.nudge`);
 }
 
 /** The recording's sound back as it came: one piece, the whole of it. */
@@ -79,20 +147,26 @@ export function resetSounds() {
 // itself, turned up and down: in step, lips and all. A moved piece plays on an <audio> of its own.
 
 /** Whether a piece plays where it was recorded, from the recording the canvas shows. */
-const inPlace = (c, scene = S.scene) => c.src === scene.devices?.[0]?.video && Math.abs(c.at - c.from) < 0.005;
+const inPlace = (c, scene = S.scene) => c.src === masterVideo(scene) && Math.abs(c.at - c.from) < 0.005;
+
+/** How loud a piece is `u` seconds into it: its volume, faded at its ends (as the export fades it). */
+const gainAt = (c, u) => {
+  const len = pieceLength(c);
+  const fin = c.fadeIn ? clamp(u / Math.min(c.fadeIn, len), 0, 1) : 1;
+  const fout = c.fadeOut ? clamp((len - u) / Math.min(c.fadeOut, len), 0, 1) : 1;
+  return (c.volume ?? 1) * fin * fout;
+};
 
 /** How loud the recording's own sound plays at `t`: as its pieces there say, silent between them. */
 export function recordingGain(t) {
   if (!hasSoundRow()) return 1;
   if (!soundOn()) return 0;
   let g = 0;
-  for (const c of soundClips()) if (inPlace(c) && t >= c.at && t < c.at + pieceLength(c)) g = Math.max(g, gainAt(c, t - c.at));
+  for (const c of soundClips()) if (inPlace(c) && t >= c.at && t < endOf(c)) g = Math.max(g, gainAt(c, t - c.at));
   return Math.min(1, g);
 }
 
 const players = [];
-/** How loud a piece is `u` seconds into it: its volume, faded at its ends. */
-const gainAt = (c, u) => (c.volume ?? 1) * Math.max(0, Math.min(1, c.fadeIn ? u / c.fadeIn : 1, c.fadeOut ? (pieceLength(c) - u) / c.fadeOut : 1));
 
 /** Plays (or stops) the moved pieces for the playhead at `t`. */
 export function followSound(t, playing) {
@@ -118,6 +192,7 @@ export function followSound(t, playing) {
     if (!playing || u < 0 || u >= pieceLength(c)) {
       if (!a.paused) a.pause();
       a.playbackRate = 1;
+      delete a.dataset.settle;
       return;
     }
     a.volume = clamp(gainAt(c, u), 0, 1);
@@ -144,54 +219,74 @@ export function followSound(t, playing) {
   });
 }
 
-/** What's playing, for the tests: each piece's player. */
+/** What's playing, for the tests: each moved piece's player. */
 export const soundPlayers = () => players.map((a) => ({ t: a.currentTime, paused: a.paused, volume: a.volume }));
 
 // ---------------------------------------------------------------------------------------------
 // The row
 
-const waves = new Map();
-/** A file's waveform ({ duration, rate, peaks }), fetched once. */
+/** A file's waveform, fetched once; `missing` when the file isn't there any more. */
 function useWave(src) {
-  const [w, setW] = useState(() => waves.get(src)?.value);
+  const [w, setW] = useState(() => waves.get(src));
   useEffect(() => {
     let live = true;
     let p = waves.get(src);
     if (!p) {
-      p = { promise: api(`/api/waveform?path=${encodeURIComponent(src)}`).catch(() => ({ duration: 0, rate: 50, peaks: [] })) };
+      p = { promise: null, value: undefined, missing: false };
+      p.promise = api(`/api/waveform?path=${encodeURIComponent(src)}`).then(
+        (v) => (p.value = v),
+        () => ((p.missing = true), (p.value = { duration: 0, rate: 50, peaks: [] })),
+      );
       waves.set(src, p);
-      p.promise.then((v) => (p.value = v));
     }
-    p.promise.then((v) => live && setW(v));
+    p.promise.then(() => live && setW({ ...p }));
     return () => {
       live = false;
     };
   }, [src]);
   return w;
 }
-export const sourceLength = (src) => waves.get(src)?.value?.duration || Infinity;
 
-/** The pieces on the Sound row, `pps` pixels a second, in a video `len` seconds long; `now()` is the playhead. */
-export function SoundPieces({ pps, len, now }) {
+/**
+ * The pieces on the Sound row, `pps` pixels a second, in a video `len` seconds long. `now()` is the
+ * playhead; `cut()` cuts there and `play(piece)` plays one piece (both the timeline's).
+ */
+export function SoundPieces({ pps, len, now, cut, play }) {
   const s = useStore();
   const list = soundClips(s.scene);
   const off = !soundOn(s.scene);
-  if (!list.length) return html`<span class="tl-sound-none">No sound. ${s.scene.sounds ? html`<button class="link" onPointerDown=${(e) => e.stopPropagation()} onClick=${resetSounds}>Put the recording's back</button>` : ""}</span>`;
-  return list.map((c, i) => html`<${Piece} key=${i} c=${c} i=${i} pps=${pps} len=${len} now=${now} on=${s.soundSel === i} off=${off} />`);
+  if (!list.length)
+    return html`<span class="tl-sound-none">No sound. ${s.scene.sounds && s.scene.recording ? html`<button class="link" onPointerDown=${(e) => e.stopPropagation()} onClick=${resetSounds}>Put the recording's back</button>` : ""}</span>`;
+  return list.map((c, i) => html`<${Piece} key=${`${i}:${c.src}`} c=${c} i=${i} pps=${pps} len=${len} now=${now} cut=${cut} play=${play} on=${s.soundSel === i} off=${off} />`);
 }
 
-function Piece({ c, i, pps, len, now, on, off }) {
+function Piece({ c, i, pps, len, now, cut, play, on, off }) {
   const wave = useWave(c.src);
   const canvas = useRef();
-  const w = Math.max(6, pieceLength(c) * pps);
-  useEffect(() => draw(canvas.current, wave, c, w), [wave, c.from, c.to, w, on]);
-  const silent = wave && !wave.peaks.length;
-  const name = `${silent ? "No sound in this recording" : `Sound from ${clock(c.from)} to ${clock(c.to)}`}${c.volume !== undefined && c.volume !== 1 ? ` at ${Math.round(c.volume * 100)}%` : ""}`;
-  return html`<div class="tl-sound ${on ? "on" : ""} ${off ? "off" : ""}" style=${{ left: c.at * pps + "px", width: w + "px" }}
+  const long = pieceLength(c);
+  const w = Math.max(6, long * pps);
+  useEffect(() => draw(canvas.current, wave?.value, c, w), [wave, c.from, c.to, w, on]);
+  const name = wave?.missing
+    ? "The sound's file isn't there any more (moved or deleted)"
+    : wave?.value && !wave.value.peaks.length
+      ? "No sound in this recording"
+      : `Sound from ${clock(c.from)} to ${clock(c.from + long)}${c.volume !== undefined && c.volume !== 1 ? `, at ${Math.round(c.volume * 100)}%` : ""}`;
+  const menu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectSound(i);
+    openMenu(e.clientX, e.clientY, [
+      { label: "Cut at the playhead", icon: "scissors", kbd: "⌘B", run: cut },
+      { label: "Play this piece", icon: "play", run: () => play(c) },
+      "-",
+      { label: "Delete this piece", icon: "trash", kbd: "⌫", danger: true, run: () => deleteSound(i) },
+    ]);
+  };
+  return html`<div class="tl-sound ${on ? "on" : ""} ${off ? "off" : ""} ${wave?.missing ? "missing" : ""}" style=${{ left: c.at * pps + "px", width: w + "px" }}
     title=${`${name}. Drag to move it, its ends to trim it; ⌘B cuts it at the playhead.`}
-    onPointerDown=${(e) => drag(e, i, "move", pps, len, now)}>
+    onPointerDown=${(e) => drag(e, i, "move", pps, len, now)} onContextMenu=${menu}>
     <canvas ref=${canvas}></canvas>
-    ${(c.fadeIn || c.fadeOut) && html`<svg class="tl-fades" viewBox="0 0 100 10" preserveAspectRatio="none">${c.fadeIn ? html`<path d=${`M0 10 L${Math.min(100, (c.fadeIn / pieceLength(c)) * 100)} 0 L0 0Z`} />` : ""}${c.fadeOut ? html`<path d=${`M100 10 L${Math.max(0, 100 - (c.fadeOut / pieceLength(c)) * 100)} 0 L100 0Z`} />` : ""}</svg>`}
+    ${(c.fadeIn || c.fadeOut) && long > 0 && html`<svg class="tl-fades" viewBox="0 0 100 10" preserveAspectRatio="none">${c.fadeIn ? html`<path d=${`M0 10 L${Math.min(100, (c.fadeIn / long) * 100)} 0 L0 0Z`} />` : ""}${c.fadeOut ? html`<path d=${`M100 10 L${Math.max(0, 100 - (c.fadeOut / long) * 100)} 0 L100 0Z`} />` : ""}</svg>`}
     <i class="tl-trim at-start" title="Drag to trim the start" onPointerDown=${(e) => drag(e, i, "start", pps, len, now)}></i>
     <i class="tl-trim at-end" title="Drag to trim the end" onPointerDown=${(e) => drag(e, i, "end", pps, len, now)}></i>
   </div>`;
@@ -222,48 +317,94 @@ function draw(cv, wave, c, w) {
   }
 }
 
-/** Drag a piece to move it, or an end to trim it. Ends snap to the other pieces' and the playhead's. */
+/**
+ * Drag a piece to move it, or an end to trim it, within its room on the row. Edges snap to the
+ * other pieces', the playhead and the start; a moved piece of the recording snaps back to where
+ * it was recorded. Near the timeline's edge it scrolls; Esc puts it back as it was.
+ */
 function drag(e, i, mode, pps, len, now) {
   if (e.button !== 0) return;
   e.stopPropagation();
+  e.preventDefault();
   selectSound(i);
   const list = soundClips();
-  const c0 = { ...list[i] };
+  const c0 = { ...list[i], from: list[i].from ?? 0 };
   const long = pieceLength(c0);
-  const edges = list.flatMap((c, k) => (k === i ? [] : [c.at, c.at + pieceLength(c)])).concat([0, now()]);
-  const near = (t) => {
+  const { lo, hi } = room(list, i);
+  const total = sourceLength(c0.src) ?? Infinity;
+  const edges = list.flatMap((c, k) => (k === i ? [] : [c.at, endOf(c)])).concat([0, now()]);
+  const home = c0.src === recordingVideo() ? c0.from : null;
+  const near = (t, extra = []) => {
     let best = t;
     let gap = 8 / pps;
-    for (const x of edges) if (Math.abs(x - t) < gap) (gap = Math.abs(x - t)), (best = x);
+    for (const x of [...edges, ...extra]) if (Math.abs(x - t) < gap) (gap = Math.abs(x - t)), (best = x);
     return best;
   };
+  const body = e.currentTarget.closest(".tl-body");
+  const scroll0 = body?.scrollLeft ?? 0;
   const x0 = e.clientX;
+  let last = e.clientX;
   let moved = false;
-  const move = (m) => {
-    if (!moved && Math.abs(m.clientX - x0) < 3) return;
-    moved = true;
-    const dt = (m.clientX - x0) / pps;
+  let auto = 0;
+  const apply = () => {
+    const dt = (last - x0 + ((body?.scrollLeft ?? 0) - scroll0)) / pps;
     editSounds((l) => {
       const c = l[i];
       if (mode === "move") {
-        const a = near(c0.at + dt);
-        const b = near(c0.at + long + dt) - long;
-        const at = Math.abs(a - (c0.at + dt)) <= Math.abs(b - (c0.at + dt)) ? a : b;
-        c.at = r3(clamp(at, 0, Math.max(0, len - 0.1)));
+        // Its start or its end snaps, whichever is nearer something to snap to.
+        const raw = c0.at + dt;
+        const a = near(raw, home !== null ? [home] : []);
+        const b = near(raw + long) - long;
+        const snapped = [a, b].filter((v) => Math.abs(v - raw) > 1e-6);
+        const at = snapped.length ? snapped.reduce((p, q) => (Math.abs(q - raw) < Math.abs(p - raw) ? q : p)) : raw;
+        c.at = r3(clamp(at, Math.max(0, lo), Math.max(lo, Math.min(hi - long, len - MIN))));
       } else if (mode === "start") {
-        const d = clamp(near(c0.at + dt) - c0.at, Math.max(-c0.from, -c0.at), long - 0.1);
-        c.at = r3(c0.at + d);
-        c.from = r3(c0.from + d);
+        const at = clamp(near(c0.at + dt), Math.max(lo, c0.at - c0.from), c0.at + long - MIN);
+        c.from = r3(c0.from + (at - c0.at));
+        c.at = r3(at);
       } else {
-        const end = near(c0.at + long + dt);
-        c.to = r3(clamp(c0.from + (end - c0.at), c0.from + 0.1, sourceLength(c0.src)));
+        const end = clamp(near(c0.at + long + dt), c0.at + MIN, Math.min(hi, c0.at + (total - c0.from)));
+        c.to = r3(c0.from + (end - c0.at));
       }
     }, `sound${i}.${mode}`);
   };
-  const up = () => {
+  // Held near the timeline's left or right edge: it scrolls, and the piece goes with it.
+  const edgeScroll = () => {
+    auto = 0;
+    // Only when zoomed in, with more of the timeline to see.
+    if (!body?.classList.contains("zoomed")) return;
+    const r = body.getBoundingClientRect();
+    const left = r.left + 172;
+    const dir = last < left + 30 ? -1 : last > r.right - 30 ? 1 : 0;
+    if (!dir) return;
+    const before = body.scrollLeft;
+    body.scrollLeft += dir * 12;
+    if (body.scrollLeft !== before) apply();
+    auto = requestAnimationFrame(edgeScroll);
+  };
+  const move = (m) => {
+    last = m.clientX;
+    if (!moved && Math.abs(m.clientX - x0) < 3) return;
+    moved = true;
+    apply();
+    if (!auto) auto = requestAnimationFrame(edgeScroll);
+  };
+  const done = () => {
+    cancelAnimationFrame(auto);
     removeEventListener("pointermove", move);
-    removeEventListener("pointerup", up);
+    removeEventListener("pointerup", done);
+    removeEventListener("pointercancel", done);
+    removeEventListener("keydown", esc, true);
+  };
+  const esc = (k) => {
+    if (k.key !== "Escape") return;
+    k.preventDefault();
+    k.stopPropagation();
+    done();
+    if (moved) editSounds((l) => void Object.assign(l[i], { at: c0.at, from: c0.from, to: toOf(c0) }), `sound${i}.${mode}`);
   };
   addEventListener("pointermove", move);
-  addEventListener("pointerup", up);
+  addEventListener("pointerup", done);
+  addEventListener("pointercancel", done);
+  addEventListener("keydown", esc, true);
 }

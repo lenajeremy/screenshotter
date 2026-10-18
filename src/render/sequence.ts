@@ -14,7 +14,7 @@ import { cacheDir, formatFor, outputPathFor } from "../util/files.js";
 import { keyMoments } from "./animate.js";
 import { layoutScene, renderHtml, type SceneFrame } from "./mockup.js";
 import type { MockupInput } from "./schema.js";
-import { FITS, PRESET_NAMES, VIDEO_PRESETS, VersionSchema, VideoInputShape, openStage, renderVideo, versionSpec, type Fit, type VideoInput, type VideoPreset } from "./video.js";
+import { FITS, PRESET_NAMES, VIDEO_PRESETS, VersionSchema, VideoInputShape, addSound, openStage, renderVideo, soundPieces, versionSpec, type Fit, type VideoInput, type VideoPreset } from "./video.js";
 
 export const TRANSITIONS = ["cut", "fade", "fade-black", "fade-white", "push-left", "push-right", "push-up", "push-down", "wipe-left", "wipe-right", "iris", "zoom", "blur", "dissolve"] as const;
 export type Transition = (typeof TRANSITIONS)[number];
@@ -273,6 +273,12 @@ async function renderSequence(input: SequenceInput, o: { output?: string; appSto
     if (appStore && total > 30) warnings.push(`It runs ${total.toFixed(1)} s; an App Store preview can be 30 s at most. Shorten some shots.`);
     await join(rendered.map((r) => r.path), lengths, j, fps, out, format, appStore, appStore ? undefined : input.deliveryWidth);
     const at = starts(lengths, j);
+    // The shots' sound (a shot's recordings, or the pieces it gives), each from where its shot
+    // starts in the video to where it ends.
+    if (!appStore && format !== "gif") {
+      const pieces = plans.flatMap((p, i) => (p.input.video?.sound ? soundPieces(p.input).map((s) => ({ ...s, at: at[i] + s.at, until: at[i] + lengths[i] })) : []));
+      if (pieces.length) await addSound(out, format, pieces, total, warnings);
+    }
     const shots = lengths.map((length, i) => ({ start: Math.round(at[i] * 1000) / 1000, length: Math.round(length * 1000) / 1000, transition: j[i].type }));
 
     // Poster (the end of the first shot) and a filmstrip: the middle of each shot and each transition.

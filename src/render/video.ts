@@ -858,11 +858,14 @@ async function hasSound(file: string): Promise<boolean> {
   });
 }
 
-/** A piece of the video's sound: `from`–`to` seconds of a file, starting `at` seconds into the video. */
-type SoundPiece = { src: string; at: number; from: number; to?: number; volume?: number; fadeIn?: number; fadeOut?: number };
+/**
+ * A piece of the video's sound: `from`–`to` seconds of a file, starting `at` seconds into the video
+ * (and cut off at `until`, the end of its shot in a video of several).
+ */
+export type SoundPiece = { src: string; at: number; from: number; to?: number; volume?: number; fadeIn?: number; fadeOut?: number; until?: number };
 
 /** The video's sound: the pieces the design gives (`sounds`), or each device recording's own, whole, from the start. */
-function soundPieces(input: VideoInput): SoundPiece[] {
+export function soundPieces(input: VideoInput): SoundPiece[] {
   const local = (p: string) => p.replace(/^file:\/\//, "");
   if (input.sounds) return input.sounds.map((p) => ({ ...p, src: local(p.src), from: p.from ?? 0 }));
   const videos = (input.devices ?? []).map((d) => d.video).filter((v): v is string => Boolean(v));
@@ -884,24 +887,37 @@ async function mediaLength(file: string): Promise<number> {
  * The sound under the finished frames: each piece cut from its file, turned up or down, faded,
  * placed at its time, and all mixed, cut to the video's length. The picture is copied as it is.
  */
-async function addSound(out: string, format: string, pieces: SoundPiece[], duration: number, warnings: string[]): Promise<void> {
+export async function addSound(out: string, format: string, pieces: SoundPiece[], duration: number, warnings: string[]): Promise<void> {
   const voiced = new Set<string>();
   for (const f of new Set(pieces.map((p) => p.src))) if (await hasSound(f)) voiced.add(f);
-  const used = pieces.filter((p) => voiced.has(p.src) && p.at < duration && (p.to === undefined || p.to > p.from + 0.01) && (p.volume ?? 1) > 0);
+  // Each piece's end in its file: as given, else the file's end; then cut off at its shot's end.
+  const ends = new Map<SoundPiece, number>();
+  for (const p of pieces) {
+    if (!voiced.has(p.src)) continue;
+    let end = p.to ?? (await mediaLength(p.src));
+    if (p.until !== undefined) end = Math.min(end, p.from + (p.until - p.at));
+    ends.set(p, end);
+  }
+  const used = pieces.filter((p) => ends.has(p) && p.at < duration && ends.get(p)! > p.from + 0.01 && (p.volume ?? 1) > 0);
   if (!used.length) return;
   const files = [...voiced].filter((f) => used.some((p) => p.src === f));
-  const chains = await Promise.all(
-    used.map(async (p, k) => {
-      const end = p.to ?? (await mediaLength(p.src));
-      const len = Math.max(0.01, end - p.from);
-      const f = [`atrim=start=${p.from.toFixed(4)}${end > 0 ? `:end=${end.toFixed(4)}` : ""}`, "asetpts=PTS-STARTPTS"];
-      if (p.volume !== undefined && p.volume !== 1) f.push(`volume=${p.volume.toFixed(3)}`);
-      if (p.fadeIn) f.push(`afade=t=in:st=0:d=${Math.min(p.fadeIn, len).toFixed(3)}`);
-      if (p.fadeOut) f.push(`afade=t=out:st=${Math.max(0, len - p.fadeOut).toFixed(3)}:d=${Math.min(p.fadeOut, len).toFixed(3)}`);
-      if (p.at > 0) f.push(`adelay=delays=${Math.round(p.at * 1000)}:all=1`);
-      return `[${files.indexOf(p.src) + 1}:a:0]${f.join(",")}[s${k}]`;
-    }),
-  );
+  // Where one piece carries straight on from another (cut, not moved), there's no seam to soften.
+  const flows = (a: SoundPiece, b: SoundPiece) => a.src === b.src && Math.abs(a.at + (ends.get(a)! - a.from) - b.at) < 0.002 && Math.abs(ends.get(a)! - b.from) < 0.002;
+  const DECLICK = 0.008;
+  const chains = used.map((p, k) => {
+    const end = ends.get(p)!;
+    const len = Math.max(0.01, end - p.from);
+    // Every piece in one format (files differ in rate and channels), so they mix.
+    const f = [`atrim=start=${p.from.toFixed(4)}:end=${end.toFixed(4)}`, "asetpts=PTS-STARTPTS", "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"];
+    if (p.volume !== undefined && p.volume !== 1) f.push(`volume=${p.volume.toFixed(3)}`);
+    // Its fades; and at a cut (a seam with nothing carrying on), a few milliseconds' fade so it doesn't click.
+    const fadeIn = p.fadeIn || (used.some((o) => o !== p && flows(o, p)) || p.from < 0.001 ? 0 : DECLICK);
+    const fadeOut = p.fadeOut || (used.some((o) => o !== p && flows(p, o)) ? 0 : DECLICK);
+    if (fadeIn) f.push(`afade=t=in:st=0:d=${Math.min(fadeIn, len).toFixed(3)}`);
+    if (fadeOut) f.push(`afade=t=out:st=${Math.max(0, len - fadeOut).toFixed(3)}:d=${Math.min(fadeOut, len).toFixed(3)}`);
+    if (p.at > 0) f.push(`adelay=delays=${Math.round(p.at * 1000)}:all=1`);
+    return `[${files.indexOf(p.src) + 1}:a:0]${f.join(",")}[s${k}]`;
+  });
   const graph = `${chains.join(";")};${used.map((_, k) => `[s${k}]`).join("")}amix=inputs=${used.length}:normalize=0:dropout_transition=0[a]`;
   const tmp = out.replace(/(\.[a-z0-9]+)$/i, ".sound$1");
   const codec = format === "webm" ? ["-c:a", "libopus", "-b:a", "160k"] : ["-c:a", "aac", "-b:a", "192k"];

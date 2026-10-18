@@ -11,7 +11,7 @@ import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, 
 import { renderShape } from "./shapes.js";
 import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
 import { cameraFollow } from "./recording.js";
-import { SOUND, SoundPieces, deleteSound, editSounds, followSound, hasSoundRow, pieceLength, recordingGain, resetSounds, soundClips, splitSound } from "./sound.js";
+import { SOUND, SoundPieces, deleteSound, editSounds, followSound, hasSoundRow, pieceLength, placeSound, recordingGain, recordingVideo, resetSounds, soundClips, splitSound } from "./sound.js";
 
 // ---------------------------------------------------------------------------------------------
 // The playhead lives outside the store: it moves every frame while playing, and only the canvas
@@ -265,6 +265,13 @@ export function openTimeline() {
 export function closeTimeline() {
   pause();
   set({ timelineOpen: false, animSel: null, soundSel: null, animRows: [] });
+}
+
+/** Play one piece of sound, from its start to its end. */
+export function playPiece(c) {
+  pause();
+  setPlayhead(c.at);
+  play(Math.min(videoLength(), c.at + pieceLength(c)));
 }
 
 /** Cut the sound in two at the playhead (⌘B). */
@@ -683,7 +690,7 @@ const stop = (e) => e.stopPropagation();
 /** The ruler's step: the smallest that leaves room for its label at this many pixels a second. */
 const TICK_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
 const tickStep = (pps) => TICK_STEPS.find((s) => s * pps >= 56) ?? 600;
-const tickLabel = (t, step, len) => (len >= 60 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}${step < 1 ? "." + String(Math.round((t % 1) * 10)) : ""}` : `${step < 1 ? t.toFixed(step < 0.5 ? 2 : 1).replace(/0$/, "") : t}s`);
+const tickLabel = (t, step, len) => (len >= 60 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}${step < 1 ? "." + String(Math.round((t % 1) * 10)) : ""}` : `${step < 1 ? t.toFixed(step < 0.5 ? 2 : 1).replace(/\.?0+$/, "") : t}s`);
 
 export function TimelineDock() {
   const s = useStore();
@@ -895,7 +902,7 @@ export function TimelineDock() {
         </div>
         ${rows.map(
           (e) => html`<div class="tl-row ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} onPointerDown=${scrub}>
-            ${e.kind === "sound" && html`<${SoundPieces} pps=${pps} len=${len} now=${() => playhead.t} />`}
+            ${e.kind === "sound" && html`<${SoundPieces} pps=${pps} len=${len} now=${() => playhead.t} cut=${cutSoundHere} play=${playPiece} />`}
             ${list.map((a, i) => {
               const k = targetsOf(a).indexOf(e.id);
               if (k < 0) return null;
@@ -1418,13 +1425,9 @@ export function SoundInspector() {
   const i = s.soundSel;
   const c = list[i];
   if (!c) return null;
-  const setPiece = (patch, key) => editSounds((l) => Object.assign(l[i], patch), key);
-  const whole = c.src === s.scene.devices?.[0]?.video ? "the recording" : "the file";
-  const playPiece = () => {
-    pause();
-    setPlayhead(c.at);
-    play(Math.min(videoLength(), c.at + pieceLength(c)));
-  };
+  const setPiece = (patch, key) => editSounds((l) => void Object.assign(l[i], patch), key);
+  const whole = c.src === recordingVideo(s.scene) ? "the recording" : "the file";
+  const long = pieceLength(c);
   return html`
     <div class="panel-head clip-head"><h2>Sound</h2><span class="sub">${list.length > 1 ? `Piece ${i + 1} of ${list.length}` : "The recording's sound"}</span><span class="grow"></span>
       <button class="icon-btn sm" title="Delete this piece (⌫)" onClick=${() => deleteSound(i)}><${Icon} n="trash" s=${14} /></button>
@@ -1438,12 +1441,12 @@ export function SoundInspector() {
         <div class="row"><label>Fade out</label><${Slider} value=${c.fadeOut ?? 0} min=${0} max=${3} step=${0.1} format=${(v) => (v > 0 ? `${v.toFixed(1)} s` : "None")} onChange=${(v) => setPiece({ fadeOut: v ? r3(v) : undefined }, "fadeOut")} /></div>
       <//>
       <${Section} title="Timing">
-        <div class="row"><label>Starts at</label><${Num} value=${c.at} min=${0} max=${videoLength()} step=${0.1} digits=${2} unit="s" onChange=${(v) => v !== undefined && setPiece({ at: r3(clamp(v, 0, videoLength())) }, "at")} /></div>
-        <div class="note">${clock(pieceLength(c))} long: ${clock(c.from)} to ${clock(c.to)} of ${whole}.</div>
+        <div class="row"><label>Starts at</label><${Num} value=${c.at} min=${0} max=${videoLength()} step=${0.1} digits=${2} unit="s" onChange=${(v) => v !== undefined && placeSound(i, v, videoLength(), "at")} /></div>
+        <div class="note">${clock(long)} long: ${clock(c.from ?? 0)} to ${clock((c.from ?? 0) + long)} of ${whole}. It moves only into the room beside it (pieces never overlap); ← and → nudge it.</div>
       <//>
       <div class="hstack">
         <button class="btn" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
-        <button class="btn" onClick=${playPiece}><${Icon} n="play" s=${13} />Play it</button>
+        <button class="btn" onClick=${() => playPiece(c)}><${Icon} n="play" s=${13} />Play it</button>
       </div>
       ${s.scene.sounds && html`<button class="btn sm ghost" title="Undo every cut, move and change to the sound" onClick=${resetSounds}><${Icon} n="undo" s=${12} />Put the recording's sound back as it was</button>`}
     </div>`;
