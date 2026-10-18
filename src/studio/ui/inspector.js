@@ -3,7 +3,7 @@ import { useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore, pictureUrl } from "./store.js";
-import { deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
+import { addShot, addSize, deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector, SoundInspector } from "./timeline.js";
 import { soundClips } from "./sound.js";
 import { LayersList, bgObj } from "./panels.js";
@@ -911,7 +911,12 @@ function SceneInspector() {
         })}</div>
         <div class="row"><label>All sizes</label><${Dropdown} value=${presets[cur] ? cur : ""} options=${sizeOptions(presets)} placeholder=${custom ? "Custom size" : "Every store slot…"} search=${true} onChange=${setCanvasSize} /></div>
         ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${setLandscape} label="Landscape" />`}
+        ${!sc.recording?.duration && html`<div class="row"><label>Also at</label><${Dropdown} value=${null} options=${sizeOptions(presets)} placeholder="Add a size…" search=${true} onChange=${addSize} title="Make every screen again at another size: iPad, Apple Watch, Google Play…" /></div>`}
       <//>
+      ${!sc.recording?.duration && html`<${Section} title="Screens">
+        <div class="note">${s.shots?.length > 1 ? `This design has ${s.shots.length} screens, side by side like the App Store shows them.` : "Make this a set: more screens beside this one, like the App Store shows them."}</div>
+        <button class="btn block" onClick=${() => (s.shots?.length > 1 ? addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 }) : addShot("copy"))}><${Icon} n="plus" s=${13} />Add a screen</button>
+      <//>`}
       <${Section} title="Backdrop">
         <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
           <span class="sw" style=${{ background: "var(--check)" }}>${bgStill && html`<img src=${bgStill} />`}</span>

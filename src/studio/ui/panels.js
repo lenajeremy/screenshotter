@@ -1073,8 +1073,8 @@ export function ExportsGrid() {
 
 const DIRECTION_STEPS = { look: "Rendering your design", read: "Reading your screens", get think() { return `${aiName()} is designing three directions`; }, render: "Rendering them", generate: "Making their AI backdrops" };
 
-/** Claude proposes three directions, rendered side by side; pick one. */
-function DesignForMe() {
+/** Claude proposes three directions, rendered side by side; pick one. It lives in the Ask AI panel. */
+export function DesignForMe() {
   const s = useStore();
   const d = s.directions;
   const ai = s.opts?.ai;
@@ -1225,8 +1225,7 @@ export function DesignsPanel() {
   return html`<div class="panel left">
     <div class="panel-head"><h2>Templates</h2><span class="sub">${s.recipes.length}</span></div>
     <div class="panel-body">
-      <div class="intro">Finished designs made from your screenshot, your headline and your app's colours. One click to try one; undo goes back.</div>
-      <${DesignForMe} />
+      <div class="intro">Finished designs made from your screenshot, your headline and your app's colours. One click to try one; undo goes back. Ask AI (⌘K) can design three for you.</div>
       <${Section} title="Whole sets" count=${s.setTemplates?.length}>
         <div class="note">Five screens in one look, made from your screenshots in order and your words: a hero, three features and a close.</div>
         ${!has && html`<div class="empty-note">Add a screenshot and each set shows a preview made from it.</div>`}

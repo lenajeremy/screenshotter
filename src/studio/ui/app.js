@@ -11,6 +11,7 @@ import {
   trySample,
   pickUpAgentChanges,
   toggleFocus,
+  openExport,
   togglePanel,
   deleteSavedScene,
   duplicateSavedScene,
@@ -27,6 +28,8 @@ import {
   addText,
   aiEdit,
   closeStills,
+  openStills,
+  addShot,
   pickStill,
   stopAI,
   useAIDraft,
@@ -65,7 +68,7 @@ import {
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
-import { BackgroundsPanel, CapturesPanel, DesignsPanel, ImagesPanel, ShapesPanel, TextPanel } from "./panels.js";
+import { BackgroundsPanel, CapturesPanel, DesignForMe, DesignsPanel, ImagesPanel, ShapesPanel, TextPanel } from "./panels.js";
 import { Inspector } from "./inspector.js";
 import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play, videoLength } from "./timeline.js";
 import { deleteSound, hasSoundRow, nudgeSound } from "./sound.js";
@@ -135,7 +138,10 @@ function Topbar() {
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!s.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
       <span style=${{ width: "6px" }}></span>
       <button class="btn ai" onClick=${() => (s.ai.open ? set({ ai: { ...s.ai, open: false } }) : openAI())} title="Describe a change in plain words and AI makes it (⌘K)"><${Icon} n="spark" s=${15} class="spark" />Ask AI<span class="kbd">⌘K</span></button>
-      <button class="btn primary" ref=${exportBtn} disabled=${!(hasDesign(s.scene) || s.shots) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => set({ exportOpen: !s.exportOpen })}><${Icon} n="export" s=${15} w=${2} />Export</button>
+      <button class="btn primary" ref=${exportBtn} disabled=${!(hasDesign(s.scene) || s.shots) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => (s.exportOpen ? set({ exportOpen: false }) : openExport())}><${Icon} n="export" s=${15} w=${2} />Export</button>
+      <span class="topbar-sep"></span>
+      <button class="icon-btn ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the left panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${16} /></button>
+      <button class="icon-btn ${s.rightOpen ? "on" : ""}" title=${`${s.rightOpen ? "Hide" : "Show"} the settings panel (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${16} /></button>
     </div>
     ${(s.busy || s.rendering) && html`<div class="progress-line ${s.rendering?.progress > 0 ? "known" : ""}" style=${s.rendering?.progress > 0 ? { "--p": s.rendering.progress } : undefined}></div>`}
     ${s.exportOpen && html`<${ExportPopover} anchor=${exportBtn.current} />`}
@@ -369,113 +375,7 @@ function Welcome() {
   </div></div>`;
 }
 
-// ---------------------------------------------------------------------------------------------
-// A new design's first steps: pick a template, write the headline, export. The strip across the
-// top shows the four steps until the first export; the step in hand sits at the bottom.
-
-const GUIDE_STEPS = [
-  ["shot", "Screenshot"],
-  ["design", "Design"],
-  ["headline", "Headline"],
-  ["export", "Export"],
-];
 const stop = (e) => e.stopPropagation();
-
-function GuideStrip() {
-  const s = useStore();
-  const done = { shot: true, design: Boolean(s.touched.design), headline: Boolean(s.touched.headline), export: Boolean(s.touched.exported) };
-  const allDone = GUIDE_STEPS.every(([k]) => done[k]);
-  useEffect(() => {
-    if (!allDone || s.guideDone) return;
-    const t = setTimeout(() => {
-      set({ guideDone: true });
-      persistPrefs();
-    }, 2600);
-    return () => clearTimeout(t);
-  }, [allDone, s.guideDone]);
-  if (s.guideDone) return null;
-  const current = s.guide ?? GUIDE_STEPS.map(([k]) => k).find((k) => !done[k]);
-  const go = (k) => (k === "shot" ? set({ leftTab: "captures", leftOpen: true }) : set({ guide: s.guide === k ? null : k }));
-  const hide = () => {
-    set({ guideDone: true, guide: s.guide === "export" ? null : s.guide });
-    persistPrefs();
-  };
-  return html`<div class="guide-strip" onPointerDown=${stop}>
-    ${GUIDE_STEPS.map(
-      ([k, label], i) => html`${i > 0 && html`<span class="gs-line ${done[k] || current === k ? "on" : ""}"></span>`}
-        <button class="gs ${done[k] ? "done" : ""} ${current === k ? "on" : ""}" onClick=${() => go(k)}>
-          <span class="n">${done[k] ? html`<${Icon} n="check" s=${10} w=${3} />` : i + 1}</span>${label}
-        </button>`,
-    )}
-    <span class="gs-sep"></span>
-    <button class="gs-skip" title="Hide these steps. Help has “Show the first steps again”." onClick=${hide}>Skip</button>
-  </div>`;
-}
-
-/** Templates to offer first, best suited to how many screenshots there are. */
-function starterTemplates(recipes, n) {
-  const order = n >= 3 ? ["mosaic", "rising", "staircase", "bold-hero", "tilted", "gallery"] : n === 2 ? ["rising", "staircase", "bold-hero", "tilted", "gallery", "art-director"] : ["bold-hero", "tilted", "gallery", "art-director", "risograph", "callout"];
-  return order.map((id) => recipes.find((r) => r.id === id)).filter((r) => r && r.screens <= Math.max(1, n));
-}
-
-function DesignTray() {
-  const s = useStore();
-  const body = recipeInput(s.scene);
-  const q = encodeURIComponent(JSON.stringify(body));
-  const picks = starterTemplates(s.recipes, body.devices.length);
-  const next = () => {
-    touch("design");
-    set({ guide: "headline" });
-  };
-  return html`<div class="guide-card design-tray" onPointerDown=${stop}>
-    <div class="gc-head">
-      <div class="gc-title"><b>Pick a starting design</b><span>Made from your screenshot. You can change everything afterwards.</span></div>
-      <button class="btn ghost sm" onClick=${() => {
-        touch("design");
-        set({ guide: null, leftTab: "designs", leftOpen: true });
-      }}>All templates</button>
-      <button class="btn primary sm" onClick=${next}>Continue<${Icon} n="right" s=${13} w=${2.2} /></button>
-    </div>
-    <div class="dt-row">${picks.map(
-      (r) => html`<button class="dt-card ${s.guidePick === r.id ? "on" : ""}" key=${r.id} title=${r.description} disabled=${s.designing} onClick=${() => {
-        set({ guidePick: r.id });
-        applyRecipe(r.id, { silent: true });
-      }}>
-        <span class="dt-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} alt="" />`}</span>
-        <span class="dt-name">${r.name}</span>
-      </button>`,
-    )}</div>
-  </div>`;
-}
-
-function HeadlineStep() {
-  const s = useStore();
-  const ref = useRef();
-  useEffect(() => {
-    ref.current?.focus();
-    ref.current?.select();
-  }, []);
-  const next = () => {
-    touch("headline");
-    set({ guide: S.guideDone || S.touched.exported ? null : "export" });
-  };
-  return html`<div class="guide-card headline-step" onPointerDown=${stop}>
-    <label class="gc-title" for="guide-headline"><b>Write your headline</b><span>What does this screen let people do? Put **stars** around words to colour them.</span></label>
-    <textarea id="guide-headline" class="textarea" ref=${ref} rows="2" spellcheck=${false} placeholder="Dinner, **sorted**" value=${s.scene.headline ?? ""}
-      onInput=${(e) => edit((d) => (d.headline = e.target.value || undefined), "headline")}
-      onKeyDown=${(e) => {
-        e.stopPropagation();
-        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-          e.preventDefault();
-          next();
-        } else if (e.key === "Escape") set({ guide: null });
-      }}></textarea>
-    <div class="gc-foot"><span class="faint"><span class="kbd">⇧↩</span> for a new line</span><span class="grow"></span>
-      <button class="btn ghost sm" onClick=${() => set({ guide: null })}>Later</button>
-      <button class="btn primary sm" onClick=${next}>Next<${Icon} n="right" s=${13} w=${2.2} /></button>
-    </div>
-  </div>`;
-}
 
 /**
  * Pick the still of a recording: the moment its device shows in images and on the canvas. The
@@ -517,19 +417,6 @@ function StillPicker() {
         : err
           ? html`<div class="note warn">${err}</div>`
           : Array.from({ length: 6 }, (_, k) => html`<span class="still-card loading" key=${k}><span class="still-img"></span><span class="still-t"> </span></span>`)}
-    </div>
-  </div>`;
-}
-
-function ExportStep() {
-  return html`<div class="guide-card export-step" onPointerDown=${stop}>
-    <div class="gc-title"><b>Happy with it? Export it.</b><span>You get a full-size image, ready for the App Store. You can keep changing the design afterwards.</span></div>
-    <div class="gc-foot"><span class="grow"></span>
-      <button class="btn ghost sm" onClick=${() => set({ guide: null })}>Keep editing</button>
-      <button class="btn primary sm" onClick=${() => {
-        set({ guide: null });
-        exportImage();
-      }}><${Icon} n="export" s=${13} w=${2} />Export image</button>
     </div>
   </div>`;
 }
@@ -671,24 +558,12 @@ function Stage() {
   const s = useStore();
   // The start screen is for a design with nothing in it; a screen of a set waiting for its screenshot stays in the set.
   const empty = !hasDesign(s.scene) && !s.shots;
-  const focused = !s.leftOpen && !s.rightOpen;
-  return html`<main class="stage ${s.guide && !empty ? "guiding" : ""} ${s.timelineOpen && s.view === "canvas" && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
+  return html`<main class="stage ${s.timelineOpen && s.view === "canvas" && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
     <div class="stage-glow"></div>
-    <div class="float panel-toggle l">
-      <button class="icon-btn sm ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the side panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${15} /></button>
-    </div>
-    <div class="float panel-toggle r">
-      <button class="icon-btn sm ${focused ? "on" : ""}" title=${focused ? "Leave focus mode (⌘\\)" : "Focus mode: hide both panels (⌘\\)"} onClick=${toggleFocus}><${Icon} n="focus" s=${15} /></button>
-      <button class="icon-btn sm ${s.rightOpen ? "on" : ""}" title=${`${s.rightOpen ? "Hide" : "Show"} the inspector (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${15} /></button>
-    </div>
     ${s.view === "render" ? html`<${RenderView} />` : empty ? html`<div class="dots"></div><${Welcome} />` : html`<${CanvasView} />`}
-    ${s.view === "canvas" && !empty && !s.timelineOpen && html`<${GuideStrip} />`}
     ${s.view === "canvas" && !empty && s.timelineOpen && html`<${TimelineDock} />`}
     ${s.view === "canvas" && !empty && !s.timelineOpen && s.stillPick && html`<${StillPicker} key=${s.stillPick.video} />`}
-    ${s.view === "canvas" && !empty && !s.timelineOpen && !s.stillPick && s.guide === "design" && html`<${DesignTray} />`}
-    ${s.view === "canvas" && !empty && !s.timelineOpen && !s.stillPick && s.guide === "headline" && html`<${HeadlineStep} />`}
-    ${s.view === "canvas" && !empty && !s.timelineOpen && !s.stillPick && s.guide === "export" && html`<${ExportStep} />`}
-    ${s.view === "canvas" && !empty && !s.guide && !s.stillPick && (!s.timelineOpen || s.ai.open) && !(s.ai.open && s.ai.docked && s.rightOpen) && html`<${AIChat} />`}
+    ${s.view === "canvas" && !empty && s.ai.open && !(s.ai.docked && s.rightOpen) && html`<${AIChat} />`}
     ${s.jsonOpen && html`<${JsonDrawer} />`}
   </main>`;
 }
@@ -834,11 +709,7 @@ function AIChat({ docked }) {
   }, [ai.work?.steps?.length, ai.work?.image, ai.work?.checkImage, Boolean(ai.work?.draft)]);
   const setAi = (patch) => set({ ai: { ...S.ai, ...patch } });
   const status = s.opts?.ai;
-  if (!ai.open) {
-    return html`<div class="ai-dock"><button class="ai-pill" onClick=${() => openAI()}>
-      <${Icon} n="spark" s=${16} class="spark" /><span>${ai.thread.length ? "Continue the chat" : `Describe a change${s.selected ? ` to ${entityLabel(s.selected)}` : ""}`}…</span><span class="kbd">⌘K</span>
-    </button></div>`;
-  }
+  if (!ai.open) return null;
   const send = () => aiEdit(ai.text);
   // Drag the panel by its header; it stays inside the stage.
   const drag = (e) => {
@@ -884,6 +755,7 @@ function AIChat({ docked }) {
         <b>What should change?</b>
         <span>Describe it like you'd brief a designer. I can see the design, change anything in it, and answer questions about it.</span>
         <div class="suggestions">${suggestionsFor(ai.context ? s.selected : null).map((t) => html`<button class="chip" onClick=${() => aiEdit(t)}>${t}</button>`)}</div>
+        ${s.scene.devices.length > 0 && !s.directions && html`<${DesignForMe} />`}
         ${status && !status.available && html`<span class="note warn">Ask AI needs Claude Code, Codex or an API key. <a href="#" onClick=${(e) => {
           e.preventDefault();
           set({ modal: { kind: "settings" } });
@@ -911,6 +783,7 @@ function AIChat({ docked }) {
               </div>`,
       )}
       ${ai.busy && html`<${AIWork} />`}
+      ${s.directions && html`<${DesignForMe} />`}
     </div>
     <div class="ai-chat-compose">
       ${s.selected && ai.context
@@ -1332,10 +1205,6 @@ function Help() {
       <div class="sheet-body">
         ${steps.map(([icon, title, text]) => html`<div class="help-row"><span class="ico"><${Icon} n=${icon} s=${18} /></span><div><b>${title}</b><div class="note" style=${{ fontSize: "12.5px" }}>${text}</div></div></div>`)}
         <div class="hstack">
-          <button class="btn" onClick=${() => {
-            set({ guideDone: false, modal: null, touched: { ...S.touched, design: false, headline: false, exported: false } });
-            persistPrefs();
-          }}>Show the first steps again</button>
           <button class="btn ghost" onClick=${() => (native ? native.call("openURL", { url: `${location.origin}/docs` }) : window.open("/docs", "_blank"))}><${Icon} n="book" s=${14} />Full documentation</button>
           <button class="btn ghost" onClick=${() => openWhatsNew(true)}><${Icon} n="spark" s=${14} />What's new</button>
         </div>
@@ -1822,7 +1691,6 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (S.stillPick) return closeStills(true);
-    if (S.guide) return set({ guide: null });
     if (S.exportOpen) return set({ exportOpen: false });
     if (S.jsonOpen) return set({ jsonOpen: false });
     if (S.ai.open) return set({ ai: { ...S.ai, open: false } });
@@ -1878,6 +1746,7 @@ function entityMenu(id) {
       { label: `Ask AI about ${entityLabel(id)}…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
       "-",
       { label: "Replace screenshot…", icon: "replace", run: () => replaceMode(id) },
+      d.video && { label: "Pick the still…", icon: "image", run: () => openStills(id) },
       // Devices are shown with Apple's art; a design that turned it off can turn it back on.
       d.bezel === false && { label: "Use Apple's device art", icon: "image", run: () => editScene((sc) => delete sc.devices[i].bezel) },
       { label: "Put back in the layout", icon: "refresh", disabled: !placed, run: () => editScene((sc) => ["x", "y", "anchor", "height", "width", "rotate"].forEach((k) => delete sc.devices[i][k])) },
@@ -1938,6 +1807,7 @@ function canvasMenu() {
     has && { label: "Add text", icon: "text", run: () => addText("label") },
     has && !S.scene.headline && { label: "Add a headline", icon: "text", run: addCaption },
     { label: "Change backdrop…", icon: "background", run: () => set({ leftTab: "backgrounds", leftOpen: true }) },
+    has && !S.scene.recording && { label: "Add a screen", icon: "plus", run: () => addShot("copy", S.shots?.length > 1 ? { at: S.shots.length, copyOf: S.shots.length - 1 } : {}) },
     "-",
     has && { label: "Preview", icon: "eye", kbd: "⌘R", run: renderPreview },
     has && { label: "Export image", icon: "export", kbd: "⌘E", run: exportImage },

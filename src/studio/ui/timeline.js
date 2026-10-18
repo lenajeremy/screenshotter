@@ -9,7 +9,7 @@ import { Icon } from "./icons.js";
 import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, toast, useStore, hasDesign } from "./store.js";
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
-import { addShot, deleteShot, exportVideo, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
+import { addShot, deleteShot, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
 import { cameraFollow } from "./recording.js";
 import { SOUND, SoundPieces, deleteSound, editSounds, followSound, hasSoundRow, pieceLength, placeSound, recordingGain, recordingVideo, resetSounds, soundClips, splitSound } from "./sound.js";
 
@@ -260,7 +260,7 @@ export function play(until) {
 }
 
 export function openTimeline() {
-  set({ timelineOpen: true, view: "canvas", guide: null, stillPick: null });
+  set({ timelineOpen: true, view: "canvas", stillPick: null });
 }
 export function closeTimeline() {
   pause();
@@ -883,7 +883,6 @@ export function TimelineDock() {
         <button class="icon-btn sm" disabled=${z >= maxZoom - 0.001} title="Zoom in" onClick=${() => setZoom(z * 1.6)}><${Icon} n="plus" s=${13} /></button>
         <button class="btn sm ghost" disabled=${z <= 1.001} title="Show the whole video" onClick=${() => setZoom(1)}>Fit</button>
       </div>
-      <button class="btn sm" title="Render the video with these animations (⇧⌘E)" onClick=${exportVideo}><${Icon} n="export" s=${13} />${s.shots?.length > 1 ? `Export ${s.shots.filter((x) => x.video !== false).length || s.shots.length} shots` : "Export video"}</button>
       <button class="icon-btn sm" title="Close the timeline" onClick=${closeTimeline}><${Icon} n="x" s=${14} /></button>
     </header>
     <${ShotStrip} />

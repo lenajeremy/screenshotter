@@ -78,7 +78,7 @@ export const S = {
   /** When the open scene was last saved, as the library has it: a newer save by an agent gets picked up. */
   sceneStamp: null,
   /** Side panels: the inspector can be hidden too, each can be dragged wider, and focus mode hides both. */
-  rightOpen: false,
+  rightOpen: true,
   leftW: null,
   rightW: null,
   /** The timeline's height when dragged taller or shorter (null: the usual). */
@@ -103,10 +103,8 @@ export const S = {
   hover: null,
   view: "canvas",
   leftTab: "captures",
-  // Both side panels start tucked away: the design has the window, and a panel opens when asked for.
+  // The left panel (things to add) opens from the rail; the right one (settings) is always there.
   leftOpen: false,
-  /** A new design's first steps: "design" (pick a template), "headline" (write it), "export". */
-  guide: null,
   busy: null,
   rendering: null,
   render: null,
@@ -131,7 +129,6 @@ export const S = {
   jsonOpen: false,
   dropping: false,
   replacing: null,
-  guideDone: false,
   touched: { backdrop: false, moved: false, exported: false },
   past: [],
   future: [],
@@ -341,7 +338,7 @@ const snapshot = () => ({
   shot: S.shot,
   groups: S.groups,
   group: S.group,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), guideDone: S.guideDone, touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 2 },
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 3 },
 });
 export function persist() {
   syncSpans();
@@ -569,20 +566,15 @@ export async function restore() {
   // Tabs that were merged or moved: Shapes joined Text; Layers and Exports left the rail.
   // Text and Shapes were one panel for a while, with a switch between them (addTab).
   if (ui.leftTab) patch.leftTab = ui.leftTab === "text" && ui.addTab === "shapes" ? "shapes" : ({ layers: "captures", exports: "captures" }[ui.leftTab] ?? ui.leftTab);
-  // Which panels are open is remembered from the layout with closed-by-default panels onward.
-  if (ui.layoutV === 2) {
-    if (typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
-    if (typeof ui.rightOpen === "boolean") patch.rightOpen = ui.rightOpen;
-  }
+  // Which panels are open is remembered; the simpler layout (3) opens the settings panel once for everyone.
+  if (ui.layoutV >= 2 && typeof ui.leftOpen === "boolean") patch.leftOpen = ui.leftOpen;
+  if (ui.layoutV >= 3 && typeof ui.rightOpen === "boolean") patch.rightOpen = ui.rightOpen;
   if (Number.isFinite(ui.leftW)) patch.leftW = ui.leftW;
   if (Number.isFinite(ui.rightW)) patch.rightW = ui.rightW;
   if (Number.isFinite(ui.tlH)) patch.tlH = ui.tlH;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) }, set: { ...S.exportOpts.set, ...(ui.exportOpts.set ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
   patch.ai = { ...S.ai, model: ui.aiModel ?? "", engine: ui.aiEngine === "codex" || ui.aiEngine === "claude" ? ui.aiEngine : "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", docked: ui.aiDocked === true, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
-  if (typeof ui.guideDone === "boolean") patch.guideDone = ui.guideDone;
-  // Someone who used the app before this layout has done the first steps already.
-  if (saved.ui && ui.layoutV !== 2) patch.guideDone = true;
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
   if (ui.scenesPrefs) patch.scenesPrefs = { ...S.scenesPrefs, ...ui.scenesPrefs };
   set(patch);

@@ -1,7 +1,7 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { createContext } from "preact";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ColorPicker, Dropdown, Popover, html } from "./controls.js";
+import { Dropdown, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, followVideo, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
@@ -9,7 +9,7 @@ import { textPieces, unitMode } from "./animate.js";
 import { CURSOR_ART, clickAt, cursorAt, cursorKindAt } from "./cursor.js";
 import { cursorTrack } from "./recording.js";
 import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout, hasDesign } from "./store.js";
-import { addDevice, addShot, addSize, carryDeviceOver, closeStills, moveShotTo, openCopyStyle, setInVideo, deleteEntity, deleteShot, duplicateEntity, goToShot, goToSize, moveShot, moveZ, openAI, openStills, recordingFor, removeSize, replaceMode, screenName, sizeLabel, togglePanel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, carryDeviceOver, moveShotTo, openCopyStyle, setInVideo, deleteShot, goToShot, goToSize, moveShot, recordingFor, removeSize, replaceMode, screenName, sizeLabel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -47,8 +47,10 @@ function placeShape(e, W, H) {
 }
 
 const PAD = 72;
-const TOP = 96;
-const BOTTOM = 104;
+/** Room above the design: for the set's screen names or the sizes' tabs, else a margin. */
+const TOP_TABS = 96;
+const TOP_PLAIN = 56;
+const BOTTOM = 64;
 
 // ---------------------------------------------------------------------------------------------
 // Background shown behind the layout: a cached still of the real background, with a colour guess
@@ -666,9 +668,10 @@ export function CanvasView() {
 
   const W0 = layout?.canvas.width ?? 1320;
   const H0 = layout?.canvas.height ?? 2868;
-  // While a first-steps card sits at the bottom, the design fits in the room above it.
+  // While the still picker sits at the bottom, the design fits in the room above it.
   // The timeline as tall as it's been dragged (else the usual), with a gap above it.
-  const bottom = s.timelineOpen ? Math.max(0, Math.min(s.tlH ?? Math.min(size.h * 0.44, 320), size.h - 150)) + 30 : s.guide === "design" || s.stillPick ? Math.min(size.h * 0.46, 290) : s.guide ? 210 : BOTTOM;
+  const bottom = s.timelineOpen ? Math.max(0, Math.min(s.tlH ?? Math.min(size.h * 0.44, 320), size.h - 150)) + 30 : s.stillPick ? Math.min(size.h * 0.46, 290) : BOTTOM;
+  const TOP = s.groups?.length > 1 || (!s.timelineOpen && manyShots()) ? TOP_TABS : TOP_PLAIN;
   // A set of screens sits in a row in Edit: fit the whole row, or just the screen being edited.
   const setMode = !s.timelineOpen && s.view === "canvas" && manyShots();
   const count = setMode ? s.shots.length : 1;
@@ -1147,10 +1150,6 @@ export function CanvasView() {
       ${setMode && html`<button class="set-add" style=${{ left: (s.shots.length - s.shot) * (W + G) + "px", width: W * SET_ADD + "px", height: H + "px" }} title="Add a screen at the end: a copy of the last one"
         onPointerDown=${(e) => e.stopPropagation()} onClick=${() => addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 })}><${Icon} n="plus" s=${Math.max(16, Math.min(28, W / 8))} /><span>Add screen</span></button>`}
       ${multi && html`<div class="frame-clip" style=${{ width: W + "px", height: H + "px" }}></div>`}
-      <div class="artboard-label" style=${{ top: H + 12 + "px", zIndex: setMode ? 96 : undefined }}><button class="size-btn" title="Change the image size" onPointerDown=${(e) => e.stopPropagation()} onClick=${() => {
-        set({ selected: null, rightOpen: true });
-        persistPrefs();
-      }}><b>${canvasName(layout.canvas.name)}</b><span>${layout.canvas.width} × ${layout.canvas.height}</span><${Icon} n="down" s=${11} /></button><span class="faint">${s.shots?.length > 1 ? html`· <b class="shot-of">Screen ${s.shot + 1} of ${s.shots.length}</b> ` : ""}${!s.timelineOpen && !(s.shots?.length > 1) ? html`· <button class="link-btn" onPointerDown=${(e) => e.stopPropagation()} onClick=${() => addShot("copy")} title="Make this a set: add another screen beside it">Add a screen</button> ` : ""}· Edit view shows placement. Preview shows the finished look.</span></div>
       <div class="artboard ${setMode ? "in-set" : ""} ${dropOver === true ? "drop-over" : ""} ${s.ai.busy || s.designing ? "ai-working" : ""}" ref=${art} style=${{ width: W + "px", height: H + "px", "--set-gap": G + "px" }}>
         <${Backdrop} bg=${s.scene.background} W=${W0} H=${H0} span=${s.scene.backgroundSpan} />
         ${s.scene.menuBar && html`<${SceneMenuBar} bar=${s.scene.menuBar} H=${H} />`}
@@ -1195,8 +1194,7 @@ export function CanvasView() {
         </div>`}
       </div>
     </div>`}
-    ${sel && selBox && !live && !editing && !s.timelineOpen && html`<${ContextBar} sel=${sel} box=${selEl} vp=${vp.current} />`}
-    ${layout && !s.timelineOpen && s.view === "canvas" && (hasDesign(s.scene) || s.groups) && html`<${SizeSwitch} />`}
+    ${layout && !s.timelineOpen && s.view === "canvas" && s.groups?.length > 1 && html`<${SizeSwitch} />`}
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>
@@ -1418,110 +1416,4 @@ function LineHandles({ sh, W, H, dims }) {
 // Floating actions above the selection
 
 /** Shapes that carry words of their own (laurels, ratings, badges): a colour and their words' colour. */
-const WORDED = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"];
-
-function ContextBar({ sel, box, vp }) {
-  const [pick, setPick] = useState(null);
-  const barRef = useRef();
-  useEffect(() => setPick(null), [sel.id]);
-  if (!box || !vp) return null;
-  // Sit above the selection (clear of the rotate handle), else below it, else at the top of the
-  // canvas; prefer a spot that doesn't cover another item, like the headline.
-  const r = box.getBoundingClientRect();
-  const v = vp.getBoundingClientRect();
-  const left = clamp(r.left + r.width / 2 - v.left, 200, v.width - 200);
-  const half = 185;
-  // Also keep clear of the "3D tilt" tag and the artboard's own label.
-  const others = [...vp.querySelectorAll(".ent, .ent-device .tag, .artboard-label"), ...(vp.parentElement?.querySelectorAll(".guide-strip") ?? [])].filter((el) => el.dataset.id !== sel.id).map((el) => el.getBoundingClientRect());
-  const fits = (bottom) => bottom - 40 >= 8 && bottom <= v.height - 70;
-  const clear = (bottom) =>
-    !others.some((o) => o.left - v.left < left + half && o.right - v.left > left - half && o.top - v.top < bottom && o.bottom - v.top > bottom - 40);
-  // The nearest free spot above the selection or below it, whichever is closer; failing that,
-  // just above it (or below, or at the top of the canvas) even if it covers something.
-  const above = r.top - v.top - (sel.kind === "caption" ? 12 : 50);
-  const below = r.bottom - v.top + 50;
-  const scan = (from, step) => {
-    for (let b = from; b - 40 >= 8 && b <= v.height - 70; b += step) if (clear(b)) return b;
-    return null;
-  };
-  const up = scan(above, -6);
-  const down = scan(below, 6);
-  const top = up !== null && (down === null || above - up <= down - below) ? up : (down ?? [above, below, 50].find(fits) ?? 50);
-  const stop = (e) => e.stopPropagation();
-  const text = sel.kind === "caption" || sel.kind === "text";
-  const sh = sel.shape;
-  // The everyday edits sit in the bar itself: words, colours, the screenshot. The rest is one
-  // click away, under ⋯ or in Settings.
-  const shapeUpd = (fn, key) => edit((d) => {
-    const x = d.shapes?.[sel.index];
-    if (x) fn(x);
-  }, key && `s${sel.index}.${key}`);
-  const textColor = (v) =>
-    sel.id === "caption"
-      ? edit((d) => (d.textStyle = { ...(d.textStyle ?? {}), color: v }), "cap.color")
-      : edit((d) => {
-          const t = d.texts?.[sel.index];
-          if (t) t.color = v;
-        }, `t${sel.index}.color`);
-  const more = (e) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const z = sel.id !== "caption";
-    openMenu(r.left, r.bottom + 6, [
-      sel.kind === "shape" && !["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(sh?.type) && { label: sh?.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => shapeUpd((x) => (x.sketch = sh?.sketch ? undefined : true)) },
-      z && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(sel.id) },
-      z && { label: "Bring forward", icon: "front", run: () => moveZ(sel.id, 1) },
-      z && { label: "Send backward", icon: "back", run: () => moveZ(sel.id, -1) },
-      "-",
-      { label: "All settings", icon: "sliders", kbd: "⌥⌘I", run: () => !S.rightOpen && togglePanel("right") },
-    ]);
-  };
-  // Colours to change from the bar: a fill dot, a stroke ring, or the text's colour.
-  const colours = text
-    ? [{ key: "text", label: "Text colour", value: sel.color, onChange: textColor }]
-    : sel.kind === "shape" && sh
-      ? [
-          !isLine(sh.type) && { key: "fill", label: WORDED.includes(sh.type) ? "Colour" : "Fill", value: sh.fill, none: !WORDED.includes(sh.type), onChange: (v) => shapeUpd((x) => (x.fill = v ?? "none"), "fill") },
-          // Laurels, ratings and badges have no stroke: their words take the other colour.
-          WORDED.includes(sh.type) && { key: "label", label: "Words", value: sh.labelColor, onChange: (v) => shapeUpd((x) => (x.labelColor = v), "labelColor") },
-          !WORDED.includes(sh.type) && {
-            key: "stroke",
-            label: sh.type === "badge" ? "Ring" : isLine(sh.type) ? "Colour" : "Stroke",
-            value: sh.strokeWidth > 0 ? sh.stroke : undefined,
-            ring: !isLine(sh.type),
-            none: !isLine(sh.type),
-            onChange: (v) => shapeUpd((x) => {
-              x.stroke = v ?? "none";
-              if (v && !(sh.strokeWidth > 0)) x.strokeWidth = 0.005;
-            }, "stroke"),
-          },
-        ].filter(Boolean)
-      : [];
-  const picking = pick && colours.find((c) => c.key === pick.key);
-  const off = (v) => !v || v === "none";
-  return html`<div class="ctx-bar" ref=${barRef} style=${{ left: left + "px", top: top + "px" }} onPointerDown=${(e) => {
-    stop(e);
-    if (!e.target.closest(".qc")) setPick(null);
-  }}>
-    <button class="btn" title="Describe a change and let AI make it (⌘K)" onClick=${() => openAI(sel.id)}><${Icon} n="spark" s=${14} style=${{ color: "var(--pink)" }} /><span class="ai-mini">Ask AI</span></button>
-    <span class="sep"></span>
-    ${text && html`<button class="btn" title="Change the words (double-click, or ↩)" onClick=${() => canvasApi.editText(sel.id)}><${Icon} n="text" s=${14} />Edit</button>`}
-    ${sel.kind === "device" && html`<button class="btn" title="Use a different screenshot in this device" onClick=${() => replaceMode(sel.id)}><${Icon} n="replace" s=${14} />Replace</button>`}
-    ${sel.kind === "device" && S.scene.devices[sel.index]?.video && html`<button class="btn ${S.stillPick?.id === sel.id ? "on" : ""}" title="Choose the moment of the recording this device shows in images" onClick=${() => (S.stillPick?.id === sel.id ? closeStills() : openStills(sel.id))}><${Icon} n="image" s=${14} />Still</button>`}
-    ${colours.map(
-      (c) => html`<button key=${c.key} class="qc ${c.ring ? "ring" : ""} ${off(c.value) ? "off" : ""} ${pick?.key === c.key ? "on" : ""}" title=${c.label} data-colour=${c.key}
-        onClick=${() => setPick(pick?.key === c.key ? null : { key: c.key })}>
-        <span style=${off(c.value) ? null : c.ring ? { borderColor: c.value } : { background: c.value }}></span>
-      </button>`,
-    )}
-    <button class="btn ${S.rightOpen ? "on" : ""}" title="Every setting for this, in the panel on the right (⌥⌘I)" onClick=${() => togglePanel("right")}><${Icon} n="sliders" s=${14} />Settings</button>
-    <button class="icon-btn" title="More" onClick=${more}><${Icon} n="dots" s=${15} /></button>
-    <button class="icon-btn" title=${sel.id === "caption" ? "Remove the headline (⌫)" : "Delete (⌫)"} onClick=${() => deleteEntity(sel.id)}><${Icon} n="trash" s=${15} /></button>
-  </div>
-  ${picking &&
-  html`<${Popover} anchor=${barRef.current} avoid=${box} onClose=${() => setPick(null)} width=${244} align="center">
-    <div class="qc-head"><b>${picking.label}</b>${picking.none && html`<button class="btn sm ${off(picking.value) ? "on" : "ghost"}" onClick=${() => picking.onChange(undefined)}>None</button>`}</div>
-    <${ColorPicker} value=${off(picking.value) ? "#ffffff" : picking.value} onChange=${(v) => v && picking.onChange(v)} />
-  <//>`}`;
-}
-
 export { commit as commitEntity, entityLabel };

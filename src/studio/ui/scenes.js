@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, aiName, fileUrl, persistPrefs, refreshScenes, saveSceneNow, set, thumbUrl, useStore } from "./store.js";
-import { addDevice, deleteSavedScene, designForMe, duplicateSavedScene, newScene, openScene, renameSavedScene } from "./actions.js";
+import { addDevice, deleteSavedScene, designForMe, duplicateSavedScene, newScene, openAI, openScene, renameSavedScene } from "./actions.js";
 import { openMenu } from "./menu.js";
 import { ExportsGrid } from "./panels.js";
 
@@ -354,10 +354,9 @@ export function ScenesPage() {
     await newScene();
     closeScenesPage();
     if (how === "blank") return;
-    if (how === "ai") set({ leftTab: "designs", leftOpen: true });
     await addDevice(latest.path);
     if (how === "ai") {
-      set({ guide: null });
+      openAI(false);
       designForMe();
     }
   };

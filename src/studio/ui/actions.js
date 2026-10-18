@@ -243,8 +243,8 @@ export function addDevice(path, at = {}) {
   // A recording: first choose the moment it shows (its first frame is often blank).
   if (video) openStills(`device-${next.devices.length}`);
   if (pristine) {
-    // A new design starts from a finished one, and offers a few others to choose from.
-    set({ guide: "design", guidePick: "bold-hero", selected: null, designing: true });
+    // A new design starts from a finished one.
+    set({ selected: null, designing: true });
     return applyRecipe("bold-hero", { silent: true }).finally(() => set({ designing: false }));
   }
 }
@@ -299,7 +299,7 @@ export function closeStills(cancel = false) {
  */
 export function startWithWords() {
   setScene({ ...S.scene, canvas: S.scene.canvas ?? "iphone-6.9", layout: "custom", background: "cream-grain", headline: "Say what it does,\n**in a few words**", textStyle: { font: "Caveat", headlineWeight: 700, color: "#22314d", accentMark: "squiggle", accentMarkColor: "#2f6fd6", x: 0.5, y: 0.4, anchor: "middle", headlineSize: 0.075, width: 0.86 } });
-  set({ leftTab: "images", leftOpen: true, guide: null, view: "canvas" });
+  set({ leftTab: "images", leftOpen: true, view: "canvas" });
   scheduleLayout(0);
 }
 
@@ -431,6 +431,19 @@ export function moveZ(id, dir) {
     else if (id.startsWith("shape-")) d.shapes[idx(id)].z = z;
     else if (id.startsWith("image-")) d.images[idx(id)].z = z;
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Export
+
+/** Whether the design moves: a recording, a video in a device, or animations. */
+export const designMoves = (scene = S.scene) => Boolean(scene.recording?.duration || scene.devices?.some((d) => d.video) || scene.animations?.length);
+
+/** Open Export on what the design is: a video when it moves, else an image (or the set). */
+export function openExport() {
+  const tab = S.exportOpts.tab;
+  const next = designMoves() || S.timelineOpen ? "video" : tab === "video" ? (S.shots?.length > 1 || S.groups?.length > 1 ? "set" : "image") : tab;
+  set({ exportOpen: true, exportOpts: { ...S.exportOpts, tab: next } });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2072,7 +2085,6 @@ export async function newScene() {
     group: 0,
     sceneId: null,
     sceneStamp: null,
-    guide: null,
     stillPick: null,
     animSel: null,
     soundSel: null,
@@ -2171,7 +2183,6 @@ export async function openScreenshot(r) {
     group: 0,
     sceneId: null,
     sceneStamp: null,
-    guide: null,
     stillPick: null,
     animSel: null,
     soundSel: null,
@@ -2243,7 +2254,6 @@ export async function openRecording(r) {
     group: 0,
     sceneId: null,
     sceneStamp: null,
-    guide: null,
     stillPick: null,
     animSel: null,
     soundSel: null,
@@ -2278,7 +2288,7 @@ export async function openScene(id) {
     // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
     const groups = saved.groups?.length > 1 ? saved.groups : null;
-    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, guide: null, stillPick: null, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, renderStale: false, view: "canvas", scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {
