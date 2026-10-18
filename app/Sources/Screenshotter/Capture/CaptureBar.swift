@@ -58,26 +58,30 @@ struct CaptureBarActions {
 private let lime = Color(red: 0.82, green: 1, blue: 0.3)
 private let ink = Color(red: 0.09, green: 0.11, blue: 0.02)
 
+/// Icons, not words: each says what it is when you point at it. The camera and microphone pick
+/// from a small menu; the options (⋯) come last.
 struct CaptureBarView: View {
     @ObservedObject var model: CaptureModel
     let actions: CaptureBarActions
 
+    private var line: some View { Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: 20) }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             IconButton(symbol: "xmark", help: "Close (Esc)", action: actions.close)
-            Divider().frame(height: 26).overlay(Color.white.opacity(0.08))
+            line
             Segmented(selection: $model.mode, items: [(.screenshot, "camera.viewfinder", "Screenshot"), (.record, "record.circle", "Record")])
-            Divider().frame(height: 26).overlay(Color.white.opacity(0.08))
-            Segmented(selection: $model.target, items: [(.area, "rectangle.dashed", "Area"), (.window, "macwindow", "Window"), (.screen, "display", "Screen")])
+            line
+            Segmented(selection: $model.target, items: [(.area, "rectangle.dashed", "An area"), (.window, "macwindow", "A window"), (.screen, "display", "The whole screen")])
             if model.mode == .record {
-                Divider().frame(height: 26).overlay(Color.white.opacity(0.08))
+                line
                 DeviceMenu(
                     on: $model.cameraOn, onSymbol: "video.fill", offSymbol: "video.slash.fill",
-                    title: model.cameraOn ? model.cameraName : "No camera", devices: model.cameras, selected: $model.cameraID,
+                    help: model.cameraOn ? "Camera: \(model.cameraName)" : "Camera off", devices: model.cameras, selected: $model.cameraID,
                     offTitle: "No camera", empty: "No camera connected")
                 DeviceMenu(
                     on: Binding(get: { model.micOn && model.micAvailable }, set: { model.micOn = $0 }), onSymbol: "mic.fill", offSymbol: "mic.slash.fill",
-                    title: model.micOn && model.micAvailable ? model.micName : "No microphone", devices: model.micAvailable ? model.mics : [], selected: $model.micID,
+                    help: model.micOn && model.micAvailable ? "Microphone: \(model.micName)" : "Microphone off", devices: model.micAvailable ? model.mics : [], selected: $model.micID,
                     offTitle: "No microphone", empty: model.mics.isEmpty ? "No microphone connected" : "Needs the camera on, or macOS 15")
                 ToggleChip(on: $model.systemAudio, onSymbol: "speaker.wave.2.fill", offSymbol: "speaker.slash.fill", help: model.systemAudio ? "Recording the Mac's sound" : "Not recording the Mac's sound")
                 if model.afterRecording == .edit {
@@ -85,8 +89,35 @@ struct CaptureBarView: View {
                                help: model.cursorEffects ? "Cursor effects on: a smooth cursor, click ripples and auto zoom to edit afterwards" : "Cursor effects off: the cursor is recorded as it is")
                 }
             }
-            Divider().frame(height: 26).overlay(Color.white.opacity(0.08))
+            line
             SaveToMenu(model: model, chooseFolder: actions.chooseFolder)
+            Button(action: actions.openStudio) {
+                Image(systemName: "arrow.up.forward.app").font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .frame(width: 32, height: 32)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+            .help("Open Screenshotter, to design with your captures")
+            .accessibilityLabel("Open Screenshotter")
+            Button(action: actions.capture) {
+                Group {
+                    if model.mode == .record {
+                        Circle().fill(Color(red: 0.95, green: 0.2, blue: 0.2)).frame(width: 13, height: 13)
+                            .overlay(Circle().strokeBorder(ink.opacity(0.25), lineWidth: 1))
+                    } else {
+                        Image(systemName: "camera.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(ink)
+                    }
+                }
+                .frame(width: 48, height: 32)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(lime))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .disabled(model.busy)
+            .opacity(model.busy ? 0.5 : 1)
+            .help(model.mode == .record ? "Start recording (↩)" : "Take the screenshot (↩)")
+            .accessibilityLabel(model.mode == .record ? "Record" : "Capture")
             Menu {
                 Toggle("Count down from 3", isOn: $model.countdown)
                 Toggle("Countdown sound", isOn: $model.countdownSound).disabled(!model.countdown)
@@ -97,51 +128,27 @@ struct CaptureBarView: View {
                 Divider()
                 Button("Refresh cameras and microphones") { model.refreshDevices() }
             } label: {
-                Image(systemName: "ellipsis").font(.system(size: 13, weight: .bold)).foregroundStyle(.white.opacity(0.85)).frame(width: 30, height: 34)
+                Image(systemName: "ellipsis").font(.system(size: 13, weight: .bold)).foregroundStyle(.white.opacity(0.8)).frame(width: 24, height: 32)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Options")
-            Button(action: actions.openStudio) {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.on.square").font(.system(size: 12, weight: .semibold))
-                    Text("Open Screenshotter").font(.system(size: 12.5, weight: .semibold))
-                }
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 12).frame(height: 34)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
-            .help("Open the canvas to design with your captures")
-            Button(action: actions.capture) {
-                HStack(spacing: 7) {
-                    if model.mode == .record { Circle().fill(Color.red).frame(width: 9, height: 9) }
-                    Text(model.mode == .record ? "Record" : "Capture").font(.system(size: 13.5, weight: .bold))
-                }
-                .foregroundStyle(ink)
-                .padding(.horizontal, 18).frame(height: 36)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(lime))
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.defaultAction)
-            .disabled(model.busy)
-            .opacity(model.busy ? 0.5 : 1)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 60)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.96)))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
+        .padding(.horizontal, 8)
+        .frame(height: 46)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
         .fixedSize()
         .onChange(of: model.mode) { _, _ in DispatchQueue.main.async { actions.resized() } }
         .onChange(of: model.cameraOn) { _, _ in DispatchQueue.main.async { actions.resized() } }
         .onChange(of: model.micOn) { _, _ in DispatchQueue.main.async { actions.resized() } }
-        .onChange(of: model.destinationName) { _, _ in DispatchQueue.main.async { actions.resized() } }
+        .onChange(of: model.afterRecording) { _, _ in DispatchQueue.main.async { actions.resized() } }
         .environment(\.colorScheme, .dark)
     }
 }
 
-/// A row of icon-and-label choices, one of them on.
+/// A row of icon choices, one of them on; each names itself when pointed at.
 struct Segmented<T: Hashable>: View {
     @Binding var selection: T
     let items: [(T, String, String)]
@@ -151,15 +158,14 @@ struct Segmented<T: Hashable>: View {
             ForEach(items, id: \.0) { item in
                 let on = item.0 == selection
                 Button { selection = item.0 } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: item.1).font(.system(size: 15, weight: .medium))
-                        Text(item.2).font(.system(size: 10.5, weight: .semibold))
-                    }
-                    .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
-                    .frame(width: 62, height: 46)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(on ? Color.white.opacity(0.14) : .clear))
+                    Image(systemName: item.1).font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(on ? Color.white : Color.white.opacity(0.5))
+                        .frame(width: 36, height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color.white.opacity(0.15) : .clear))
                 }
                 .buttonStyle(.plain)
+                .help(item.2)
+                .accessibilityLabel(item.2)
             }
         }
     }
@@ -191,20 +197,14 @@ struct SaveToMenu: View {
             Divider()
             Button("Choose Folder…", action: chooseFolder)
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
-                Text(model.destinationName).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(maxWidth: 110, alignment: .leading)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.45))
-            }
-            .padding(.horizontal, 10).frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(0.05)))
+            ChevronIcon(symbol: symbol, tint: .white.opacity(0.8), lit: false)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(model.mode == .screenshot ? "Where screenshots go" : "Where recordings go")
+        .help("\(model.mode == .screenshot ? "Screenshots" : "Recordings") go to: \(model.destinationName)")
+        .accessibilityLabel("Save to \(model.destinationName)")
     }
 
     private func choice(_ title: String, _ icon: String, _ d: CaptureModel.Destination) -> some View {
@@ -214,12 +214,28 @@ struct SaveToMenu: View {
     }
 }
 
-/// A camera or microphone: off, or one of the connected ones.
+/// An icon with a small arrow beside it: a button that opens a menu.
+private struct ChevronIcon: View {
+    let symbol: String
+    let tint: Color
+    let lit: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
+            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.white.opacity(0.4))
+        }
+        .padding(.horizontal, 8).frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(lit ? 0.1 : 0.05)))
+    }
+}
+
+/// A camera or microphone: off, or one of the connected ones. Its name shows when pointed at.
 struct DeviceMenu: View {
     @Binding var on: Bool
     let onSymbol: String
     let offSymbol: String
-    let title: String
+    let help: String
     let devices: [CaptureModel.Device]
     @Binding var selected: String
     let offTitle: String
@@ -238,20 +254,14 @@ struct DeviceMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: on ? onSymbol : offSymbol).font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(on ? lime : Color.white.opacity(0.5))
-                Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                    .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
-                    .frame(maxWidth: 120, alignment: .leading)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.45))
-            }
-            .padding(.horizontal, 10).frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(on ? 0.1 : 0.05)))
+            ChevronIcon(symbol: on ? onSymbol : offSymbol, tint: on ? lime : Color.white.opacity(0.5), lit: on)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -265,11 +275,12 @@ struct ToggleChip: View {
         Button { on.toggle() } label: {
             Image(systemName: on ? onSymbol : offSymbol).font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(on ? lime : Color.white.opacity(0.5))
-                .frame(width: 34, height: 34)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(on ? 0.1 : 0.05)))
+                .frame(width: 32, height: 32)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(on ? 0.1 : 0.05)))
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -281,12 +292,13 @@ struct IconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.7))
-                .frame(width: 26, height: 26)
+            Image(systemName: symbol).font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.7))
+                .frame(width: 24, height: 24)
                 .background(Circle().fill(Color.white.opacity(hover ? 0.14 : 0.06)))
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
         .onHover { hover = $0 }
     }
 }
