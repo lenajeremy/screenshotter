@@ -1111,7 +1111,7 @@ const withoutSpill = (scene) => {
   return rest;
 };
 
-/** A shot's video options: the camera motion chosen for export, and its own length when it has one. */
+/** A shot's video options: its own motion, and its own length when it has one. */
 function shotVideo(scene, length) {
   const v = S.exportOpts.video;
   // A recording: its own length, no ambient motion, its sound (unless turned off).
@@ -1127,7 +1127,8 @@ function shotVideo(scene, length) {
     });
   }
   const d = length ?? Math.max(v.duration ?? 6, Math.ceil((timelineEnd(scene.animations) + (scene.animations?.length ? 1.2 : 0)) * 2) / 2);
-  return tidy({ duration: d, motion: v.motion, zoom: v.zoom ? { start: d * 0.35, end: d * 0.85 } : undefined });
+  // The design's own motion (its Motion setting), shown on its timeline.
+  return tidy({ duration: d, motion: scene.motion ?? "subtle" });
 }
 
 /** The shots the video plays: the set's screens not left out of it (all of them, if every one is); null for a single design. */
@@ -1762,7 +1763,7 @@ export async function aiEdit(text) {
       return;
     }
     const ops = r.operations.map((o) => describeOp(o, r.request, r.video?.shots));
-    const reply = msg({ role: "assistant", text: r.summary, changes: r.operations.length, changed: r.video && r.video.changed.length > 1 ? r.video.changed.map((i) => `Shot ${i + 1}`) : r.changed.map((c) => entityLabel(c, r.request)), ops, via, took, steps, remembered: r.remembered, fresh: true });
+    const reply = msg({ role: "assistant", text: r.summary, changes: r.operations.length, changed: r.video && r.video.changed.length > 1 ? r.video.changed.map((i) => `Screen ${i + 1}`) : r.changed.map((c) => entityLabel(c, r.request)), ops, via, took, steps, remembered: r.remembered, fresh: true });
     if (r.video) {
       // Every shot as it was, so Revert can put back the ones this changed.
       beforeAI.set(reply.id, { kind: "video", shots: video, shot: shotSnapshot, changed: r.video.changed, structural: r.video.structural });
@@ -1899,18 +1900,18 @@ function describeOp(op, scene, shots) {
   let shot = "";
   if (parts[0] === "shots" && /^\d+$/.test(parts[1] ?? "")) {
     const n = Number(parts[1]);
-    shot = `Shot ${n + 1}`;
+    shot = `Screen ${n + 1}`;
     scene = shots?.[n]?.scene ?? scene;
     parts = parts.slice(2);
     const verb = { remove: "Removed", move: "Moved", copy: "Added a copy", insert: "Added", append: "Added" }[op.op];
-    if (!parts.length) return { shot: String(n + 1), target: "Shot", prop: verb ?? "Replaced", value: op.from && /^\/shots\/\d+$/.test(op.from) ? `from shot ${Number(op.from.split("/")[2]) + 1}` : "" };
-    if (parts[0] === "length") return { shot: String(n + 1), target: "Shot", prop: "Length", value: op.op === "remove" ? "as long as it needs" : `${JSON.parse(op.value)} s` };
+    if (!parts.length) return { shot: String(n + 1), target: "Screen", prop: verb ?? "Replaced", value: op.from && /^\/shots\/\d+$/.test(op.from) ? `from screen ${Number(op.from.split("/")[2]) + 1}` : "" };
+    if (parts[0] === "length") return { shot: String(n + 1), target: "Screen", prop: "Length", value: op.op === "remove" ? "as long as it needs" : `${JSON.parse(op.value)} s` };
     if (parts[0] === "transition") {
       let t;
       try {
         t = JSON.parse(op.value);
       } catch {}
-      return { shot: String(n + 1), target: "Shot", prop: "Comes in", value: t?.type ? `${TRANSITION_NAMES[t.type] ?? t.type}${t.duration !== undefined && t.type !== "cut" ? ` · ${t.duration} s` : ""}` : "updated" };
+      return { shot: String(n + 1), target: "Screen", prop: "Comes in", value: t?.type ? `${TRANSITION_NAMES[t.type] ?? t.type}${t.duration !== undefined && t.type !== "cut" ? ` · ${t.duration} s` : ""}` : "updated" };
     }
   }
   let target = "Design";
@@ -1954,10 +1955,10 @@ function describeOp(op, scene, shots) {
   const unit = ["rotateY", "rotateX", "rotate"].includes(key) ? "°" : "";
   const moved = op.op === "copy" || op.op === "move";
   return {
-    shot: shot ? shot.replace("Shot ", "") : undefined,
+    shot: shot ? shot.replace("Screen ", "") : undefined,
     target,
     prop: op.op === "append" || op.op === "insert" ? `Added ${prop.toLowerCase()}` : moved ? `${op.op === "copy" ? "Copied" : "Moved"} ${prop.toLowerCase()}` : prop,
-    value: op.op === "append" || op.op === "insert" ? "" : moved ? (op.from?.startsWith("/shots/") ? `from shot ${Number(op.from.split("/")[2]) + 1}` : "") : short(value) + (typeof value === "number" ? unit : ""),
+    value: op.op === "append" || op.op === "insert" ? "" : moved ? (op.from?.startsWith("/shots/") ? `from screen ${Number(op.from.split("/")[2]) + 1}` : "") : short(value) + (typeof value === "number" ? unit : ""),
     color: moved ? undefined : color,
   };
 }
@@ -2303,7 +2304,7 @@ export async function pickUpAgentChanges(scenes, known) {
         checkpoint();
         set({ sceneStamp: saved.updatedAt, shots: theirs, shot, scene: theirs ? theirs[shot].scene : saved.scene, sceneName: saved.name, selected: null, render: null });
         scheduleLayout(0);
-        toast({ kind: "ok", icon: "spark", title: theirs ? `An agent updated this video (${theirs.length} shots)` : "An agent updated this design", timeout: 9000, actions: [{ label: "Undo", run: undo }] });
+        toast({ kind: "ok", icon: "spark", title: theirs ? `An agent updated this video (${theirs.length} screens)` : "An agent updated this design", timeout: 9000, actions: [{ label: "Undo", run: undo }] });
         return;
       }
       // An agent saves the design's first shot: on the canvas if that's the one showing.

@@ -11,7 +11,7 @@ import { BACKDROP, CALLOUT, animatedIds, backdropStyle, cameraTransform, evaluat
 import { CURSOR_ART, cursorAt, readLog, trackOf } from "./cursor.js";
 import { fastAvailable, renderFast, type FastStage } from "./fast.js";
 import { buildScene, layoutScene, renderHtml, type MockupResult, type SceneEntity, type SceneFrame } from "./mockup.js";
-import { MockupInputShape, type MockupInput } from "./schema.js";
+import { MOTIONS, MockupInputShape, type MockupInput } from "./schema.js";
 import { renderShape } from "./shapes.js";
 
 /** The longest video: an hour, for a whole screen recording. */
@@ -31,9 +31,9 @@ export const VideoOptionsSchema = z
       .describe("Keep the sound of the devices' recordings (a screen recording's voice-over and system sound), mixed into the video. Default false: silent. Not for GIFs."),
     fps: z.number().int().min(12).max(60).optional().describe("Default 30."),
     motion: z
-      .enum(["none", "subtle", "float", "drift", "push-in"])
+      .enum(MOTIONS)
       .optional()
-      .describe("Ambient motion: subtle bob, float (gentle 3D sway), drift (slow pan and turn), push-in (slow camera push). Default subtle."),
+      .describe("Ambient motion: subtle bob, float (gentle 3D sway), drift (slow pan and turn), push-in (slow camera push). Default: the design's own motion, else subtle."),
     motionAmount: z.number().optional().describe("Multiplier for motion strength. Default 1."),
     zoom: z
       .object({
@@ -599,7 +599,7 @@ function installTimeline(cfg: {
  */
 export async function openStage(input: VideoInput, scale: number, o: { frame?: SceneFrame; length?: [number, number] } = {}) {
   const opts = input.video ?? {};
-  const motion = opts.motion ?? "subtle";
+  const motion = opts.motion ?? input.motion ?? "subtle";
   const zoomList = [...(opts.zoom ? [opts.zoom] : []), ...(opts.zooms ?? [])];
   for (const z of zoomList) {
     if (!(z.end > z.start)) throw new Error(`A zoom's end (${z.end}s) must be after its start (${z.start}s).`);

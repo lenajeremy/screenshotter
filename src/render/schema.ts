@@ -90,6 +90,8 @@ export const BackgroundSchema = z
 // Effects
 
 export const GRADES = ["none", "airy", "warm-film", "cool-film", "faded", "cinematic", "vivid", "mono", "noir"] as const;
+/** How a design moves on its own in a video, under its animations. */
+export const MOTIONS = ["none", "subtle", "float", "drift", "push-in"] as const;
 
 export const EffectsSchema = z
   .object({
@@ -555,6 +557,12 @@ export const MockupInputShape = {
     .optional()
     .describe(
       "For videos (create_video, and Studio video exports): when and how each item appears, changes and leaves. Items not animated are there from the start. Example: the headline slides up at 1 s, the MacBook and iPhone zoom in together at 2.5 s, an arrow's end moves at 4 s. Still images show the design as it is.",
+    ),
+  motion: z
+    .enum(MOTIONS)
+    .optional()
+    .describe(
+      "For videos: how the design moves on its own, under its animations. none (still), subtle (a gentle bob; the default), float (a gentle 3D sway), drift (a slow pan and turn), push-in (a slow camera push). A video's own video.motion wins.",
     ),
   sounds: z
     .array(

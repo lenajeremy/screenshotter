@@ -4,7 +4,7 @@ import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, T
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore, pictureUrl } from "./store.js";
 import { addShot, addSize, deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
-import { ClipInspector, SoundInspector } from "./timeline.js";
+import { AnimationSection, ClipInspector, MotionSection, SoundInspector } from "./timeline.js";
 import { soundClips } from "./sound.js";
 import { Finish, LayersList, PrintFinish, Treatment, bgObj } from "./panels.js";
 import { setAutoZoom, setFrame, setRecording } from "./recording.js";
@@ -262,6 +262,7 @@ function DeviceInspector({ id }) {
         }, "3d")} />
       <//>
 
+      <${AnimationSection} id=${id} />
       <${More} id="device">
         ${frame === "device" && frameSection}
         <${Section} title="Position" right=${custom ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((dev) => {
@@ -489,6 +490,7 @@ function CaptionInspector() {
         <div class="row"><label>Size</label><${Slider} value=${st.headlineSize ?? e?.size} min=${0.015} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((t) => (t.headlineSize = v && r4(v)), "hs")} /></div>
       <//>
       <${Emphasis} v=${st} upd=${upd} starColor=${st.accentColor} />
+      <${AnimationSection} id=${"caption"} />
       <${More} id="text">
       <${Section} title="Position" right=${placed ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((t) => {
         for (const k of ["x", "y", "anchor", "width"]) delete t[k];
@@ -555,6 +557,7 @@ function TextInspector({ id }) {
         <div class="row"><label>Size</label><${Slider} value=${t.size ?? e?.size} min=${0.008} max=${0.12} step=${0.001} format=${(v) => Math.round(v * (s.layout?.canvas.height ?? 1000)) + " px"} onChange=${(v) => upd((x) => (x.size = v && r4(v)), "size")} /></div>
       <//>
       <${Emphasis} v=${t} upd=${upd} starColor=${t.accentColor ?? headAccent} />
+      <${AnimationSection} id=${id} />
       <${More} id="text">
       <${Section} title="Position">
         <div class="grid2">
@@ -685,6 +688,7 @@ function ShapeInspector({ id }) {
         ${strokeOn &&
         html`<div class="row"><label>Width</label><${Slider} value=${widthFrac} min=${0.001} max=${0.03} step=${0.0005} format=${(v) => Math.max(1, Math.round(v * H0)) + " px"} onChange=${(v) => upd((x) => (x.strokeWidth = v ?? 0.005), "sw")} /></div>`}
       <//>`}
+      <${AnimationSection} id=${id} />
       <${More} id="shape">
       ${strokeOn && html`<${Section} title="Line style">
         <${Seg} value=${g.dash} options=${DASH_OPTIONS} onChange=${(v) => upd((x) => (x.dash = v === "solid" ? undefined : v))} />
@@ -768,6 +772,7 @@ function ImageInspector({ id }) {
         <div class="row"><label>Colour</label><${ColorButton} value=${b.tint} auto="Its own colours" onChange=${(v) => upd((x) => (x.tint = v), "tint")} /></div>
         <div class="row"><label>Opacity</label><${Slider} value=${b.opacity ?? 1} min=${0.05} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => upd((x) => (x.opacity = v === 1 ? undefined : v), "op")} /></div>
       <//>
+      <${AnimationSection} id=${id} />
       <${More} id="image">
       <${Section} title="Size & position">
         <div class="grid2">
@@ -931,6 +936,7 @@ function SceneInspector() {
         <div class="note">${s.shots?.length > 1 ? `This design has ${s.shots.length} screens, side by side like the App Store shows them.` : "Make this a set: more screens beside this one, like the App Store shows them."}</div>
         <button class="btn block" onClick=${() => (s.shots?.length > 1 ? addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 }) : addShot("copy"))}><${Icon} n="plus" s=${13} />Add a screen</button>
       <//>`}
+      <${MotionSection} />
       <${PrintFinish} />
       <${Finish} />
       ${(s.shots || s.groups) &&

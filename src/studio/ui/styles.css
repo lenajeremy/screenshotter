@@ -1076,10 +1076,10 @@ li.done .work-shot .scan { display: none; }
 .motion.on { color: var(--text); box-shadow: inset 0 0 0 1.5px var(--lime); }
 .motion .mini { width: 16px; height: 26px; border-radius: 4px; border: 1.5px solid currentColor; }
 .motion.on .mini { border-color: var(--lime); }
-.motion:hover .mini.subtle, .motion.on .mini.subtle { animation: m-subtle 2.4s ease-in-out infinite; }
-.motion:hover .mini.float, .motion.on .mini.float { animation: m-float 2s ease-in-out infinite; }
-.motion:hover .mini.drift, .motion.on .mini.drift { animation: m-drift 2.6s ease-in-out infinite; }
-.motion:hover .mini.push-in, .motion.on .mini.push-in { animation: m-push 2.4s ease-in-out infinite; }
+.motion:hover .mini.mo-subtle, .motion.on .mini.mo-subtle { animation: m-subtle 2.4s ease-in-out infinite; }
+.motion:hover .mini.mo-float, .motion.on .mini.mo-float { animation: m-float 2s ease-in-out infinite; }
+.motion:hover .mini.mo-drift, .motion.on .mini.mo-drift { animation: m-drift 2.6s ease-in-out infinite; }
+.motion:hover .mini.mo-push-in, .motion.on .mini.mo-push-in { animation: m-push 2.4s ease-in-out infinite; }
 @keyframes m-subtle { 50% { transform: rotate(4deg) scale(1.04); } }
 @keyframes m-float { 50% { transform: translateY(-4px); } }
 @keyframes m-drift { 50% { transform: translateX(4px) rotate(-3deg); } }
@@ -1246,7 +1246,7 @@ li.done .work-shot .scan { display: none; }
    Animate: the timeline under the canvas. A row per item, a bar per animation, a playhead. */
 /* The timeline's height: as dragged (--tl-h), else the usual; the canvas always keeps some room. */
 .stage { --tl-now: min(var(--tl-h, min(44%, 320px)), calc(100% - 150px)); }
-.tl-dock { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 62; height: var(--tl-now); display: flex; flex-direction: column; border-radius: 16px; background: rgba(20, 20, 24, 0.97); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); box-shadow: var(--shadow-pop); overflow: hidden; animation: pop-in 0.2s var(--ease); }
+.tl-dock { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 62; height: var(--tl-now); display: flex; flex-direction: column; border-radius: 16px; background: rgb(20, 20, 24); box-shadow: var(--shadow-pop); overflow: hidden; animation: pop-in 0.2s var(--ease); }
 .tl-head { flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 10px 0 8px; border-bottom: 1px solid var(--line); }
 .tl-play { width: 30px; height: 30px; border-radius: 50%; background: var(--text); color: #000; }
 .tl-play:hover { background: #fff; color: #000; }
@@ -1505,3 +1505,27 @@ li.done .work-shot .scan { display: none; }
 .viewer-frame img, .viewer-frame video { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .export-progress .render-progress { width: auto; margin: 0; }
 .export-progress .render-progress .pct { text-align: left; margin-top: 6px; }
+/* The timeline's + on each row, at the playhead, and what it opens. */
+.tl-add { position: absolute; left: 5px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: var(--panel-4); color: var(--text-2); box-shadow: 0 0 0 1px var(--line-2), 0 2px 6px rgba(0, 0, 0, 0.4); pointer-events: auto; opacity: 0.55; transition: opacity 120ms ease, background-color 120ms ease, transform 120ms ease; }
+.tl-add:hover, .tl-add.on, .tl-add.open { opacity: 1; background: var(--lime); color: var(--lime-ink); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45); }
+.tl-add:active { transform: scale(0.92); }
+.tl-bar.ambient { background: repeating-linear-gradient(90deg, rgba(84, 199, 236, 0.32) 0 22px, rgba(84, 199, 236, 0.22) 22px 24px); color: var(--text); cursor: pointer; box-shadow: inset 0 0 0 1px rgba(84, 199, 236, 0.45); }
+.add-pop { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.add-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px; }
+.add-head b { font-size: 13px; font-weight: 640; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-head span { color: var(--text-3); font: 500 11px var(--mono); }
+.add-pop .seg { width: 100%; }
+.add-pop .seg button { flex: 1; font-size: 11px; padding-inline: 4px; }
+.add-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); text-align: left; }
+.add-row:hover { background: var(--panel-3); color: var(--text); }
+.add-row span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.add-row b { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.add-row small { font-size: 11px; color: var(--text-3); }
+/* An item's animation in its own settings. */
+.anim-rows { display: flex; flex-direction: column; gap: 4px; }
+.anim-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-size: 12px; text-align: left; }
+.anim-row:hover { background: var(--panel-3); color: var(--text); }
+.anim-row .ar-name { flex: none; font-weight: 560; }
+.anim-row .ar-val { flex: 1; min-width: 0; text-align: right; color: var(--text-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anim-row.set .ar-val { color: var(--lime); }
+.anim-row svg { flex: none; color: var(--text-3); }

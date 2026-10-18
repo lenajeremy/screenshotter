@@ -312,6 +312,40 @@ function drawShape(el, spec, art) {
 
 const IDLE = { opacity: 1, dx: 0, dy: 0, sx: 1, sy: 1, rotate: 0 };
 
+// ---------------------------------------------------------------------------------------------
+// The design's own motion, under its animations: a gentle bob unless it says otherwise.
+
+/** How a design can move on its own (its Motion setting). */
+export const MOTION_OPTIONS = [
+  { value: "none", label: "Still", note: "Nothing moves unless you animate it." },
+  { value: "subtle", label: "Subtle", note: "The devices bob gently, as if held." },
+  { value: "float", label: "Float", note: "The devices sway gently in 3D." },
+  { value: "drift", label: "Drift", note: "The devices pan and turn slowly across the video." },
+  { value: "push-in", label: "Push in", note: "The camera pushes in slowly over the whole video." },
+];
+/** A design's own motion: a recording has none; anything else is subtle unless set. */
+export const motionOf = (scene = S.scene) => (scene.recording?.duration ? "none" : scene.motion ?? "subtle");
+const smoothstep = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+/** A device's own motion at `t` (canvas px and degrees), as the video draws it. */
+function ambientAt(motion, i, t, W, H, D) {
+  const ph = i * 1.3;
+  const w = (period) => Math.sin((2 * Math.PI * t) / period + ph);
+  if (motion === "subtle") return { dx: 0, dy: w(6) * 0.004 * H, dr: w(7.5) * 0.35, drx: 0, dry: 0 };
+  if (motion === "float") return { dx: 0, dy: w(5) * 0.012 * H, dr: 0, drx: w(6.3) * 2.2, dry: Math.cos((2 * Math.PI * t) / 7.1 + ph) * 3 };
+  if (motion === "drift") {
+    const k = smoothstep(t / D);
+    return { dx: (k - 0.5) * 0.03 * W, dy: w(6) * 0.003 * H, dr: 0, drx: 0, dry: (0.5 - k) * 8 };
+  }
+  return null;
+}
+/** Set how the design moves on its own. */
+export function setMotion(v) {
+  edit((d) => {
+    if (v === "subtle") delete d.motion;
+    else d.motion = v;
+  }, "motion");
+}
+
 /** Lay each gradient accent's gradient across its pieces (as the video does): measured untransformed. */
 function paintPieces(root) {
   // A gradient accent drawn in pieces: clipped to text, it wouldn't reach the words inside it,
@@ -363,8 +397,15 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
   // Its soft focus as it ends (that isn't dragged, so the canvas shows it).
   const heldBlur = held && held.clip.to?.blur !== undefined ? evaluate(anims, layout.entities.map(toAnim), animationEnd(held.clip), W0, H0) : null;
   if (held) for (const id of targetsOf(held.clip)) states.delete(id);
+  // The design's own motion: a bob or sway of each device, or a slow push of the camera.
+  const motion = on ? motionOf(shot.scene) : "none";
+  const D = Math.max(0.5, videoLength());
   // The camera, except while one of its moves is being framed (the viewfinder shows that).
-  const cam = on && !(held && targetsOf(held.clip).includes(CAMERA)) ? evaluateCamera(anims, t, cameraFollow(shot.scene)) : undefined;
+  let cam = on && !(held && targetsOf(held.clip).includes(CAMERA)) ? evaluateCamera(anims, t, cameraFollow(shot.scene)) : undefined;
+  if (motion === "push-in") {
+    const c = cam ?? { zoom: 1, x: 0.5, y: 0.5 };
+    cam = { ...c, zoom: c.zoom * (1 + 0.07 * smoothstep(t / D)) };
+  }
   const ct = cam && cam.zoom > 1.0005 ? cameraTransform(cam, W0, H0) : null;
   const through = (x, y) => (ct ? { x: (x - ct.fx) * ct.zoom + ct.fx + ct.tx, y: (y - ct.fy) * ct.zoom + ct.fy + ct.ty } : { x, y });
   const bg = art.querySelector(":scope > .bg");
@@ -388,7 +429,12 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
     const pinned = e?.kind === "device" && shot.scene.devices?.[e.index]?.fixed;
     const ct = pinned ? null : camAll;
     const through = (x, y) => (ct ? { x: (x - ct.fx) * ct.zoom + ct.fx + ct.tx, y: (y - ct.fy) * ct.zoom + ct.fy + ct.ty } : { x, y });
-    const st = states.get(el.dataset.id) ?? (ct ? IDLE : undefined);
+    let st = states.get(el.dataset.id) ?? (ct ? IDLE : undefined);
+    const am = e?.kind === "device" && !pinned && !(held && targetsOf(held.clip).includes(e.id)) ? ambientAt(motion, e.index, t, W0, H0, D) : null;
+    if (am) {
+      const b = st ?? IDLE;
+      st = { ...b, dx: b.dx + am.dx, dy: b.dy + am.dy, rotate: b.rotate + am.dr, rotateX: (b.rotateX ?? 0) + am.drx, rotateY: (b.rotateY ?? 0) + am.dry };
+    }
     const blur = (st ?? heldBlur?.get(el.dataset.id))?.blur;
     if (blur !== undefined) el.style.setProperty("--ablur", `${Math.max(0, blur) * k}px`);
     else el.style.removeProperty("--ablur");
@@ -625,52 +671,235 @@ const update = (i, fn, key) =>
     if (a) fn(a);
   }, key && `anim${i}.${key}`);
 
-/** Animate the chosen items (one clip; several items move as a group), starting at the playhead. */
-export function addAnimation(ids) {
+/** Changes part way, ready-made: what an item becomes, to fine-tune or drag on the canvas. */
+const CHANGES = {
+  grow: { label: "Grow", icon: "pulse", clip: { to: { scale: 1.15 } } },
+  shrink: { label: "Shrink", icon: "pulse", clip: { to: { scale: 0.85 } } },
+  rise: { label: "Move up", icon: "float", clip: { to: { dy: -0.04 } } },
+  turn: { label: "Turn", icon: "sway", clip: { to: { rotate: 8 } } },
+  dim: { label: "Dim", icon: "blink", clip: { to: { opacity: 0.35 } } },
+  tilt: { label: "3D tilt", icon: "turn", clip: { to: { rotateY: -18 } }, devices: true },
+};
+const isText = (id) => id === "caption" || id.startsWith("text-");
+
+/**
+ * Add an animation for `ids` at the playhead (several items move as one group), and select it so
+ * its settings show on the right. `spec` says what: { enter }, { exit } (an effect), { loop }
+ * (a loop's name), { change } (a ready-made change), { camera: "in" | "out" }, { backdrop } (a
+ * move's name) or { callout: "enter" | "exit" }. `at` is when (the playhead by default).
+ */
+export function addClip(ids, spec, at = snap(playhead.t)) {
   const list = S.scene.animations ?? [];
-  if (ids.includes(CAMERA)) {
-    // A camera move: push in on the selected item (or the middle); pull back if it's already in.
-    const now = evaluateCamera(list, playhead.t + 0.001);
+  const targets = ids.length === 1 ? ids[0] : ids;
+  const first = S.layout?.entities.find((e) => e.id === ids[0]);
+  let clip;
+  if (spec.camera) {
+    // Push in on the selected item (or the middle); or pull back to the whole design.
     const aim = S.layout?.entities.find((e) => e.id === S.selected);
     const c = aim ? entityCentre(toAnim(aim)) : { x: 0.5, y: 0.5 };
-    const to = now && now.zoom > 1.2 ? { zoom: 1 } : { zoom: 2, x: Math.round(c.x * 1000) / 1000, y: Math.round(c.y * 1000) / 1000 };
-    edit((d) => {
-      d.animations = [...(d.animations ?? []), { targets: CAMERA, at: snap(playhead.t), duration: 1, ease: "ease-in-out", to }];
-    });
-    selectAnimation(list.length);
-    return persistPrefs();
+    clip = { targets: CAMERA, at, duration: 1, ease: "ease-in-out", to: spec.camera === "out" ? { zoom: 1 } : { zoom: 2, x: r3(c.x), y: r3(c.y) } };
+  } else if (spec.backdrop) {
+    const m = structuredClone(BACKDROP_MOVES[spec.backdrop].clip);
+    clip = { targets: BACKDROP, at, ...m };
+    // A one-off move runs to the end of the video unless its own length says otherwise.
+    if (!m.duration) clip.duration = Math.max(1, snap(videoLength() - at));
+    if (!m.repeat && !m.from) clip.ease = "ease-in-out";
+  } else if (spec.callout) {
+    clip = { targets, at, duration: 0.5, [spec.callout]: "fade" };
+  } else if (spec.enter || spec.exit) {
+    clip = { targets, at, duration: DEFAULT_DURATION, ...(spec.enter ? { enter: spec.enter } : { exit: spec.exit }) };
+  } else if (spec.loop) {
+    clip = { targets, at, ...structuredClone(LOOPS[spec.loop].clip), repeat: true };
+    // Your own curve starts as a loop out to the right of the item and back.
+    if (spec.loop === "curve") {
+      const c = first ? entityCentre(toAnim(first)) : { x: 0.5, y: 0.5 };
+      clip.path.points = [{ x: r3(c.x + 0.08), y: r3(c.y - 0.07) }, { x: r3(c.x + 0.16), y: r3(c.y) }, { x: r3(c.x + 0.08), y: r3(c.y + 0.07) }];
+    }
+  } else if (spec.change) {
+    clip = { targets, at, duration: DEFAULT_DURATION, ...structuredClone(CHANGES[spec.change].clip) };
   }
-  if (ids.includes(BACKDROP)) {
-    // The backdrop: a slow push from here to the end of the video, to start with.
-    const at = snap(playhead.t);
-    edit((d) => {
-      d.animations = [...(d.animations ?? []), { targets: BACKDROP, at, duration: Math.max(1, snap(videoLength() - at)), ease: "ease-in-out", to: { zoom: 1.15 } }];
-    });
-    selectAnimation(list.length);
-    return persistPrefs();
-  }
-  if (ids.length && ids.every(isCallout)) {
-    // A call-out appears the way its style does; once it has, the next one takes it away.
-    const shown = ids.every((id) => list.some((a) => a.enter && targetsOf(a).includes(id)));
-    edit((d) => {
-      d.animations = [...(d.animations ?? []), { targets: ids.length === 1 ? ids[0] : ids, at: snap(playhead.t), duration: 0.5, [shown ? "exit" : "enter"]: "fade" }];
-    });
-    selectAnimation(list.length);
-    return persistPrefs();
-  }
-  const targets = ids.filter((id) => S.layout?.entities.some((e) => e.id === id));
-  if (!targets.length) return;
-  // The first animation of an item is its entrance; after that, a change.
-  const entered = targets.every((id) => list.some((a) => a.enter && targetsOf(a).includes(id)));
-  const text = targets.every((id) => id === "caption" || id.startsWith("text-"));
-  const clip = { targets: targets.length === 1 ? targets[0] : targets, at: snap(playhead.t), duration: DEFAULT_DURATION };
-  if (entered) clip.to = { scale: 1.15 };
-  else clip.enter = text ? "slide-up" : "zoom";
+  if (!clip) return;
   edit((d) => {
     d.animations = [...(d.animations ?? []), clip];
   });
+  if (!S.timelineOpen) openTimeline();
   selectAnimation(list.length);
   persistPrefs();
+}
+
+/** The + on a row: what to add there, at the playhead. */
+function AddPopover({ anchor, ids, onClose }) {
+  const [tab, setTab] = useState("enter");
+  const id = ids[0];
+  const add = (spec) => {
+    onClose();
+    addClip(ids, spec);
+  };
+  const when = `at ${playhead.t.toFixed(1)}s`;
+  const head = (title) => html`<div class="add-head"><b>${title}</b><span>${when}</span></div>`;
+  if (id === CAMERA)
+    return html`<${Popover} anchor=${anchor} onClose=${onClose} class="add-pop" width=${270}>
+      ${head("The camera")}
+      <button class="add-row" onClick=${() => add({ camera: "in" })}><${Icon} n="plus" s=${14} /><span><b>Zoom in here</b><small>${S.selected ? `On ${entityLabel(S.selected)}` : "On the middle; select an item first to zoom on it"}</small></span></button>
+      <button class="add-row" onClick=${() => add({ camera: "out" })}><${Icon} n="fit" s=${14} /><span><b>Pull back</b><small>Back out to the whole design</small></span></button>
+    <//>`;
+  if (id === BACKDROP)
+    return html`<${Popover} anchor=${anchor} onClose=${onClose} class="add-pop" width=${300}>
+      ${head("The background")}
+      <div class="fx-grid">${Object.entries(BACKDROP_MOVES).map(([name, m]) => html`<button class="fx" key=${name} onClick=${() => add({ backdrop: name })}><${LoopIcon} kind=${name} /><span>${m.label}</span></button>`)}</div>
+    <//>`;
+  if (ids.every(isCallout))
+    return html`<${Popover} anchor=${anchor} onClose=${onClose} class="add-pop" width=${260}>
+      ${head(ids.length > 1 ? `${ids.length} call-outs` : label(id))}
+      <button class="add-row" onClick=${() => add({ callout: "enter" })}><${Icon} n="eye" s=${14} /><span><b>Appears</b><small>The way its style does</small></span></button>
+      <button class="add-row" onClick=${() => add({ callout: "exit" })}><${Icon} n="x" s=${14} /><span><b>Leaves</b></span></button>
+    <//>`;
+  const devices = ids.every((x) => x.startsWith("device-"));
+  const texts = ids.every(isText);
+  return html`<${Popover} anchor=${anchor} onClose=${onClose} class="add-pop" width=${330}>
+    ${head(ids.length > 1 ? `${ids.length} items, together` : label(id))}
+    <${Seg} value=${tab} onChange=${setTab} options=${[{ value: "enter", label: "Comes in" }, { value: "loop", label: "Keeps moving" }, { value: "change", label: "Changes" }, { value: "exit", label: "Leaves" }]} />
+    ${tab === "enter" || tab === "exit"
+      ? html`<div class="fx-grid">${(tab === "enter" && texts ? ["slide-up", ...FX_ORDER.filter((f) => f !== "slide-up")] : FX_ORDER).map((f) => html`<button class="fx" key=${f} onClick=${() => add({ [tab]: f })}><${FxIcon} fx=${f} /><span>${FX[f]}</span></button>`)}</div>
+        ${texts && tab === "enter" && html`<div class="note">Text can come in a word or a letter at a time: choose it in its settings after.</div>`}`
+      : tab === "loop"
+        ? html`<div class="fx-grid">${Object.entries(LOOPS).map(([name, l]) => html`<button class="fx" key=${name} onClick=${() => add({ loop: name })}><${LoopIcon} kind=${name} /><span>${l.label}</span></button>`)}</div>
+          <div class="note">It keeps going until the video ends.</div>`
+        : html`<div class="fx-grid">${Object.entries(CHANGES).filter(([, c]) => !c.devices || devices).map(([name, c]) => html`<button class="fx" key=${name} onClick=${() => add({ change: name })}><${LoopIcon} kind=${c.icon} /><span>${c.label}</span></button>`)}</div>
+          <div class="note">Then drag it on the canvas to where it should end up, or fine-tune it on the right.</div>`}
+  <//>`;
+}
+
+/** When an animation added from an item's own settings starts, with the timeline closed. */
+function quickAt(kind) {
+  if (S.timelineOpen) return snap(playhead.t);
+  return kind === "exit" ? Math.max(0.5, snap(videoLength() - 1)) : kind === "change" ? 1.5 : kind === "loop" ? 0 : 0.3;
+}
+
+/** An item's animation, in its own settings: how it comes in, keeps moving, changes and leaves. */
+export function AnimationSection({ id }) {
+  const s = useStore();
+  const mine = (s.scene.animations ?? []).map((a, i) => ({ a, i })).filter(({ a }) => targetsOf(a).includes(id));
+  const ROWS = [
+    { kind: "enter", title: "Comes in", spec: { enter: isText(id) ? "slide-up" : "zoom" }, sum: (a) => `${FX[a.enter]}${a.by ? ` by ${a.by}` : ""} · ${a.at.toFixed(1)}s` },
+    { kind: "loop", title: "Keeps moving", spec: { loop: "float" }, sum: (a) => LOOPS[loopOf(a)]?.label ?? "Loop" },
+    { kind: "change", title: "Changes part way", spec: { change: "grow" }, sum: (a) => `${clipName(a)} · ${a.at.toFixed(1)}s` },
+    { kind: "exit", title: "Leaves", spec: { exit: "fade" }, sum: (a) => `${FX[a.exit]} · ${a.at.toFixed(1)}s` },
+  ];
+  const open = (i) => {
+    if (!S.timelineOpen) openTimeline();
+    selectAnimation(i);
+  };
+  return html`<${Section} title="Animation">
+    <div class="anim-rows">${ROWS.map((r) => {
+      const got = mine.filter(({ a }) => kindOf(a) === r.kind);
+      return html`<button class="anim-row ${got.length ? "set" : ""}" key=${r.kind} title=${got.length ? "Change it" : `Add one: it shows on the timeline (⌘T)`} onClick=${() => (got.length ? open(got[0].i) : addClip([id], r.spec, quickAt(r.kind)))}>
+        <span class="ar-name">${r.title}</span><span class="ar-val">${got.length ? got.map(({ a }) => r.sum(a)).join(", ") : "None"}</span><${Icon} n=${got.length ? "right" : "plus"} s=${12} />
+      </button>`;
+    })}</div>
+    <div class="note">For videos. ${s.timelineOpen ? "The + on its row adds one at the playhead." : "The timeline (⌘T) shows when each one happens."}</div>
+  <//>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Motion styles: ready-made ways in, written as ordinary animations to change on the timeline.
+
+const STYLES = [
+  { value: "one-by-one", label: "One by one", note: "The headline rises word by word, then each device zooms in, then the rest, one after another." },
+  { value: "lively", label: "Lively", note: "Everything pops in with a little overshoot, and the devices float." },
+  { value: "tour", label: "Tour", note: "Everything fades in, then the camera visits each device and each line of text in turn, and pulls back." },
+];
+
+/** A style's animations for the design as it is, and the motion it goes with. */
+function styleOf(name, scene = S.scene, layout = S.layout) {
+  const ents = layout?.entities ?? [];
+  if (!ents.length) return null;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const kind = (k) => ents.filter((e) => e.kind === k);
+  const captions = kind("caption");
+  const devices = kind("device");
+  const rest = [...kind("text"), ...kind("image"), ...kind("shape")];
+  const clips = [];
+  if (name === "tour") {
+    for (const e of [...captions, ...devices, ...rest]) clips.push({ targets: e.id, at: 0, duration: 0.6, enter: "fade" });
+    // The camera calls on each device and each line of text, a couple of seconds each, then pulls back.
+    const stops = [...devices, ...kind("text")].slice(0, 5);
+    let at = 1.2;
+    for (const e of stops) {
+      const c = entityCentre(toAnim(e));
+      clips.push({ targets: CAMERA, at: r2(at), duration: 0.9, ease: "ease-in-out", to: { zoom: e.kind === "device" ? 1.6 : 2.2, x: r3(c.x), y: r3(c.y) } });
+      at += 2;
+    }
+    if (stops.length) clips.push({ targets: CAMERA, at: r2(at), duration: 0.9, ease: "ease-in-out", to: { zoom: 1 } });
+    return { motion: "none", animations: clips };
+  }
+  const lively = name === "lively";
+  const pop = lively ? { ease: "back-out" } : {};
+  let t = 0.3;
+  for (const e of captions) {
+    clips.push({ targets: e.id, at: r2(t), duration: 0.7, enter: lively ? "zoom" : "slide-up", by: "word", ...pop });
+    t += 0.6;
+  }
+  devices.forEach((e, i) => clips.push({ targets: e.id, at: r2(t + i * 0.25), duration: 0.8, enter: lively ? "slide-up" : "zoom", ...pop }));
+  if (devices.length) t += 0.8 + (devices.length - 1) * 0.25;
+  for (const e of rest) {
+    clips.push({ targets: e.id, at: r2(t), duration: 0.5, enter: lively ? "zoom" : "fade", ...pop });
+    t += 0.25;
+  }
+  // Each device's call-outs, one after another.
+  for (const d of devices)
+    (scene.devices?.[d.index]?.highlights ?? []).forEach((_, k) => {
+      clips.push({ targets: `${d.id}/callout-${k + 1}`, at: r2(t), duration: 0.5, enter: "fade" });
+      t += 0.5;
+    });
+  return { motion: lively ? "float" : "subtle", animations: clips };
+}
+const isStyle = (name) => {
+  const st = styleOf(name);
+  return Boolean(st?.animations.length) && st.motion === motionOf() && JSON.stringify(st.animations) === JSON.stringify(S.scene.animations ?? []);
+};
+
+/** Put a style's animations on the timeline (in place of what's there) and play them. */
+export function applyStyle(name) {
+  const st = styleOf(name);
+  if (!st) return;
+  const had = S.scene.animations?.length ?? 0;
+  edit((d) => {
+    if (st.animations.length) d.animations = st.animations;
+    else delete d.animations;
+    if (st.motion === "subtle") delete d.motion;
+    else d.motion = st.motion;
+  });
+  openTimeline();
+  set({ animSel: null, soundSel: null });
+  setPlayhead(0);
+  play();
+  const label = STYLES.find((x) => x.value === name)?.label;
+  if (had) toast({ kind: "ok", icon: "animate", title: label, text: `In place of the ${had} animation${had === 1 ? "" : "s"} it had. ⌘Z brings ${had === 1 ? "it" : "them"} back.`, timeout: 5000 });
+}
+
+/** The design's Motion settings: how it moves on its own, ready-made ways in, and how long it runs. */
+export function MotionSection() {
+  const s = useStore();
+  const [hover, setHover] = useState(null);
+  if (s.scene.recording?.duration) return null;
+  const now = motionOf(s.scene);
+  const style = STYLES.find((x) => isStyle(x.value));
+  const n = s.scene.animations?.length ?? 0;
+  const note = hover?.note ?? style?.note ?? (n ? `${n} animation${n === 1 ? "" : "s"} on its timeline (⌘T).` : MOTION_OPTIONS.find((m) => m.value === now)?.note);
+  return html`<${Section} title="Motion">
+    <div class="lbl">On its own</div>
+    <div class="motions">${MOTION_OPTIONS.map((m) => html`<button class="motion ${now === m.value ? "on" : ""}" key=${m.value} title=${m.note} onMouseEnter=${() => setHover(m)} onMouseLeave=${() => setHover(null)} onClick=${() => setMotion(m.value)}><i class="mini mo-${m.value}"></i>${m.label}</button>`)}</div>
+    <div class="lbl">Bring it in</div>
+    <div class="chips">${STYLES.map((x) => html`<button class="chip ${style?.value === x.value ? "on" : ""}" key=${x.value} title=${x.note} onMouseEnter=${() => setHover(x)} onMouseLeave=${() => setHover(null)} onClick=${() => applyStyle(x.value)}>${x.label}</button>`)}</div>
+    <div class="note">${note}</div>
+    ${!(s.shots?.length > 1) &&
+    html`<div class="row"><label>Length</label><${Slider} value=${s.exportOpts.video.duration} min=${2} max=${30} step=${0.5} format=${(v) => v + " s"} onChange=${(v) => {
+      set({ exportOpts: { ...S.exportOpts, video: { ...S.exportOpts.video, duration: v ?? 6 } } });
+      persistPrefs();
+    }} /></div>`}
+    <button class="btn block" onClick=${toggleTimeline}><${Icon} n="animate" s=${13} />${s.timelineOpen ? "Close the timeline" : "Open the timeline"}<span class="kbd">⌘T</span></button>
+  <//>`;
 }
 
 export function deleteAnimation(i) {
@@ -684,7 +913,9 @@ export function deleteAnimation(i) {
 // ---------------------------------------------------------------------------------------------
 // The timeline under the canvas
 
-const ROW_ICON = { camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes", sound: "sound" };
+const ROW_ICON = { motion: "animate", camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes", sound: "sound" };
+/** The row for the design's own motion (not an item). */
+const MOTION_ROW = "motion";
 const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const stop = (e) => e.stopPropagation();
 
@@ -708,7 +939,8 @@ export function TimelineDock() {
   const entities = s.layout?.entities ?? [];
   // Text first, then devices, then shapes: roughly the order things are introduced.
   // Each device's call-outs sit under it.
-  const rows = [{ id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape"), ...(hasSoundRow(s.scene) ? [{ id: SOUND, kind: "sound" }] : [])];
+  const motion = motionOf(s.scene);
+  const rows = [...(motion !== "none" ? [{ id: MOTION_ROW, kind: "motion" }] : []), { id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape"), ...(hasSoundRow(s.scene) ? [{ id: SOUND, kind: "sound" }] : [])];
   const ents = entities.map(toAnim);
   // Zoomed in, a second gets up to 400px; the timeline scrolls sideways.
   const maxZoom = Math.max(1, (400 * len) / Math.max(1, width));
@@ -818,6 +1050,7 @@ export function TimelineDock() {
   };
   const pickRow = (e, id) => {
     // The camera is animated on its own; items can be chosen together, and so can call-outs.
+    if (id === MOTION_ROW) return set({ selected: null, animSel: null, soundSel: null, animRows: [], rightOpen: true });
     const solo = (x) => x === CAMERA || x === BACKDROP || x === SOUND;
     const group = (x) => (solo(x) ? x : isCallout(x) ? "callout" : "item");
     const many = (e.metaKey || e.ctrlKey || e.shiftKey) && !solo(id) && s.animRows.every((x) => group(x) === group(id));
@@ -826,6 +1059,37 @@ export function TimelineDock() {
     set({ animRows: rowsNow, animSel: null, soundSel: null, ...(solo(id) ? {} : { selected: id.split("/")[0] }) });
   };
   const chosen = s.animRows.length ? s.animRows : s.selected ? [s.selected] : [];
+  // Each row that takes animations has a + at the playhead; the popover it opens adds one there.
+  const [plus, setPlus] = useState([]);
+  const [adding, setAdding] = useState(null);
+  const rowKey = rows.map((r) => r.id).join("|");
+  useLayoutEffect(() => {
+    const el = tracks.current;
+    if (!el) return;
+    const next = [...el.querySelectorAll(":scope > .tl-row[data-row]")]
+      .filter((r) => r.dataset.row !== SOUND && r.dataset.row !== MOTION_ROW)
+      .map((r) => ({ id: r.dataset.row, top: r.offsetTop, h: r.offsetHeight }));
+    if (JSON.stringify(next) !== JSON.stringify(plus)) setPlus(next);
+  });
+  /** Open the + popover for a row; several chosen rows together get one animation as a group. */
+  const openAdd = (id, el) => {
+    if (adding?.id === id) return setAdding(null);
+    pause();
+    const ids = chosen.length > 1 && chosen.includes(id) ? chosen : [id];
+    if (!chosen.includes(id) || chosen.length === 1) pickRow({}, id);
+    setAdding({ id, ids, el });
+  };
+  /** Right-click a spot on a row: the playhead goes there and the + opens. */
+  const addHere = (ev, id) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (id === SOUND || id === MOTION_ROW) return;
+    setPlayhead(timeAt(ev.clientX));
+    requestAnimationFrame(() => {
+      const el = line.current?.querySelector(`[data-add="${CSS.escape(id)}"]`);
+      if (el) openAdd(id, el);
+    });
+  };
   // Drag the top edge to make the timeline taller or shorter; the canvas keeps at least 150px.
   const resize = (e) => {
     if (e.button !== 0) return;
@@ -865,14 +1129,11 @@ export function TimelineDock() {
     <header class="tl-head">
       <button class="icon-btn tl-play" title=${s.playing ? "Pause (Space)" : "Play (Space)"} onClick=${() => play()}><${Icon} n=${s.playing ? "pause" : "play"} s=${15} /></button>
       <span class="tl-clock" title=${manyShots() ? "Where the whole video is, and how long it runs" : ""}><b ref=${time}>0:00.0</b><span> / ${clock(manyShots() ? videoPlan().total : len)}</span></span>
-      ${chosen.includes(SOUND)
-        ? html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
-          ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`
-        : html`<button class="btn sm primary" disabled=${!chosen.length} title=${chosen.length ? "Add an animation for the chosen items, starting at the playhead" : "Choose an item on the left first (⌘-click for several)"} onClick=${() => addAnimation(chosen)}>
-        <${Icon} n="plus" s=${13} w=${2.2} />${chosen.includes(CAMERA) ? "Move the camera" : chosen.includes(BACKDROP) ? "Move the background" : chosen.length > 1 ? `Animate ${chosen.length} together` : chosen.length ? `Animate ${label(chosen[0])}` : "Animate"}
-      </button>`}
+      ${chosen.includes(SOUND) &&
+      html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
+        ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`}
       <span class="grow"></span>
-      ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this shot is on screen, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Shot ${s.shot + 1}` : "Length"}
+      ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this screen is on, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Screen ${s.shot + 1}` : "Length"}
         <${Num} value=${s.shots?.length > 1 ? len : s.exportOpts.video.duration} min=${1} max=${60} step=${0.5} digits=${1} unit="s" onChange=${(v) => {
           if (S.shots?.length > 1) return updateShot(S.shot, { length: v ?? undefined });
           set({ exportOpts: { ...S.exportOpts, video: { ...S.exportOpts.video, duration: v ?? 6 } } });
@@ -891,8 +1152,8 @@ export function TimelineDock() {
       <div class="tl-names">
         <div class="tl-corner">${list.length ? `${list.length} animation${list.length === 1 ? "" : "s"}` : "Items"}</div>
         ${rows.map(
-          (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title=${e.kind === "sound" ? "The video's sound: drag a piece to move it, its ends to trim it, and cut it at the playhead (⌘B)" : "Click to choose; ⌘-click to choose several and animate them together"} onClick=${(ev) => pickRow(ev, e.id)}>
-            <${Icon} n=${ROW_ICON[e.kind]} s=${13} /><span>${label(e.id)}</span>
+          (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title=${e.kind === "sound" ? "The video's sound: drag a piece to move it, its ends to trim it, and cut it at the playhead (⌘B)" : e.kind === "motion" ? "How the design moves on its own: change it in its Motion settings" : "Click to choose; ⌘-click to choose several and animate them together. The + at the playhead adds how it moves."} onClick=${(ev) => pickRow(ev, e.id)}>
+            <${Icon} n=${ROW_ICON[e.kind]} s=${13} /><span>${e.kind === "motion" ? "On its own" : label(e.id)}</span>
           </button>`,
         )}
       </div>
@@ -901,8 +1162,13 @@ export function TimelineDock() {
           ${ticks.map((n) => html`<span class="tl-tick" key=${n} style=${{ left: n * pps + "px" }}>${tickLabel(n, step, len)}</span>`)}
         </div>
         ${rows.map(
-          (e) => html`<div class="tl-row ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} onPointerDown=${scrub}>
+          (e) => html`<div class="tl-row ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} data-row=${e.id} onPointerDown=${scrub} onContextMenu=${(ev) => addHere(ev, e.id)}>
             ${e.kind === "sound" && html`<${SoundPieces} pps=${pps} len=${len} now=${() => playhead.t} cut=${cutSoundHere} play=${playPiece} />`}
+            ${e.kind === "motion" &&
+            html`<div class="tl-bar ambient" style=${{ left: 0, width: len * pps + "px" }} title="The design's own motion, for the whole video. Change it in its Motion settings (click)." onPointerDown=${(ev) => {
+              ev.stopPropagation();
+              set({ selected: null, animSel: null, soundSel: null, animRows: [], rightOpen: true });
+            }}><span>${MOTION_OPTIONS.find((m) => m.value === motion)?.label}</span></div>`}
             ${list.map((a, i) => {
               const k = targetsOf(a).indexOf(e.id);
               if (k < 0) return null;
@@ -922,8 +1188,11 @@ export function TimelineDock() {
           </div>`,
         )}
         ${!rows.length && html`<div class="tl-empty">Add a screenshot first.</div>`}
-        ${rows.length > 0 && !list.length && html`<div class="tl-hint">Choose an item on the left, move the playhead to when it should arrive, then press Animate.</div>`}
-        <div class="tl-line" ref=${line}><i></i></div>
+        ${rows.length > 0 && !list.length && html`<div class="tl-hint">Move the playhead to when something should happen, then press + on its row.</div>`}
+        <div class="tl-line" ref=${line}><i></i>
+          ${plus.map((r) => html`<button class="tl-add ${chosen.includes(r.id) ? "on" : ""} ${adding?.id === r.id ? "open" : ""}" key=${r.id} data-add=${r.id} style=${{ top: r.top + r.h / 2 - 9 + "px" }} title=${`Add to ${r.id === CAMERA ? "the camera" : r.id === BACKDROP ? "the background" : label(r.id)}, here`} onPointerDown=${stop} onClick=${(ev) => openAdd(r.id, ev.currentTarget)}><${Icon} n="plus" s=${12} w=${2.4} /></button>`)}
+        </div>
+        ${adding && html`<${AddPopover} anchor=${adding.el} ids=${adding.ids} onClose=${() => setAdding(null)} />`}
       </div>
     </div>
   </section>`;
@@ -963,12 +1232,12 @@ function TransitionChip({ i, t, at }) {
   const [open, setOpen] = useState(false);
   const ref = useRef();
   const type = t?.type ?? "fade";
-  return html`<button class="shot-join ${open ? "on" : ""}" ref=${ref} style=${at !== undefined ? { left: at + "px" } : null} title=${`${TRANSITION_NAMES[type]} into shot ${i + 1}`} onPointerDown=${(e) => e.stopPropagation()} onClick=${() => setOpen(!open)}>
+  return html`<button class="shot-join ${open ? "on" : ""}" ref=${ref} style=${at !== undefined ? { left: at + "px" } : null} title=${`${TRANSITION_NAMES[type]} into screen ${i + 1}`} onPointerDown=${(e) => e.stopPropagation()} onClick=${() => setOpen(!open)}>
       <${TransitionIcon} type=${type} />
     </button>
     ${open &&
     html`<${Popover} anchor=${ref.current} align="center" class="join-pop" onClose=${() => setOpen(false)}>
-      <div class="join-head">Into shot ${i + 1}</div>
+      <div class="join-head">Into screen ${i + 1}</div>
       <div class="fx-grid">${Object.entries(TRANSITION_NAMES).map(([name, label]) => html`<button class="fx ${type === name ? "on" : ""}" key=${name} onClick=${() => updateShot(i, { transition: { type: name, duration: name === "cut" ? undefined : (t?.duration ?? 0.5) } })}><${TransitionIcon} type=${name} /><span>${label}</span></button>`)}</div>
       ${type !== "cut" && html`<div class="row"><label>Takes</label><${Slider} value=${t?.duration} min=${0.1} max=${2} step=${0.05} fallback=${0.5} format=${(v) => v.toFixed(2) + " s"} onChange=${(v) => updateShot(i, { transition: { type, duration: v ?? 0.5 } })} /></div>`}
     <//>`}`;
@@ -1046,7 +1315,7 @@ function ShotStrip() {
       ...designs.map((x) => ({ label: x.name, icon: "image", run: () => addShot(x.id) })),
     ]);
   };
-  const addBtn = html`<button class="shot-add" title="Add a shot after this one: a copy of it, or one of your designs" onClick=${addMenu}><${Icon} n="plus" s=${14} w=${2.2} /><span>${many ? "" : "Add a shot"}</span></button>`;
+  const addBtn = html`<button class="shot-add" title="Add a screen after this one: a copy of it, or one of your designs" onClick=${addMenu}><${Icon} n="plus" s=${14} w=${2.2} /><span>${many ? "" : "Add a screen"}</span></button>`;
   if (!many) {
     return html`<div class="tl-shots">
       <button class="tl-shot on" title="Shot 1, on the canvas"><${ShotThumb} scene=${s.scene} /><span class="shot-n">1</span><span class="shot-len">${videoLength().toFixed(1)}s</span></button>
@@ -1104,8 +1373,8 @@ function ShotStrip() {
       </button>`)}
     </div>`}
     ${addBtn}
-    <span class="tl-total">${plan.out.filter((o) => !o).length} shots · ${plan.total.toFixed(1)} s</span>
-    <button class="btn sm ghost" title="Every shot at its key moments on one sheet, without rendering the video" onClick=${previewShots}><${Icon} n="grid" s=${13} />All shots</button>
+    <span class="tl-total">${plan.out.filter((o) => !o).length} screens · ${plan.total.toFixed(1)} s</span>
+    <button class="btn sm ghost" title="Every screen at its key moments on one sheet, without rendering the video" onClick=${previewShots}><${Icon} n="grid" s=${13} />All screens</button>
   </div>`;
 }
 
@@ -1567,7 +1836,7 @@ export function ClipInspector() {
     </div>
     <div class="panel-body">
       <div class="clip-targets">${ids.map((id) => html`<span class="pill">${entityLabel(id)}</span>`)}${ids.length > 1 && html`<span class="note">Move as one group: zooms and turns are about their shared middle.</span>`}</div>
-      <${Seg} value=${kind} options=${[{ value: "enter", label: "Enter" }, { value: "change", label: "Change" }, { value: "loop", label: "Loop" }, { value: "exit", label: "Exit" }]} onChange=${setKind} />
+      <${Seg} value=${kind} options=${[{ value: "enter", label: "Comes in" }, { value: "loop", label: "Keeps moving" }, { value: "change", label: "Changes" }, { value: "exit", label: "Leaves" }]} onChange=${setKind} />
       ${kind === "loop" &&
       html`<${Section} title="Keeps going">
           <div class="fx-grid">${Object.entries(LOOPS).map(([name, l]) => html`<button class="fx ${loopOf(a) === name ? "on" : ""}" key=${name} onClick=${() => setLoop(name)}><${LoopIcon} kind=${name} /><span>${l.label}</span></button>`)}</div>

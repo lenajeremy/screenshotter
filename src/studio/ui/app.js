@@ -125,14 +125,6 @@ function Topbar() {
 // =============================================================================================
 // Export
 
-const MOTIONS = [
-  { value: "none", label: "Still" },
-  { value: "subtle", label: "Subtle" },
-  { value: "float", label: "Float" },
-  { value: "drift", label: "Drift" },
-  { value: "push-in", label: "Push in" },
-];
-
 function ExportPopover({ anchor }) {
   const s = useStore();
   const o = s.exportOpts;
@@ -171,10 +163,7 @@ function ExportPopover({ anchor }) {
         </div>`
       : html`<div class="body">
           ${many && html`<${VideoScreens} />`}
-          <div class="lbl">Camera motion</div>
-          <div class="motions">${MOTIONS.map((m) => html`<button class="motion ${o.video.motion === m.value ? "on" : ""}" onClick=${() => upv({ motion: m.value })}><i class="mini ${m.value}"></i>${m.label}</button>`)}</div>
-          ${!many && html`<div class="row"><label>Length</label><${Slider} value=${o.video.duration} min=${2} max=${20} step=${0.5} format=${(v) => v + "s"} onChange=${(v) => upv({ duration: v ?? 6 })} /></div>`}
-          <${Switch} checked=${o.video.zoom} onChange=${(v) => upv({ zoom: v })} label="Zoom into the first highlight" />
+          <div class="note">${s.scene.recording?.duration ? "The recording as you've edited it on its timeline." : html`How it moves, and for how long, is on its timeline (⌘T) and in its Motion settings.`}</div>
           <div class="row"><label>Format</label><${Seg} value=${o.video.format} options=${[{ value: "mp4", label: "MP4" }, { value: "mov", label: "MOV" }, { value: "webm", label: "WebM" }, { value: "gif", label: "GIF" }]} onChange=${(v) => upv({ format: v })} /></div>
           <div class="lbl">Sizes <span class="faint">${sizes.length > 1 ? `· ${sizes.length} files` : ""}</span></div>
           <div class="size-chips">${VIDEO_SIZES.map((z) => html`<button class="size-chip ${sizes.includes(z.value) ? "on" : ""}" key=${z.value} title=${z.title ?? ""} onClick=${() => toggleSize(z.value)}>
@@ -681,7 +670,7 @@ function AIChat({ docked }) {
                 ${m.took && html`<${WorkedFor} m=${m} />`}
                 ${m.ops?.length > 0 &&
                 html`<ul class="op-list">${m.ops.map(
-                  (o, i) => html`<li style=${{ "--i": i }}><span class="op-tick"><${Icon} n="check" s=${10} w=${3} /></span>${o.shot && html`<span class="op-shot" title=${`Shot ${o.shot}`}>${o.shot}</span>`}<b>${o.prop}</b><span class="op-target">${o.target}</span>${o.value && html`<span class="op-val" title=${o.value}>${o.color && html`<i style=${{ background: o.color }}></i>`}<span>${o.value}</span></span>`}</li>`,
+                  (o, i) => html`<li style=${{ "--i": i }}><span class="op-tick"><${Icon} n="check" s=${10} w=${3} /></span>${o.shot && html`<span class="op-shot" title=${`Screen ${o.shot}`}>${o.shot}</span>`}<b>${o.prop}</b><span class="op-target">${o.target}</span>${o.value && html`<span class="op-val" title=${o.value}>${o.color && html`<i style=${{ background: o.color }}></i>`}<span>${o.value}</span></span>`}</li>`,
                 )}</ul>`}
                 <p>${m.fresh ? plain(m.text).split(/(\s+)/).map((w, i) => html`<span class="w" style=${{ "--i": Math.min(i, 60) }}>${w}</span>`) : plain(m.text)}</p>
                 ${m.remembered?.length > 0 && html`<div class="remembered"><${Icon} n="spark" s=${11} /><span>Remembered for next time: ${m.remembered.map((r) => `“${r}”`).join(", ")}</span></div>`}

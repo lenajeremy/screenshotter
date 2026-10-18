@@ -552,7 +552,7 @@ function ShotGhost({ index, scene, layout, W, H, x = 0, inSet = false, quiet = f
   const gw = gW0 * k;
   const gh = gH0 * k;
   const finished = useFinished(scene, inSet && quiet);
-  return html`<div class="ghost-wrap ${inSet ? "set" : ""} ${dragging ? "dragging" : ""} ${dropping ? "drop-over" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it, drag to move it` : `Shot ${index + 1}: click to edit it`}
+  return html`<div class="ghost-wrap ${inSet ? "set" : ""} ${dragging ? "dragging" : ""} ${dropping ? "drop-over" : ""}" data-shot=${index} style=${{ width: W + "px", height: H + "px", left: x + "px" }} title=${inSet ? `${screenName(index)}: click to edit it, drag to move it` : `Screen ${index + 1}: click to edit it`}
       onPointerDown=${(ev) => {
         if (ev.button !== 0) return;
         ev.stopPropagation();
