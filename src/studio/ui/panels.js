@@ -331,7 +331,6 @@ function MacWallpapers() {
   const s = useStore();
   const o = bgObj(s.scene.background);
   const [list, setList] = useState(null);
-  const [all, setAll] = useState(false);
   const [getting, setGetting] = useState({});
   const [bulk, setBulk] = useState(null);
   const stop = useRef(false);
@@ -341,7 +340,6 @@ function MacWallpapers() {
     return () => (stop.current = true);
   }, []);
   if (!list?.length) return null;
-  const here = list.filter((w) => w.here);
   const more = list.filter((w) => !w.here);
   const mb = (b) => `${Math.max(1, Math.round(b / 1e6))} MB`;
   const fetchOne = async (w) => {
@@ -379,15 +377,33 @@ function MacWallpapers() {
     refresh();
   };
   const left = more.reduce((n, w) => n + (w.download ?? 0), 0);
+  // The ones on this Mac come first; the rest download from Apple when chosen.
   return html`<${Section} title="macOS wallpapers" count=${list.length}>
-    <div class="looks">${(all ? list : here).map((w) => html`<${WallpaperTile} key=${w.name} w=${w} on=${o.photo === `macos:${w.name}`} busy=${getting[w.name]} size=${w.download && mb(w.download)} pick=${pick} />`)}</div>
-    ${more.length > 0 &&
-    html`<div class="hstack wall-more">
-      <button class="btn sm ghost" onClick=${() => setAll(!all)}><${Icon} n=${all ? "up" : "down"} s=${12} />${all ? "Only the ones on this Mac" : `${more.length} more from Apple`}</button>
-      <span class="grow"></span>
-      ${all && html`<button class="btn sm" title="Download every one of Apple's wallpapers now, for use offline" onClick=${getAll}>${bulk ? `Stop (${bulk.done} of ${bulk.total})` : `Download all · ${(left / 1e9).toFixed(1)} GB`}</button>`}
-    </div>`}
+    <${Shelf} items=${list} on=${(w) => o.photo === `macos:${w.name}`} render=${(w) => html`<${WallpaperTile} key=${w.name} w=${w} on=${o.photo === `macos:${w.name}`} busy=${getting[w.name]} size=${w.download && mb(w.download)} pick=${pick} />`}
+      extra=${more.length > 0 && html`<button class="btn sm" title="Download every one of Apple's wallpapers now, for use offline" onClick=${getAll}>${bulk ? `Stop (${bulk.done} of ${bulk.total})` : `Download all · ${(left / 1e9).toFixed(1)} GB`}</button>`} />
   <//>`;
+}
+
+/**
+ * A grid of tiles showing its first rows, with Show all and Show less under it, so the groups
+ * below stay in sight. The chosen tile always shows (in the last place, when it's further down).
+ */
+function Shelf({ items, on = () => false, render, show: n = 6, grid = "looks", extra }) {
+  const [open, setOpen] = useState(false);
+  const top = useRef();
+  const k = items.findIndex(on);
+  const shown = open || items.length <= n ? items : k >= n ? [...items.slice(0, n - 1), items[k]] : items.slice(0, n);
+  const toggle = () => {
+    setOpen(!open);
+    // Folding a long group back up keeps its heading in view.
+    if (open) requestAnimationFrame(() => top.current?.scrollIntoView({ block: "nearest" }));
+  };
+  return html`<div class=${grid} ref=${top} onDragStart=${(e) => e.preventDefault()}>${shown.map(render)}</div>
+    ${items.length > n &&
+    html`<div class="hstack shelf-more">
+      <button class="btn sm ghost" onClick=${toggle} aria-expanded=${open}><${Icon} n=${open ? "up" : "down"} s=${12} />${open ? "Show less" : `Show all ${items.length}`}</button>
+      <span class="grow"></span>${open && extra}
+    </div>`}`;
 }
 
 function WallpaperTile({ w, on, busy, size, pick }) {
@@ -411,9 +427,11 @@ function Looks() {
   const made = looks.filter((l) => !l.photo);
   return html`
     <${MacWallpapers} />
-    <${Section} title="Photographic" count=${photo.length}><div class="looks">${photo.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>
-    <${Section} title="Paintings & prints" count=${paintings.length}><div class="looks">${paintings.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>
-    <${Section} title="Gradients" count=${made.length}><div class="looks">${made.map((l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`)}</div><//>`;
+    ${[
+      ["Photographic", photo],
+      ["Paintings & prints", paintings],
+      ["Gradients", made],
+    ].map(([title, list]) => html`<${Section} title=${title} count=${list.length} key=${title}><${Shelf} items=${list} on=${(l) => o.look === l.name} render=${(l) => html`<${LookTile} key=${l.name} l=${l} on=${o.look === l.name} />`} /><//>`)}`;
 }
 
 const SOLIDS = ["#0b0b0d", "#f5f5f7", "#1e1b4b", "#0f172a", "#14532d", "#7c2d12", "#fde68a", "#fbcfe8", "#bae6fd", "#d9f99d", "#e9d5ff", "#fecaca"];
@@ -956,11 +974,11 @@ export function ImagesPanel({ tabs }) {
       }} />
       ${!replacing &&
       html`<${Section} title="Stickers" count=${s.opts?.stickers?.length}>
-        <div class="sticker-grid" onDragStart=${(e) => e.preventDefault()}>${(s.opts?.stickers ?? []).map((n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: drag it onto the design, or click to add it`} onPointerDown=${(e) => dragOnto(e, pictureGhost(`sticker:${n}`, 0.11, true), (at) => addSticker(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addSticker(n))}><img loading="lazy" draggable=${false} src=${`/ui/stickers/${n}.svg`} /></button>`)}</div>
+        <${Shelf} grid="sticker-grid" show=${12} items=${s.opts?.stickers ?? []} render=${(n) => html`<button key=${n} title=${`${n[0].toUpperCase()}${n.slice(1)}: drag it onto the design, or click to add it`} onPointerDown=${(e) => dragOnto(e, pictureGhost(`sticker:${n}`, 0.11, true), (at) => addSticker(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addSticker(n))}><img loading="lazy" draggable=${false} src=${`/ui/stickers/${n}.svg`} /></button>`} />
       <//>
       <${Section} title="Illustrations" count=${s.opts?.art?.length}>
-        <div class="sticker-grid art-grid" onDragStart=${(e) => e.preventDefault()}>${(s.opts?.art ?? []).map((n) => html`<button key=${n} class=${(s.opts?.colouredArt ?? []).includes(n) ? "" : "mono"} title=${`${n.replace(/-/g, " ")}: drag it onto the design, or click to add it (it goes behind the devices)`}
-          onPointerDown=${(e) => dragOnto(e, pictureGhost(`art:${n}`, 0.14), (at) => addArt(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addArt(n))}><img loading="lazy" draggable=${false} src=${`/ui/art/${n}.svg`} /></button>`)}</div>
+        <${Shelf} grid="sticker-grid art-grid" show=${10} items=${s.opts?.art ?? []} render=${(n) => html`<button key=${n} class=${(s.opts?.colouredArt ?? []).includes(n) ? "" : "mono"} title=${`${n.replace(/-/g, " ")}: drag it onto the design, or click to add it (it goes behind the devices)`}
+          onPointerDown=${(e) => dragOnto(e, pictureGhost(`art:${n}`, 0.14), (at) => addArt(n, { at }))} onKeyDown=${(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), addArt(n))}><img loading="lazy" draggable=${false} src=${`/ui/art/${n}.svg`} /></button>`} />
       <//>
       <${Section} title="Badges">
         <div class="shape-tiles">${BADGE_PRESETS.map(preset)}</div>
@@ -1221,22 +1239,18 @@ export function DesignsPanel() {
       <${Section} title="Whole sets" count=${s.setTemplates?.length}>
         <div class="note">Five screens in one look, made from your screenshots in order and your words: a hero, three features and a close.</div>
         ${!has && html`<div class="empty-note">Add a screenshot and each set shows a preview made from it.</div>`}
-        <div class="set-templates">${setsFor(s.setTemplates ?? [], form).map(
-          (t) => html`<button class="set-template" key=${t.id} disabled=${!has} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
+        <${Shelf} grid="set-templates" show=${3} items=${setsFor(s.setTemplates ?? [], form)} render=${(t) => html`<button class="set-template" key=${t.id} disabled=${!has} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
             <div class="strip" style=${{ aspectRatio: STRIP_SHAPE[form] ?? STRIP_SHAPE.phone }}>${has && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>
             <b>${t.name}${t.forms?.includes(form) ? html` <em class="made-for">For ${FORM_NAME[form]}</em>` : ""}</b><span>${t.description}</span>
-          </button>`,
-        )}</div>
+          </button>`} />
       <//>
       <${MyTemplates} has=${has} sq=${sq} />
       <${Section} title="Single screens" count=${s.recipes.length}>
         ${!has && html`<div class="empty-note">Add a screenshot and each template shows a preview made from it.</div>`}
-        <div class="recipes">${s.recipes.map(
-          (r) => html`<button class="recipe" key=${r.id} disabled=${!has} onClick=${() => applyRecipe(r.id)} title=${r.description}>
+        <${Shelf} grid="recipes" show=${6} items=${s.recipes} render=${(r) => html`<button class="recipe" key=${r.id} disabled=${!has} onClick=${() => applyRecipe(r.id)} title=${r.description}>
             <div class="recipe-img">${has && html`<img loading="lazy" src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} />`}</div>
             <b>${r.name}</b><span>${r.description}</span>
-          </button>`,
-        )}</div>
+          </button>`} />
       <//>
       ${has && html`<${Arrangement} />`}
     </div>
