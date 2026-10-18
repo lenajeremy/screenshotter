@@ -110,6 +110,8 @@ export const S = {
   capture: { source: "simulator", simulator: "", bundleId: "", deepLink: "", appearance: "light", time: "9:41", grant: true, system: false, url: "", viewport: "iphone", scheme: "light", macWindow: "", more: false, frame: "device" },
   apps: { list: [], loading: false, for: "" },
   stillPick: null,
+  /** A new design's first screenshot is in: pick how it starts, on a screen of its own. */
+  starting: false,
   /** Animate: the timeline under the canvas, the selected animation, the rows chosen to animate. */
   timelineOpen: false,
   animSel: null,

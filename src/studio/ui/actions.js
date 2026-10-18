@@ -243,8 +243,8 @@ export function addDevice(path, at = {}) {
   // A recording: first choose the moment it shows (its first frame is often blank).
   if (video) openStills(`device-${next.devices.length}`);
   if (pristine) {
-    // A new design starts from a finished one.
-    set({ selected: null, designing: true });
+    // A new design starts from a finished one; the start screen offers others to pick from.
+    set({ selected: null, designing: true, starting: !video });
     return applyRecipe("bold-hero", { silent: true }).finally(() => set({ designing: false }));
   }
 }
@@ -2113,6 +2113,7 @@ export async function newScene() {
     sceneId: null,
     sceneStamp: null,
     stillPick: null,
+    starting: false,
     animSel: null,
     soundSel: null,
     animRows: [],
@@ -2209,6 +2210,7 @@ export async function openScreenshot(r) {
     sceneId: null,
     sceneStamp: null,
     stillPick: null,
+    starting: false,
     animSel: null,
     soundSel: null,
     animRows: [],
@@ -2278,6 +2280,7 @@ export async function openRecording(r) {
     sceneId: null,
     sceneStamp: null,
     stillPick: null,
+    starting: false,
     animSel: null,
     soundSel: null,
     animRows: [],
@@ -2309,7 +2312,7 @@ export async function openScene(id) {
     // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
     const groups = saved.groups?.length > 1 ? saved.groups : null;
-    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, starting: false, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {

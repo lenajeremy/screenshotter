@@ -310,7 +310,7 @@ function Welcome() {
     <p>Start with a screenshot of your app. You get a finished design to make your own.</p>
     <button class="drop-target" onClick=${() => input.current.click()}>
       <span class="ico"><${Icon} n="upload" s=${24} /></span>
-      <b>Drop a screenshot here</b>
+      <b>Drop a screenshot or a recording here</b>
       <span>or click to choose one. You can also paste with <span class="kbd">⌘V</span></span>
     </button>
     <input type="file" ref=${input} hidden multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime" onChange=${(e) => {
@@ -320,6 +320,7 @@ function Welcome() {
     <div class="welcome-alt">
       ${hasSim && html`<button class="alt" onClick=${() => go("simulator")} title=${booted ? `Grabs whatever ${booted.name} is showing, with a clean status bar` : "Opens an iPhone simulator and grabs its screen"}><${Icon} n="sim" s=${15} />From the iOS Simulator</button>`}
       <button class="alt" onClick=${() => go("web")} title="Type an address; it's captured on a phone or a desktop"><${Icon} n="globe" s=${15} />From a website</button>
+      ${native && html`<button class="alt" onClick=${() => native.call("showBar", { mode: "record" }).catch(() => undefined)} title="Record your screen, with your voice and camera if you like; it opens here, ready to edit"><${Icon} n="video" s=${15} />Record your screen</button>`}
       <button class="alt" onClick=${startWithWords} title="A screen of just words, stickers and doodles: no screenshot needed"><${Icon} n="text" s=${15} />Just words and doodles</button>
       <button class="alt" onClick=${trySample} title="See what it does with a made-up app's screenshot"><${Icon} n="spark" s=${15} />Try a sample</button>
     </div>
@@ -339,6 +340,53 @@ function Welcome() {
 }
 
 const stop = (e) => e.stopPropagation();
+
+/** Starting designs to offer first, best suited to how many screenshots there are. */
+function starterTemplates(recipes, n) {
+  const order = n >= 3 ? ["mosaic", "rising", "staircase", "bold-hero", "tilted", "depth", "gallery", "art-director"] : n === 2 ? ["rising", "staircase", "bold-hero", "tilted", "depth", "gallery", "art-director", "dissolve"] : ["bold-hero", "tilted", "depth", "gallery", "art-director", "risograph", "callout", "dissolve"];
+  return order.map((id) => recipes.find((r) => r.id === id)).filter((r) => r && r.screens <= Math.max(1, n));
+}
+
+/**
+ * A new design's first screenshot is in: pick how it starts. Each starting design is made from the
+ * screenshot, big, side by side. Picking one goes straight to the editor, with nothing on top.
+ */
+function StartPicker() {
+  const s = useStore();
+  const body = recipeInput(s.scene);
+  const q = encodeURIComponent(JSON.stringify(body));
+  const picks = starterTemplates(s.recipes, body.devices.length);
+  const [busy, setBusy] = useState(null);
+  const done = () => set({ starting: false });
+  useEffect(() => {
+    const key = (e) => {
+      if (e.key !== "Escape" && e.key !== "Enter") return;
+      e.preventDefault();
+      done();
+    };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, []);
+  const pick = async (id) => {
+    setBusy(id);
+    await applyRecipe(id, { silent: true });
+    done();
+  };
+  return html`<div class="hero start-pick"><div class="hero-inner">
+    <h1>Pick how it <em>starts.</em></h1>
+    <p>Each one is made from your screenshot. You can change everything afterwards, and Templates has more.</p>
+    <div class="sp-grid">${picks.map(
+      (r) => html`<button class="sp-card ${busy === r.id ? "busy" : ""}" key=${r.id} title=${r.description} disabled=${Boolean(busy)} onClick=${() => pick(r.id)}>
+        <span class="sp-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=420&body=${q}`} alt="" />`}</span>
+        <b>${r.name}</b>
+      </button>`,
+    )}</div>
+    <div class="hstack sp-foot">
+      <button class="btn" onClick=${done}>Keep the first one<span class="kbd">↩</span></button>
+      <button class="btn ghost" onClick=${() => (done(), set({ leftTab: "designs", leftOpen: true }))}><${Icon} n="wand" s=${14} />See every template</button>
+    </div>
+  </div></div>`;
+}
 
 /**
  * Pick the still of a recording: the moment its device shows in images and on the canvas. The
@@ -459,9 +507,9 @@ function Stage() {
   const empty = !hasDesign(s.scene) && !s.shots;
   return html`<main class="stage ${s.timelineOpen && !empty ? "animating" : ""}" style=${{ "--tl-h": s.tlH ? s.tlH + "px" : null }}>
     <div class="stage-glow"></div>
-    ${empty ? html`<div class="dots"></div><${Welcome} />` : html`<${CanvasView} />`}
-    ${!empty && s.timelineOpen && html`<${TimelineDock} />`}
-    ${!empty && !s.timelineOpen && !s.stillPick && html`<${TimelineButton} />`}
+    ${empty ? html`<div class="dots"></div><${Welcome} />` : s.starting ? html`<div class="dots"></div><${StartPicker} />` : html`<${CanvasView} />`}
+    ${!empty && !s.starting && s.timelineOpen && html`<${TimelineDock} />`}
+    ${!empty && !s.starting && !s.timelineOpen && !s.stillPick && html`<${TimelineButton} />`}
     ${!empty && !s.timelineOpen && s.stillPick && html`<${StillPicker} key=${s.stillPick.video} />`}
     ${!empty && s.ai.open && !(s.ai.docked && s.rightOpen) && html`<${AIChat} />`}
     <${ExportProgress} />

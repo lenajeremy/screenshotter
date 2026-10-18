@@ -1545,3 +1545,16 @@ li.done .work-shot .scan { display: none; }
 .tl-clip.cut .tl-trim::after { content: ""; position: absolute; left: 3px; top: 50%; width: 2px; height: 14px; margin-top: -7px; border-radius: 1px; background: #fff; opacity: 0; }
 .tl-clip.cut:hover .tl-trim::after { opacity: 0.9; }
 .tl-trimmed { position: absolute; top: 0; bottom: 0; z-index: 2; border-radius: 6px; background: repeating-linear-gradient(135deg, rgba(255, 90, 80, 0.55) 0 6px, rgba(255, 90, 80, 0.35) 6px 12px); pointer-events: none; }
+/* The start screen's second step: starting designs made from the screenshot, big. */
+.start-pick { overflow-y: auto; }
+.start-pick .hero-inner { max-width: min(820px, calc(100% - 48px)); padding-block: 24px; }
+.sp-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; width: 100%; margin-top: 4px; }
+@media (max-width: 1180px) { .sp-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.sp-card { display: flex; flex-direction: column; gap: 8px; padding: 6px 6px 10px; border: 0; border-radius: 14px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font: inherit; font-size: 12.5px; transition: transform 160ms var(--ease), box-shadow 160ms ease, background-color 160ms ease; }
+.sp-card:hover { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-3); color: var(--text); transform: translateY(-2px); }
+.sp-card:active { transform: scale(0.98); }
+.sp-card.busy { box-shadow: inset 0 0 0 2px var(--lime); }
+.sp-card:disabled:not(.busy) { opacity: 0.5; }
+.sp-img { display: block; aspect-ratio: 3 / 4; border-radius: 9px; overflow: hidden; background: linear-gradient(110deg, var(--panel-3) 30%, var(--panel-4) 50%, var(--panel-3) 70%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; }
+.sp-img img { width: 100%; height: 100%; object-fit: contain; display: block; background: var(--panel-2); }
+.sp-foot { margin-top: 10px; justify-content: center; }
