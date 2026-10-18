@@ -208,6 +208,11 @@ export const DeviceInputSchema = z.object({
     .optional()
     .describe("Path to the screenshot PNG/JPEG (e.g. from capture_screenshot or capture_web). Optional when `video` is given: the recording's first frame is used."),
   video: z.string().optional().describe("A screen recording (from record_simulator, or any MP4/MOV) to play inside the frame in create_video. Stills show its first frame unless `screenshot` is set."),
+  cuts: z
+    .array(z.object({ from: z.number().min(0).describe("Seconds into the recording where the part taken out starts."), to: z.number().min(0).describe("Where it ends.") }))
+    .max(500)
+    .optional()
+    .describe("Parts of its video taken out: the rest plays on without them, its sound and logged cursor too (give a recording's screen and webcam the same cuts to keep them in step)."),
   frame: z
     .enum(["device", "browser", "window", "card", "none"])
     .optional()

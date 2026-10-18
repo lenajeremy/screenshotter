@@ -545,6 +545,48 @@ await check("export: a video of several shots keeps each shot's sound, cut off w
   expect(b.length >= 2 && b[0].f === 300 && Math.abs(b[0].t - 0.5) < 0.03 && b[1].f === 500 && b.every((x) => x.t < 3.05), `heard ${heard(b)}`);
 });
 
+// Footage cuts: parts of the recording taken out, picture, sound and cursor alike.
+const { toEdited, toSource, keptParts, cutLog } = await import("../src/render/cuts.js");
+
+await check("cuts: moments map to the edited video and back, and the cursor's log loses the cut parts", async () => {
+  const cuts = [{ from: 1, to: 2 }, { from: 4, to: 5 }];
+  const there = [0.5, 1.5, 2.5, 4.5, 5.5].map((t) => +toEdited(t, cuts).toFixed(3));
+  expect(JSON.stringify(there) === JSON.stringify([0.5, 1, 1.5, 3, 3.5]), `edited ${there}`);
+  const back = [0.5, 1.2, 3.2].map((t) => +toSource(t, cuts).toFixed(3));
+  expect(JSON.stringify(back) === JSON.stringify([0.5, 2.2, 5.2]), `source ${back}`);
+  const kept = keptParts(cuts, 6).map((p) => `${p.from}-${p.to}`).join(",");
+  expect(kept === "0-1,2-4,5-6", `kept ${kept}`);
+  const log = cutLog({ samples: [[0.5, 0.1, 0.1], [1.5, 0.5, 0.5], [3, 0.3, 0.3]], clicks: [[1.4, 0.5, 0.5, "down"], [3.1, 0.3, 0.3, "down"]] }, cuts);
+  const s = log.samples.map((x) => `${x[0]}:${x[1]}`).join(",");
+  expect(s === "0.5:0.1,1:0.5,2:0.3", `samples ${s}`);
+  expect(log.clicks!.length === 1 && log.clicks![0][0] === 2.1, `clicks ${JSON.stringify(log.clicks)}`);
+});
+
+await check("export: a part cut out of the recording is gone, picture and sound, and the rest moves up", async () => {
+  const r = await exportOf(design(undefined, { devices: [{ screenshot: poster, video, frame: "none", x: 0.5, y: 0.5, height: 0.9, shadow: "none", cuts: [{ from: 2, to: 4 }] }], video: { duration: 4, motion: "none", sound: true } }));
+  const p = probe(r.path);
+  expect(Math.abs(p.seconds - 4) < 0.1, `${p.seconds.toFixed(2)} s long`);
+  expectBeeps(beeps(pcm(r.path)), [[300, 0.5], [500, 1.5], [1100, 2.5], [1300, 3.5]]);
+});
+
+await check("export: the start trimmed and a part cut from the middle", async () => {
+  const r = await exportOf(design(undefined, { devices: [{ screenshot: poster, video, frame: "none", x: 0.5, y: 0.5, height: 0.9, shadow: "none", cuts: [{ from: 3, to: 4 }, { from: 0, to: 1 }] }], video: { duration: 4, motion: "none", sound: true } }));
+  expectBeeps(beeps(pcm(r.path)), [[500, 0.5], [700, 1.5], [1100, 2.5], [1300, 3.5]]);
+});
+
+if (native) {
+  await check("fast export: a part cut out is gone there too", async () => {
+    process.env.SCREENSHOTTER_NATIVE = native;
+    try {
+      const r = await exportOf(design(undefined, { devices: [{ screenshot: poster, video, frame: "none", x: 0.5, y: 0.5, height: 0.9, shadow: "none", cuts: [{ from: 2, to: 4 }] }], video: { duration: 4, motion: "none", sound: true } }));
+      expect(!r.warnings.some((w) => /fast export/.test(w)), r.warnings.join(" "));
+      expectBeeps(beeps(pcm(r.path)), [[300, 0.5], [500, 1.5], [1100, 2.5], [1300, 3.5]]);
+    } finally {
+      delete process.env.SCREENSHOTTER_NATIVE;
+    }
+  });
+}
+
 if (native) {
   await check("fast export: the same sound, piece for piece", async () => {
     process.env.SCREENSHOTTER_NATIVE = native;

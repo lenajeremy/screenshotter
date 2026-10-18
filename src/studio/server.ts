@@ -437,7 +437,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   // The canvas draws shapes with the engine's own code: its compiled module (from the build when
   // running from source).
   // The engine's pure modules (shapes, animation), so the canvas draws and animates with the same code.
-  const engineModule = /^\/ui\/(shapes|animate|cursor)\.js$/.exec(url.pathname);
+  const engineModule = /^\/ui\/(shapes|animate|cursor|cuts)\.js$/.exec(url.pathname);
   if (req.method === "GET" && engineModule) {
     const name = `${engineModule[1]}.js`;
     const file = [path.join(here, "..", "render", name), path.join(here, "..", "..", "dist", "render", name)].find((f) => existsSync(f));

@@ -14,7 +14,7 @@ import { cacheDir, formatFor, outputPathFor } from "../util/files.js";
 import { keyMoments } from "./animate.js";
 import { layoutScene, renderHtml, type SceneFrame } from "./mockup.js";
 import type { MockupInput } from "./schema.js";
-import { FITS, PRESET_NAMES, VIDEO_PRESETS, VersionSchema, VideoInputShape, addSound, openStage, renderVideo, soundPieces, versionSpec, type Fit, type VideoInput, type VideoPreset } from "./video.js";
+import { FITS, PRESET_NAMES, VIDEO_PRESETS, VersionSchema, VideoInputShape, addSound, applyCuts, openStage, renderVideo, soundPieces, versionSpec, type Fit, type VideoInput, type VideoPreset } from "./video.js";
 
 export const TRANSITIONS = ["cut", "fade", "fade-black", "fade-white", "push-left", "push-right", "push-up", "push-down", "wipe-left", "wipe-right", "iris", "zoom", "blur", "dissolve"] as const;
 export type Transition = (typeof TRANSITIONS)[number];
@@ -105,7 +105,8 @@ const asScene = (shot: Shot) => {
 /** A shot as a video to render at the sequence's size: in a frame, or laid out again for it. */
 async function shotPlan(shot: Shot, size: { width: number; height: number }, fit: Fit | undefined, fps: number): Promise<{ input: VideoInput; frame?: SceneFrame }> {
   const { length, transition: _t, ...scene } = shot;
-  const input: VideoInput = { ...scene, video: { ...scene.video, fps, ...(length ? { duration: length } : {}) } } as VideoInput;
+  // Parts cut out of its recordings, taken out once here (its sound is mixed from this input too).
+  const input: VideoInput = await applyCuts({ ...scene, video: { ...scene.video, fps, ...(length ? { duration: length } : {}) } } as VideoInput);
   const own = (await layoutScene(scene as MockupInput)).canvas;
   if (Math.abs(own.width - size.width) < 1 && Math.abs(own.height - size.height) < 1) return { input };
   const how = fit ?? (scene.layout === "custom" ? "fit" : "rearrange");

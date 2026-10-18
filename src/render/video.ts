@@ -9,6 +9,7 @@ import { cacheDir, formatFor, outputPathFor } from "../util/files.js";
 import { newPage } from "./browser.js";
 import { BACKDROP, CALLOUT, animatedIds, backdropStyle, cameraTransform, evaluate, evaluateBackdrop, evaluateCallouts, evaluateCamera, keyMoments, targetsOf, timelineEnd, uses3d, type AnimEntity } from "./animate.js";
 import { CURSOR_ART, cursorAt, readLog, trackOf } from "./cursor.js";
+import { cutLogFile, cutVideo } from "./cut-files.js";
 import { fastAvailable, renderFast, type FastStage } from "./fast.js";
 import { buildScene, layoutScene, renderHtml, type MockupResult, type SceneEntity, type SceneFrame } from "./mockup.js";
 import { MOTIONS, MockupInputShape, type MockupInput } from "./schema.js";
@@ -772,6 +773,7 @@ export const MAX_MOMENTS = 16;
  * end of each animation, the middle of long ones, and the settled end.
  */
 export async function storyboard(input: VideoInput, o: { max?: number; output?: string; times?: number[]; every?: number; frame?: SceneFrame } = {}): Promise<Storyboard> {
+  input = await applyCuts(input);
   const canvas: { width: number; height: number } = o.frame ? o.frame : (await layoutScene({ ...input, format: undefined, quality: undefined } as MockupInput)).canvas;
   // Each frame a little sharper than the tile it's shown in.
   const tileH = canvas.width < canvas.height ? 640 : 380;
@@ -959,7 +961,28 @@ const stillOf = (video: string, t: number, file: string, duration: number) =>
   });
 
 /** Render one video: the design at its own size, or in a frame, as a delivery file or a sequence's shot. */
+/**
+ * A video's devices with the parts of their recordings taken out (`cuts`) as files that play
+ * without them, sound and all, and its logged cursor with them taken out too. Done once: the
+ * result has no cuts left.
+ */
+export async function applyCuts(input: VideoInput): Promise<VideoInput> {
+  if (!input.devices?.some((d) => d.video && d.cuts?.length)) return input;
+  const devices = await Promise.all(
+    input.devices.map(async (d) => {
+      if (!d.cuts) return d;
+      const { cuts, ...rest } = d;
+      return d.video && cuts.length ? { ...rest, video: await cutVideo(d.video, cuts) } : rest;
+    }),
+  );
+  const c = input.video?.cursor;
+  const cuts = input.devices[c?.device ?? 0]?.cuts;
+  const video = c?.log && cuts?.length ? { ...input.video, cursor: { ...c, log: cutLogFile(c.log, cuts) } } : input.video;
+  return { ...input, devices, video };
+}
+
 export async function renderVideo(input: VideoInput, o: RenderOptions = {}): Promise<VideoResult> {
+  input = await applyCuts(input);
   const opts = input.video ?? {};
   const format = o.shot || o.appStore ? "mp4" : formatFor(input.format, o.output ?? input.output, ["mp4", "mov", "webm", "gif"] as const, "mp4", { m4v: "mp4" });
   const fps = o.appStore ? 30 : (opts.fps ?? 30);
