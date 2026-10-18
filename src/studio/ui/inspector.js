@@ -932,7 +932,7 @@ function SceneInspector() {
         ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${setLandscape} label="Landscape" />`}
         ${!sc.recording?.duration && html`<div class="row"><label>Also at</label><${Dropdown} value=${null} options=${sizeOptions(presets)} placeholder="Add a size…" search=${true} onChange=${addSize} title="Make every screen again at another size: iPad, Apple Watch, Google Play…" /></div>`}
       <//>
-      ${!sc.recording?.duration && html`<${Section} title="Screens">
+      ${!sc.recording?.duration && !sc.plain && html`<${Section} title="Screens">
         <div class="note">${s.shots?.length > 1 ? `This design has ${s.shots.length} screens, side by side like the App Store shows them.` : "Make this a set: more screens beside this one, like the App Store shows them."}</div>
         <button class="btn block" onClick=${() => (s.shots?.length > 1 ? addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 }) : addShot("copy"))}><${Icon} n="plus" s=${13} />Add a screen</button>
       <//>`}

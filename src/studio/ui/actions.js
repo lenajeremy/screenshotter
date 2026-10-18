@@ -1567,6 +1567,62 @@ export function carryDeviceOver(index) {
  * Add a screen (a shot of the video): a copy of one (the one on the canvas unless `copyOf` says
  * which), or a saved design (by id); after the one on the canvas unless `at` says where.
  */
+/**
+ * Add a video or a picture to the end of the video, as a new clip on the timeline's Footage row:
+ * a screen of its own in this one's look, showing it. `item`: a library path (a picture, or a
+ * recording's still or file) or an upload's result ({ path, poster }).
+ */
+export async function addFootage(item) {
+  const p = typeof item === "string" ? item : item.path;
+  const video = isVideo(p) ? p : recordingFor(p);
+  const still = isVideo(p) ? (item.poster ?? S.files.find((f) => f.path === p.replace(/\.(mp4|mov)$/i, ".png"))?.path) : p;
+  if (!still) return toast({ kind: "warn", title: "That video has no still to show yet", text: "Import it again, or pick another." });
+  const duration = video ? (await api(`/api/media-length?path=${encodeURIComponent(video)}`).catch(() => ({ duration: 0 }))).duration : 0;
+  const look = clone(S.scene);
+  let scene;
+  if (look.recording?.duration || look.plain) {
+    // A recording or a screenshot on its own: the new one framed the same way, on the same background.
+    const d0 = look.devices[0] ?? {};
+    const keep = Object.fromEntries(["frame", "x", "y", "anchor", "height", "width", "radius", "shadow", "rotate"].filter((k) => d0[k] !== undefined).map((k) => [k, d0[k]]));
+    scene = tidy({
+      canvas: look.canvas,
+      background: look.background,
+      effects: look.effects,
+      plain: true,
+      devices: [{ ...keep, screenshot: still, video }],
+      recording: video && duration ? { duration: r4(duration), video, sound: true } : undefined,
+      motion: video ? undefined : look.motion,
+    });
+  } else {
+    // A design: the same design, showing it in its first device.
+    scene = look;
+    delete scene.animations;
+    delete scene.sounds;
+    delete scene.recording;
+    scene.devices[0] = { ...(scene.devices[0] ?? {}), screenshot: still };
+    if (video) scene.devices[0].video = video;
+    else delete scene.devices[0].video;
+  }
+  const shots = allShots() ?? [{ scene: S.scene }];
+  const at = shots.length;
+  checkpoint();
+  // A picture shows for a few seconds; a video runs its own length.
+  shots.push(tidy({ scene, transition: { type: "fade", duration: 0.5 }, length: video ? undefined : 4 }));
+  set({ shots, shot: S.shots ? S.shot : 0 });
+  goToShot(at);
+  toast({ kind: "ok", icon: video ? "video" : "image", title: video ? "Video added" : "Picture added", text: `Clip ${at + 1}, after the last one on the timeline.`, timeout: 3000 });
+}
+
+/** Import a file and add it as a clip at the end of the video. */
+export async function addFootageFile(f) {
+  const name = f.name || (f.type.startsWith("video/") ? "recording.mp4" : "picture.png");
+  await task(f.size > 200 * 1024 * 1024 ? "Importing a large recording…" : "Importing…", async () => {
+    const item = await api(`/api/upload?name=${encodeURIComponent(name)}`, f, true);
+    await refreshFiles();
+    await addFootage(item);
+  });
+}
+
 export async function addShot(from = "copy", { at, copyOf } = {}) {
   const shots = allShots() ?? [{ scene: S.scene }];
   let scene = clone(shots[copyOf ?? (S.shots ? S.shot : 0)]?.scene ?? S.scene);

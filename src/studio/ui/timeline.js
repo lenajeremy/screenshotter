@@ -9,7 +9,7 @@ import { Icon } from "./icons.js";
 import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, toast, useStore, hasDesign } from "./store.js";
 import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, evaluateBackdrop, pathRoute, playsOf, CALLOUT, CAMERA, DEFAULT_DURATION, DEFAULT_EACH, EASES, animationEnd, cameraFor, cameraTransform, cameraView, ease as easeAt, entityCentre, evaluate, evaluateCamera, targetsOf, timelineEnd } from "./animate.js";
 import { renderShape } from "./shapes.js";
-import { addShot, deleteShot, goToShot, moveShot, previewShots, screenName, setInVideo, updateShot } from "./actions.js";
+import { addFootage, addFootageFile, addShot, deleteShot, goToShot, moveShot, previewShots, recordingFor, screenName, setInVideo, updateShot } from "./actions.js";
 import { cameraFollow } from "./recording.js";
 import { SOUND, SoundPieces, deleteSound, editSounds, followSound, hasSoundRow, pieceLength, placeSound, recordingGain, recordingVideo, resetSounds, soundClips, splitSound } from "./sound.js";
 
@@ -152,7 +152,7 @@ export function videoLength() {
   return Math.min(60, Math.max(chosen, S.scene.animations?.length ? needed : 0));
 }
 /** A shot's length when it isn't on the canvas (its text isn't laid out, so words aren't counted). */
-const shotLength = (x) => x.length ?? Math.max(S.exportOpts.video.duration ?? 6, x.scene?.animations?.length ? Math.ceil((timelineEnd(x.scene.animations) + 1.2) * 2) / 2 : 0);
+const shotLength = (x) => x.scene?.recording?.duration ?? x.length ?? Math.max(S.exportOpts.video.duration ?? 6, x.scene?.animations?.length ? Math.ceil((timelineEnd(x.scene.animations) + 1.2) * 2) / 2 : 0);
 
 // Recordings on the canvas in Animate follow the playhead: they play, sound and all, while the
 // timeline plays, and show the frame at the playhead when it's scrubbed or stopped.
@@ -913,9 +913,13 @@ export function deleteAnimation(i) {
 // ---------------------------------------------------------------------------------------------
 // The timeline under the canvas
 
-const ROW_ICON = { motion: "animate", camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes", sound: "sound" };
+const ROW_ICON = { footage: "video", motion: "animate", camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes", sound: "sound" };
 /** The row for the design's own motion (not an item). */
 const MOTION_ROW = "motion";
+/** The row for the video's clips: its footage and pictures, one after another. */
+export const FOOTAGE = "footage";
+/** Room after the timeline for the Footage row's +. */
+const ADD_ROOM = 40;
 const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const stop = (e) => e.stopPropagation();
 
@@ -935,23 +939,28 @@ export function TimelineDock() {
   const [zoom, setZoomNow] = useState(1);
   const anchor = useRef(null);
   const len = videoLength();
+  // One timeline for the whole video: the screen on the canvas is the span from `off`, `len` long.
+  const many = manyShots() && !offVideo();
+  const plan = many ? videoPlan() : null;
+  const off = many ? plan.starts[s.shot] : 0;
+  const total = many ? plan.total : len;
   const list = s.scene.animations ?? [];
   const entities = s.layout?.entities ?? [];
   // Text first, then devices, then shapes: roughly the order things are introduced.
   // Each device's call-outs sit under it.
   const motion = motionOf(s.scene);
-  const rows = [...(motion !== "none" ? [{ id: MOTION_ROW, kind: "motion" }] : []), { id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape"), ...(hasSoundRow(s.scene) ? [{ id: SOUND, kind: "sound" }] : [])];
+  const rows = [...(motion !== "none" ? [{ id: MOTION_ROW, kind: "motion" }] : []), { id: CAMERA, kind: "camera" }, { id: BACKDROP, kind: "backdrop" }, ...entities.filter((e) => e.kind === "caption" || e.kind === "text"), ...entities.filter((e) => e.kind === "device").flatMap((e) => [e, ...calloutRows(e)]), ...entities.filter((e) => e.kind === "image"), ...entities.filter((e) => e.kind === "shape"), { id: FOOTAGE, kind: "footage" }, ...(hasSoundRow(s.scene) ? [{ id: SOUND, kind: "sound" }] : [])];
   const ents = entities.map(toAnim);
   // Zoomed in, a second gets up to 400px; the timeline scrolls sideways.
-  const maxZoom = Math.max(1, (400 * len) / Math.max(1, width));
+  const maxZoom = Math.max(1, (400 * total) / Math.max(1, width));
   const z = clamp(zoom, 1, maxZoom);
-  const pps = (width / len) * z;
+  const pps = (width / total) * z;
 
   useLayoutEffect(() => {
     const el = body.current;
     if (!el) return;
-    // The names column and the tracks' margins aren't timeline.
-    const measure = () => setWidth(Math.max(120, el.clientWidth - 172 - 28));
+    // The names column, the tracks' margins and room for the Footage row's + aren't timeline.
+    const measure = () => setWidth(Math.max(120, el.clientWidth - 172 - 28 - ADD_ROOM));
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     measure();
@@ -961,8 +970,8 @@ export function TimelineDock() {
   const setZoom = (next, clientX) => {
     const el = body.current;
     const left = tracks.current?.getBoundingClientRect().left ?? 0;
-    const x = clientX ?? left + playhead.t * pps;
-    anchor.current = { t: clamp((x - left) / pps, 0, len), x: x - el.getBoundingClientRect().left };
+    const x = clientX ?? left + (many ? video.T : playhead.t) * pps;
+    anchor.current = { t: clamp((x - left) / pps, 0, total), x: x - el.getBoundingClientRect().left };
     setZoomNow(clamp(next, 1, maxZoom));
   };
   useLayoutEffect(() => {
@@ -978,43 +987,49 @@ export function TimelineDock() {
     e.preventDefault();
     setZoom(z * Math.exp(-e.deltaY * 0.01), e.clientX);
   };
-  // The playhead line and the clock follow without re-rendering the dock.
+  // The playhead line and the clock follow without re-rendering the dock: the whole video's clock
+  // when it has several screens (outside the one on the canvas, its rows' + buttons step aside).
   useEffect(() => {
-    const show = (t) => {
-      if (line.current) line.current.style.transform = `translateX(${t * pps}px)`;
-      if (time.current && !manyShots()) time.current.textContent = clock(t);
+    const show = (T) => {
+      if (line.current) {
+        line.current.style.transform = `translateX(${T * pps}px)`;
+        line.current.classList.toggle("outside", many && (T < off - 1e-6 || T > off + len + 1e-6));
+      }
+      if (time.current) time.current.textContent = clock(T);
       // Zoomed in and playing: the timeline keeps the playhead in view.
       const el = body.current;
       if (el && S.playing && z > 1) {
-        const x = 172 + 12 + t * pps;
+        const x = 172 + 12 + T * pps;
         if (x > el.scrollLeft + el.clientWidth - 48 || x < el.scrollLeft + 172) el.scrollLeft = Math.max(0, x - 172 - 48);
       }
     };
-    show(playhead.t);
-    const offShot = onPlayhead(show);
-    // A video of several shots: the clock is the whole video's; this shot's playhead dims outside it.
-    const offVideo = onVideoTime((T, plan) => {
-      if (time.current) time.current.textContent = clock(T);
-      const a = plan.starts[S.shot];
-      if (line.current) line.current.style.opacity = T >= a - 1e-6 && T <= a + plan.lengths[S.shot] + 1e-6 ? "" : "0.3";
-    });
-    if (manyShots()) setVideoTime(video.T);
-    else if (line.current) line.current.style.opacity = "";
-    return () => {
-      offShot();
-      offVideo();
-    };
-  }, [pps, z, s.shots?.length]);
+    if (!many) {
+      show(playhead.t);
+      return onPlayhead(show);
+    }
+    const stop = onVideoTime((T) => show(T));
+    setVideoTime(video.T);
+    return stop;
+  }, [pps, z, many, off, len]);
+  // Editing another screen: the clock moves into it (keeping its place if it's already there).
+  useEffect(() => {
+    if (!many) return;
+    if (video.T < off - 1e-6 || video.T > off + len + 1e-6) setVideoTime(off + Math.min(playhead.t, len));
+    else setVideoTime(video.T);
+  }, [many, s.shot, s.shots?.length]);
   useEffect(() => {
     if (playhead.t > len) setPlayhead(len);
   }, [len]);
 
-  const timeAt = (clientX) => clamp((clientX - tracks.current.getBoundingClientRect().left) / pps, 0, len);
+  /** The moment under the pointer, on the whole video's clock. */
+  const timeAt = (clientX) => clamp((clientX - tracks.current.getBoundingClientRect().left) / pps, 0, total);
+  /** Move the playhead to a moment of the whole video. */
+  const goTo = (T) => (many ? setVideoTime(T) : setPlayhead(T));
   const scrub = (e) => {
     if (e.button !== 0) return;
     pause();
-    setPlayhead(timeAt(e.clientX));
-    const move = (m) => setPlayhead(timeAt(m.clientX));
+    goTo(timeAt(e.clientX));
+    const move = (m) => goTo(timeAt(m.clientX));
     const up = () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", up);
@@ -1051,6 +1066,7 @@ export function TimelineDock() {
   const pickRow = (e, id) => {
     // The camera is animated on its own; items can be chosen together, and so can call-outs.
     if (id === MOTION_ROW) return set({ selected: null, animSel: null, soundSel: null, animRows: [], rightOpen: true });
+    if (id === FOOTAGE) return set({ animRows: [FOOTAGE], animSel: null, soundSel: null, selected: null });
     const solo = (x) => x === CAMERA || x === BACKDROP || x === SOUND;
     const group = (x) => (solo(x) ? x : isCallout(x) ? "callout" : "item");
     const many = (e.metaKey || e.ctrlKey || e.shiftKey) && !solo(id) && s.animRows.every((x) => group(x) === group(id));
@@ -1067,7 +1083,7 @@ export function TimelineDock() {
     const el = tracks.current;
     if (!el) return;
     const next = [...el.querySelectorAll(":scope > .tl-row[data-row]")]
-      .filter((r) => r.dataset.row !== SOUND && r.dataset.row !== MOTION_ROW)
+      .filter((r) => r.dataset.row !== SOUND && r.dataset.row !== MOTION_ROW && r.dataset.row !== FOOTAGE)
       .map((r) => ({ id: r.dataset.row, top: r.offsetTop, h: r.offsetHeight }));
     if (JSON.stringify(next) !== JSON.stringify(plus)) setPlus(next);
   });
@@ -1083,8 +1099,9 @@ export function TimelineDock() {
   const addHere = (ev, id) => {
     ev.preventDefault();
     ev.stopPropagation();
-    if (id === SOUND || id === MOTION_ROW) return;
-    setPlayhead(timeAt(ev.clientX));
+    if (id === SOUND || id === MOTION_ROW || id === FOOTAGE) return;
+    // Only within the screen on the canvas (its rows are its own).
+    goTo(clamp(timeAt(ev.clientX), off, off + len));
     requestAnimationFrame(() => {
       const el = line.current?.querySelector(`[data-add="${CSS.escape(id)}"]`);
       if (el) openAdd(id, el);
@@ -1122,13 +1139,13 @@ export function TimelineDock() {
   };
   const step = tickStep(pps);
   // Each with room for its label (none right at the end, where it would run past it).
-  const ticks = Array.from({ length: Math.floor(len / step + 1e-6) + 1 }, (_, n) => Math.round(n * step * 1000) / 1000).filter((t) => (len - t) * pps >= 34);
+  const ticks = Array.from({ length: Math.floor(total / step + 1e-6) + 1 }, (_, n) => Math.round(n * step * 1000) / 1000).filter((t) => (total - t) * pps >= 34);
 
   return html`<section class="tl-dock" onPointerDown=${stop}>
     <i class="tl-grip" title="Drag to make the timeline taller or shorter. Double-click for the usual height." onPointerDown=${resize} onDblClick=${usualHeight}></i>
     <header class="tl-head">
       <button class="icon-btn tl-play" title=${s.playing ? "Pause (Space)" : "Play (Space)"} onClick=${() => play()}><${Icon} n=${s.playing ? "pause" : "play"} s=${15} /></button>
-      <span class="tl-clock" title=${manyShots() ? "Where the whole video is, and how long it runs" : ""}><b ref=${time}>0:00.0</b><span> / ${clock(manyShots() ? videoPlan().total : len)}</span></span>
+      <span class="tl-clock" title=${many ? "Where the whole video is, and how long it runs" : ""}><b ref=${time}>0:00.0</b><span> / ${clock(total)}</span></span>
       ${chosen.includes(SOUND) &&
       html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
         ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`}
@@ -1147,22 +1164,24 @@ export function TimelineDock() {
       </div>
       <button class="icon-btn sm" title="Close the timeline" onClick=${closeTimeline}><${Icon} n="x" s=${14} /></button>
     </header>
-    <${ShotStrip} />
     <div class="tl-body ${z > 1.001 ? "zoomed" : ""}" ref=${body} onWheel=${wheel}>
       <div class="tl-names">
         <div class="tl-corner">${list.length ? `${list.length} animation${list.length === 1 ? "" : "s"}` : "Items"}</div>
         ${rows.map(
-          (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title=${e.kind === "sound" ? "The video's sound: drag a piece to move it, its ends to trim it, and cut it at the playhead (⌘B)" : e.kind === "motion" ? "How the design moves on its own: change it in its Motion settings" : "Click to choose; ⌘-click to choose several and animate them together. The + at the playhead adds how it moves."} onClick=${(ev) => pickRow(ev, e.id)}>
-            <${Icon} n=${ROW_ICON[e.kind]} s=${13} /><span>${e.kind === "motion" ? "On its own" : label(e.id)}</span>
+          (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title=${e.kind === "sound" ? "The video's sound: drag a piece to move it, its ends to trim it, and cut it at the playhead (⌘B)" : e.kind === "motion" ? "How the design moves on its own: change it in its Motion settings" : e.kind === "footage" ? "The video's clips, one after another: videos and pictures. The + at its end adds another." : "Click to choose; ⌘-click to choose several and animate them together. The + at the playhead adds how it moves."} onClick=${(ev) => pickRow(ev, e.id)}>
+            <${Icon} n=${ROW_ICON[e.kind]} s=${13} /><span>${e.kind === "motion" ? "On its own" : e.kind === "footage" ? "Footage" : label(e.id)}</span>
           </button>`,
         )}
       </div>
-      <div class="tl-tracks" ref=${tracks} style=${{ width: len * pps + "px" }}>
+      <div class="tl-tracks" ref=${tracks} style=${{ width: total * pps + "px", "--off": off * pps + "px", "--span": len * pps + "px" }}>
         <div class="tl-ruler" onPointerDown=${scrub}>
-          ${ticks.map((n) => html`<span class="tl-tick" key=${n} style=${{ left: n * pps + "px" }}>${tickLabel(n, step, len)}</span>`)}
+          ${ticks.map((n) => html`<span class="tl-tick" key=${n} style=${{ left: n * pps + "px" }}>${tickLabel(n, step, total)}</span>`)}
         </div>
         ${rows.map(
-          (e) => html`<div class="tl-row ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} data-row=${e.id} onPointerDown=${scrub} onContextMenu=${(ev) => addHere(ev, e.id)}>
+          (e) => html`<div class="tl-row ${e.kind} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} data-row=${e.id} onPointerDown=${scrub} onContextMenu=${(ev) => addHere(ev, e.id)}>
+            ${e.kind === "footage"
+              ? html`<${FootageTrack} pps=${pps} plan=${plan} len=${len} on=${chosen.includes(FOOTAGE)} />`
+              : html`<div class="tl-lane ${many ? "part" : ""}">
             ${e.kind === "sound" && html`<${SoundPieces} pps=${pps} len=${len} now=${() => playhead.t} cut=${cutSoundHere} play=${playPiece} />`}
             ${e.kind === "motion" &&
             html`<div class="tl-bar ambient" style=${{ left: 0, width: len * pps + "px" }} title="The design's own motion, for the whole video. Change it in its Motion settings (click)." onPointerDown=${(ev) => {
@@ -1185,6 +1204,7 @@ export function TimelineDock() {
                 <i class="tl-edge" onPointerDown=${(ev) => dragBar(ev, i, k, true)}></i>
               </div>`;
             })}
+            </div>`}
           </div>`,
         )}
         ${!rows.length && html`<div class="tl-empty">Add a screenshot first.</div>`}
@@ -1269,113 +1289,123 @@ function ShotThumb({ scene, film }) {
   return img ? html`<img src=${img} alt="" draggable=${false} />` : html`<i class="shot-blank"></i>`;
 }
 
-/**
- * The video's shots on one timeline: each as long as it runs, a transition chip where one gives
- * way to the next, and a playhead for the whole video (drag it, or press Play). Click a shot to
- * edit it; add one, or right-click one to move or remove it.
- */
-function ShotStrip() {
+/** Steps between the frames a video clip shows: the smallest that leaves each frame room. */
+const FRAME_STEPS = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const mediaLengths = new Map();
+/** How long a video file runs (asked of the engine once, then remembered). */
+function useMediaLength(file) {
+  const [n, setN] = useState(() => mediaLengths.get(file));
+  useEffect(() => {
+    if (!file || mediaLengths.has(file)) return setN(mediaLengths.get(file));
+    let live = true;
+    api(`/api/media-length?path=${encodeURIComponent(file)}`)
+      .then((r) => {
+        mediaLengths.set(file, r.duration || 0);
+        if (live) setN(r.duration || 0);
+      })
+      .catch(() => undefined);
+    return () => (live = false);
+  }, [file]);
+  return n;
+}
+
+/** The video a screen plays (its recording, else the first device's), if any. */
+export const footageOf = (scene) => scene?.recording?.video ?? scene?.devices?.find((d) => d.video)?.video;
+
+/** A clip's look on the Footage row: its video's frames at a steady step, or its picture. */
+function ClipFrames({ scene, len, pps }) {
+  const vid = footageOf(scene);
+  const dur = useMediaLength(vid);
+  if (!vid) return html`<${ShotThumb} scene=${scene} film />`;
+  // A frame about as wide as the row is tall; the same moments at every zoom, so they're reused.
+  const step = FRAME_STEPS.find((x) => x * pps >= 56) ?? 1200;
+  const end = Math.max(0.05, Math.min(len, dur || len) - 0.05);
+  const times = [];
+  for (let t = 0; t < len - 1e-6 && times.length < 400; t += step) times.push(t);
+  return html`<span class="clip-frames">${times.map((t) => html`<img key=${t} loading="lazy" draggable=${false} alt="" src=${`/api/moment?path=${encodeURIComponent(vid)}&t=${Math.min(t + step / 2, end).toFixed(2)}&w=160`} style=${{ width: step * pps + "px" }} />`)}</span>`;
+}
+
+/** The + at the end of the Footage row: a video or a picture from your library, or a file. */
+function AddFootage({ anchor, onClose }) {
   const s = useStore();
-  const many = s.shots?.length > 1;
-  const track = useRef();
-  const line = useRef();
-  const [tw, setTw] = useState(600);
-  useLayoutEffect(() => {
-    const el = track.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setTw(el.clientWidth));
-    ro.observe(el);
-    setTw(el.clientWidth);
-    return () => ro.disconnect();
-  }, [many]);
-  const plan = many ? videoPlan() : null;
-  const pps = plan ? tw / Math.max(0.1, plan.total) : 0;
-  // The video's playhead follows its clock without re-rendering the strip.
-  useEffect(() => {
-    if (!many) return;
-    const show = (T) => line.current && (line.current.style.transform = `translateX(${T * pps}px)`);
-    show(video.T);
-    return onVideoTime(show);
-  }, [many, pps]);
-  // Editing another shot: the clock moves into it (keeping its place if it's already there).
-  useEffect(() => {
-    if (!many || offVideo()) return;
-    const p = videoPlan();
-    const a = p.starts[S.shot];
-    const L = p.lengths[S.shot];
-    if (video.T < a - 1e-6 || video.T > a + L + 1e-6) setVideoTime(a + Math.min(playhead.t, L));
-    else setVideoTime(video.T);
-  }, [many, s.shot, s.shots?.length]);
-  const addMenu = (e) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const designs = (S.scenes ?? []).filter((x) => x.id !== S.sceneId && x.devices).slice(0, 10);
-    openMenu(r.left, r.top - 8, [
-      { label: "A copy of this shot", icon: "duplicate", run: () => addShot("copy") },
-      designs.length ? "-" : null,
-      ...designs.map((x) => ({ label: x.name, icon: "image", run: () => addShot(x.id) })),
-    ]);
+  const input = useRef();
+  const media = s.files.filter((f) => ["raw", "uploads", "recordings"].includes(f.kind) && /\.(png|jpe?g|webp)$/i.test(f.path) && !/\.still-\d+\.png$/i.test(f.path)).slice(0, 12);
+  const add = (p) => {
+    onClose();
+    addFootage(p);
   };
-  const addBtn = html`<button class="shot-add" title="Add a screen after this one: a copy of it, or one of your designs" onClick=${addMenu}><${Icon} n="plus" s=${14} w=${2.2} /><span>${many ? "" : "Add a screen"}</span></button>`;
-  if (!many) {
-    return html`<div class="tl-shots">
-      <button class="tl-shot on" title="Shot 1, on the canvas"><${ShotThumb} scene=${s.scene} /><span class="shot-n">1</span><span class="shot-len">${videoLength().toFixed(1)}s</span></button>
-      ${addBtn}
-    </div>`;
-  }
-  const n = plan.shots.length;
-  const shotMenu = (e, i) => {
+  return html`<${Popover} anchor=${anchor} onClose=${onClose} class="add-pop footage-pop" width=${320} align="end">
+    <div class="add-head"><b>Add a video or a picture</b><span>after the last clip</span></div>
+    ${media.length
+      ? html`<div class="footage-grid">${media.map((f) => html`<button class="fg-tile" key=${f.path} title=${f.path.split("/").pop()} onClick=${() => add(f.path)}><img src=${`/thumb?path=${encodeURIComponent(f.path)}&w=160`} alt="" />${recordingFor(f.path) && html`<span class="fg-video"><${Icon} n="video" s=${11} /></span>`}</button>`)}</div>`
+      : html`<div class="note">Your screenshots and recordings show here.</div>`}
+    <button class="btn block" onClick=${() => input.current.click()}><${Icon} n="upload" s=${13} />Choose a file…</button>
+    <input type="file" ref=${input} hidden accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime" onChange=${(e) => {
+      const f = e.target.files?.[0];
+      e.target.value = "";
+      if (!f) return;
+      onClose();
+      addFootageFile(f);
+    }} />
+  <//>`;
+}
+
+/**
+ * The Footage row: the video's clips one after another (each screen of it, as its recording's
+ * frames or its picture), a transition chip where one gives way to the next, and a + at the end to
+ * add a video or a picture. Click a clip to edit it; right-click one for more.
+ */
+function FootageTrack({ pps, plan, len, on }) {
+  const s = useStore();
+  const [adding, setAdding] = useState(null);
+  const many = Boolean(plan);
+  const cur = s.shots ? s.shot : 0;
+  const clips = many
+    ? plan.shots.map((x, i) => ({ i, scene: i === s.shot ? s.scene : x.scene, at: plan.starts[i], len: plan.lengths[i] })).filter((c) => !plan.out[c.i])
+    : [{ i: 0, scene: s.scene, at: 0, len }];
+  const end = many ? plan.total : len;
+  const n = s.shots?.length ?? 1;
+  const pick = (i) => {
+    if (i !== cur) {
+      pause();
+      goToShot(i);
+    } else set({ animRows: [FOOTAGE], animSel: null, soundSel: null, selected: null });
+  };
+  const menu = (e, i) => {
     e.preventDefault();
+    e.stopPropagation();
     openMenu(e.clientX, e.clientY, [
-      { label: "Duplicate", icon: "duplicate", run: () => (goToShot(i), setTimeout(() => addShot("copy"))) },
-      { label: "Move earlier", icon: "left", disabled: i === 0, run: () => moveShot(i, -1) },
-      { label: "Move later", icon: "right", disabled: i === n - 1, run: () => moveShot(i, 1) },
-      plan.shots[i].video === false ? { label: "Put back in the video", icon: "video", run: () => setInVideo(i, true) } : { label: "Leave out of the video", icon: "video", disabled: plan.out.filter((o) => !o).length < 2, run: () => setInVideo(i, false) },
-      "-",
-      { label: "Remove this shot", icon: "trash", danger: true, run: () => deleteShot(i) },
+      i !== cur && { label: "Edit this clip", icon: "canvas", run: () => goToShot(i) },
+      { label: "Duplicate", icon: "duplicate", run: () => addShot("copy", { at: i + 1, copyOf: i }) },
+      many && { label: "Move earlier", icon: "left", disabled: i === 0, run: () => moveShot(i, -1) },
+      many && { label: "Move later", icon: "right", disabled: i === n - 1, run: () => moveShot(i, 1) },
+      many && (S.shots[i]?.video === false ? { label: "Put back in the video", icon: "video", run: () => setInVideo(i, true) } : { label: "Leave out of the video", icon: "video", disabled: plan.out.filter((o) => !o).length < 2, run: () => setInVideo(i, false) }),
+      many && { label: "See every clip on one sheet", icon: "grid", run: previewShots },
+      many && "-",
+      many && { label: "Delete this clip", icon: "trash", danger: true, run: () => deleteShot(i) },
     ]);
   };
-  // Drag anywhere on the strip to scrub the whole video; a click on a shot also edits it.
-  const scrub = (e) => {
-    if (e.button !== 0 || e.target.closest(".shot-join")) return;
-    pause();
-    const at = (x) => clamp((x - track.current.getBoundingClientRect().left) / pps, 0, plan.total);
-    setVideoTime(at(e.clientX));
-    const move = (m) => setVideoTime(at(m.clientX));
-    const up = () => {
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-    };
-    addEventListener("pointermove", move);
-    addEventListener("pointerup", up);
-  };
-  const c = s.layout?.canvas;
-  return html`<div class="tl-shots video" style=${{ "--shot-aspect": c ? `${c.width} / ${c.height}` : undefined }}>
-    <div class="vt" ref=${track} onPointerDown=${scrub}>
-      ${plan.shots.map((x, i) => {
-        if (plan.out[i]) return null;
-        const left = plan.starts[i] * pps;
-        const right = (i < n - 1 ? plan.starts[i + 1] : plan.total) * pps;
-        return html`<button class="tl-shot ${i === s.shot ? "on" : ""} ${s.shotPulse?.includes(i) ? "pulse" : ""}" key=${`s${i}`} style=${{ left: left + "px", width: Math.max(18, right - left - 3) + "px" }}
-            title=${i === s.shot ? `${i + 1} · ${screenName(i)}, on the canvas. Right-click to move or remove it.` : `${i + 1} · ${screenName(i)}: click to edit it`} onClick=${() => goToShot(i)} onContextMenu=${(e) => shotMenu(e, i)}>
-          <${ShotThumb} scene=${i === s.shot ? s.scene : x.scene} film />
-          <span class="shot-n">${i + 1}</span>
-          ${right - left > 70 && html`<span class="shot-len">${plan.lengths[i].toFixed(1)}s</span>`}
-        </button>`;
-      })}
-      ${plan.shots.map((x, i) => plan.joins[i].type && html`<${TransitionChip} i=${i} t=${x.transition} key=${`t${i}`} at=${plan.starts[i] * pps + (plan.joins[i].duration * pps) / 2} />`)}
-      <div class="vt-line" ref=${line}><i></i></div>
-    </div>
-    ${plan.out.some(Boolean) &&
-    html`<div class="tl-left-out" title="Screens of the set left out of the video: still App Store screenshots. Right-click one to put it back.">
-      <span>Not in the video</span>
-      ${plan.shots.map((x, i) => plan.out[i] && html`<button class="tl-shot mini ${i === s.shot ? "on" : ""}" key=${`o${i}`} title=${`${i + 1} · ${screenName(i)}: left out of the video`} onClick=${() => goToShot(i)} onContextMenu=${(e) => shotMenu(e, i)}>
-        <${ShotThumb} scene=${i === s.shot ? s.scene : x.scene} /><span class="shot-n">${i + 1}</span>
-      </button>`)}
-    </div>`}
-    ${addBtn}
-    <span class="tl-total">${plan.out.filter((o) => !o).length} screens · ${plan.total.toFixed(1)} s</span>
-    <button class="btn sm ghost" title="Every screen at its key moments on one sheet, without rendering the video" onClick=${previewShots}><${Icon} n="grid" s=${13} />All screens</button>
-  </div>`;
+  const leftOut = many ? plan.shots.map((_, i) => i).filter((i) => plan.out[i]) : [];
+  return html`
+    ${clips.map(
+      (c) => html`<button class="tl-clip ${c.i === cur ? "current" : ""} ${on && c.i === cur ? "on" : ""} ${s.shotPulse?.includes(c.i) ? "pulse" : ""}" key=${c.i}
+          style=${{ left: c.at * pps + "px", width: Math.max(14, c.len * pps - (many ? 2 : 0)) + "px" }}
+          title=${`${many ? `${c.i + 1} · ${screenName(c.i)} · ` : ""}${c.len.toFixed(1)} s${c.i === cur ? "" : ": click to edit it"}. Right-click for more.`}
+          onClick=${() => pick(c.i)} onContextMenu=${(e) => menu(e, c.i)}>
+        <${ClipFrames} scene=${c.scene} len=${c.len} pps=${pps} />
+        ${many && html`<span class="clip-n">${c.i + 1}</span>`}
+        ${c.len * pps > 70 && html`<span class="clip-len">${c.len.toFixed(1)}s</span>`}
+      </button>`,
+    )}
+    ${many && plan.shots.map((x, i) => plan.joins[i].type && html`<${TransitionChip} i=${i} t=${x.transition} key=${`t${i}`} at=${plan.starts[i] * pps + (plan.joins[i].duration * pps) / 2} />`)}
+    <button class="tl-clip-add ${adding ? "open" : ""}" style=${{ left: end * pps + 8 + "px" }} title="Add a video or a picture after the last clip" onPointerDown=${stop} onClick=${(e) => setAdding(adding ? null : e.currentTarget)}><${Icon} n="plus" s=${14} w=${2.2} /></button>
+    ${leftOut.length > 0 &&
+    html`<button class="tl-left-out" style=${{ left: end * pps + 40 + "px" }} title="Screens of the set left out of the video: still App Store screenshots" onPointerDown=${stop}
+      onClick=${(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        openMenu(r.left, r.top - 8, leftOut.map((i) => ({ label: `Put screen ${i + 1} back in the video`, icon: "video", run: () => setInVideo(i, true) })));
+      }}>${leftOut.length} not in the video</button>`}
+    ${adding && html`<${AddFootage} anchor=${adding} onClose=${() => setAdding(null)} />`}`;
 }
 
 // ---------------------------------------------------------------------------------------------

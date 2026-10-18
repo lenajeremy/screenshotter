@@ -873,7 +873,7 @@ export function soundPieces(input: VideoInput): SoundPiece[] {
 }
 
 /** How long a file runs, in seconds (0 when it can't be told). */
-async function mediaLength(file: string): Promise<number> {
+export async function mediaLength(file: string): Promise<number> {
   return new Promise((resolve) => {
     const p = spawn("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file], { stdio: ["ignore", "pipe", "ignore"] });
     let o = "";

@@ -24,7 +24,7 @@ import { setImageQuality } from "../render/photos.js";
 import { STILL, isRecording, momentThumb, saveStill, stillMoments } from "./stills.js";
 import { waveform } from "./waveform.js";
 import { asJpeg, downloadWallpaper, findWallpaper, macWallpapers } from "../render/wallpapers.js";
-import { createVideo, VideoInputSchema } from "../render/video.js";
+import { createVideo, mediaLength, VideoInputSchema } from "../render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputSchema } from "../render/sequence.js";
 import { captureScreenshot } from "../simulator/capture.js";
 import { recordSimulator } from "../simulator/record.js";
@@ -477,6 +477,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const file = url.searchParams.get("path") ?? "";
     if (!allowedFile(file) || !existsSync(file)) throw new HttpError(404, "Not found");
     return send(200, await waveform(file));
+  }
+  // How long a video runs, for the timeline's Footage row.
+  if (req.method === "GET" && url.pathname === "/api/media-length") {
+    const file = url.searchParams.get("path") ?? "";
+    if (!allowedFile(file) || !existsSync(file)) throw new HttpError(404, "Not found");
+    return send(200, { duration: await mediaLength(file) });
   }
   // A recording's moments to pick its still from, and a small picture of each.
   if (req.method === "GET" && url.pathname === "/api/moments") {
