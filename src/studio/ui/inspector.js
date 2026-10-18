@@ -6,7 +6,7 @@ import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, picture
 import { addShot, addSize, deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
 import { ClipInspector, SoundInspector } from "./timeline.js";
 import { soundClips } from "./sound.js";
-import { LayersList, bgObj } from "./panels.js";
+import { Finish, LayersList, PrintFinish, Treatment, bgObj } from "./panels.js";
 import { setAutoZoom, setFrame, setRecording } from "./recording.js";
 
 const FONTS = [
@@ -899,10 +899,24 @@ function SceneInspector() {
   const o = bgObj(sc.background);
   const bgName = typeof sc.background === "string" ? sc.background : o.look ?? (o.type === "transparent" ? "Transparent" : o.photo ? (o.photo.startsWith("unsplash:") ? "Unsplash photo" : o.photo.startsWith("macos:") ? `${o.photo.slice(6)} (macOS)` : base(o.photo)) : o.unsplash ? `Unsplash: ${o.unsplash}` : o.generate ? "AI image" : o.colors ? "Gradient" : o.color ?? "Custom");
   const bgStill = sc.background && !o.generate && o.type !== "transparent" ? `/api/bg-preview?bg=${encodeURIComponent(JSON.stringify(sc.background))}&w=120&h=120` : null;
+  // A recording or a screenshot on its own has its background in its Frame section.
+  const framed = Boolean(sc.recording?.duration || (sc.plain && sc.devices?.length === 1));
   return html`
     <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : sc.plain && sc.devices?.length === 1 ? "Screenshot" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
     <div class="panel-body">
       ${sc.recording?.duration ? html`<${RecordingInspector} />` : sc.plain && sc.devices?.length === 1 ? html`<${PlainInspector} />` : html`<div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>`}
+      ${!framed &&
+      html`<${Section} title="Background">
+        <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
+          <span class="sw" style=${{ background: "var(--check)" }}>${bgStill && html`<img src=${bgStill} />`}</span>
+          <span class="grow"><b style=${{ display: "block", textTransform: "capitalize" }}>${String(bgName).replace(/-/g, " ")}</b><span class="note">Pick another wallpaper, look, colour or photo</span></span>
+          <${Icon} n="right" s=${14} />
+        </button>
+        ${s.shots &&
+        html`<${Switch} checked=${Boolean(sc.backgroundSpan)} label="Across the set" onChange=${setBackdropAcross} />
+          <div class="note">${sc.backgroundSpan ? `One background across all ${s.shots.length} screens, each showing its slice. Changing it here changes it everywhere.` : "Lay this background across every screen, one panorama, each showing its slice."}</div>`}
+      <//>`}
+      <${Treatment} />
       <${Section} title="Image size">
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;
@@ -917,21 +931,13 @@ function SceneInspector() {
         <div class="note">${s.shots?.length > 1 ? `This design has ${s.shots.length} screens, side by side like the App Store shows them.` : "Make this a set: more screens beside this one, like the App Store shows them."}</div>
         <button class="btn block" onClick=${() => (s.shots?.length > 1 ? addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 }) : addShot("copy"))}><${Icon} n="plus" s=${13} />Add a screen</button>
       <//>`}
-      <${Section} title="Backdrop">
-        <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
-          <span class="sw" style=${{ background: "var(--check)" }}>${bgStill && html`<img src=${bgStill} />`}</span>
-          <span class="grow"><b style=${{ display: "block", textTransform: "capitalize" }}>${String(bgName).replace(/-/g, " ")}</b><span class="note">Change the look, colours or photo</span></span>
-          <${Icon} n="right" s=${14} />
-        </button>
-        ${s.shots &&
-        html`<${Switch} checked=${Boolean(sc.backgroundSpan)} label="Across the set" onChange=${setBackdropAcross} />
-          <div class="note">${sc.backgroundSpan ? `One backdrop across all ${s.shots.length} screens, each showing its slice. Changing it here changes it everywhere.` : "Lay this backdrop across every screen, one panorama, each showing its slice."}</div>`}
-      <//>
+      <${PrintFinish} />
+      <${Finish} />
       ${(s.shots || s.groups) &&
       html`<${Section} title="This screen">
         <button class="bg-summary" onClick=${openCopyStyle}>
           <span class="sw ico"><${Icon} n="copy" s=${16} /></span>
-          <span class="grow"><b style=${{ display: "block" }}>Copy its style to the others</b><span class="note">Backdrop, text style, film look or devices</span></span>
+          <span class="grow"><b style=${{ display: "block" }}>Copy its style to the others</b><span class="note">Background, text style, film look or devices</span></span>
           <${Icon} n="right" s=${14} />
         </button>
       <//>`}

@@ -1532,3 +1532,6 @@ li.done .work-shot .scan { display: none; }
 .seam-glow { position: absolute; top: 0; bottom: 0; width: 3px; transform: translateX(-50%); z-index: 96; pointer-events: none; border-radius: 2px; background: var(--lime); box-shadow: 0 0 14px 2px color-mix(in srgb, var(--lime) 70%, transparent); animation: pop-in 0.15s var(--ease); }
 .seam-label { position: absolute; top: 12px; transform: translateX(-50%); z-index: 97; pointer-events: none; padding: 4px 10px; border-radius: 999px; background: var(--lime); color: var(--lime-ink); font: 650 11.5px -apple-system, system-ui, sans-serif; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); animation: pop-in 0.15s var(--ease); }
 .ai-chat .dfm { text-align: left; margin-top: 6px; }
+.el-tabs { padding: 0 14px 8px; }
+.el-tabs .seg { width: 100%; }
+.el-tabs .seg button { flex: 1; }

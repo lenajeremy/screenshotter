@@ -68,7 +68,7 @@ import {
 } from "./actions.js";
 import { CanvasView, canvasApi, commitEntity, deviceAtPoint, withShape } from "./canvas.js";
 import { ContextMenu, openMenu } from "./menu.js";
-import { BackgroundsPanel, CapturesPanel, DesignForMe, DesignsPanel, ImagesPanel, ShapesPanel, TextPanel } from "./panels.js";
+import { BackgroundsPanel, CapturesPanel, DesignForMe, DesignsPanel, ElementsPanel, isElementsTab } from "./panels.js";
 import { Inspector } from "./inspector.js";
 import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play, videoLength } from "./timeline.js";
 import { deleteSound, hasSoundRow, nudgeSound } from "./sound.js";
@@ -212,7 +212,7 @@ function ExportPopover({ anchor }) {
             <i class="shape" style=${{ aspectRatio: z.value === "design" ? `${W || 16} / ${H || 9}` : z.aspect }}></i><span><b>${z.label}</b><small>${z.value === "design" ? (W ? `${W}×${H}` : "") : z.sub}</small></span>
           </button>`)}</div>
           ${sizes.some((z) => z !== "design") && html`<div class="row"><label>Other shapes</label><${Seg} value=${o.video.fit ?? "auto"} options=${[{ value: "auto", label: "Auto" }, { value: "fit", label: "Fit" }, { value: "fill", label: "Fill" }, { value: "rearrange", label: "Rearrange" }]} onChange=${(v) => upv({ fit: v })} /></div>
-            <div class="note">${{ auto: "Hand-placed designs fit whole, with the backdrop filling the rest; automatic layouts are laid out again for each shape.", fit: "The whole design, with the backdrop filling the rest.", fill: "Fills the shape, trimming the edges.", rearrange: "Laid out again for each shape." }[o.video.fit ?? "auto"]}</div>`}
+            <div class="note">${{ auto: "Hand-placed designs fit whole, with the background filling the rest; automatic layouts are laid out again for each shape.", fit: "The whole design, with the background filling the rest.", fill: "Fills the shape, trimming the edges.", rearrange: "Laid out again for each shape." }[o.video.fit ?? "auto"]}</div>`}
           ${sizes.some((z) => z.startsWith("app-store")) && html`<div class="note"><b>App Store</b> previews follow Apple's rules: 15 to 30 seconds (a short one holds its end), 30 fps, H.264, with a silent sound track.</div>`}
           <div class="note">${hasRecording ? html`<b>Screen recording</b> plays inside the frame.` : "Tip: record the simulator to play real app footage inside the frame."}</div>
           <button class="btn primary lg block" onClick=${exportVideo}><${Icon} n="video" s=${16} />Export video<span class="kbd">⇧⌘E</span></button>
@@ -298,20 +298,23 @@ const VIDEO_SIZES = [
 const TABS = [
   { id: "captures", label: "Screenshots", icon: "captures", tip: "Bring in a screenshot of your app" },
   { id: "designs", label: "Templates", icon: "wand", tip: "Finished designs made from your screenshot" },
-  { id: "backgrounds", label: "Backdrop", icon: "background", tip: "What sits behind your device" },
-  { id: "text", label: "Text", icon: "text", tip: "Headline, labels, badges and ratings" },
-  { id: "shapes", label: "Shapes", icon: "shapes", tip: "Arrows, circles, boxes and number badges" },
-  { id: "images", label: "Images", icon: "image", tip: "Logos, your app icon, stickers and pictures" },
+  { id: "backgrounds", label: "Back­grounds", icon: "background", tip: "Wallpapers, looks, colours and photos to sit behind your design" },
+  { id: "elements", label: "Elements", icon: "shapes", tip: "Text, badges, arrows, shapes, stickers and pictures" },
 ];
+/** Which rail tab the left panel's tab belongs to (Text, Shapes and Pictures are all Elements). */
+const railOf = (tab) => (isElementsTab(tab) ? "elements" : tab);
 
 function Rail() {
   const s = useStore();
   const pick = (id) => {
-    set(s.leftTab === id && s.leftOpen ? { leftOpen: false } : { leftTab: id, leftOpen: true });
+    const on = railOf(s.leftTab) === id;
+    // Elements opens on the part last used.
+    const tab = id === "elements" ? (isElementsTab(s.leftTab) ? s.leftTab : "text") : id;
+    set(on && s.leftOpen ? { leftOpen: false } : { leftTab: tab, leftOpen: true });
     persistPrefs();
   };
   return html`<nav class="rail">
-    ${TABS.map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && s.leftTab === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
+    ${TABS.map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && railOf(s.leftTab) === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
       <span class="ico"><${Icon} n=${t.icon} s=${18} /></span>
       <span class="rl">${t.label}</span>
       <span class="tip">${t.tip}</span>
@@ -326,7 +329,8 @@ function Rail() {
 
 function LeftPanel() {
   const s = useStore();
-  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel, text: TextPanel, shapes: ShapesPanel, images: ImagesPanel }[s.leftTab] ?? CapturesPanel;
+  if (isElementsTab(s.leftTab)) return html`<${ElementsPanel} />`;
+  const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel }[s.leftTab] ?? CapturesPanel;
   return html`<${P} />`;
 }
 
@@ -588,7 +592,7 @@ const AI_STEPS = {
   read: { now: "Reading the screenshots", done: "Read the design" },
   think: { now: () => `${aiName()} is thinking`, done: (x) => (x.answer ? "Answered" : "Designed the change") },
   retry: { now: "Fixing a mistake in its first try", done: "Fixed a mistake in its first try" },
-  generate: { now: (x) => `${provider(x)} is making the new backdrop image`, done: (x) => `${provider(x)} made the backdrop image`, cut: (x) => `You used it while ${provider(x)} was still making the backdrop image` },
+  generate: { now: (x) => `${provider(x)} is making the new background image`, done: (x) => `${provider(x)} made the background image`, cut: (x) => `You used it while ${provider(x)} was still making the background image` },
   render: { now: "Rendering the result", done: "Rendered the result", cut: () => `You used it before ${aiName()} checked it` },
   frames: { now: (x) => `${aiName()} asked to see ${moments(x.times)}`, done: (x) => `Looked closer at ${moments(x.times)}` },
   check: { now: (x) => (x.moments ? `${aiName()} is checking ${x.moments} moments of the video` : `${aiName()} is checking the render`), done: (x) => (x.moments ? `Checked ${x.moments} moments of the video` : "Checked the render"), cut: "You used it before Claude finished checking it" },
@@ -983,7 +987,7 @@ function Settings() {
         </div>
         <div class="card">
           <h4><${Icon} n="image" s=${15} />Photos</h4>
-          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> for backdrop photos needs a free access key: at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a>, make a new app (any name) and copy its <b>Access Key</b>. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : "Photos you've already chosen keep working without one."}</div>
+          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> for background photos needs a free access key: at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a>, make a new app (any name) and copy its <b>Access Key</b>. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : "Photos you've already chosen keep working without one."}</div>
           ${native
             ? html`<div class="row"><label>Access key</label><div class="hstack">
                 <input class="input grow mono" type="password" placeholder=${info?.hasUnsplashKey ? "•••••••••• saved in Keychain" : "Unsplash Access Key"} value=${unsplashKey} onInput=${(e) => setUnsplashKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
@@ -1194,7 +1198,7 @@ function Help() {
     ["text", "3 · Write your headline", "Double-click the headline to retype it. Put **stars** around words to colour them."],
     ["canvas", "Make it yours", "Click anything to select it, then drag to move, pull a corner to resize and use the round handle to rotate. The bar above a selection has the everyday edits (words, colours, Replace); Settings opens the rest. Backdrop, Text and Shapes are in the rail."],
     ["animate", "Animate it for a video", "Animate (⌘3) opens a timeline: choose an item, set when it arrives and how (fade, zoom, slide…), and press Play. Things can change part way through too, and several can move together. Export video renders it."],
-    ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset backdrop”. Undo (⌘Z) reverts anything."],
+    ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset background”. Undo (⌘Z) reverts anything."],
     ["export", "4 · Export", "Export saves a full-size PNG, JPEG or WebP, or a video with gentle camera motion. Preview shows the finished look first."],
     ["grid", "My designs", "Every design saves itself as you work. My designs (⇧⌘O) has them all, and everything you've exported."],
   ];
@@ -1806,7 +1810,7 @@ function canvasMenu() {
     { label: "Add a screenshot…", icon: "upload", kbd: "⌘O", run: commands.import },
     has && { label: "Add text", icon: "text", run: () => addText("label") },
     has && !S.scene.headline && { label: "Add a headline", icon: "text", run: addCaption },
-    { label: "Change backdrop…", icon: "background", run: () => set({ leftTab: "backgrounds", leftOpen: true }) },
+    { label: "Change background…", icon: "background", run: () => set({ leftTab: "backgrounds", leftOpen: true }) },
     has && !S.scene.recording && { label: "Add a screen", icon: "plus", run: () => addShot("copy", S.shots?.length > 1 ? { at: S.shots.length, copyOf: S.shots.length - 1 } : {}) },
     "-",
     has && { label: "Preview", icon: "eye", kbd: "⌘R", run: renderPreview },

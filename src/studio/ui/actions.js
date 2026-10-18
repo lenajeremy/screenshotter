@@ -1414,7 +1414,7 @@ export function setBackdropAcross(on) {
   set({ shots: next, scene: next[S.shot].scene, renderStale: Boolean(S.render) });
   scheduleLayout(0);
   persist();
-  if (on) toast({ kind: "ok", icon: "image", title: `The backdrop goes across all ${shots.length} screens`, text: "Each shows its slice, so swiping between them on the App Store reads as one picture. A device can carry on across them too (its Size & tilt). ⌘Z undoes it.", timeout: 7000 });
+  if (on) toast({ kind: "ok", icon: "image", title: `The background goes across all ${shots.length} screens`, text: "Each shows its slice, so swiping between them on the App Store reads as one picture. A device can carry on across them too (its Size & tilt). ⌘Z undoes it.", timeout: 7000 });
 }
 
 /** Landscape or portrait: in a set, every screen. */
@@ -1480,7 +1480,7 @@ export async function addSize(value) {
  * is. Devices (matched by order) only go to screens of the same size: an iPad's place doesn't suit a phone.
  */
 export const STYLE_PARTS = [
-  { key: "backdrop", label: "Backdrop", hint: "Colour, gradient, photo or AI image, and its finish" },
+  { key: "backdrop", label: "Background", hint: "Colour, gradient, photo or AI image, and its finish" },
   { key: "text", label: "Text style", hint: "Fonts, sizes, colours and where the text sits. The words stay." },
   { key: "film", label: "Film look", hint: "Grain, vignette, blur and colour grade" },
   { key: "device", label: "Device look", hint: "Frame, model, colour, shadow and glare", sameSize: true },
@@ -1864,7 +1864,7 @@ const stoppedAt = (step) =>
     think: `while ${aiName()} was designing`,
     retry: `while ${aiName()} was fixing its first try`,
     frames: `while ${aiName()} was looking at moments of the video`,
-    generate: "while the backdrop image was being made",
+    generate: "while the background image was being made",
     render: "while rendering the result",
     check: `while ${aiName()} was checking its work`,
   })[step];
@@ -1917,7 +1917,7 @@ const OP_NAMES = {
   color: "Colour", accentColor: "Accent colour", headline: "Headline", subheadline: "Subheadline", headlineSize: "Headline size",
   subheadlineSize: "Subheadline size", font: "Font", headlineWeight: "Weight", weight: "Weight", letterSpacing: "Tracking",
   uppercase: "Uppercase", align: "Alignment", position: "Placement", shadow: "Shadow", glare: "Glare", frame: "Frame",
-  device: "Model", side: "Side", highlights: "Call-outs", text: "Words", size: "Size", background: "Backdrop", opacity: "Opacity",
+  device: "Model", side: "Side", highlights: "Call-outs", text: "Words", size: "Size", background: "Background", opacity: "Opacity",
   canvas: "Image size", layout: "Arrangement", effects: "Film look", grain: "Grain", vignette: "Vignette", grade: "Colour grade",
   edgeBlur: "Edge blur", screenshot: "Screenshot", texts: "Text", devices: "Device", blur: "Blur", dim: "Dim", look: "Look",
 };
@@ -1955,7 +1955,7 @@ function describeOp(op, scene, shots) {
     target = "Caption";
     rest = parts[0] === "textStyle" ? parts.slice(1) : parts;
   } else if (parts[0] === "background") {
-    target = "Backdrop";
+    target = "Background";
     rest = parts.slice(1);
   } else if (parts[0] === "effects") {
     target = "Film look";

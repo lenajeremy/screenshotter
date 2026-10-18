@@ -252,7 +252,7 @@ const FINISH_OPTIONS = [
   { value: "fluted-glass", label: "Fluted glass" },
 ];
 
-function PrintFinish() {
+export function PrintFinish() {
   const s = useStore();
   const o = bgObj(s.scene.background);
   if (o.type === "transparent") return null;
@@ -269,8 +269,8 @@ function PrintFinish() {
       const keys = Object.keys(b);
       d.background = keys.length === 1 && keys[0] === "look" ? b.look : b;
     }, key ?? "bg.finish");
-  return html`<${Section} title="Print & paint" collapsible id="print">
-    <div class="note">Reprint or repaint the backdrop. Your screenshots stay untouched.</div>
+  return html`<${Section} title="Print & paint" collapsible id="print" open=${Boolean(f)}>
+    <div class="note">Reprint or repaint the background. Your screenshots stay untouched.</div>
     <div class="chips">
       <button class="chip sm ${!f ? "on" : ""}" onClick=${() => setF(null)}>None</button>
       ${FINISH_OPTIONS.map((x) => html`<button class="chip sm ${f?.style === x.value ? "on" : ""}" onClick=${() => setF({ style: x.value })}>${x.label}</button>`)}
@@ -552,7 +552,7 @@ function AiBg() {
   `;
 }
 
-function Treatment() {
+export function Treatment() {
   const s = useStore();
   const o = bgObj(s.scene.background);
   const look = s.opts?.looks.find((l) => l.name === o.look);
@@ -567,7 +567,7 @@ function Treatment() {
       d.background = keys.length === 1 && keys[0] === "look" ? b.look : b;
     }, `bg.${k}`);
   const pct = (v) => `${Math.round(v * 100)}`;
-  return html`<${Section} title="Adjust photo" collapsible id="treat" right=${Object.keys(keepTreatment(s.scene.background)).length ? html`<button class="btn sm ghost" onClick=${() => setBackground(o.look && !o.photo ? o.look : Object.fromEntries(Object.entries(o).filter(([k]) => !TREATMENT.includes(k))))}>Reset</button>` : null}>
+  return html`<${Section} title="Adjust the photo" collapsible id="treat" open=${Object.keys(keepTreatment(s.scene.background)).length > 0} right=${Object.keys(keepTreatment(s.scene.background)).length ? html`<button class="btn sm ghost" onClick=${() => setBackground(o.look && !o.photo ? o.look : Object.fromEntries(Object.entries(o).filter(([k]) => !TREATMENT.includes(k))))}>Reset</button>` : null}>
     <div class="row"><label>Motion</label><${Slider} value=${o.motionBlur} min=${0} max=${0.15} step=${0.002} fallback=${0} format=${pct} onChange=${(v) => setT("motionBlur", v)} /></div>
     <div class="row"><label>Blur</label><${Slider} value=${o.blur} min=${0} max=${0.06} step=${0.001} fallback=${0} format=${pct} onChange=${(v) => setT("blur", v)} /></div>
     <div class="row"><label>Haze</label><${Slider} value=${o.haze} min=${0} max=${1} step=${0.01} fallback=${0} format=${pct} onChange=${(v) => setT("haze", v)} /></div>
@@ -580,7 +580,7 @@ function Treatment() {
   <//>`;
 }
 
-function Finish() {
+export function Finish() {
   const s = useStore();
   const fx = s.scene.effects ?? {};
   const setFx = (k, v) =>
@@ -592,11 +592,11 @@ function Finish() {
   const grain = typeof fx.grain === "object" ? fx.grain.amount : fx.grain;
   const vig = typeof fx.vignette === "object" ? fx.vignette.amount : fx.vignette;
   const grade = typeof fx.grade === "object" ? fx.grade.preset ?? "none" : fx.grade ?? "none";
-  return html`<${Section} title="Film look" collapsible id="finish">
+  return html`<${Section} title="Film look" collapsible id="finish" open=${Object.keys(fx).length > 0}>
     <div class="row"><label>Grain</label><${Slider} value=${grain} min=${0} max=${0.6} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100)} onChange=${(v) => setFx("grain", v)} /></div>
     <div class="row"><label>Vignette</label><${Slider} value=${vig} min=${0} max=${1} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100)} onChange=${(v) => setFx("vignette", v)} /></div>
     <${Switch} checked=${Boolean(fx.edgeBlur)} onChange=${(v) => setFx("edgeBlur", v || undefined)} label="Blur where devices leave the canvas" />
-    <div class="lbl">Colour grade (affects the backdrop, not your screenshot)</div>
+    <div class="lbl">Colour grade (affects the background, not your screenshot)</div>
     <div class="chips">${(s.opts?.grades ?? ["none"]).map((g) => html`<button class="chip sm ${grade === g ? "on" : ""}" onClick=${() => setFx("grade", g)}>${g}</button>`)}</div>
   <//>`;
 }
@@ -605,24 +605,16 @@ export function BackgroundsPanel() {
   const s = useStore();
   const [mode, setMode] = useState(() => currentMode(S.scene.background));
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Backdrop</h2>
-      <button class="btn sm ${currentMode(s.scene.background) === "none" ? "" : "ghost"}" title="No backdrop: export a transparent PNG" onClick=${() => setBackground({ type: "transparent" })}>Transparent</button>
+    <div class="panel-head"><h2>Backgrounds</h2>
+      <button class="btn sm ${currentMode(s.scene.background) === "none" ? "" : "ghost"}" title="No background: export a transparent PNG" onClick=${() => setBackground({ type: "transparent" })}>Transparent</button>
     </div>
     <div class="panel-body">
-      <div class="intro">What sits behind your device. Start with a ready-made look, or use your own colours or photo.</div>
-      ${s.shots &&
-      html`<div class="across-set ${s.scene.backgroundSpan ? "on" : ""}">
-        <${Switch} checked=${Boolean(s.scene.backgroundSpan)} label=${`Across all ${s.shots.length} screens`} onChange=${setBackdropAcross} />
-        <span>${s.scene.backgroundSpan ? "One backdrop, each screen showing its slice: swiping through them reads as one picture." : "Lay this backdrop across the whole set as one panorama, each screen showing its slice."}</span>
-      </div>`}
+      <div class="intro">What sits behind your design. Pick a wallpaper or a look, or use your own colours or photo. Its effects are in the settings on the right.</div>
       <${Seg} value=${mode} onChange=${setMode} options=${[{ value: "looks", label: "Looks" }, { value: "color", label: "Colours" }, { value: "photo", label: "Photos" }, { value: "ai", label: "AI image" }]} />
       ${mode === "looks" && html`<${Looks} />`}
       ${mode === "color" && html`<div class="vstack">${html`<${ColorBg} />`}</div>`}
       ${mode === "photo" && html`<div class="vstack"><${PhotoBg} /></div>`}
       ${mode === "ai" && html`<div class="vstack"><${AiBg} /></div>`}
-      <${Treatment} />
-      <${PrintFinish} />
-      <${Finish} />
     </div>
   </div>`;
 }
@@ -632,13 +624,13 @@ export function BackgroundsPanel() {
 
 /** Text and shapes share a tab in the rail: this switches between the two halves. */
 
-export function TextPanel() {
+export function TextPanel({ tabs }) {
   const s = useStore();
   const scene = s.scene;
   const texts = scene.texts ?? [];
   const hasCaption = scene.headline !== undefined || scene.subheadline !== undefined;
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Text</h2></div>
+    ${tabs ?? html`<div class="panel-head"><h2>Text</h2></div>`}
     <div class="panel-body">
       <div class="intro">A headline sells the screen. Add labels or badges for extra detail. Double-click any text in the design to retype it.</div>
       <${Section} title="Headline">
@@ -820,7 +812,7 @@ function dragOnto(ev, makeGhost, place) {
   addEventListener("keydown", key, true);
 }
 
-export function ShapesPanel() {
+export function ShapesPanel({ tabs }) {
   const s = useStore();
   const tint = s.shapeTint;
   const shapes = s.scene.shapes ?? [];
@@ -848,7 +840,7 @@ export function ShapesPanel() {
     <${ShapePreview} kind=${k} tint=${tint} /><span class="nm">${k.label}</span>
   </div>`;
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>
+    ${tabs ?? html`<div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>`}
     <div class="panel-body">
       <div class="intro">Drag a shape onto your design and drop it where you want it (or click to add it in the middle). Then move, resize, rotate and recolour it.</div>
       <${Section} title="Colour">
@@ -906,7 +898,7 @@ const IMAGE_AS = [
   { value: "sticker", label: "Sticker" },
 ];
 
-export function ImagesPanel() {
+export function ImagesPanel({ tabs }) {
   const s = useStore();
   const [lib, setLib] = useState(null);
   const [over, setOver] = useState(false);
@@ -935,7 +927,7 @@ export function ImagesPanel() {
     if (paths.length === 1 || (replacing && paths.length)) use(paths[0]);
   };
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Images</h2>${images.length > 0 && html`<span class="sub">${images.length}</span>`}</div>
+    ${tabs ?? html`<div class="panel-head"><h2>Images</h2>${images.length > 0 && html`<span class="sub">${images.length}</span>`}</div>`}
     <div class="panel-body">
       ${replacing
         ? html`<div class="follow-note"><${Icon} n="replace" s=${13} /><span>Choose a picture for <b>${entityLabel(replacing)}</b>.</span><button class="btn sm ghost" onClick=${() => set({ replacingImage: null })}>Cancel</button></div>`
@@ -1071,7 +1063,7 @@ export function ExportsGrid() {
 // =============================================================================================
 // Designs
 
-const DIRECTION_STEPS = { look: "Rendering your design", read: "Reading your screens", get think() { return `${aiName()} is designing three directions`; }, render: "Rendering them", generate: "Making their AI backdrops" };
+const DIRECTION_STEPS = { look: "Rendering your design", read: "Reading your screens", get think() { return `${aiName()} is designing three directions`; }, render: "Rendering them", generate: "Making their AI backgrounds" };
 
 /** Claude proposes three directions, rendered side by side; pick one. It lives in the Ask AI panel. */
 export function DesignForMe() {
@@ -1094,7 +1086,7 @@ export function DesignForMe() {
     ${d?.busy &&
     html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint" title="This step · in all">${Math.max(0, Math.round((now - (d.stepAt ?? d.started)) / 1000))}s · ${Math.max(0, Math.round((now - d.started) / 1000))}s</span>
       <button class="btn sm ghost" title=${`Stop ${aiName()}. Your design stays as it is.`} onClick=${stopDesignForMe}>Stop</button></div>
-      ${d.step === "generate" && html`<div class="note">${IMAGE_PROVIDERS[d.provider] ?? "The image generator"} is making a new backdrop image. This can take a minute.</div>`}`}
+      ${d.step === "generate" && html`<div class="note">${IMAGE_PROVIDERS[d.provider] ?? "The image generator"} is making a new background image. This can take a minute.</div>`}`}
     ${d?.error && html`<div class="note warn">${d.error}</div>`}
     ${d?.items?.length > 0 &&
     html`<div class="dfm-grid">${d.items.map(
@@ -1249,6 +1241,25 @@ export function DesignsPanel() {
       ${has && html`<${Arrangement} />`}
     </div>
   </div>`;
+}
+
+/** Elements: words, shapes and arrows, and pictures (stickers, illustrations, logos, your app icon). */
+const ELEMENT_TABS = [
+  { value: "text", label: "Text", title: "Headline, labels, badges and ratings" },
+  { value: "shapes", label: "Shapes", title: "Arrows, circles, boxes, badges and awards" },
+  { value: "images", label: "Pictures", title: "Stickers, illustrations, logos, your app icon and your pictures" },
+];
+export const isElementsTab = (tab) => ELEMENT_TABS.some((t) => t.value === tab);
+export function ElementsPanel() {
+  const s = useStore();
+  const sub = isElementsTab(s.leftTab) ? s.leftTab : "text";
+  const head = html`<div class="panel-head"><h2>Elements</h2></div>
+    <div class="el-tabs"><${Seg} value=${sub} options=${ELEMENT_TABS} onChange=${(v) => {
+      set({ leftTab: v });
+      persistPrefs();
+    }} /></div>`;
+  const P = { text: TextPanel, shapes: ShapesPanel, images: ImagesPanel }[sub];
+  return html`<${P} tabs=${head} />`;
 }
 
 export { bgObj, keepTreatment, setBackground };

@@ -296,7 +296,7 @@ function calloutLabel(id) {
   const text = h?.text?.trim();
   return `${HL_NAMES[h?.style] ?? "Call-out"} ${text ? `“${text.length > 18 ? text.slice(0, 17) + "…" : text}”` : m[2]}`;
 }
-const label = (id) => (id === CAMERA ? "Camera" : id === BACKDROP ? "Backdrop" : id === SOUND ? "Sound" : isCallout(id) ? calloutLabel(id) : entityLabel(id));
+const label = (id) => (id === CAMERA ? "Camera" : id === BACKDROP ? "Background" : id === SOUND ? "Sound" : isCallout(id) ? calloutLabel(id) : entityLabel(id));
 /** A device's call-outs as rows of their own, "device-1/callout-2" (counting from 1). */
 const calloutRows = (e) => (S.scene.devices?.[e.index]?.highlights ?? []).map((_, k) => ({ id: `${e.id}/callout-${k + 1}`, kind: "callout" }));
 /** Whether a device's soft focus is animated (the canvas then takes it from --ablur). */
@@ -868,7 +868,7 @@ export function TimelineDock() {
         ? html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
           ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`
         : html`<button class="btn sm primary" disabled=${!chosen.length} title=${chosen.length ? "Add an animation for the chosen items, starting at the playhead" : "Choose an item on the left first (⌘-click for several)"} onClick=${() => addAnimation(chosen)}>
-        <${Icon} n="plus" s=${13} w=${2.2} />${chosen.includes(CAMERA) ? "Move the camera" : chosen.includes(BACKDROP) ? "Move the backdrop" : chosen.length > 1 ? `Animate ${chosen.length} together` : chosen.length ? `Animate ${label(chosen[0])}` : "Animate"}
+        <${Icon} n="plus" s=${13} w=${2.2} />${chosen.includes(CAMERA) ? "Move the camera" : chosen.includes(BACKDROP) ? "Move the background" : chosen.length > 1 ? `Animate ${chosen.length} together` : chosen.length ? `Animate ${label(chosen[0])}` : "Animate"}
       </button>`}
       <span class="grow"></span>
       ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this shot is on screen, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Shot ${s.shot + 1}` : "Length"}
@@ -1280,12 +1280,12 @@ function BackdropInspector({ i, a }) {
       if (!clip.duration) x.duration = Math.max(1, snap(videoLength() - x.at));
     });
   return html`
-    <div class="panel-head clip-head"><h2>Backdrop</h2><span class="sub">${clipName(a)}</span><span class="grow"></span>
+    <div class="panel-head clip-head"><h2>Background</h2><span class="sub">${clipName(a)}</span><span class="grow"></span>
       <button class="icon-btn sm" title="Delete this move (⌫)" onClick=${() => deleteAnimation(i)}><${Icon} n="trash" s=${14} /></button>
       <button class="icon-btn sm" title="Close" onClick=${() => set({ animSel: null })}><${Icon} n="x" s=${14} /></button>
     </div>
     <div class="panel-body">
-      <div class="note">Moves only the backdrop, behind everything else. The camera moves the whole picture.</div>
+      <div class="note">Moves only the background, behind everything else. The camera moves the whole picture.</div>
       <${Section} title="Move">
         <div class="fx-grid">${Object.entries(BACKDROP_MOVES).map(([name, m]) => html`<button class="fx ${backdropMoveOf(a) === name ? "on" : ""}" key=${name} onClick=${() => setMove(name)}><${LoopIcon} kind=${name} /><span>${m.label}</span></button>`)}</div>
       <//>
