@@ -1535,3 +1535,13 @@ li.done .work-shot .scan { display: none; }
 .fg-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .fg-tile:hover { box-shadow: 0 0 0 2px var(--lime); }
 .fg-video { position: absolute; right: 4px; bottom: 4px; width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); color: #fff; }
+/* The recording on the canvas, in parts: choose one to take it out; drag an end in to trim. */
+.tl-clip.cut { background: transparent; box-shadow: none; overflow: visible; }
+.tl-part { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: var(--panel-3); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); cursor: pointer; }
+.tl-part:hover { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5); }
+.tl-part.on { box-shadow: 0 0 0 2px var(--text); z-index: 2; }
+.tl-clip.cut .tl-trim { z-index: 3; border-radius: 6px; }
+.tl-clip.cut:hover .tl-trim { background: rgba(255, 255, 255, 0.35); }
+.tl-clip.cut .tl-trim::after { content: ""; position: absolute; left: 3px; top: 50%; width: 2px; height: 14px; margin-top: -7px; border-radius: 1px; background: #fff; opacity: 0; }
+.tl-clip.cut:hover .tl-trim::after { opacity: 0.9; }
+.tl-trimmed { position: absolute; top: 0; bottom: 0; z-index: 2; border-radius: 6px; background: repeating-linear-gradient(135deg, rgba(255, 90, 80, 0.55) 0 6px, rgba(255, 90, 80, 0.35) 6px 12px); pointer-events: none; }

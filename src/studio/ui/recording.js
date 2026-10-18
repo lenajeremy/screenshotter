@@ -2,6 +2,7 @@
 // the cursor's path for the canvas, the calmer one the camera follows, and the zooms auto zoom
 // makes on the clicks. The drawing itself uses the engine's cursor module, as the export does.
 import { autoZooms, cursorAt, readLog, trackOf } from "./cursor.js";
+import { cutLog, tidyCuts } from "./cuts.js";
 import { CAMERA } from "./animate.js";
 import { DEFAULT_SCENE, S, edit, fileUrl, set } from "./store.js";
 
@@ -28,12 +29,15 @@ function logFor(path) {
   return undefined;
 }
 
-/** The cursor's path at this smoothness, once the log is in. */
-export function cursorTrack(path, smooth = 0.5) {
+/** The parts cut out of the recording (its devices carry them). */
+const cutsIn = (scene = S.scene) => tidyCuts(scene.devices?.find((d) => d.video && d.cuts?.length)?.cuts);
+
+/** The cursor's path at this smoothness, once the log is in, with the parts cut out of the recording taken out. */
+export function cursorTrack(path, smooth = 0.5, cuts = cutsIn()) {
   const log = logFor(path);
   if (!log) return undefined;
-  const key = `${path}|${smooth}`;
-  if (!tracks.has(key)) tracks.set(key, trackOf(log, smooth));
+  const key = `${path}|${smooth}|${JSON.stringify(cuts)}`;
+  if (!tracks.has(key)) tracks.set(key, trackOf(cuts.length ? cutLog(log, cuts) : log, smooth));
   return tracks.get(key);
 }
 
@@ -105,7 +109,8 @@ export async function setAutoZoom(on, zoom = S.scene.recording?.zoom ?? 1.8) {
   // On the recording wherever it sits (padded, it doesn't fill the canvas).
   const box = recordingBox();
   const r4 = (v) => Math.round(v * 10000) / 10000;
-  const made = (log ? autoZooms(trackOf(log, 0), rec.duration ?? Infinity, zoom) : []).map((a) => (a.to.zoom > 1 ? { ...a, to: { ...a.to, x: r4(box.x + a.to.x * box.w), y: r4(box.y + a.to.y * box.h) } } : a));
+  const cuts = cutsIn();
+  const made = (log ? autoZooms(trackOf(cuts.length ? cutLog(log, cuts) : log, 0), rec.duration ?? Infinity, zoom) : []).map((a) => (a.to.zoom > 1 ? { ...a, to: { ...a.to, x: r4(box.x + a.to.x * box.w), y: r4(box.y + a.to.y * box.h) } } : a));
   edit((d) => {
     const own = (d.animations ?? []).filter((a) => !(a.auto && [a.targets].flat().includes(CAMERA)));
     d.animations = [...own, ...made].sort((a, b) => a.at - b.at);

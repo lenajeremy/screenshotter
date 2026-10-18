@@ -11,6 +11,8 @@ import { BACKDROP, DEFAULT_BLUR, DEFAULT_PATH_SIZE, backdropStyle, defaultEase, 
 import { renderShape } from "./shapes.js";
 import { addFootage, addFootageFile, addShot, deleteShot, goToShot, moveShot, previewShots, recordingFor, screenName, setInVideo, updateShot } from "./actions.js";
 import { cameraFollow } from "./recording.js";
+import { cutFootageHere, cutsOf, cuttable, deleteFootagePart, footageParts, removeSpan, selectPart, sourceAt } from "./footage.js";
+import { toEdited } from "./cuts.js";
 import { SOUND, SoundPieces, deleteSound, editSounds, followSound, hasSoundRow, pieceLength, placeSound, recordingGain, recordingVideo, resetSounds, soundClips, splitSound } from "./sound.js";
 
 // ---------------------------------------------------------------------------------------------
@@ -159,7 +161,7 @@ const shotLength = (x) => x.scene?.recording?.duration ?? x.length ?? Math.max(S
 const seekTo = (v, t) => Math.max(0, Math.min(t, (v.duration || Infinity) - 0.05));
 export function followVideo(v, t = playhead.t) {
   if (!v || !S.timelineOpen) return;
-  const at = seekTo(v, t);
+  const at = seekTo(v, sourceAt(t));
   // A recording sets the pace while playing (the playhead follows it): seeking it would cut up its sound.
   if (S.playing && v.dataset.master) {
     // Its sound, as the Sound row has it: silent where it's been cut out, quieter where turned down.
@@ -230,11 +232,19 @@ export function play(until) {
   // A recording keeps its own pace, sound and all: the playhead follows it (waiting when it buffers).
   const master = S.scene.recording && document.querySelector("video[data-follow][data-master]");
   if (master) {
+    // Parts cut out of the recording are skipped: the playhead runs on the edited video's clock.
+    const cuts = cutsOf();
     master.muted = recordingGain(playhead.t) <= 0;
-    master.currentTime = seekTo(master, playhead.t);
+    master.currentTime = seekTo(master, sourceAt(playhead.t));
     master.play().catch(() => undefined);
     const follow = () => {
-      const t = master.currentTime;
+      let src = master.currentTime;
+      const gap = cuts.find((c) => src >= c.from - 0.02 && src < c.to - 0.02);
+      if (gap) {
+        master.currentTime = gap.to;
+        src = gap.to;
+      }
+      const t = toEdited(src, cuts);
       if (t >= end - 0.01 || master.ended) {
         setPlayhead(Math.min(end, t));
         return pause();
@@ -265,7 +275,7 @@ export function openTimeline() {
 export const toggleTimeline = () => (S.timelineOpen ? closeTimeline() : openTimeline());
 export function closeTimeline() {
   pause();
-  set({ timelineOpen: false, animSel: null, soundSel: null, animRows: [] });
+  set({ timelineOpen: false, animSel: null, soundSel: null, footageSel: null, animRows: [] });
 }
 
 /** Play one piece of sound, from its start to its end. */
@@ -1146,6 +1156,9 @@ export function TimelineDock() {
     <header class="tl-head">
       <button class="icon-btn tl-play" title=${s.playing ? "Pause (Space)" : "Play (Space)"} onClick=${() => play()}><${Icon} n=${s.playing ? "pause" : "play"} s=${15} /></button>
       <span class="tl-clock" title=${many ? "Where the whole video is, and how long it runs" : ""}><b ref=${time}>0:00.0</b><span> / ${clock(total)}</span></span>
+      ${chosen.includes(FOOTAGE) && cuttable(s.scene) &&
+      html`<button class="btn sm primary" title="Cut the footage in two at the playhead (⌘B)" onClick=${cutFootageHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
+        ${s.footageSel != null && html`<button class="btn sm" title="Take the chosen part out: everything after moves up (⌫)" onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${13} />Delete part</button>`}`}
       ${chosen.includes(SOUND) &&
       html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
         ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`}
@@ -1312,17 +1325,66 @@ function useMediaLength(file) {
 /** The video a screen plays (its recording, else the first device's), if any. */
 export const footageOf = (scene) => scene?.recording?.video ?? scene?.devices?.find((d) => d.video)?.video;
 
-/** A clip's look on the Footage row: its video's frames at a steady step, or its picture. */
-function ClipFrames({ scene, len, pps }) {
-  const vid = footageOf(scene);
-  const dur = useMediaLength(vid);
-  if (!vid) return html`<${ShotThumb} scene=${scene} film />`;
+/** A stretch of a video's frames, from `from` to `to` in the file: one at a steady step, so zooming reuses them. */
+function Frames({ file, from, to, pps }) {
+  const dur = useMediaLength(file);
   // A frame about as wide as the row is tall; the same moments at every zoom, so they're reused.
   const step = FRAME_STEPS.find((x) => x * pps >= 56) ?? 1200;
-  const end = Math.max(0.05, Math.min(len, dur || len) - 0.05);
+  const last = Math.max(0.05, Math.min(to, dur || to) - 0.05);
   const times = [];
-  for (let t = 0; t < len - 1e-6 && times.length < 400; t += step) times.push(t);
-  return html`<span class="clip-frames">${times.map((t) => html`<img key=${t} loading="lazy" draggable=${false} alt="" src=${`/api/moment?path=${encodeURIComponent(vid)}&t=${Math.min(t + step / 2, end).toFixed(2)}&w=160`} style=${{ width: step * pps + "px" }} />`)}</span>`;
+  for (let t = Math.floor(from / step) * step; t < to - 1e-6 && times.length < 400; t += step) times.push(t);
+  return html`<span class="clip-frames" style=${{ left: (times[0] - from) * pps + "px" }}>${times.map((t) => html`<img key=${t} loading="lazy" draggable=${false} alt="" src=${`/api/moment?path=${encodeURIComponent(file)}&t=${clamp(t + step / 2, 0, last).toFixed(2)}&w=160`} style=${{ width: step * pps + "px" }} />`)}</span>`;
+}
+
+/** A clip's look on the Footage row: its video's frames, or its picture. */
+function ClipFrames({ scene, len, pps }) {
+  const vid = footageOf(scene);
+  if (!vid) return html`<${ShotThumb} scene=${scene} film />`;
+  return html`<${Frames} file=${vid} from=${0} to=${len} pps=${pps} />`;
+}
+
+/**
+ * The recording on the canvas, on the Footage row: its parts (cut at the playhead with ⌘B) to
+ * choose and take out, and its ends to drag in to trim it. The rest moves up.
+ */
+function CutClip({ scene, at, len, pps, on, menu }) {
+  const s = useStore();
+  const [trim, setTrim] = useState(null);
+  const file = scene.recording.video;
+  const parts = footageParts(scene);
+  // Drag an end in: the stretch it passes over goes when it's let go.
+  const drag = (e, side) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    pause();
+    const x0 = e.clientX;
+    let by = 0;
+    const move = (m) => {
+      by = clamp(((m.clientX - x0) / pps) * (side === "start" ? 1 : -1), 0, Math.max(0, len - 0.1));
+      setTrim({ side, by });
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      setTrim(null);
+      if (by >= 0.05) side === "start" ? removeSpan(0, by) : removeSpan(len - by, len);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
+  return html`<div class="tl-clip current cut ${on ? "on" : ""}" style=${{ left: at * pps + "px", width: Math.max(14, len * pps) + "px" }} onContextMenu=${menu}>
+    ${parts.map(
+      (p, k) => html`<button class="tl-part ${on && s.footageSel === k ? "on" : ""}" key=${`${p.from}`} style=${{ left: p.at * pps + "px", width: Math.max(4, (p.to - p.from) * pps - (k < parts.length - 1 ? 1 : 0)) + "px" }}
+          title=${`${(p.to - p.from).toFixed(1)} s, from ${clock(p.from)} of the recording. Click to choose it; ⌫ takes it out.`}
+          onClick=${() => selectPart(k)}>
+        <${Frames} file=${file} from=${p.from} to=${p.to} pps=${pps} />
+      </button>`,
+    )}
+    ${trim && html`<i class="tl-trimmed" style=${trim.side === "start" ? { left: 0, width: trim.by * pps + "px" } : { right: 0, width: trim.by * pps + "px" }}></i>`}
+    <i class="tl-trim at-start" title="Drag to trim the start" onPointerDown=${(e) => drag(e, "start")}></i>
+    <i class="tl-trim at-end" title="Drag to trim the end" onPointerDown=${(e) => drag(e, "end")}></i>
+  </div>`;
 }
 
 /** The + at the end of the Footage row: a video or a picture from your library, or a file. */
@@ -1387,8 +1449,10 @@ function FootageTrack({ pps, plan, len, on }) {
   };
   const leftOut = many ? plan.shots.map((_, i) => i).filter((i) => plan.out[i]) : [];
   return html`
-    ${clips.map(
-      (c) => html`<button class="tl-clip ${c.i === cur ? "current" : ""} ${on && c.i === cur ? "on" : ""} ${s.shotPulse?.includes(c.i) ? "pulse" : ""}" key=${c.i}
+    ${clips.map((c) =>
+      c.i === cur && cuttable(c.scene)
+        ? html`<${CutClip} key=${c.i} scene=${c.scene} at=${c.at} len=${c.len} pps=${pps} on=${on} menu=${(e) => menu(e, c.i)} />`
+        : html`<button class="tl-clip ${c.i === cur ? "current" : ""} ${on && c.i === cur ? "on" : ""} ${s.shotPulse?.includes(c.i) ? "pulse" : ""}" key=${c.i}
           style=${{ left: c.at * pps + "px", width: Math.max(14, c.len * pps - (many ? 2 : 0)) + "px" }}
           title=${`${many ? `${c.i + 1} · ${screenName(c.i)} · ` : ""}${c.len.toFixed(1)} s${c.i === cur ? "" : ": click to edit it"}. Right-click for more.`}
           onClick=${() => pick(c.i)} onContextMenu=${(e) => menu(e, c.i)}>
@@ -1718,6 +1782,30 @@ export function Viewfinder() {
 }
 
 /** A piece of sound: how loud, its fades, when it starts; cut it, play it or delete it. */
+/** The chosen part of the recording: where it's from, how long, and taking it out. */
+export function FootageInspector() {
+  const s = useStore();
+  const parts = footageParts(s.scene);
+  const p = parts[s.footageSel];
+  if (!p) return null;
+  const len = p.to - p.from;
+  return html`
+    <div class="panel-head clip-head"><h2>Footage</h2><span class="sub">Part ${s.footageSel + 1} of ${parts.length}</span><span class="grow"></span>
+      <button class="icon-btn sm" title="Take this part out (⌫)" onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${14} /></button>
+      <button class="icon-btn sm" title="Close" onClick=${() => set({ footageSel: null })}><${Icon} n="x" s=${14} /></button>
+    </div>
+    <div class="panel-body">
+      <${Section} title="This part">
+        <div class="row"><label>On the timeline</label><span class="mono">${clock(p.at)} – ${clock(p.at + len)}</span></div>
+        <div class="row"><label>Of the recording</label><span class="mono">${clock(p.from)} – ${clock(p.to)}</span></div>
+        <div class="row"><label>Length</label><span class="mono">${len.toFixed(1)} s</span></div>
+      <//>
+      <button class="btn block danger" disabled=${parts.length < 2} onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${13} />Take this part out</button>
+      <div class="note">${parts.length < 2 ? "Cut the footage first: move the playhead and press ⌘B." : "The screen, the webcam, your voice and the cursor all skip it, and everything after moves up. ⌘Z brings it back."}</div>
+      <button class="btn block" onClick=${cutFootageHere}><${Icon} n="scissors" s=${13} />Cut at the playhead<span class="kbd">⌘B</span></button>
+    </div>`;
+}
+
 export function SoundInspector() {
   const s = useStore();
   const list = soundClips(s.scene);

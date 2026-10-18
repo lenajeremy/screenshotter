@@ -115,6 +115,8 @@ export const S = {
   animSel: null,
   /** The chosen piece of sound on Animate's Sound row. */
   soundSel: null,
+  /** The chosen part of the recording on the Footage row. */
+  footageSel: null,
   animRows: [],
   playing: false,
   /** docked: Ask AI fills the right-hand panel instead of floating over the canvas. */
@@ -272,7 +274,7 @@ export const undo = () => step(true);
 export const redo = () => step(false);
 function fixSelection() {
   // A piece of sound is chosen by its place in the list, which an undo may have changed.
-  if (S.soundSel != null) set({ soundSel: null });
+  if (S.soundSel != null || S.footageSel != null) set({ soundSel: null, footageSel: null });
   const s = S.selected;
   if (!s) return;
   const [kind, n] = s.split("-");

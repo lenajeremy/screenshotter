@@ -437,6 +437,79 @@ for (const [name, engine] of only.length ? only : engines) {
   });
 
   await check(`${pad} no page errors`, async () => expect(!errors.length, errors.join(" | ")));
+  // Footage: cut the recording at the playhead, take a part out; everything after moves up.
+  const footage = () => S<{ dur: number; cuts: unknown; sounds: number[][]; parts: number[][] }>(page, async () => {
+    const f = await import("/ui/footage.js" as string);
+    const snd = await import("/ui/sound.js" as string);
+    const st = (window as any).studio.state;
+    return { dur: st.scene.recording.duration, cuts: st.scene.devices.map((d: any) => d.cuts ?? null), sounds: snd.soundClips(st.scene).map((c: any) => [c.at, c.from ?? 0, Math.round(snd.toOf(c) * 1000) / 1000]), parts: f.footageParts().map((p: any) => [p.at, p.from, p.to]) };
+  });
+  await check(`${pad} footage: cut at the playhead twice and take the middle out: the rest moves up, screen, webcam and sound`, async () => {
+    await fresh();
+    const r = await S(page, async () => {
+      const tl = await import("/ui/timeline.js" as string);
+      const f = await import("/ui/footage.js" as string);
+      tl.setPlayhead(2);
+      const a = f.cutFootageHere();
+      tl.setPlayhead(4);
+      const b = f.cutFootageHere();
+      const parts = f.footageParts().length;
+      const shown = document.querySelectorAll(".tl-row.footage .tl-part").length;
+      f.deleteFootagePart(1);
+      return { a, b, parts, shown };
+    });
+    await page.waitForTimeout(300);
+    const g = await footage();
+    expect(r.a && r.b && r.parts === 3, `cuts ${r.a} ${r.b}, ${r.parts} parts`);
+    expect(g.dur === 4, `it runs ${g.dur} s`);
+    expect(JSON.stringify(g.cuts) === JSON.stringify([[{ from: 2, to: 4 }]]) || JSON.stringify(g.cuts).split('{"from":2,"to":4}').length - 1 === g.cuts.filter(Boolean).length, `cuts ${JSON.stringify(g.cuts)}`);
+    expect(same(g.sounds, [[0, 0, 2], [2, 4, 6]]), `sound ${JSON.stringify(g.sounds)}`);
+    expect(same(g.parts, [[0, 0, 2], [2, 4, 6]]), `parts ${JSON.stringify(g.parts)}`);
+  });
+  await check(`${pad} footage: the recording on the canvas shows the moment after the cut`, async () => {
+    await call("setPlayhead", 2.5);
+    await page.waitForTimeout(500);
+    const t = await S(page, () => (document.querySelector("video[data-master]") as HTMLVideoElement).currentTime);
+    expect(Math.abs(t - 4.5) < 0.06, `the recording is at ${t.toFixed(2)} s`);
+  });
+  await check(`${pad} footage: playing runs over the part taken out, on the edited video's clock`, async () => {
+    await call("setPlayhead", 1.5);
+    await call("play");
+    // Over the cut the recording seeks on, which can take a moment (headless WebKit pauses for it).
+    for (let k = 0; k < 40; k++) {
+      await page.waitForTimeout(100);
+      if ((await S<number>(page, async () => (await import("/ui/timeline.js" as string)).playhead.t)) > 2.3) break;
+    }
+    const r = await S(page, async () => {
+      const tl = await import("/ui/timeline.js" as string);
+      return { t: tl.playhead.t, src: (document.querySelector("video[data-master]") as HTMLVideoElement).currentTime };
+    });
+    await call("pause");
+    expect(r.t > 2.1 && r.src > 4.05 && Math.abs(r.src - (r.t + 2)) < 0.2, `playhead ${r.t.toFixed(2)}, recording ${r.src.toFixed(2)}`);
+  });
+  await check(`${pad} footage: undo brings the part back; redo takes it out again`, async () => {
+    await S(page, async () => (await import("/ui/store.js" as string)).undo());
+    await page.waitForTimeout(200);
+    const back = await footage();
+    await S(page, async () => (await import("/ui/store.js" as string)).redo());
+    await page.waitForTimeout(200);
+    const again = await footage();
+    expect(back.dur === 6 && back.cuts.every((c) => !c), `undone: ${JSON.stringify(back)}`);
+    expect(again.dur === 4, `redone: ${again.dur} s`);
+  });
+  if (name === "chromium") {
+    await check(`${pad} footage: the exported video skips the part taken out, picture and sound`, async () => {
+      const out = await S<string>(page, async () => {
+        const st = (window as any).studio.state;
+        await (await import("/ui/actions.js" as string)).exportVideo();
+        return st.render?.path;
+      });
+      const p = probe(out);
+      expect(Math.abs(p.seconds - 4) < 0.15, `${p.seconds.toFixed(2)} s long`);
+      expectBeeps(beeps(pcm(out)), [[300, 0.5], [500, 1.5], [1100, 2.5], [1300, 3.5]]);
+    });
+  }
+
   await browser.close();
 }
 server.close();

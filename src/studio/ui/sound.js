@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "./controls.js";
 import { openMenu } from "./menu.js";
 import { S, api, clamp, edit, fileUrl, set, useStore } from "./store.js";
+import { tidyCuts, toSource } from "./cuts.js";
 
 export const SOUND = "sound";
 /** The shortest a piece can be, in seconds. */
@@ -14,6 +15,8 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 
 /** The recording's video, where its sound is (remembered by the design; older ones: the first device's). */
 export const recordingVideo = (scene = S.scene) => scene.recording?.video ?? scene.devices?.[0]?.video;
+/** The parts cut out of the recording's footage (its devices carry them). */
+const takeCuts = (scene = S.scene) => tidyCuts(scene.devices?.find((d) => d.video && d.cuts?.length)?.cuts);
 /** The video the canvas plays as the recording, whose own sound the editor plays. */
 const masterVideo = (scene = S.scene) => (scene.recording ? scene.devices?.[0]?.video : undefined);
 
@@ -24,7 +27,7 @@ const waves = new Map();
 export function sourceLength(src, scene = S.scene) {
   const w = waves.get(src)?.value;
   if (w?.duration > 0) return w.duration;
-  if (src === recordingVideo(scene) && scene.recording?.duration) return scene.recording.duration;
+  if (src === recordingVideo(scene) && scene.recording?.duration) return scene.recording.duration + takeCuts(scene).reduce((n, k) => n + k.to - k.from, 0);
   return undefined;
 }
 
@@ -147,7 +150,12 @@ export function resetSounds() {
 // itself, turned up and down: in step, lips and all. A moved piece plays on an <audio> of its own.
 
 /** Whether a piece plays where it was recorded, from the recording the canvas shows. */
-const inPlace = (c, scene = S.scene) => c.src === masterVideo(scene) && Math.abs(c.at - c.from) < 0.005;
+const inPlace = (c, scene = S.scene) => {
+  if (c.src !== masterVideo(scene)) return false;
+  // Parts cut out of the footage: the recording shows the file's moment `toSource(t)` at `t`.
+  const cuts = takeCuts(scene);
+  return Math.abs(toSource(c.at, cuts) - c.from) < 0.005 && !cuts.some((k) => k.from > c.from + 0.005 && k.from < toOf(c, scene) - 0.005);
+};
 
 /** How loud a piece is `u` seconds into it: its volume, faded at its ends (as the export fades it). */
 const gainAt = (c, u) => {

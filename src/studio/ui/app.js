@@ -69,6 +69,7 @@ import { BackgroundsPanel, CapturesPanel, DesignForMe, DesignsPanel, ElementsPan
 import { Inspector } from "./inspector.js";
 import { TimelineDock, closeTimeline, cutSoundHere, deleteAnimation, openTimeline, play, toggleTimeline, videoLength } from "./timeline.js";
 import { deleteSound, hasSoundRow, nudgeSound } from "./sound.js";
+import { cutFootageHere, cuttable, deleteFootagePart } from "./footage.js";
 import { ScenesPage, ScenesPopover, SceneThumb, closeScenesPage, openScenesPage, sceneMenu, toggleScenesPage } from "./scenes.js";
 
 // =============================================================================================
@@ -1570,7 +1571,11 @@ window.addEventListener("keydown", (e) => {
     return e.shiftKey && inSet ? canvasApi.fitSet() : inSet ? canvasApi.fitScreen() : commands.fit();
   }
   // Animate: ⌘B cuts the sound at the playhead.
-  if (mod && k === "b" && S.timelineOpen && hasSoundRow()) return e.preventDefault(), cutSoundHere();
+  // ⌘B cuts the recording's footage at the playhead (the sound alone when the Sound row is chosen).
+  if (mod && k === "b" && S.timelineOpen) {
+    if (cuttable() && !S.animRows.includes("sound")) return e.preventDefault(), cutFootageHere();
+    if (hasSoundRow()) return e.preventDefault(), cutSoundHere();
+  }
   if (mod && k === "d") return e.preventDefault(), commands.duplicate();
   if (mod && k === "o") return e.preventDefault(), commands.import();
   if (mod && k === ",") return e.preventDefault(), commands.settings();
@@ -1584,6 +1589,8 @@ window.addEventListener("keydown", (e) => {
     if (e.key === " ") return e.preventDefault(), play();
     if (S.animSel !== null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteAnimation(S.animSel);
     if (S.animSel !== null && e.key === "Escape") return set({ animSel: null });
+    if (S.footageSel != null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteFootagePart(S.footageSel);
+    if (S.footageSel != null && e.key === "Escape") return set({ footageSel: null });
     if (S.soundSel != null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteSound(S.soundSel);
     if (S.soundSel != null && e.key === "Escape") return set({ soundSel: null });
     if (S.soundSel != null && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return e.preventDefault(), nudgeSound((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 0.1), videoLength());

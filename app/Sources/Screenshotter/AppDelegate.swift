@@ -283,6 +283,10 @@ import WebKit
         case "openURL":
             if let s = body["url"] as? String, let url = URL(string: s) { NSWorkspace.shared.open(url) }
             replyHandler(true, nil)
+        case "showBar":
+            // The start screen's Record your screen and Screenshot your Mac: the capture bar.
+            capture.showBar((body["mode"] as? String) == "record" ? .record : .screenshot)
+            replyHandler(true, nil)
         case "dragFile":
             guard let path = body["path"] as? String, FileManager.default.fileExists(atPath: path) else { return replyHandler(nil, "File not found") }
             web.dragFile(URL(fileURLWithPath: path))

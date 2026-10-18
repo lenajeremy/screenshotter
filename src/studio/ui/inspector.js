@@ -4,7 +4,8 @@ import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, T
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore, pictureUrl } from "./store.js";
 import { addShot, addSize, deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
-import { AnimationSection, ClipInspector, MotionSection, SoundInspector } from "./timeline.js";
+import { AnimationSection, ClipInspector, FootageInspector, MotionSection, SoundInspector } from "./timeline.js";
+import { footageParts } from "./footage.js";
 import { soundClips } from "./sound.js";
 import { Finish, LayersList, PrintFinish, Treatment, bgObj } from "./panels.js";
 import { setAutoZoom, setFrame, setRecording } from "./recording.js";
@@ -45,6 +46,7 @@ export function Inspector() {
   // Animate: the selected animation takes the panel.
   if (s.timelineOpen && s.animSel !== null && s.scene.animations?.[s.animSel]) body = html`<${ClipInspector} />`;
   else if (s.timelineOpen && s.soundSel != null && soundClips(s.scene)[s.soundSel]) body = html`<${SoundInspector} />`;
+  else if (s.timelineOpen && s.footageSel != null && footageParts(s.scene)[s.footageSel]) body = html`<${FootageInspector} />`;
   else if (!id) body = html`<${SceneInspector} />`;
   else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
   else if (id === "caption") body = html`<${CaptionInspector} />`;
