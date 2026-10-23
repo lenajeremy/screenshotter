@@ -558,7 +558,8 @@ export const MockupInputShape = {
   menuBar: SceneMenuBarSchema.optional(),
   animations: z
     .array(AnimationSchema)
-    .max(80)
+    // A long recording's auto-zoom follows every click: hundreds of camera moves.
+    .max(5000)
     .optional()
     .describe(
       "For videos (create_video, and Studio video exports): when and how each item appears, changes and leaves. Items not animated are there from the start. Example: the headline slides up at 1 s, the MacBook and iPhone zoom in together at 2.5 s, an arrow's end moves at 4 s. Still images show the design as it is.",
@@ -581,7 +582,7 @@ export const MockupInputShape = {
         fadeOut: z.number().min(0).max(10).optional().describe("Seconds to fade out over."),
       }),
     )
-    .max(200)
+    .max(2000)
     .optional()
     .describe(
       "For videos: the sound, as pieces of files placed on the timeline (a recording's voice cut up and moved, music). Given, it's the video's sound in place of the devices' recordings' own (with video.sound on); an empty list is silence.",
