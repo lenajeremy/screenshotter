@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cacheDir } from "../util/files.js";
+import { mediaInfo } from "../util/media.js";
 import { readLog } from "./cursor.js";
 import { cutLog, keptParts, tidyCuts, type Cut } from "./cuts.js";
 
@@ -23,13 +24,6 @@ function run(cmd: string, args: string[]): Promise<string> {
   });
 }
 
-/** How long a file runs, and whether it has sound. */
-async function probe(file: string): Promise<{ length: number; sound: boolean }> {
-  const out = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", file]);
-  const j = JSON.parse(out) as { format?: { duration?: string }; streams?: Array<{ codec_type?: string }> };
-  return { length: Number(j.format?.duration) || 0, sound: Boolean(j.streams?.some((s) => s.codec_type === "audio")) };
-}
-
 const making = new Map<string, Promise<string>>();
 
 /** The recording with its cut parts taken out, picture and sound, as one file. */
@@ -41,13 +35,15 @@ export async function cutVideo(file: string, cuts: Cut[]): Promise<string> {
   const pending = making.get(out);
   if (pending) return pending;
   const job = (async () => {
-    const { length, sound } = await probe(file);
+    const { length, sound } = await mediaInfo(file);
     const parts = keptParts(list, length || Infinity).filter((p) => p.to - p.from > 0.01);
     if (!parts.length) throw new Error("Every part of the recording was cut out.");
     const f = (v: number) => v.toFixed(3);
+    // The file's length is known to the hundredth of a second: a part running to its end runs to the end.
+    const span = (p: Cut) => `start=${f(p.from)}${Number.isFinite(p.to) && !(length && p.to >= length - 0.011) ? `:end=${f(p.to)}` : ""}`;
     const chains = parts.flatMap((p, k) => [
-      `[0:v]trim=start=${f(p.from)}:end=${f(p.to)},setpts=PTS-STARTPTS[v${k}]`,
-      ...(sound ? [`[0:a]atrim=start=${f(p.from)}:end=${f(p.to)},asetpts=PTS-STARTPTS[a${k}]`] : []),
+      `[0:v]trim=${span(p)},setpts=PTS-STARTPTS[v${k}]`,
+      ...(sound ? [`[0:a]atrim=${span(p)},asetpts=PTS-STARTPTS[a${k}]`] : []),
     ]);
     const joined = parts.map((_, k) => (sound ? `[v${k}][a${k}]` : `[v${k}]`)).join("");
     const graph = `${chains.join(";")};${joined}concat=n=${parts.length}:v=1:a=${sound ? 1 : 0}[v]${sound ? "[a]" : ""}`;

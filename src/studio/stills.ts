@@ -10,6 +10,7 @@ import path from "node:path";
 import { run } from "../util/exec.js";
 import { cacheDir } from "../util/files.js";
 import { imageSize } from "../util/image.js";
+import { mediaInfo } from "../util/media.js";
 
 /** Each design's still of a recording: `<recording>.still-<ms>.png`, beside the recording. */
 export const STILL = /\.still-\d+\.png$/i;
@@ -19,9 +20,7 @@ export const isRecording = (p: string) => /\.(mp4|mov)$/i.test(p);
 const firstFrame = (video: string) => video.replace(/\.(mp4|mov)$/i, ".png");
 
 async function duration(video: string): Promise<number> {
-  const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", video], { timeoutMs: 15_000 });
-  const d = Number((JSON.parse(stdout) as { format?: { duration?: string } }).format?.duration);
-  return Number.isFinite(d) && d > 0 ? d : 0;
+  return (await mediaInfo(video)).length;
 }
 
 /** When the picture changes a lot (a new screen, a big scroll), in seconds. */

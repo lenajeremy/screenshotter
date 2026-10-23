@@ -2,8 +2,10 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { closeBrowser } from "./render/browser.js";
 import { createServer } from "./server.js";
+import { useAppHelpers } from "./util/tools.js";
 
 async function main() {
+  useAppHelpers();
   const [command, ...rest] = process.argv.slice(2);
 
   if (command === "studio") {

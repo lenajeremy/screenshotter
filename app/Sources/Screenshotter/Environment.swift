@@ -63,7 +63,9 @@ enum NodeLocator {
     static func candidates(path: String?, home: String) -> [String] {
         var list: [String] = []
         if let override = UserDefaults.standard.string(forKey: "nodePath"), !override.isEmpty { list.append(override) }
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("node").path { list.append(bundled) }
+        // The Node the app carries (Contents/Helpers; Resources in older builds).
+        list.append(Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/node").path)
+        if let older = Bundle.main.resourceURL?.appendingPathComponent("node").path { list.append(older) }
         for dir in (path ?? "").split(separator: ":") { list.append("\(dir)/node") }
         list += ["/opt/homebrew/bin/node", "/usr/local/bin/node", "\(home)/.volta/bin/node", "\(home)/.asdf/shims/node", "\(home)/.local/share/mise/shims/node"]
         let nvm = URL(fileURLWithPath: "\(home)/.nvm/versions/node")

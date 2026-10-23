@@ -18,11 +18,11 @@ Agents such as Claude Code or Codex drive it through MCP tools. You can drive th
 | Needed for | Requirement |
 | --- | --- |
 | MCP server and Studio | macOS, Node.js 20 or later |
-| Desktop app | macOS 14+, and Xcode or its command line tools to build it |
+| Desktop app | macOS 14+ on Apple silicon. It carries its own Node.js and ffmpeg. Building it needs Xcode or its command line tools, and `pkg-config` (`brew install pkgconf`) |
 | Ask AI (optional) | Claude Code signed in (run `claude` once), an Anthropic API key, or Codex signed in (run `codex` once) |
 | Simulator captures | Xcode with at least one iOS simulator runtime |
 | Rendering | Google Chrome, or another Chromium browser (set `SCREENSHOTTER_CHROME_PATH`) |
-| Videos | `ffmpeg` (`brew install ffmpeg`) |
+| Videos | `ffmpeg` (`brew install ffmpeg`); the desktop app has its own |
 | AI backgrounds (optional) | `OPENAI_API_KEY`, `GEMINI_API_KEY`, `REPLICATE_API_TOKEN` or `FAL_KEY` |
 | Mac window captures (optional) | Screen Recording permission for the app that runs the server |
 
@@ -132,9 +132,9 @@ open build/Screenshotter.app           # try it
 cp -R build/Screenshotter.app /Applications/   # keep it (optional)
 ```
 
-The app is small (a native window around the Studio plus the engine) and uses the Node.js you already have. It finds Node the way your terminal does (Homebrew, nvm, Volta, asdf…). If it can't, it asks you to point at it. `npm run app:build -- --bundle-node` copies Node into the app instead (about 100 MB more), for Macs without Node. The build is signed for your Mac only; macOS may ask you to confirm the first time you open it (right-click → **Open**).
+The app is a native window around the Studio and the engine, and it carries what the engine runs on, so it works on a Mac with nothing else installed: the Node.js that ran the build (it must be one that runs on any Mac, such as nodejs.org's or nvm's, not Homebrew's), and an ffmpeg built from source for it, with x264 for MP4 and libvpx and Opus for WebM (`scripts/build-ffmpeg.mjs`; a few minutes the first time, then kept in `build/vendor`). Both are in `Contents/Helpers`, with their licences in `Contents/Resources/Licenses`. That ffmpeg is GPL, so `npm run app:dmg` puts its exact source beside each release, in `site/downloads/sources`. The build is signed for your Mac only; macOS may ask you to confirm the first time you open it (right-click → **Open**).
 
-It reads your shell profile at launch, so `ANTHROPIC_API_KEY`, the AI-background keys and tools like `ffmpeg` and `claude` from `~/.zshrc` work without extra setup. Its engine runs on a private local port and stops when you quit the app.
+It reads your shell profile at launch, so `ANTHROPIC_API_KEY`, the AI-background keys and tools like `claude` from `~/.zshrc` work without extra setup. Its engine runs on a private local port and stops when you quit the app.
 
 ### Or run it in the browser
 

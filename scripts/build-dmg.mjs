@@ -4,7 +4,9 @@
  * Download button.
  *
  *   npm run app:dmg                      → build/Screenshotter-<version>.dmg and site/downloads/Screenshotter.dmg
- *   npm run app:dmg -- --bundle-node     builds the app with Node inside first (for Macs without Node)
+ *
+ * The app carries Node and an ffmpeg built from source (see scripts/build-app.mjs). That ffmpeg is
+ * GPL, so its exact source goes beside the download too, in site/downloads/sources.
  *
  * With a Developer ID certificate in the keychain, the app and the disk image are signed with it.
  * With notarization credentials saved too, the image is notarized and stapled, so it opens on any
@@ -24,6 +26,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ffmpegBuild } from "./build-ffmpeg.mjs";
 import { notaryAuth, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,10 +60,11 @@ if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
 run("node", ["scripts/build-app.mjs", ...process.argv.slice(2)]);
 const app = path.join(root, "build", "Screenshotter.app");
 if (!existsSync(app)) throw new Error("build/Screenshotter.app is missing");
-// The app just built draws recordings' videos itself: check it against the usual export.
+// The app just built draws recordings' videos itself: check it against the usual export, with the
+// ffmpeg it carries.
 if (!process.env.SCREENSHOTTER_SKIP_TESTS) {
   for (const args of [["run", "test:recording", "--", "--native-only"], ["run", "test:fast"]]) {
-    const r = spawnSync("npm", args, { cwd: root, stdio: "inherit", env: { ...process.env, SCREENSHOTTER_NATIVE: path.join(app, "Contents", "MacOS", "Screenshotter") } });
+    const r = spawnSync("npm", args, { cwd: root, stdio: "inherit", env: { ...process.env, PATH: `${path.join(app, "Contents", "Helpers")}:${process.env.PATH}`, SCREENSHOTTER_NATIVE: path.join(app, "Contents", "MacOS", "Screenshotter") } });
     if (r.status !== 0) throw new Error(`The app's fast export failed its check (npm ${args.slice(1).join(" ")}): the release stops here.`);
   }
 }
@@ -95,6 +99,8 @@ if (identity) {
 const site = path.join(root, "site", "downloads");
 mkdirSync(site, { recursive: true });
 copyFileSync(dmg, path.join(site, "Screenshotter.dmg"));
+// The source of the ffmpeg inside, as its licence asks, where the app's notice says it is.
+cpSync(ffmpegBuild({ quiet: true }).sources, path.join(site, "sources"), { recursive: true });
 const mb = (statSync(dmg).size / 1024 / 1024).toFixed(1);
 console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB, ${state}), copied to site/downloads/Screenshotter.dmg`);
 if (identity && state === "signed") {

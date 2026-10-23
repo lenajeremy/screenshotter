@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { cacheDir, formatFor, outputPathFor } from "../util/files.js";
+import { mediaInfo } from "../util/media.js";
 import { newPage } from "./browser.js";
 import { BACKDROP, CALLOUT, animatedIds, backdropStyle, cameraTransform, evaluate, evaluateBackdrop, evaluateCallouts, evaluateCamera, keyMoments, targetsOf, timelineEnd, uses3d, type AnimEntity } from "./animate.js";
 import { CURSOR_ART, cursorAt, readLog, trackOf } from "./cursor.js";
@@ -849,16 +850,8 @@ export function versionSpec(v: Version, layout?: string): { name: string; label:
   return { name: preset ? size : `${w}x${h}`, label: preset?.label ?? `${w} × ${h}`, width: w, height: h, fit, appStore: preset?.appStore ?? false };
 }
 
-/** Whether a file has a sound track (ffmpeg lists its streams when asked about it). */
-async function hasSound(file: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const p = spawn("ffmpeg", ["-hide_banner", "-i", file], { stdio: ["ignore", "ignore", "pipe"] });
-    let err = "";
-    p.stderr.on("data", (d) => (err += d));
-    p.on("error", () => resolve(false));
-    p.on("exit", () => resolve(/Stream #\d+:\d+[^\n]*: Audio:/.test(err)));
-  });
-}
+/** Whether a file has a sound track. */
+const hasSound = (file: string) => mediaInfo(file).then((i) => i.sound, () => false);
 
 /**
  * A piece of the video's sound: `from`–`to` seconds of a file, starting `at` seconds into the video
@@ -875,15 +868,7 @@ export function soundPieces(input: VideoInput): SoundPiece[] {
 }
 
 /** How long a file runs, in seconds (0 when it can't be told). */
-export async function mediaLength(file: string): Promise<number> {
-  return new Promise((resolve) => {
-    const p = spawn("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file], { stdio: ["ignore", "pipe", "ignore"] });
-    let o = "";
-    p.stdout.on("data", (d) => (o += d));
-    p.on("error", () => resolve(0));
-    p.on("exit", () => resolve(Number(o.trim()) || 0));
-  });
-}
+export const mediaLength = (file: string) => mediaInfo(file).then((i) => i.length, () => 0);
 
 /**
  * The sound under the finished frames: each piece cut from its file, turned up or down, faded,

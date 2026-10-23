@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { run, sleep } from "../util/exec.js";
 import { outputPathFor } from "../util/files.js";
+import { mediaInfo } from "../util/media.js";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { captureClear, launchTarget, prepareSimulator, writeCaptureSidecar, type CaptureOptions } from "./capture.js";
@@ -93,16 +94,15 @@ async function recordUnlocked(opts: RecordOptions): Promise<RecordResult> {
   // The recorder only writes frames when the screen changes, so take the very first frame.
   await run("ffmpeg", ["-y", "-loglevel", "error", "-i", video, "-frames:v", "1", "-update", "1", poster]);
   await writeCaptureSidecar(poster, simulator, { bundleId: opts.bundleId, appearance: opts.appearance });
-  const probe = await run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-show_entries", "format=duration", "-of", "json", video]);
-  const info = JSON.parse(probe.stdout);
+  const info = await mediaInfo(video);
   steps.push(`recorded ${duration}s`);
   return {
     video,
     poster,
-    width: info.streams?.[0]?.width,
-    height: info.streams?.[0]?.height,
+    width: info.width ?? 0,
+    height: info.height ?? 0,
     // A still screen yields a short file; the take still covers the requested time.
-    duration: Math.max(Number(info.format?.duration ?? 0), duration),
+    duration: Math.max(info.length, duration),
     steps,
     warnings,
   };

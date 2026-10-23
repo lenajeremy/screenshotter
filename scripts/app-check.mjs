@@ -3,6 +3,8 @@
  * Check the engine inside build/Screenshotter.app without touching the simulator or your files:
  * it starts on a free port, serves the Studio UI and its assets, renders a real PNG and MP4 into
  * a temporary folder, and exits by itself when its stdin closes (as it does when the app quits).
+ * It runs on the Node and ffmpeg the app carries, with nothing from Homebrew or nvm on its PATH,
+ * as on a Mac with nothing installed.
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -13,11 +15,13 @@ import assert from "node:assert/strict";
 import { encodePng } from "../dist/util/png.js";
 
 const resources = path.resolve("build/Screenshotter.app/Contents/Resources");
-const node = existsSync(path.join(resources, "node")) ? path.join(resources, "node") : process.execPath;
+const helpers = path.resolve("build/Screenshotter.app/Contents/Helpers");
+const node = path.join(helpers, "node");
+for (const f of [node, path.join(helpers, "ffmpeg")]) assert(existsSync(f), `${f} is missing: the app should carry it`);
 const output = await mkdtemp(path.join(tmpdir(), "screenshotter-bundle-test-"));
 const child = spawn(node, [path.join(resources, "engine/dist/index.js"), "studio", "--port", "0", "--no-open", "--watch-stdin"], {
   cwd: path.join(resources, "engine"),
-  env: { ...process.env, SCREENSHOTTER_OUTPUT_DIR: output },
+  env: { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", SCREENSHOTTER_OUTPUT_DIR: output },
   stdio: ["pipe", "ignore", "pipe"],
 });
 let log = "";
@@ -63,7 +67,10 @@ try {
   pass("backdrop previews");
   const video = await post("/api/video", { ...request, quality: "preview", format: "mp4", video: { duration: 0.5, fps: 12, motion: "subtle" } });
   assert((await readFile(video.path)).length > 100);
-  pass("exports an MP4 with ffmpeg");
+  pass("exports an MP4 with the app's own ffmpeg");
+  const webm = await post("/api/video", { ...request, quality: "preview", format: "webm", video: { duration: 0.5, fps: 12, motion: "subtle" } });
+  assert((await readFile(webm.path)).length > 100);
+  pass("exports a WebM (VP9) with it too");
   await post("/api/state", { scene: request, sceneName: "check" });
   assert.equal((await (await fetch(base + "/api/state")).json()).sceneName, "check");
   pass("remembers the design between launches");
