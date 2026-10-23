@@ -866,6 +866,41 @@ await check("animation: the camera pushes in on a point, glides to the next and 
   assert(t.zoom === 2 && near(t.tx, 0) && near(t.ty, 0), "zooming on the middle doesn't move it");
 });
 
+await check("auto zoom is calm: it stays put for clicks well in view, follows ones near the edge once still, and always shows the click", async () => {
+  const { autoZooms } = await import("../src/render/cursor.js");
+  const { cameraView } = await import("../src/render/animate.js");
+  const track = (clicks: Array<[number, number, number]>) => ({ samples: [], clicks, kinds: [] }) as unknown as Parameters<typeof autoZooms>[0];
+  const shown = (zooms: ReturnType<typeof autoZooms>, c: [number, number, number], box = { x: 0, y: 0, w: 1, h: 1 }) => {
+    let cam = { zoom: 1, x: 0.5, y: 0.5 };
+    for (const z of zooms) if (z.at + z.duration <= c[0] + 1e-6) cam = z.to;
+    const v = cameraView(cam);
+    const x = box.x + c[1] * box.w;
+    const y = box.y + c[2] * box.h;
+    return x >= v.x && x <= v.x + v.width && y >= v.y && y <= v.y + v.height;
+  };
+  // Clicking away in one place, five times a second: in once, out once, nothing in between.
+  const busy = Array.from({ length: 40 }, (_, i) => [2 + i * 0.2, 0.3 + (i % 3) * 0.01, 0.6 + (i % 2) * 0.01] as [number, number, number]);
+  let z = autoZooms(track(busy), 20);
+  assert(z.length === 2 && z[0].to.zoom > 1 && z[1].to.zoom === 1, `clicks in one place should be one zoom in and out, got ${z.length} moves`);
+  assert(busy.every((c) => shown(z, c)), "every click should be on screen");
+  // A click across the screen: the camera goes to it, arriving as it happens.
+  const across: Array<[number, number, number]> = [[2, 0.2, 0.3], [4, 0.85, 0.8]];
+  z = autoZooms(track(across), 20);
+  assert(z.length === 3 && Math.abs(z[1].at + z[1].duration - 4) < 0.01 && z[1].to.x === 0.85, `a far click should get one move that lands on it: ${JSON.stringify(z.map((m) => [m.at, m.to]))}`);
+  // Near the edge of the view, just after arriving: it waits; a moment later, it follows.
+  const v = cameraView({ zoom: 1.8, x: 0.3, y: 0.5 });
+  const edge = v.x + v.width * 0.92;
+  z = autoZooms(track([[2, 0.3, 0.5], [2.6, edge, 0.5], [5, edge, 0.5]]), 20);
+  assert(z.length === 3 && z[1].at > 4 && z[1].to.x === Math.round(edge * 10000) / 10000, `near the edge it should wait, then follow: ${JSON.stringify(z.map((m) => [m.at, m.to]))}`);
+  // A quick string of far clicks is one glide, to the last.
+  z = autoZooms(track([[2, 0.1, 0.1], [4, 0.9, 0.9], [4.1, 0.1, 0.9], [4.2, 0.9, 0.1]]), 20);
+  assert(z.length === 3 && z[1].to.x === 0.9 && z[1].to.y === 0.1, `rapid far clicks should be one glide: ${JSON.stringify(z.map((m) => [m.at, m.duration, m.to]))}`);
+  // On a padded recording, the zooms land where the recording sits on the canvas.
+  const box = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+  z = autoZooms(track([[2, 0.5, 0.25]]), 20, 1.8, box);
+  assert(z[0].to.x === 0.5 && z[0].to.y === 0.3 && shown(z, [2, 0.5, 0.25], box), `zoom should land on the canvas point: ${JSON.stringify(z[0].to)}`);
+});
+
 await check("animation: text arrives a word or a letter at a time; an accented word keeps its punctuation", async () => {
   const { evaluate, textPieces, unitMode, timelineEnd } = await import("../src/render/animate.js");
   const words = textPieces("Plan it on the **Mac**. Cook it\nnow", "word").filter((p) => p.kind === "unit");

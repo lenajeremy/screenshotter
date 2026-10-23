@@ -2,6 +2,8 @@
 // the picture): where it was, smoothed or not, which cursor it was, the clicks, and the zooms on
 // them. Pure, so the Studio's canvas and the video renderer draw it from the same code.
 
+import { cameraView } from "./animate.js";
+
 /** The log as the capture bar writes it: seconds of the recording; places as shares of the
  *  recording (from its top left); clicks "down", "double", "up" or "right"; cursors "arrow",
  *  "text", "hand", "grab", "grabbing". */
@@ -135,12 +137,23 @@ export interface AutoZoom {
   auto: true;
 }
 
+/** Where a recording sits on the canvas, as canvas fractions: its left, top, width and height. */
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 /**
- * Zooms that follow the clicks, as Screen Studio's do: in on the first of a run of clicks (clicks
- * close together in time), across to each next one, and back out a little after the last. They're
- * plain camera animations, so they can be moved, changed or deleted on the timeline.
+ * Zooms that follow the clicks, as Screen Studio's do, calmly: in on the first of a run of clicks
+ * (clicks close together in time), and back out a little after the last. In between, the camera
+ * stays put while each click lands well inside what it shows; it goes after one near the edge once
+ * it has been still a moment, and after one out of sight at once (a quick string of those is one
+ * glide, to the last). They're plain camera animations, so they can be moved, changed or deleted
+ * on the timeline. Places are on the canvas: `box` is where the recording sits on it.
  */
-export function autoZooms(track: CursorTrack, length: number, zoom = 1.8): AutoZoom[] {
+export function autoZooms(track: CursorTrack, length: number, zoom = 1.8, box: Box = { x: 0, y: 0, w: 1, h: 1 }): AutoZoom[] {
   const presses = track.clicks.filter((c) => c[0] >= 0 && c[0] <= length);
   if (!presses.length) return [];
   // Runs of clicks: a pause of more than 3 s starts a new one.
@@ -152,26 +165,58 @@ export function autoZooms(track: CursorTrack, length: number, zoom = 1.8): AutoZ
   }
   const r4 = (v: number) => Math.round(v * 10000) / 10000;
   const into = (v: number) => Math.min(1, Math.max(0, v));
-  const out: AutoZoom[] = [];
+  const on = (c: [number, number, number]) => ({ x: r4(into(box.x + c[1] * box.w)), y: r4(into(box.y + c[2] * box.h)) });
   const IN = 0.7;
   const OUT = 0.8;
+  // Within this share of the view from its edge, a click is near the edge.
+  const EDGE = 0.15;
+  // How long the camera stays still before going after a click near the edge.
+  const SETTLE = 1;
+  /** Where a point is in the view of a camera on `f`: well inside, near the edge, or out of it. */
+  const where = (f: { x: number; y: number }, p: { x: number; y: number }) => {
+    const v = cameraView({ zoom, x: f.x, y: f.y });
+    const m = v.width * EDGE;
+    const within = (pad: number) => p.x >= v.x + pad && p.x <= v.x + v.width - pad && p.y >= v.y + pad && p.y <= v.y + v.height - pad;
+    return within(m) ? "inside" : within(0) ? "edge" : "out";
+  };
+  const out: AutoZoom[] = [];
+  // Where the camera is (null when zoomed out), and when its last move ends.
+  let cam: { x: number; y: number } | null = null;
+  let still = 0;
   runs.forEach((run, n) => {
-    const first = run[0];
-    const start = Math.max(0, first[0] - IN - 0.25);
-    out.push({ targets: "camera", at: r4(start), duration: IN, ease: "ease-in-out", to: { zoom, x: r4(into(first[1])), y: r4(into(first[2])) }, auto: true });
-    let at = start + IN;
-    for (const c of run.slice(1)) {
-      // Across to the next click, arriving as it happens (or as soon as it can).
-      const move = Math.min(0.6, Math.max(0.3, c[0] - at));
-      const from = Math.max(at, c[0] - move);
-      out.push({ targets: "camera", at: r4(from), duration: r4(Math.max(0.2, c[0] - from)), ease: "ease-in-out", to: { zoom, x: r4(into(c[1])), y: r4(into(c[2])) }, auto: true });
-      at = from + Math.max(0.2, c[0] - from);
+    for (const [i, c] of run.entries()) {
+      const p = on(c);
+      if (!cam) {
+        // In on the first click of the run, arriving a moment before it.
+        const at = Math.max(still, c[0] - IN - 0.25);
+        out.push({ targets: "camera", at: r4(at), duration: IN, ease: "ease-in-out", to: { zoom, ...p }, auto: true });
+        cam = p;
+        still = at + IN;
+        continue;
+      }
+      const place = where(cam, p);
+      if (place === "inside" || (place === "edge" && c[0] < still + SETTLE)) continue;
+      const last = out[out.length - 1];
+      // Still on its way, after one of this run's clicks: go on to this one instead, in one glide.
+      if (i > 0 && last.to.zoom > 1 && c[0] < still + 0.15 && c[0] > last.at) {
+        last.duration = r4(Math.max(last.duration, c[0] - last.at));
+        last.to = { zoom, ...p };
+      } else {
+        // Across to it, arriving as it happens (or as soon as it can).
+        const move = Math.min(0.6, Math.max(0.3, c[0] - still));
+        const from = Math.max(still, c[0] - move);
+        out.push({ targets: "camera", at: r4(from), duration: r4(Math.max(0.2, c[0] - from)), ease: "ease-in-out", to: { zoom, ...p }, auto: true });
+      }
+      cam = p;
+      still = out[out.length - 1].at + out[out.length - 1].duration;
     }
     // Back out a moment after the last click, unless the next run starts soon after.
     const next = runs[n + 1];
-    const leave = Math.min(length - OUT, run[run.length - 1][0] + 1.6);
-    if (leave > at && (!next || next[0][0] - IN - 0.25 > leave + OUT)) {
+    const leave = Math.min(length - OUT, Math.max(still, run[run.length - 1][0] + 1.6));
+    if (leave >= still && (!next || next[0][0] - IN - 0.25 > leave + OUT)) {
       out.push({ targets: "camera", at: r4(leave), duration: OUT, ease: "ease-in-out", to: { zoom: 1, x: 0.5, y: 0.5 }, auto: true });
+      cam = null;
+      still = leave + OUT;
     }
   });
   return out;

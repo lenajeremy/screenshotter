@@ -107,10 +107,8 @@ export async function setAutoZoom(on, zoom = S.scene.recording?.zoom ?? 1.8) {
   const rec = S.scene.recording;
   const log = on && rec?.cursor?.log ? await cursorLog(rec.cursor.log) : null;
   // On the recording wherever it sits (padded, it doesn't fill the canvas).
-  const box = recordingBox();
-  const r4 = (v) => Math.round(v * 10000) / 10000;
   const cuts = cutsIn();
-  const made = (log ? autoZooms(trackOf(cuts.length ? cutLog(log, cuts) : log, 0), rec.duration ?? Infinity, zoom) : []).map((a) => (a.to.zoom > 1 ? { ...a, to: { ...a.to, x: r4(box.x + a.to.x * box.w), y: r4(box.y + a.to.y * box.h) } } : a));
+  const made = log ? autoZooms(trackOf(cuts.length ? cutLog(log, cuts) : log, 0), rec.duration ?? Infinity, zoom, recordingBox()) : [];
   edit((d) => {
     const own = (d.animations ?? []).filter((a) => !(a.auto && [a.targets].flat().includes(CAMERA)));
     d.animations = [...own, ...made].sort((a, b) => a.at - b.at);

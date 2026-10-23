@@ -174,7 +174,8 @@ for (const [name, engine] of nativeOnly ? [] : ([["chromium", chromium], ["webki
 
   await check(`${pad} zooms land on the clicks, and turning auto zoom off removes only those`, async () => {
     const zooms = await S(page, () => ((window as any).studio.state.scene.animations ?? []).filter((a: any) => a.targets === "camera" && a.auto).length);
-    expect(zooms >= 3, `${zooms} automatic zooms`);
+    // In on the first click, and on to the far one (the second is in view already, so no move).
+    expect(zooms >= 2, `${zooms} automatic zooms`);
     const left = await S(page, async () => {
       const st = await import("/ui/store.js" as string);
       st.edit((d: any) => d.animations.push({ targets: "camera", at: 3.6, duration: 0.3, to: { zoom: 1.3, x: 0.5, y: 0.5 } }));
