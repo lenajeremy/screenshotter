@@ -24,6 +24,8 @@
 - **Pretty from the start.** A recording or screenshot opens with room round it (5%), rounded corners (3%) and a soft shadow, on this Mac's newest wallpaper.
 
 ### Fixes
+- **Zoom in on clicks is calm.** The camera stays put while you click around what it already shows, goes after a click near the edge once it's been still a moment, and after one out of sight at once; a quick string of far clicks is one glide. A minute of busy clicking was 150 little nudges; it's now a handful of moves, every click still in view. Turn it off and on to redo an older recording's zooms.
+- A long recording with zooms on its clicks exports: designs can now hold thousands of animations (the export refused more than 80).
 - Your voice stays with your lips. Sound the recorder was too busy to take was dropped and the file closed up round it, pulling everything after it early (seconds out by the end of a long recording); it now keeps its time, gaps filled with silence. The last moment of what you said before Stop is kept too.
 - The editor keeps the webcam within a few hundredths of a second of the recording as it plays (it could drift a quarter of a second).
 - A round webcam stays round in a fast export (it played as a square behind its ring).
