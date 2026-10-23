@@ -1,6 +1,6 @@
 # What's new
 
-## Unreleased
+## 0.12.0 · 23 October 2026
 
 ### Highlights
 - **A simpler Screenshotter.** Three areas, one place for each job. The left side adds things: **Screenshots**, **Templates**, **Backgrounds** and **Elements** (text, shapes and pictures in one tab). The right side changes things and is always open: whatever you've selected, or the whole design. Nothing floats over your design any more: the step bar, the starting-design sheet, the toolbar on a selection, the "Describe a change" bar and the line under the design are gone. There's one **Ask AI** (⌘K, with Design it for me inside) and one **Export**, which opens on Video when the design moves.

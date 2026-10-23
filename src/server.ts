@@ -33,7 +33,7 @@ import { createVideo, storyboard, VideoInputShape } from "./render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputShape, TRANSITIONS } from "./render/sequence.js";
 import { previewBase64 } from "./util/image.js";
 
-const VERSION = "0.11.6";
+const VERSION = "0.12.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
