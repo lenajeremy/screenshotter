@@ -310,7 +310,7 @@ function currentMode(bg) {
 
 function LookTile({ l, on }) {
   const [ready, setReady] = useState(false);
-  const guess = l.colors.length > 1 ? `linear-gradient(150deg, ${l.colors.join(", ")})` : l.color;
+  const guess = l.css ?? (l.colors.length > 1 ? `linear-gradient(150deg, ${l.colors.join(", ")})` : l.color);
   return html`<button class="look ${on ? "on" : ""}" title=${l.description}
       onClick=${() => {
         const t = keepTreatment(S.scene.background);

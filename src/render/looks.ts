@@ -48,6 +48,15 @@ const mesh = (name: string, tone: Look["tone"], description: string, colors: str
   effects,
 });
 
+/** A gradient written as CSS layers: soft glows in two corners over a three-colour sweep. */
+const glow = (name: string, tone: Look["tone"], description: string, css: string, color: string): Look => ({
+  name,
+  tone,
+  description,
+  color,
+  background: { type: "solid", color: css },
+});
+
 export const LOOKS: Look[] = [
   // Photographic
   photo("meadow-motion", "light", "Wildflower meadow streaked with horizontal motion blur, warm haze.", "lpHm3TXzWeA", "#8b9a6a", { motionBlur: 0.07, haze: 0.45, tint: "#d8c4b0", tintAmount: 0.12, saturation: 0.92, brightness: 1.12 }, ["#dfe5cf", "#9fb37a", "#b9c7e8", "#f3eed2"]),
@@ -83,6 +92,11 @@ export const LOOKS: Look[] = [
   painting("wisteria-plate", "light", "Botanical plate of purple wisteria (The New York Public Library).", "FazDueOXSC8", "#ecebe5", ["#f4f3ee", "#8f7fb8", "#8fa37a"]),
 
   // Procedural (work offline)
+  glow("orchid", "dark", "Vivid pink sweeping into violet and deep indigo, a pink glow top left.", "radial-gradient(120% 90% at 0% 0%, #ff8fd1 0%, transparent 55%), radial-gradient(100% 100% at 100% 100%, #5a3bf0 0%, transparent 60%), linear-gradient(135deg, #f15bb5, #7b2ff7 60%, #2d1b9a)", "#7b2ff7"),
+  glow("tangerine", "dark", "Vivid orange into coral and raspberry, a golden glow top right.", "radial-gradient(110% 90% at 100% 0%, #ffd36b 0%, transparent 55%), radial-gradient(100% 100% at 0% 100%, #ff4d4d 0%, transparent 60%), linear-gradient(135deg, #ff9f43, #ff5e62 55%, #c2185b)", "#ff5e62"),
+  glow("lagoon", "dark", "Vivid aqua into teal and indigo, a mint glow top left.", "radial-gradient(110% 90% at 0% 0%, #8ff5d0 0%, transparent 55%), radial-gradient(100% 100% at 100% 100%, #1565c0 0%, transparent 60%), linear-gradient(135deg, #1de9b6, #00acc1 55%, #283593)", "#00acc1"),
+  glow("cobalt", "dark", "Periwinkle into electric blue and navy, a lilac glow top right.", "radial-gradient(110% 90% at 100% 0%, #c6b8ff 0%, transparent 55%), radial-gradient(100% 100% at 0% 100%, #0d47a1 0%, transparent 60%), linear-gradient(135deg, #8c9eff, #3d5afe 55%, #1a237e)", "#3d5afe"),
+  glow("fern", "dark", "Lime into leaf green and forest, a warm glow top left.", "radial-gradient(110% 90% at 0% 0%, #ffe0a3 0%, transparent 55%), radial-gradient(100% 100% at 100% 100%, #2e7d32 0%, transparent 60%), linear-gradient(135deg, #d4e157, #43a047 55%, #1b5e20)", "#43a047"),
   mesh("midnight", "dark", "Deep indigo with violet and cyan glows.", ["#0b1020", "#3b3bb3", "#7c3aed", "#0ea5e9"]),
   mesh("aurora", "dark", "Dark teal with green and violet aurora bands.", ["#06131f", "#10b981", "#22d3ee", "#6366f1"], { meshStyle: "aurora" }, { grain: 0.1 }),
   mesh("sunset", "light", "Peach, pink and lilac.", ["#fff1e6", "#fdba74", "#f472b6", "#a78bfa"]),

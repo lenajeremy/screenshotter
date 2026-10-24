@@ -314,8 +314,10 @@ export async function resolveBackground(
       return { ...base, html: "", tone: look?.tone ?? "light", transparent: true };
     case "solid": {
       const color = bg.color ?? "#111";
-      // Anything that isn't a plain colour (gradients, url(...)) is passed through as CSS.
-      return { ...base, html: `<div class="bg" style="background:${esc(color)}"></div>`, tone: look?.tone ?? toneFrom(color), color: parseColor(color) ? color : undefined };
+      // Anything that isn't a plain colour (gradients, url(...)) is passed through as CSS, and
+      // isn't a colour shadows can be tinted with.
+      const plain = parseColor(color) && !/gradient\(|url\(/i.test(color);
+      return { ...base, html: `<div class="bg" style="background:${esc(color)}"></div>`, tone: look?.tone ?? toneFrom(color), color: look?.color ?? (plain ? color : undefined) };
     }
     case "gradient": {
       const colors = bg.colors ?? ["#1e293b", "#0f172a"];

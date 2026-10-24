@@ -387,7 +387,7 @@ async function options() {
     devices: DEVICE_MODELS.map((m) => ({ name: m.name, aliases: m.aliases, family: m.family, colors: m.colors })),
     extraDevices,
     genericColors: GENERIC_COLORS,
-    looks: LOOKS.map((l) => ({ name: l.name, tone: l.tone, description: l.description, color: l.color, photo: Boolean(l.background.photo), painting: Boolean(l.painting), colors: l.background.colors ?? l.fallback?.colors ?? [l.color] })),
+    looks: LOOKS.map((l) => ({ name: l.name, tone: l.tone, description: l.description, color: l.color, photo: Boolean(l.background.photo), painting: Boolean(l.painting), colors: l.background.colors ?? l.fallback?.colors ?? [l.color], css: l.background.type === "solid" ? l.background.color : undefined })),
     canvases: CANVAS_PRESETS,
     layouts: LAYOUTS,
     grades: GRADES,
