@@ -48,6 +48,17 @@ import SwiftUI
         rec.isVideo = true
         save(CaptureHUDView(state: rec, actions: actions, close: {}, hover: { _ in }), "5-after-recording", folder)
 
+        let saving = CaptureHUD.State()
+        saving.title = "Saving your recording…"
+        save(CaptureHUDView(state: saving, actions: actions, close: {}, hover: { _ in }), "5b-saving", folder)
+
+        let failed = CaptureHUD.State()
+        failed.working = false
+        failed.failed = true
+        failed.title = "Couldn't save it"
+        failed.detail = "Nothing was recorded."
+        save(CaptureHUDView(state: failed, actions: actions, close: {}, hover: { _ in }), "5c-failed", folder)
+
         // The countdown, a second in.
         let count = Countdown.State()
         count.count = 2

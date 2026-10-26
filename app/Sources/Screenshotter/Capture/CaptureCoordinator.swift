@@ -192,6 +192,7 @@ import Combine
         guard Permissions.screen() else { return }
         capturing = true
         bar?.orderOut(nil)
+        if model.mode == .screenshot, model.shutterSound { ShutterSound.prepare() }
         let then: (CaptureRegion?) -> Void = { [weak self] region in
             guard let self else { return }
             guard let region else {
@@ -221,6 +222,8 @@ import Combine
             defer { model.busy = false }
             do {
                 let (image, scale) = try await ScreenShot.image(of: region)
+                // The shutter, the moment the picture's taken (before it's saved).
+                if model.shutterSound { ShutterSound.play() }
                 let files = files(for: .screenshot)
                 let url = try files.newScreenshot(named: region.name)
                 try ScreenShot.writePNG(image, to: url, scale: scale)
@@ -237,7 +240,6 @@ import Combine
                     pb.setData(png, forType: .png)
                     if let tiff = NSImage(cgImage: image, size: CGSize(width: size.width / scale, height: size.height / scale)).tiffRepresentation { pb.setData(tiff, forType: .tiff) }
                 }
-                NSSound(named: "Grab")?.play()
                 let hud = newHUD(on: region.screen)
                 hud.ready(file: url, image: NSImage(cgImage: image, size: .zero), title: files.destination == .clipboard ? "Screenshot copied" : "Screenshot saved",
                           detail: "\(image.width) × \(image.height) · \(files.placeName)", isVideo: false)

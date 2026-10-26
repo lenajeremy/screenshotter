@@ -1,4 +1,5 @@
 import AppKit
+import AudioToolbox
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
@@ -74,5 +75,28 @@ enum ScreenShot {
         let dpi = 72 * scale
         CGImageDestinationAddImage(dest, image, [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi] as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { throw CaptureError.writeFailed("the PNG didn't finish") }
+    }
+}
+
+/// The Mac's own screenshot sound, the one ⌘⇧3 makes: read from the system (the app doesn't carry
+/// it) and played as a sound effect, at the alert volume, through the sound effects output.
+enum ShutterSound {
+    private static let sound: SystemSoundID? = {
+        let dir = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system"
+        for name in ["Screen Capture", "Shutter", "Grab"] {
+            let path = "\(dir)/\(name).aif"
+            var id: SystemSoundID = 0
+            if FileManager.default.fileExists(atPath: path), AudioServicesCreateSystemSoundID(URL(fileURLWithPath: path) as CFURL, &id) == noErr { return id }
+        }
+        return nil
+    }()
+
+    /// Loaded ahead, so it plays the instant the picture's taken.
+    static func prepare() { _ = sound }
+
+    static func play() {
+        // Quiet when "Play user interface sound effects" is off in System Settings › Sound, as macOS's own screenshots are.
+        guard UserDefaults.standard.object(forKey: "com.apple.sound.uiaudio.enabled") as? Bool ?? true else { return }
+        if let sound { AudioServicesPlaySystemSound(sound) } else { NSSound(named: "Tink")?.play() }
     }
 }

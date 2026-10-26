@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 /// After a capture: its thumbnail in the corner of the screen, already saved to Screenshotter's
-/// library, with Edit in Screenshotter, Copy, Save to…, Show in Finder and Delete. It goes away
-/// on its own after a while unless the pointer is over it. Drag the thumbnail anywhere a file goes.
+/// library, with Edit in Screenshotter, Copy, Save to…, Show in Finder and Delete, and a close
+/// button. It goes away on its own after a while unless the pointer is over it. Drag the
+/// thumbnail anywhere a file goes.
 @MainActor final class CaptureHUD: NSPanel {
     final class State: ObservableObject {
         @Published var image: NSImage?
@@ -12,6 +13,7 @@ import SwiftUI
         @Published var file: URL?
         @Published var working = true
         @Published var isVideo = false
+        @Published var failed = false
     }
     struct Actions {
         var edit: (URL) -> Void
@@ -24,6 +26,8 @@ import SwiftUI
     let state = State()
     private var hideTimer: Timer?
     private var hovering = false
+    /// Closed with its ×: a save that finishes afterwards doesn't bring it back.
+    private var closed = false
 
     init(on screen: NSScreen, actions: Actions) {
         super.init(contentRect: CGRect(x: 0, y: 0, width: 300, height: 260), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -34,7 +38,10 @@ import SwiftUI
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         var a = actions
-        let close: () -> Void = { [weak self] in self?.dismiss() }
+        let close: () -> Void = { [weak self] in
+            self?.closed = true
+            self?.dismiss()
+        }
         // Editing or deleting it is the end of the panel.
         let edit = actions.edit
         let delete = actions.delete
@@ -55,6 +62,7 @@ import SwiftUI
     func show(saving title: String) {
         state.title = title
         state.working = true
+        state.failed = false
         orderFrontRegardless()
     }
 
@@ -65,6 +73,8 @@ import SwiftUI
         state.detail = detail
         state.isVideo = isVideo
         state.working = false
+        state.failed = false
+        guard !closed else { return }
         if let screen { place(on: screen) }
         orderFrontRegardless()
         scheduleHide()
@@ -72,8 +82,10 @@ import SwiftUI
 
     func failed(_ message: String) {
         state.working = false
+        state.failed = true
         state.title = "Couldn't save it"
         state.detail = message
+        if isVisible, let screen { place(on: screen) }
         scheduleHide(after: 8)
     }
 
@@ -99,7 +111,10 @@ import SwiftUI
 }
 
 private let lime = Color(red: 0.82, green: 1, blue: 0.3)
+private let ink = Color(red: 0.09, green: 0.11, blue: 0.02)
 
+/// What was captured and where it went, with a close button; the capture; then Edit and the
+/// smaller things to do with it, as icons.
 struct CaptureHUDView: View {
     @ObservedObject var state: CaptureHUD.State
     let actions: CaptureHUD.Actions
@@ -108,37 +123,25 @@ struct CaptureHUDView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ZStack(alignment: .topTrailing) {
-                thumb
-                Button(action: close) {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                        .frame(width: 20, height: 20).background(Circle().fill(Color.black.opacity(0.55)))
-                }
-                .buttonStyle(.plain).padding(6).help("Close")
-            }
-            HStack(spacing: 6) {
-                if state.working { ProgressView().controlSize(.small) } else { Image(systemName: "checkmark.circle.fill").foregroundStyle(lime) }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(state.title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.white)
-                    if !state.detail.isEmpty { Text(state.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(2) }
-                }
-            }
-            if let file = state.file, !state.working {
-                Button { actions.edit(file) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "wand.and.stars").font(.system(size: 12, weight: .semibold))
-                        Text("Edit in Screenshotter").font(.system(size: 12.5, weight: .bold))
-                    }
-                    .foregroundStyle(Color(red: 0.09, green: 0.11, blue: 0.02))
-                    .frame(maxWidth: .infinity).frame(height: 32)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(lime))
-                }
-                .buttonStyle(.plain)
+            header
+            if state.image != nil { thumb }
+            if let file = state.file, !state.working, !state.failed {
                 HStack(spacing: 6) {
-                    HUDButton(symbol: "doc.on.doc", title: "Copy") { actions.copy(file) }
+                    Button { actions.edit(file) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "wand.and.stars").font(.system(size: 11.5, weight: .semibold))
+                            Text("Edit").font(.system(size: 12.5, weight: .semibold))
+                        }
+                        .foregroundStyle(ink)
+                        .frame(maxWidth: .infinity).frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(lime))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).help("Edit in Screenshotter")
+                    HUDButton(symbol: "doc.on.doc", title: "Copy", done: "Copied") { actions.copy(file) }
                     HUDButton(symbol: "square.and.arrow.down", title: "Save to…") { actions.saveAs(file) }
-                    HUDButton(symbol: "folder", title: "Show") { actions.reveal(file) }
-                    HUDButton(symbol: "trash", title: "Delete", tint: Color(red: 1, green: 0.45, blue: 0.42)) { actions.delete(file) }
+                    HUDButton(symbol: "folder", title: "Show in Finder") { actions.reveal(file) }
+                    HUDButton(symbol: "trash", title: "Delete", danger: true) { actions.delete(file) }
                 }
             }
         }
@@ -151,6 +154,25 @@ struct CaptureHUDView: View {
         .fixedSize()
     }
 
+    private var header: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if state.working {
+                ProgressView().controlSize(.small).frame(width: 14, height: 14).padding(.top, 1)
+            } else if state.failed {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(Color(red: 1, green: 0.62, blue: 0.25)).padding(.top, 2)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(state.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                if !state.detail.isEmpty {
+                    Text(state.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(state.failed ? 3 : 1)
+                }
+            }
+            Spacer(minLength: 4)
+            CloseButton(action: close)
+        }
+    }
+
     @ViewBuilder private var thumb: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         ZStack {
@@ -158,11 +180,9 @@ struct CaptureHUDView: View {
             if let image = state.image {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).clipShape(shape)
                 if state.isVideo {
-                    Image(systemName: "play.fill").font(.system(size: 18)).foregroundStyle(.white)
-                        .frame(width: 44, height: 44).background(Circle().fill(Color.black.opacity(0.5)))
+                    Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white)
+                        .frame(width: 34, height: 34).background(Circle().fill(Color.black.opacity(0.5)))
                 }
-            } else if state.working {
-                ProgressView()
             }
         }
         .frame(width: 276, height: 156)
@@ -171,24 +191,52 @@ struct CaptureHUDView: View {
     }
 }
 
-struct HUDButton: View {
-    let symbol: String
-    let title: String
-    var tint: Color = .white
+/// Closes the panel there and then.
+private struct CloseButton: View {
     let action: () -> Void
     @State private var hover = false
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
-                Text(title).font(.system(size: 10, weight: .semibold))
-            }
-            .foregroundStyle(tint.opacity(0.9))
-            .frame(maxWidth: .infinity).frame(height: 42)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(hover ? 0.12 : 0.06)))
+            Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.white.opacity(hover ? 1 : 0.7))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Color.white.opacity(hover ? 0.18 : 0.09)))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+        .help("Close")
+        .accessibilityLabel("Close")
+    }
+}
+
+/// One of the smaller actions, as an icon with its name in the tooltip. With `done`, it shows a
+/// tick for a moment once pressed (Copy has nothing else to show it worked).
+struct HUDButton: View {
+    let symbol: String
+    let title: String
+    var done: String?
+    var danger = false
+    let action: () -> Void
+    @State private var hover = false
+    @State private var didIt = false
+
+    var body: some View {
+        Button {
+            action()
+            guard done != nil else { return }
+            didIt = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { didIt = false }
+        } label: {
+            Image(systemName: didIt ? "checkmark" : symbol).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(didIt ? lime : danger && hover ? Color(red: 1, green: 0.45, blue: 0.42) : .white.opacity(hover ? 1 : 0.8))
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(hover ? 0.13 : 0.06)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(didIt ? done ?? title : title)
+        .accessibilityLabel(title)
     }
 }

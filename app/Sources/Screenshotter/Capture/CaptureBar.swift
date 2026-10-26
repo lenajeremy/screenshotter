@@ -119,6 +119,7 @@ struct CaptureBarView: View {
             .help(model.mode == .record ? "Start recording (↩)" : "Take the screenshot (↩)")
             .accessibilityLabel(model.mode == .record ? "Record" : "Capture")
             Menu {
+                Toggle("Shutter sound", isOn: $model.shutterSound)
                 Toggle("Count down from 3", isOn: $model.countdown)
                 Toggle("Countdown sound", isOn: $model.countdownSound).disabled(!model.countdown)
                 Picker("After recording", selection: $model.afterRecording) {
