@@ -24,12 +24,15 @@ import SwiftUI
     }
 
     let state = State()
+    /// The screen whose corner it sits in.
+    private let home: NSScreen
     private var hideTimer: Timer?
     private var hovering = false
     /// Closed with its ×: a save that finishes afterwards doesn't bring it back.
     private var closed = false
 
     init(on screen: NSScreen, actions: Actions) {
+        home = screen
         super.init(contentRect: CGRect(x: 0, y: 0, width: 300, height: 260), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
@@ -47,16 +50,26 @@ import SwiftUI
         let delete = actions.delete
         a.edit = { edit($0); close() }
         a.delete = { delete($0); close() }
-        let host = NSHostingView(rootView: CaptureHUDView(state: state, actions: a, close: close, hover: { [weak self] in self?.setHover($0) }))
+        // The window follows its content's size as that changes (saving, then the capture and
+        // its buttons, or a failure): measured as drawn, since a size asked for straight after a
+        // change is the one before it.
+        let view = CaptureHUDView(state: state, actions: a, close: close, hover: { [weak self] in self?.setHover($0) })
+            .background(GeometryReader { Color.clear.preference(key: ContentSize.self, value: $0.size) })
+            .onPreferenceChange(ContentSize.self) { [weak self] size in DispatchQueue.main.async { self?.fit(size) } }
+        let host = NSHostingView(rootView: view)
         host.sizingOptions = [.intrinsicContentSize]
         contentView = host
-        place(on: screen)
+        fit(host.fittingSize)
     }
 
-    private func place(on screen: NSScreen) {
-        let size = contentView?.fittingSize ?? CGSize(width: 300, height: 260)
-        let v = screen.visibleFrame
-        setFrame(CGRect(x: v.maxX - size.width - 20, y: v.minY + 20, width: size.width, height: size.height), display: true)
+    /// Its content's size, in the bottom-right corner of its screen (growing upwards).
+    private func fit(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let v = home.visibleFrame
+        let frame = CGRect(x: v.maxX - size.width - 20, y: v.minY + 20, width: size.width, height: size.height)
+        guard frame != self.frame else { return }
+        setFrame(frame, display: true)
+        invalidateShadow()
     }
 
     func show(saving title: String) {
@@ -75,9 +88,13 @@ import SwiftUI
         state.working = false
         state.failed = false
         guard !closed else { return }
-        if let screen { place(on: screen) }
-        orderFrontRegardless()
-        scheduleHide()
+        // Shown once it has drawn the capture, at the size that takes.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.closed else { return }
+            if let size = self.contentView?.fittingSize { self.fit(size) }
+            self.orderFrontRegardless()
+            self.scheduleHide()
+        }
     }
 
     func failed(_ message: String) {
@@ -85,7 +102,6 @@ import SwiftUI
         state.failed = true
         state.title = "Couldn't save it"
         state.detail = message
-        if isVisible, let screen { place(on: screen) }
         scheduleHide(after: 8)
     }
 
@@ -108,6 +124,11 @@ import SwiftUI
         hideTimer?.invalidate()
         orderOut(nil)
     }
+}
+
+private struct ContentSize: PreferenceKey {
+    static var defaultValue: CGSize { .zero }
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }
 
 private let lime = Color(red: 0.82, green: 1, blue: 0.3)
