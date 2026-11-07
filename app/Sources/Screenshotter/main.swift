@@ -2,8 +2,19 @@ import AppKit
 import AVFoundation
 
 MainActor.assumeIsolated {
-    // `--ui-snapshots <folder> [sample.png]`: draw the capture UI to PNGs and quit.
     let args = CommandLine.arguments
+    // `mcp`: become the engine's MCP server (on stdin/stdout, with the Node the app carries), so an
+    // agent needs one command: `claude mcp add screenshotter -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp`
+    if args.count > 1, args[1] == "mcp" {
+        let contents = Bundle.main.bundleURL.appendingPathComponent("Contents")
+        let node = contents.appendingPathComponent("Helpers/node").path
+        let server = contents.appendingPathComponent("Resources/engine/dist/index.js").path
+        var argv: [UnsafeMutablePointer<CChar>?] = ([node, server] + args.dropFirst(2)).map { strdup($0) } + [nil]
+        execv(node, &argv)
+        FileHandle.standardError.write(Data("Screenshotter couldn't start its MCP server: \(node): \(String(cString: strerror(errno)))\n".utf8))
+        exit(1)
+    }
+    // `--ui-snapshots <folder> [sample.png]`: draw the capture UI to PNGs and quit.
     if let i = args.firstIndex(of: "--ui-snapshots"), i + 1 < args.count {
         _ = NSApplication.shared
         UISnapshots.render(to: URL(fileURLWithPath: args[i + 1]), sample: i + 2 < args.count ? URL(fileURLWithPath: args[i + 2]) : nil)

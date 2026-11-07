@@ -13,6 +13,17 @@ Agents such as Claude Code or Codex drive it through MCP tools. You can drive th
 
 ## Install
 
+### With the Mac app
+
+The app is also the MCP server: `Screenshotter mcp` runs it on the Node.js and ffmpeg inside the app, so there is nothing else to install. Put Screenshotter in Applications, then add it to your agent:
+
+```bash
+claude mcp add screenshotter --scope user -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp
+codex mcp add screenshotter -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp
+```
+
+In any other client, the command is `/Applications/Screenshotter.app/Contents/MacOS/Screenshotter` with the one argument `mcp`. The rest of this section builds it from source instead.
+
 ### Requirements
 
 | Needed for | Requirement |
