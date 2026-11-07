@@ -2,7 +2,7 @@
 
 Pass 1 of 2: what's wrong, what's good and what to change. Pass 2 fixes it, in the order at the end.
 
-**Status (pass 2, 7 November 2026): every finding has been addressed.** Screenshots after each fix are the `ui-audit/after-*.jpg` files. Not done: dragging gradient stops (part of U15), because gradients don't store stop positions, so the format the renderer and MCP tools share would have to change. Also unchanged: landscape starting designs still sit letterboxed in their portrait cards (U2).
+**Status (pass 2, 7 November 2026): every finding is fixed.** Screenshots after each fix are the `ui-audit/after-*.jpg` files. Gradient stops (U15) keep their position in the colour itself ("#ffd60a 21%"), so the design format didn't change; starting designs (U2) are all portrait now, with the 16:9 ones in Templates.
 
 **How it was checked (7 November 2026, 0.12.0 plus `main`).** A separate Studio was run with its own library and notes, so the real library wasn't touched. It was screenshotted in WebKit, the Mac app's engine:
 - **Window sizes:** 1440×900, the app's default 1360×880, and the small 1280×800 and 1024×720 (the window's minimum is 1040×660).
