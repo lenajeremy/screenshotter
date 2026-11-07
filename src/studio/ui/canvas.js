@@ -1261,7 +1261,7 @@ export function CanvasView() {
     ${layout &&
     html`<div class="float zoom-ctl" onPointerDown=${(e) => e.stopPropagation()}>
       <button class="icon-btn sm" title="Zoom out (⌘−)" onClick=${() => canvasApi.zoomBy(1 / 1.25)}><${Icon} n="minus" s=${14} /></button>
-      <button class="pct" title="Fit (⌘0)" onClick=${() => canvasApi.fit()}>${Math.round(scale * 100)}%</button>
+      <button class="pct" title="Zoom to fit (⌘0)" onClick=${() => canvasApi.fit()}>${Math.round(scale * 100)}%</button>
       <button class="icon-btn sm" title="Zoom in (⌘+)" onClick=${() => canvasApi.zoomBy(1.25)}><${Icon} n="plus" s=${14} /></button>
       ${setMode
         ? html`<button class="icon-btn sm ${view.zoom === null && fit === "screen" ? "on" : ""}" title="Fit this screen (⌘0)" onClick=${() => canvasApi.fitScreen()}><${Icon} n="fit" s=${14} /></button>
@@ -1353,7 +1353,7 @@ function screenMenu(ev, i) {
   ev.stopPropagation();
   const n = S.shots?.length ?? 1;
   openMenu(ev.clientX, ev.clientY, [
-    { label: "Rename", icon: "text", run: () => canvasApi.rename(i) },
+    { label: "Rename…", icon: "text", run: () => canvasApi.rename(i) },
     { label: "Duplicate", icon: "duplicate", run: () => addShot("copy", { at: i + 1, copyOf: i }) },
     { label: "Copy style to the others…", icon: "copy", run: () => (goToShot(i), openCopyStyle()) },
     S.shots?.[i]?.video === false ? { label: "Put back in the video", icon: "video", run: () => setInVideo(i, true) } : { label: "Leave out of the video", icon: "video", run: () => setInVideo(i, false) },
@@ -1408,7 +1408,7 @@ function dimsText(e, mode, W0, H0) {
       return `${Math.round(len)} px  ·  ${Math.round(-ang)}°`;
     }
   }
-  if (mode === "resize") return e.kind === "device" || e.kind === "image" ? `H ${Math.round(e.height * 1000) / 10}%  ·  ${Math.round(e.width * W0)}×${Math.round(e.height * H0)}` : `${Math.round(e.size * H0)} px`;
+  if (mode === "resize") return e.kind === "device" || e.kind === "image" ? `H ${Math.round(e.height * 1000) / 10}% · ${Math.round(e.width * W0)} × ${Math.round(e.height * H0)}` : `${Math.round(e.size * H0)} px`;
   return `X ${Math.round(e.x * 1000) / 10}%  Y ${Math.round(e.y * 1000) / 10}%`;
 }
 

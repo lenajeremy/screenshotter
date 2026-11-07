@@ -17,7 +17,7 @@ export async function api(path, body, raw) {
   try {
     res = await fetch(path, init);
   } catch {
-    throw new Error("Lost connection to the Screenshotter engine.");
+    throw new Error("Lost connection to the Screenshotter engine. Choose File › Restart Engine, then try again.");
   }
   const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok || (data && data.error)) throw new Error(data.error || `HTTP ${res.status}`);
@@ -716,7 +716,7 @@ export function entityLabel(id, scene = S.scene, layout = S.layout) {
     const d = scene.devices?.[n - 1];
     // A name of its own (a recording's layers: "Recording", "Webcam").
     if (d?.label) return d.label;
-    if (d?.frame && d.frame !== "device") return { browser: "Browser", window: "Window", card: "Card", none: "Screenshot" }[d.frame];
+    if (d?.frame && d.frame !== "device") return { browser: "Browser", window: "Window", card: "Screen only", none: "Screenshot" }[d.frame];
     return e?.device || d?.device || `Device ${n}`;
   }
   return id;

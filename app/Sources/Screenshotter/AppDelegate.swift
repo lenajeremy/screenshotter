@@ -288,11 +288,11 @@ import WebKit
             capture.showBar((body["mode"] as? String) == "record" ? .record : .screenshot)
             replyHandler(true, nil)
         case "dragFile":
-            guard let path = body["path"] as? String, FileManager.default.fileExists(atPath: path) else { return replyHandler(nil, "File not found") }
+            guard let path = body["path"] as? String, FileManager.default.fileExists(atPath: path) else { return replyHandler(nil, "The file isn't there any more.") }
             web.dragFile(URL(fileURLWithPath: path))
             replyHandler(true, nil)
         case "copyFile":
-            guard let path = body["path"] as? String, FileManager.default.fileExists(atPath: path) else { return replyHandler(nil, "File not found") }
+            guard let path = body["path"] as? String, FileManager.default.fileExists(atPath: path) else { return replyHandler(nil, "The file isn't there any more.") }
             let url = URL(fileURLWithPath: path)
             let pb = NSPasteboard.general
             pb.clearContents()
@@ -358,7 +358,7 @@ import WebKit
 
     private func chooseNode() {
         let panel = NSOpenPanel()
-        panel.message = "Choose the node executable (version 20 or newer), e.g. /opt/homebrew/bin/node"
+        panel.message = "Choose Node.js (version 20 or newer), such as /opt/homebrew/bin/node."
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.showsHiddenFiles = true
@@ -523,7 +523,7 @@ import WebKit
             item("Zoom to Fit", "fit", "0"),
             .separator(),
             item("Show or Hide the Left Panel", "toggleLeft", "s", [.command, .option]),
-            item("Show or Hide Settings", "toggleRight", "i", [.command, .option]),
+            item("Show or Hide the Right Panel", "toggleRight", "i", [.command, .option]),
             item("Focus Mode", "focus", "\\"),
             item("Design as JSON", "json", "j", [.command, .option]),
             .separator(),
@@ -558,7 +558,7 @@ enum StatusPage {
             if reason == "node" {
                 title = "Screenshotter needs Node.js"
                 body = "Install Node.js 20 or newer (from nodejs.org, or run <code>brew install node</code>), then try again. If it's already installed somewhere unusual, choose it."
-                actions = "<button class='primary' onclick=\"post('restartEngine')\">Try again</button><button onclick=\"post('chooseNode')\">Choose Node…</button><button onclick=\"post('openURL',{url:'https://nodejs.org/en/download'})\">Get Node.js</button>"
+                actions = "<button class='primary' onclick=\"post('restartEngine')\">Try again</button><button onclick=\"post('chooseNode')\">Choose Node.js…</button><button onclick=\"post('openURL',{url:'https://nodejs.org/en/download'})\">Get Node.js</button>"
             } else {
                 title = "The engine didn't start"
                 body = escape(reason).replacingOccurrences(of: "\n", with: "<br>")

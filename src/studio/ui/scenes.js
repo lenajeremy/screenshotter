@@ -95,7 +95,7 @@ export function ScenesPopover({ anchor }) {
           </div>`,
         )}</div>
         ${list.length > 12 && html`<button class="scenes-more-link" onClick=${openScenesPage}>${list.length - 12} more · See all designs</button>`}`
-      : html`<div class="empty-note">${q ? "No designs match." : "Designs save themselves as you work. Start one and it appears here."}</div>`}
+      : html`<div class="empty-note">${q ? "No designs match. Try another word." : "Designs save themselves as you work. Start one and it appears here."}</div>`}
     <div class="scenes-foot"><${Icon} n="check" s=${12} />Saved automatically · <span class="kbd">⌘S</span> saves now<span class="grow"></span><span class="kbd">⇧⌘O</span> all designs</div>
   <//>`;
 }
@@ -369,7 +369,7 @@ export function ScenesPage() {
   return html`<div class="scenes-page" role="dialog" aria-label="My designs">
     <header class="sp-bar" data-drag>
       <div class="brand" data-nodrag>
-        <button class="btn ghost sp-back" onClick=${closeScenesPage} title="Back to the editor (Esc)"><${Icon} n="left" s=${15} /><span>${current ? current.name : "Back to editor"}</span></button>
+        <button class="btn ghost sp-back" onClick=${closeScenesPage} title="Back to the editor (Esc)"><${Icon} n="left" s=${15} /><span>${current ? current.name : "Back to the editor"}</span></button>
         <span class="crumb-sep">/</span>
         <span class="sp-crumb">My designs</span>
       </div>

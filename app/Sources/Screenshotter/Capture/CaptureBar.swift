@@ -123,7 +123,7 @@ struct CaptureBarView: View {
                 ToggleChip(on: $model.systemAudio, onSymbol: "speaker.wave.2.fill", offSymbol: "speaker.slash.fill", help: model.systemAudio ? "Recording the Mac's sound" : "Not recording the Mac's sound")
                 if model.afterRecording == .edit {
                     ToggleChip(on: $model.cursorEffects, onSymbol: "cursorarrow.motionlines", offSymbol: "cursorarrow",
-                               help: model.cursorEffects ? "Cursor effects on: a smooth cursor, click ripples and auto zoom to edit afterwards" : "Cursor effects off: the cursor is recorded as it is")
+                               help: model.cursorEffects ? "Cursor effects on: a smooth cursor, click ripples and zoom on clicks, to edit afterwards" : "Cursor effects off: the cursor is recorded as it is")
                 }
             }
             line
@@ -167,7 +167,7 @@ struct CaptureBarView: View {
                 Toggle("Countdown sound", isOn: $model.countdownSound).disabled(!model.countdown)
                 Picker("After recording", selection: $model.afterRecording) {
                     Text("Open in Screenshotter to edit").tag(CaptureModel.AfterRecording.edit)
-                    Text("Save the video right away").tag(CaptureModel.AfterRecording.save)
+                    Text("Save the recording right away").tag(CaptureModel.AfterRecording.save)
                 }
                 Divider()
                 Button("Refresh cameras and microphones") { model.refreshDevices() }
@@ -242,7 +242,7 @@ struct SaveToMenu: View {
                 if !model.folder.isEmpty { choice(URL(fileURLWithPath: model.folder).lastPathComponent, "folder", .folder) }
             }
             Divider()
-            Button("Choose Folder…", action: chooseFolder)
+            Button("Choose a folder…", action: chooseFolder)
         } label: {
             ChevronIcon(symbol: symbol, title: shortName, tint: .white.opacity(0.8), lit: false)
         }

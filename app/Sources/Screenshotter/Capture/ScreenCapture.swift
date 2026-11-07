@@ -4,13 +4,14 @@ import ScreenCaptureKit
 import UniformTypeIdentifiers
 
 enum CaptureError: LocalizedError {
-    case noDisplay, noWindow, noImage, writeFailed(String)
+    case noDisplay, noWindow, noImage, noCamera, writeFailed(String)
     var errorDescription: String? {
         switch self {
-        case .noDisplay: return "That screen isn't available any more."
-        case .noWindow: return "That window has closed."
-        case .noImage: return "Nothing was captured."
-        case .writeFailed(let why): return "Couldn't save the capture: \(why)"
+        case .noDisplay: return "That screen isn't available any more. Choose another."
+        case .noWindow: return "That window has closed. Choose another."
+        case .noImage: return "Nothing was captured. Try again."
+        case .noCamera: return "No camera is connected. Connect one, or record without the camera."
+        case .writeFailed(let why): return "Couldn't save the capture (\(why)). Try again."
         }
     }
 }

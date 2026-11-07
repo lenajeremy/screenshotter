@@ -111,7 +111,7 @@ function Topbar() {
       <button class="btn primary" ref=${exportBtn} disabled=${blankDesign(s) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => (s.exportOpen ? set({ exportOpen: false }) : openExport())}>${s.rendering ? html`<span class="spinner"></span>Exporting…` : html`<${Icon} n="export" s=${15} w=${2} />Export`}</button>
       <span class="topbar-sep"></span>
       <button class="icon-btn ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the left panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${16} /></button>
-      <button class="icon-btn ${s.rightOpen ? "on" : ""}" disabled=${blankDesign(s)} title=${`${s.rightOpen ? "Hide" : "Show"} the settings panel (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${16} /></button>
+      <button class="icon-btn ${s.rightOpen ? "on" : ""}" disabled=${blankDesign(s)} title=${`${s.rightOpen ? "Hide" : "Show"} the right panel (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${16} /></button>
     </div>
     ${/* An export shows its progress in one place, the card over the canvas; these are for other work. */ ""}
     ${s.busy && !s.rendering && html`<div class="progress-line"></div>`}
@@ -160,7 +160,7 @@ function ExportPopover({ anchor }) {
           <div class="row"><label>Size</label><${Seg} value=${o.size} options=${[{ value: "full", label: "Full" }, { value: "half", label: "½" }, { value: "custom", label: "Width" }]} onChange=${(v) => up({ size: v })} /></div>
           ${o.size === "custom" && html`<div class="row"><label>Width</label><input class="input sm mono" type="number" min="16" max="8192" value=${o.width} onKeyDown=${(e) => e.stopPropagation()} onChange=${(e) => up({ width: Math.max(16, Math.min(8192, Number(e.target.value) || 1080)) })} /></div>`}
           ${o.format !== "png" && html`<div class="row"><label>Quality</label><${Slider} value=${o.jpegQuality} min=${50} max=${100} step=${1} format=${(v) => Math.round(v)} onChange=${(v) => up({ jpegQuality: v ?? 90 })} /></div>`}
-          <div class="note">${outW && outH ? html`<b>${outW} × ${outH}</b> px · ` : ""}${o.format === "png" ? "lossless, transparent where the background is none" : o.format.toUpperCase()}</div>
+          <div class="note">${outW && outH ? html`<b>${outW} × ${outH}</b> px · ` : ""}${o.format === "png" ? "Lossless, transparent where there's no background" : o.format.toUpperCase()}</div>
           <button class="btn primary lg block" onClick=${exportImage}><${Icon} n="export" s=${16} w=${2} />Export image<span class="kbd">⌘E</span></button>
         </div>`
       : html`<div class="body">
@@ -169,7 +169,7 @@ function ExportPopover({ anchor }) {
           <div class="row"><label>Format</label><${Seg} value=${o.video.format} options=${[{ value: "mp4", label: "MP4" }, { value: "mov", label: "MOV" }, { value: "webm", label: "WebM" }, { value: "gif", label: "GIF" }]} onChange=${(v) => upv({ format: v })} /></div>
           <div class="lbl">Sizes <span class="faint">${sizes.length > 1 ? `· ${sizes.length} files` : ""}</span></div>
           <div class="size-chips">${VIDEO_SIZES.map((z) => html`<button class="size-chip ${sizes.includes(z.value) ? "on" : ""}" key=${z.value} title=${z.title ?? ""} onClick=${() => toggleSize(z.value)}>
-            <i class="shape" style=${{ aspectRatio: z.value === "design" ? `${W || 16} / ${H || 9}` : z.aspect }}></i><span><b>${z.label}</b><small>${z.value === "design" ? (W ? `${W}×${H}` : "") : z.sub}</small></span>
+            <i class="shape" style=${{ aspectRatio: z.value === "design" ? `${W || 16} / ${H || 9}` : z.aspect }}></i><span><b>${z.label}</b><small>${z.value === "design" ? (W ? `${W} × ${H}` : "") : z.sub}</small></span>
           </button>`)}</div>
           ${sizes.some((z) => z !== "design") && html`<div class="row"><label>Other shapes</label><${Seg} value=${o.video.fit ?? "auto"} options=${[{ value: "auto", label: "Auto" }, { value: "fit", label: "Fit" }, { value: "fill", label: "Fill" }, { value: "rearrange", label: "Rearrange" }]} onChange=${(v) => upv({ fit: v })} /></div>
             <div class="note">${{ auto: "Hand-placed designs fit whole, with the background filling the rest; automatic layouts are laid out again for each shape.", fit: "The whole design, with the background filling the rest.", fill: "Fills the shape, trimming the edges.", rearrange: "Laid out again for each shape." }[o.video.fit ?? "auto"]}</div>`}
@@ -243,9 +243,9 @@ function SetExport() {
 /** Sizes a video can be exported at, beside the design's own. */
 const VIDEO_SIZES = [
   { value: "design", label: "As designed" },
-  { value: "app-store-iphone", label: "App Store iPhone", sub: "886×1920", aspect: "886 / 1920", title: "Apple's app preview size for every current iPhone" },
-  { value: "app-store-ipad", label: "App Store iPad", sub: "1200×1600", aspect: "3 / 4", title: "Apple's app preview size for iPad" },
-  { value: "app-store-mac", label: "App Store Mac", sub: "1920×1080", aspect: "16 / 9", title: "Apple's app preview size for Mac and Apple TV" },
+  { value: "app-store-iphone", label: "App Store iPhone", sub: "886 × 1920", aspect: "886 / 1920", title: "Apple's app preview size for every current iPhone" },
+  { value: "app-store-ipad", label: "App Store iPad", sub: "1200 × 1600", aspect: "3 / 4", title: "Apple's app preview size for iPad" },
+  { value: "app-store-mac", label: "App Store Mac", sub: "1920 × 1080", aspect: "16 / 9", title: "Apple's app preview size for Mac and Apple TV" },
   { value: "vertical", label: "9:16", sub: "Reels, TikTok", aspect: "9 / 16" },
   { value: "portrait", label: "4:5", sub: "Feed post", aspect: "4 / 5" },
   { value: "square", label: "1:1", sub: "Square", aspect: "1 / 1" },
@@ -543,20 +543,20 @@ const StepIcon = ({ state }) =>
 const provider = (x) => IMAGE_PROVIDERS[x?.provider] ?? "The image generator";
 const AI_STEPS = {
   look: { now: "Rendering your design", done: (x) => (x.moments ? `Looked at ${x.moments} moments of your video` : "Looked at your design") },
-  read: { now: "Reading the screenshots", done: "Read the design" },
+  read: { now: "Reading the screenshots", done: "Read the screenshots" },
   think: { now: () => `${aiName()} is thinking`, done: (x) => (x.answer ? "Answered" : "Designed the change") },
   retry: { now: "Fixing a mistake in its first try", done: "Fixed a mistake in its first try" },
   generate: { now: (x) => `${provider(x)} is making the new background image`, done: (x) => `${provider(x)} made the background image`, cut: (x) => `You used it while ${provider(x)} was still making the background image` },
   render: { now: "Rendering the result", done: "Rendered the result", cut: () => `You used it before ${aiName()} checked it` },
   frames: { now: (x) => `${aiName()} asked to see ${moments(x.times)}`, done: (x) => `Looked closer at ${moments(x.times)}` },
-  check: { now: (x) => (x.moments ? `${aiName()} is checking ${x.moments} moments of the video` : `${aiName()} is checking the render`), done: (x) => (x.moments ? `Checked ${x.moments} moments of the video` : "Checked the render"), cut: "You used it before Claude finished checking it" },
+  check: { now: (x) => (x.moments ? `${aiName()} is checking ${x.moments} moments of the video` : `${aiName()} is checking the render`), done: (x) => (x.moments ? `Checked ${x.moments} moments of the video` : "Checked the render"), cut: `You used it before ${aiName()} finished checking it` },
 };
 const moments = (times = []) => (times.length > 3 ? `${times.length} moments` : times.map((t) => `${t} s`).join(", "));
 const stepText = (x, active) => {
   const t = AI_STEPS[x.key]?.[active ? "now" : x.cut ? "cut" : "done"] ?? AI_STEPS[x.key]?.done ?? x.key;
   return typeof t === "function" ? t(x) : t;
 };
-const secs = (ms) => (ms >= 60000 ? `${Math.floor(ms / 60000)}m ${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}s` : `${Math.max(0, Math.floor(ms / 1000))}s`);
+const secs = (ms) => (ms >= 60000 ? `${Math.floor(ms / 60000)} min ${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")} s` : `${Math.max(0, Math.floor(ms / 1000))} s`);
 
 /**
  * The agent at work, step by step, as the engine reports it: what it's doing now and for how
@@ -610,7 +610,7 @@ function WorkedFor({ m }) {
   const [open, setOpen] = useState(false);
   const list = m.steps?.list;
   return html`<div class="worked ${open ? "open" : ""}">
-    <button class="worked-toggle" onClick=${() => setOpen(!open)}><${Icon} n="spark" s=${11} />Worked for ${m.took}s<${Icon} n="down" s=${11} class="chev" /></button>
+    <button class="worked-toggle" onClick=${() => setOpen(!open)}><${Icon} n="spark" s=${11} />Worked for ${m.took} s<${Icon} n="down" s=${11} class="chev" /></button>
     ${open &&
     (list?.length
       ? html`<ol class="work-steps done">
@@ -646,7 +646,7 @@ const OP_NAMES = {
   background: "Background", headline: "Headline", subheadline: "Subheadline", rotateX: "Tilt", rotateY: "Turn", rotate: "Rotation",
   device: "Device", color: "Colour", shadow: "Shadow", height: "Size", width: "Width", x: "Position", y: "Position", frame: "Frame",
   accentColor: "Accent colour", font: "Font", weight: "Weight", size: "Text size", grain: "Grain", vignette: "Vignette", grade: "Colour grade",
-  motion: "Motion", animations: "Animation", canvas: "Image size", layout: "Layout", highlights: "Call-outs", texts: "Text", images: "Pictures",
+  motion: "Motion", animations: "Animation", canvas: "Size", layout: "Layout", highlights: "Call-outs", texts: "Text", images: "Pictures",
   shapes: "Shapes", effects: "Film look", textStyle: "Text style", blur: "Soft focus", fade: "Fade", finish: "Print finish", landscape: "Landscape",
 };
 const opName = (prop) => {
@@ -796,7 +796,7 @@ function AIChat({ docked }) {
           }}></textarea>
         ${ai.busy
           ? html`<button class="send stop" onClick=${stopAI} title=${`Stop ${aiName()}. The design stays as it was.`}><span class="stop-sq"></span></button>`
-          : html`<button class="send" disabled=${!ai.text.trim()} onClick=${send} title="Send (Enter)"><${Icon} n="up" s=${16} w=${2.4} /></button>`}
+          : html`<button class="send" disabled=${!ai.text.trim()} onClick=${send} title="Send (↩)"><${Icon} n="up" s=${16} w=${2.4} /></button>`}
       </div>
     </div>
   </section>`;
@@ -967,10 +967,10 @@ function Settings() {
         ${tab === "devices" && html`<${DeviceArt} />`}
         ${tab === "images" && html`<div class="card">
           <h4><${Icon} n="image" s=${15} />Photos</h4>
-          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> needs a free access key: make an app at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a> and copy its Access Key. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : ""}</div>
+          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> needs a free access key: make an app at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a> and copy its access key. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : ""}</div>
           ${native
             ? html`<div class="row"><label>Access key</label><div class="hstack">
-                <input class="input grow mono" type="password" placeholder=${info?.hasUnsplashKey ? "•••••••••• saved in Keychain" : "Unsplash Access Key"} value=${unsplashKey} onInput=${(e) => setUnsplashKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
+                <input class="input grow mono" type="password" placeholder=${info?.hasUnsplashKey ? "•••••••••• saved in Keychain" : "Unsplash access key"} value=${unsplashKey} onInput=${(e) => setUnsplashKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
                 <button class="btn" disabled=${!unsplashKey.trim() || saving} onClick=${() => saveUnsplashKey(unsplashKey.trim())}>Save</button>
                 ${info?.hasUnsplashKey && html`<button class="btn ghost" disabled=${saving} onClick=${() => saveUnsplashKey("")}>Remove</button>`}
               </div></div>`
@@ -999,10 +999,10 @@ function Settings() {
               ["Cut at the playhead", "⌘B"],
               ["My designs", "⇧⌘O"],
               ["Focus mode (hide both panels)", "⌘\\"],
-              ["Undo / Redo", "⌘Z / ⇧⌘Z"],
-              ["Duplicate / Delete", "⌘D / ⌫"],
+              ["Undo / redo", "⌘Z / ⇧⌘Z"],
+              ["Duplicate / delete", "⌘D / ⌫"],
               ["Nudge (×10 with ⇧)", "← ↑ → ↓"],
-              ["Scale / Rotate", "+ − / [ ]"],
+              ["Scale / rotate", "+ − / [ ]"],
               ["Zoom in / out / fit", "⌘+ / ⌘− / ⌘0"],
               ["Pan", "Space-drag or scroll"],
               ["Import from clipboard", "⌘V"],
@@ -1090,14 +1090,14 @@ function DeviceArt() {
   };
   const add = async () => {
     try {
-      const r = await native.call("choosePaths", { message: "Choose Apple bezel images, or a folder (or opened disk image) of them." });
+      const r = await native.call("choosePaths", { message: "Choose Apple's device images, or a folder (or an opened disk image) of them." });
       if (!r?.paths?.length) return;
       const out = await api("/api/bezels/import", { paths: r.paths });
       setInfo({ ...info, ...out });
-      toast({ kind: out.added ? "ok" : "warn", title: out.added ? `Added ${out.added} bezel images` : "No bezel images found", text: out.added ? "Matching devices now use them." : "Files need a model and colour in their name, like Apple's." });
+      toast({ kind: out.added ? "ok" : "warn", title: out.added ? `Added ${out.added} device images` : "No device art found", text: out.added ? "Matching devices now use them." : "Files need a model and colour in their name, like Apple's." });
       refreshScene();
     } catch (e) {
-      fail(e, "Couldn't add the bezels");
+      fail(e, "Couldn't add the device art");
     }
   };
   const job = info?.job;
@@ -1108,8 +1108,8 @@ function DeviceArt() {
   }, []);
   return html`<div class="card" ref=${card}>
     <h4><${Icon} n="phone" s=${15} />Device art<span class="grow"></span>
-      ${info?.count ? html`<span class="pill ok"><span class="status-dot ok"></span>Apple bezels</span>` : html`<span class="pill">No device art yet</span>`}</h4>
-    <div class="note">Devices are shown with Apple's own product renders: only the models you get here appear in the device list, in the finishes (and, for Apple Watch, the bands) Apple drew. Screenshotter downloads them from <a href="https://developer.apple.com/design/resources/" target="_blank">Apple Design Resources</a>, and macOS asks you to accept Apple's license first. It covers mock-ups of apps for Apple platforms, so website captures are shown without hardware.</div>
+      ${info?.count ? html`<span class="pill ok"><span class="status-dot ok"></span>Installed</span>` : html`<span class="pill">No device art yet</span>`}</h4>
+    <div class="note">Devices are shown with Apple's own device art: only the models you get here appear in the device list, in the finishes (and, for Apple Watch, the bands) Apple drew. Screenshotter downloads them from <a href="https://developer.apple.com/design/resources/" target="_blank">Apple Design Resources</a>, and macOS asks you to accept Apple's licence first. It covers mock-ups of apps for Apple platforms, so website captures are shown without hardware.</div>
     ${info?.models?.length > 0 && html`<div class="bezel-list">${info.models.map((m) => html`<span><b>${m.name}</b> ${m.colors.join(", ")}</span>`)}</div>`}
     <div class="bezel-sets">${sets.map((x) =>
       x.installed
@@ -1121,7 +1121,7 @@ function DeviceArt() {
     <div class="hstack">
       <button class="btn primary sm" disabled=${running || !chosen.length} onClick=${get}>${running ? html`<span class="spinner"></span>Working…` : chosen.length ? `Get from Apple (${mb} MB)` : "Get from Apple"}</button>
       ${native && html`<button class="btn sm" disabled=${running} onClick=${add}>Add files…</button>`}
-      ${info?.count > 0 && html`<button class="btn sm ghost" onClick=${() => reveal(info.dir)}>Show folder</button>`}
+      ${info?.count > 0 && html`<button class="btn sm ghost" onClick=${() => reveal(info.dir)}>Show in Finder</button>`}
     </div>
   </div>`;
 }
@@ -1799,7 +1799,7 @@ function entityMenu(id) {
     const sh = S.scene.shapes?.[i];
     if (!sh) return [];
     return [
-      { label: `Ask AI about this ${entityLabel(id).toLowerCase()}…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
+      { label: `Ask AI about “${entityLabel(id)}”…`, icon: "spark", ai: true, kbd: "⌘K", run: () => openAI(id) },
       "-",
       !["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(sh.type) && { label: sh.sketch ? "Make it clean" : "Make it hand-drawn", icon: "pen", run: () => editScene((sc) => (sc.shapes[i].sketch = sh.sketch ? undefined : true)) },
       { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => duplicateEntity(id) },
@@ -1817,7 +1817,7 @@ function entityMenu(id) {
     id !== "caption" && { label: "Bring forward", icon: "front", run: () => moveZ(id, 1) },
     id !== "caption" && { label: "Send backward", icon: "back", run: () => moveZ(id, -1) },
     "-",
-    { label: id === "caption" ? "Remove headline" : "Delete", icon: "trash", kbd: "⌫", danger: true, run: () => deleteEntity(id) },
+    { label: id === "caption" ? "Remove the headline" : "Delete", icon: "trash", kbd: "⌫", danger: true, run: () => deleteEntity(id) },
   ];
 }
 

@@ -76,7 +76,7 @@ import SwiftUI
         failed.working = false
         failed.failed = true
         failed.title = "Couldn't save it"
-        failed.detail = "Nothing was recorded."
+        failed.detail = "Nothing was recorded. Try again."
         save(CaptureHUDView(state: failed, actions: actions, close: {}, hover: { _ in }), "5c-failed", folder)
 
         // The countdown, a second in.

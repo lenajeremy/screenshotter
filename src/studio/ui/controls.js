@@ -32,7 +32,8 @@ export function Seg({ value, options, onChange, class: cls = "" }) {
     ${thumb && html`<div class="thumb" style=${{ left: thumb.left + "px", width: thumb.width + "px" }}></div>`}
     ${options.map((o) => {
       const v = typeof o === "object" ? o.value : o;
-      const label = typeof o === "object" ? o.label : o;
+      // A plain value reads as a name ("light" → "Light").
+      const label = typeof o === "object" ? o.label : optionName(o);
       return html`<button class=${v === value ? "on" : ""} title=${o.title ?? ""} onClick=${() => onChange(v)}>${o.icon ? html`<${Icon} n=${o.icon} s=${14} />` : null}${label}</button>`;
     })}
   </div>`;
@@ -686,7 +687,7 @@ export function AccentText({ value, onChange, placeholder, rows = 2, onFocus }) 
   };
   return html`<div class="accent-field">
     <div ref=${ref} class="textarea rich" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder=${placeholder ?? ""} style=${{ minHeight: rows * 1.45 + 1.1 + "em" }} onFocus=${onFocus}
-      title="Enter to finish · Shift+Enter for a new line · ⌘B makes the chosen words accent words"
+      title="↩ to finish · ⇧↩ for a new line · ⌘B accents the chosen words"
       onInput=${emit}
       onPaste=${(e) => (e.preventDefault(), document.execCommand("insertText", false, e.clipboardData.getData("text/plain")))}
       onKeyDown=${(e) => {
@@ -702,7 +703,7 @@ export function AccentText({ value, onChange, placeholder, rows = 2, onFocus }) 
         const v = accentFromEdit(ref.current).replace(/\s+$/, "");
         if (v !== (value ?? "")) onChange(v);
       }}></div>
-    <button class="accent-btn" onMouseDown=${toggle} title="Makes the chosen words accent words (⌘B), in the accent colour. Again to make them plain.">
+    <button class="accent-btn" onMouseDown=${toggle} title="In the accent colour; again makes them plain (⌘B)">
       <${Icon} n="palette" s=${12} />Accent the chosen words
     </button>
   </div>`;

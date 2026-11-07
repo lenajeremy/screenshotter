@@ -405,7 +405,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     init(cameraID: String) throws {
         self.cameraID = cameraID
-        guard let cam = AVCaptureDevice(uniqueID: cameraID) ?? AVCaptureDevice.default(for: .video) else { throw CaptureError.writeFailed("no camera is connected") }
+        guard let cam = AVCaptureDevice(uniqueID: cameraID) ?? AVCaptureDevice.default(for: .video) else { throw CaptureError.noCamera }
         videoIn = try AVCaptureDeviceInput(device: cam)
         super.init()
     }

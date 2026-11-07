@@ -308,7 +308,7 @@ struct BubbleStyleView: View {
             row("Size") { HUDSlider(value: $model.bubbleSize, range: 110...440, label: "Size") }
             Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
             Toggle("Mirror", isOn: $model.bubbleMirrored).toggleStyle(HUDSwitch())
-            Toggle("White border", isOn: $model.bubbleBorder).toggleStyle(HUDSwitch())
+            Toggle("White ring", isOn: $model.bubbleBorder).toggleStyle(HUDSwitch())
         }
         .font(.system(size: 12))
         .foregroundStyle(.white.opacity(0.85))

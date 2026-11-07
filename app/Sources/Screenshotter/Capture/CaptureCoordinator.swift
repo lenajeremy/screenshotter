@@ -418,7 +418,7 @@ import Combine
                 cam.shutDown { bubble?.detach() }
             }
             guard screenOK, let screenWriter = rec.screen?.writer else {
-                hud.failed("Nothing was recorded.")
+                hud.failed("Nothing was recorded. Try again.")
                 return
             }
             // The camera's first frame against the screen's: how far apart the two files start.

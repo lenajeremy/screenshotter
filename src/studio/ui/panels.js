@@ -113,7 +113,7 @@ function WebForm() {
         e.stopPropagation();
         if (e.key === "Enter") captureWeb();
       }} /></div>
-    <div class="chips">${vps.map((v) => html`<button class="chip sm ${c.viewport === v ? "on" : ""}" onClick=${() => setCap({ viewport: v })}>${v}</button>`)}</div>
+    <div class="chips">${vps.map((v) => html`<button class="chip sm ${c.viewport === v ? "on" : ""}" onClick=${() => setCap({ viewport: v })}>${{ iphone: "iPhone", "iphone-max": "iPhone Pro Max", ipad: "iPad", desktop: "Desktop", macbook: "MacBook", wide: "Wide" }[v] ?? optionName(v)}</button>`)}</div>
     <div class="row"><label>Look</label><${Seg} value=${c.scheme} options=${[{ value: "light", label: "Light", icon: "sun" }, { value: "dark", label: "Dark", icon: "moon" }]} onChange=${(v) => setCap({ scheme: v })} /></div>
     <button class="btn ${capturePrimary(s)}" disabled=${Boolean(s.busy)} onClick=${captureWeb}><${Icon} n="globe" s=${15} />Capture page</button>
   </div>`;
@@ -131,9 +131,9 @@ function MacForm() {
     load();
   }, []);
   const apps = [...new Map((wins ?? []).map((w) => [w.app, w])).values()];
-  const opts = [{ value: "", label: "Entire screen" }, ...apps.map((w) => ({ value: w.app, label: w.app, hint: w.title?.slice(0, 30) }))];
+  const opts = [{ value: "", label: "Whole screen" }, ...apps.map((w) => ({ value: w.app, label: w.app, hint: w.title?.slice(0, 30) }))];
   return html`<div class="vstack">
-    <div class="hstack"><div class="grow"><${Dropdown} value=${c.macWindow} options=${opts} search placeholder=${wins ? "Choose a window" : "Loading windows…"} onChange=${(v) => setCap({ macWindow: v })} /></div>
+    <div class="hstack"><div class="grow"><${Dropdown} value=${c.macWindow} options=${opts} search placeholder=${wins ? "Choose a window…" : "Loading windows…"} onChange=${(v) => setCap({ macWindow: v })} /></div>
       <button class="icon-btn" title="Refresh" onClick=${load}><${Icon} n="refresh" s=${14} /></button></div>
     <div class="note">macOS may ask to allow <b>Screen Recording</b> for Screenshotter the first time.</div>
     <button class="btn ${capturePrimary(s)}" disabled=${Boolean(s.busy)} onClick=${captureMac}><${Icon} n="monitor" s=${15} />Capture ${c.macWindow ? "window" : "screen"}</button>
@@ -208,11 +208,11 @@ export function CapturesPanel() {
     </div>
     <div class="panel-body">
       <div class="intro">Bring in a screenshot of your app, then click it to put it in the design.</div>
-      <div class="row" title="How new screenshots come in: in a device, with no frame, or with rounded corners"><label>Frame</label><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "Device" }, { value: "none", label: "None" }, { value: "card", label: "Rounded" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
+      <div class="row" title="How new screenshots come in: in a device, with no frame, or as the screen alone"><label>Frame</label><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "Device" }, { value: "none", label: "None" }, { value: "card", label: "Screen only" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
       ${s.replacing &&
       html`<div class="insp-hero" style=${{ boxShadow: "inset 0 0 0 1px var(--iris)", background: "var(--iris-soft)" }}>
         <${Icon} n="replace" s=${16} />
-        <div class="meta"><b>Replacing ${entityLabel(s.replacing)}</b><span>Pick a capture below</span></div>
+        <div class="meta"><b>Replacing ${entityLabel(s.replacing)}</b><span>Pick a screenshot below</span></div>
         <button class="btn sm ghost" onClick=${() => set({ replacing: null })}>Cancel</button>
       </div>`}
       <div class="sources">${SOURCES.map((x) => html`<button class="source ${c.source === x.id ? "on" : ""}" onClick=${() => setCap({ source: x.id })}><${Icon} n=${x.icon} s=${18} />${x.label}</button>`)}</div>
@@ -231,7 +231,7 @@ export function CapturesPanel() {
         ]} />`}>
         ${shown.length
           ? html`<div class="shots">${shown.map((f) => html`<${Shot} key=${f.path} f=${f} used=${used.has(f.path)} replacing=${s.replacing} />`)}</div>`
-          : html`<div class="empty-note">${shots.length ? "Nothing here." : "Screenshots you capture or import appear here. Click one to use it, or drag it onto the design."}</div>`}
+          : html`<div class="empty-note">${shots.length ? "None of these yet. Choose All to see the rest." : "Screenshots you capture or import appear here. Click one to use it, or drag it onto the design."}</div>`}
       <//>
     </div>
   </div>`;
@@ -279,7 +279,7 @@ export function PrintFinish() {
       ${FINISH_OPTIONS.map((x) => html`<button class="chip sm ${f?.style === x.value ? "on" : ""}" onClick=${() => setF({ style: x.value })}>${x.label}</button>`)}
     </div>
     ${f &&
-    html`<div class="row"><label>Size</label><${Slider} value=${f.scale} min=${0.4} max=${3} step=${0.05} fallback=${1} format=${(v) => v.toFixed(2) + "×"} onChange=${(v) => setF({ ...f, scale: v === undefined || v === 1 ? undefined : v }, "bg.finish.scale")} /></div>
+    html`<div class="row"><label>Size</label><${Slider} value=${f.scale} min=${0.4} max=${3} step=${0.05} fallback=${1} format=${(v) => v.toFixed(1) + "×"} onChange=${(v) => setF({ ...f, scale: v === undefined || v === 1 ? undefined : v }, "bg.finish.scale")} /></div>
       <div class="row"><label>Strength</label><${Slider} value=${f.amount} min=${0.1} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setF({ ...f, amount: v === undefined || v >= 1 ? undefined : v }, "bg.finish.amount")} /></div>
       ${opt?.colors?.map(
         ([label, dflt], i) => html`<div class="row"><label>${label}</label><${ColorButton} value=${f.colors?.[i] ?? dflt} onChange=${(v) => {
@@ -566,7 +566,7 @@ function PhotoBg() {
     try {
       setHits(await api(`/api/unsplash?q=${encodeURIComponent(query.trim())}`));
     } catch (e) {
-      fail(e, "Unsplash search failed");
+      fail(e, "Couldn't search Unsplash");
       setHits([]);
     } finally {
       setLoading(false);
@@ -592,7 +592,7 @@ function PhotoBg() {
     ${hits &&
     html`<div class="photo-grid">${hits.map((h) => html`<button key=${h.id} class=${current === h.id ? "on" : ""} style=${{ background: h.color }} title=${`${h.description ?? ""}${h.author ? ` — ${h.author}` : ""}`}
         onClick=${() => setBackground({ ...keepTreatment(S.scene.background), photo: `unsplash:${h.id}` })}><img loading="lazy" src=${h.thumb} /></button>`)}</div>
-      ${!hits.length && html`<div class="empty-note">No free photos found.</div>`}
+      ${!hits.length && html`<div class="empty-note">No free photos found. Try another word.</div>`}
       <div class="note">Photos from <a href="https://unsplash.com" target="_blank">Unsplash</a>. Credits are added to each render's metadata.</div>
 `}
 `}
@@ -606,7 +606,7 @@ function PhotoBg() {
         const r = await api(`/api/upload?kind=backdrop&name=${encodeURIComponent(f.name)}`, f, true);
         setBackground({ ...keepTreatment(S.scene.background), photo: r.path });
       } catch (err) {
-        fail(err, "Upload failed");
+        fail(err, "Couldn't add that photo");
       }
     }} />
     ${o.photo && !current && html`<div class="note">Using <b>${base(o.photo)}</b></div>`}
@@ -643,16 +643,16 @@ export function Treatment() {
       const keys = Object.keys(b);
       d.background = keys.length === 1 && keys[0] === "look" ? b.look : b;
     }, `bg.${k}`);
-  const pct = (v) => `${Math.round(v * 100)}`;
+  const pct = (v) => `${Math.round(v * 100)}%`;
   return html`<${Section} title="Adjust the photo" collapsible id="treat" open=${Object.keys(keepTreatment(s.scene.background)).length > 0} right=${Object.keys(keepTreatment(s.scene.background)).length ? html`<button class="btn sm ghost" onClick=${() => setBackground(o.look && !o.photo ? o.look : Object.fromEntries(Object.entries(o).filter(([k]) => !TREATMENT.includes(k))))}>Reset</button>` : null}>
     <div class="row"><label>Motion</label><${Slider} value=${o.motionBlur} min=${0} max=${0.15} step=${0.002} fallback=${0} format=${pct} onChange=${(v) => setT("motionBlur", v)} /></div>
     <div class="row"><label>Blur</label><${Slider} value=${o.blur} min=${0} max=${0.06} step=${0.001} fallback=${0} format=${pct} onChange=${(v) => setT("blur", v)} /></div>
     <div class="row"><label>Haze</label><${Slider} value=${o.haze} min=${0} max=${1} step=${0.01} fallback=${0} format=${pct} onChange=${(v) => setT("haze", v)} /></div>
     <div class="row"><label>Bloom</label><${Slider} value=${o.bloom} min=${0} max=${1} step=${0.01} fallback=${0} format=${pct} onChange=${(v) => setT("bloom", v)} /></div>
-    <div class="row"><label>Brightness</label><${Slider} value=${o.brightness} min=${0.4} max=${1.6} step=${0.01} fallback=${1} centered format=${(v) => v.toFixed(2)} onChange=${(v) => setT("brightness", v)} /></div>
-    <div class="row"><label>Saturation</label><${Slider} value=${o.saturation} min=${0} max=${2} step=${0.01} fallback=${1} format=${(v) => v.toFixed(2)} onChange=${(v) => setT("saturation", v)} /></div>
+    <div class="row"><label>Brightness</label><${Slider} value=${o.brightness} min=${0.4} max=${1.6} step=${0.01} fallback=${1} centered format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setT("brightness", v)} /></div>
+    <div class="row"><label>Saturation</label><${Slider} value=${o.saturation} min=${0} max=${2} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setT("saturation", v)} /></div>
     <div class="row"><label>Dim</label><${Slider} value=${o.dim} min=${0} max=${0.8} step=${0.01} fallback=${0} format=${pct} onChange=${(v) => setT("dim", v)} /></div>
-    <div class="row"><label>Zoom</label><${Slider} value=${o.zoom} min=${1} max=${3} step=${0.01} fallback=${1} format=${(v) => v.toFixed(2) + "×"} onChange=${(v) => setT("zoom", v)} /></div>
+    <div class="row"><label>Zoom</label><${Slider} value=${o.zoom} min=${1} max=${3} step=${0.01} fallback=${1} format=${(v) => v.toFixed(1) + "×"} onChange=${(v) => setT("zoom", v)} /></div>
     <div class="row"><label>Tint</label><div class="hstack"><${ColorButton} value=${o.tint} auto="None" onChange=${(v) => setT("tint", v)} />${o.tint && html`<div class="grow"><${Slider} value=${o.tintAmount} min=${0} max=${1} step=${0.01} fallback=${0.15} format=${pct} onChange=${(v) => setT("tintAmount", v)} /></div>`}</div></div>
   <//>`;
 }
@@ -670,8 +670,8 @@ export function Finish() {
   const vig = typeof fx.vignette === "object" ? fx.vignette.amount : fx.vignette;
   const grade = typeof fx.grade === "object" ? fx.grade.preset ?? "none" : fx.grade ?? "none";
   return html`<${Section} title="Film look" collapsible id="finish" open=${Object.keys(fx).length > 0}>
-    <div class="row"><label>Grain</label><${Slider} value=${grain} min=${0} max=${0.6} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100)} onChange=${(v) => setFx("grain", v)} /></div>
-    <div class="row"><label>Vignette</label><${Slider} value=${vig} min=${0} max=${1} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100)} onChange=${(v) => setFx("vignette", v)} /></div>
+    <div class="row"><label>Grain</label><${Slider} value=${grain} min=${0} max=${0.6} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setFx("grain", v)} /></div>
+    <div class="row"><label>Vignette</label><${Slider} value=${vig} min=${0} max=${1} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setFx("vignette", v)} /></div>
     <${Switch} checked=${Boolean(fx.edgeBlur)} onChange=${(v) => setFx("edgeBlur", v || undefined)} label="Blur where devices leave the canvas" />
     <div class="lbl">Colour grade (affects the background, not your screenshot)</div>
     <div class="chips">${(s.opts?.grades ?? ["none"]).map((g) => html`<button class="chip sm ${grade === g ? "on" : ""}" onClick=${() => setFx("grade", g)}>${optionName(g)}</button>`)}</div>
@@ -936,7 +936,7 @@ export function ShapesPanel({ tabs }) {
       <//>
       <${Section} title="Badges and awards">
         <div class="shape-tiles">${SHAPE_KINDS.filter((k) => k.group === "award").map(tile)}</div>
-        <div class="note">Each holds your own words. Only claim what's true. More ready-made ones are in Images.</div>
+        <div class="note">Each holds your own words. Only claim what's true. More ready-made ones are in Pictures.</div>
       <//>
       ${shapes.length > 0 &&
       html`<${Section} title="In this design" count=${shapes.length}>
@@ -1043,7 +1043,7 @@ export function ImagesPanel({ tabs }) {
       <//>
       <${Section} title="Badges">
         <div class="shape-tiles">${BADGE_PRESETS.map(preset)}</div>
-        <div class="note">Select one to change its words in the panel on the right.</div>
+        <div class="note">Select one to change its words on the right.</div>
       <//>
       <${Section} title="Awards and ratings">
         <div class="shape-tiles">${AWARD_PRESETS.map(preset)}</div>
@@ -1086,7 +1086,7 @@ export function ImagesPanel({ tabs }) {
 /** How long ago, briefly. */
 const since = (ms) => {
   const m = Math.round((Date.now() - ms) / 60000);
-  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} hour${Math.round(m / 60) === 1 ? "" : "s"} ago` : m < 2880 ? "yesterday" : `${Math.round(m / 1440)} days ago`;
 };
 
 /**
@@ -1123,7 +1123,7 @@ export function ExportsGrid() {
       <button class="icon-btn" title="Delete" onClick=${() => deleteFile(f.path)}><${Icon} n="trash" s=${13} /></button>
     </div>
   </div>`;
-  if (!groups.length) return html`<div class="sp-empty big"><div class="art"><${Icon} n="exports" s=${24} /></div><b>Nothing exported yet</b><span>Images and videos you export appear here, with every version of each design.</span></div>`;
+  if (!groups.length) return html`<div class="sp-empty big"><div class="art"><${Icon} n="exports" s=${24} /></div><b>Nothing exported yet</b><span>Export a design (⌘E, or ⇧⌘E for video) and it appears here, with every version of it.</span></div>`;
   return html`<div class="shots exports-grid">${groups.map((g) => [
     tile(g.versions[0], g),
     open === g.key &&
@@ -1163,7 +1163,7 @@ export function DesignForMe() {
       </button>
     </div>
     ${d?.busy &&
-    html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint" title="This step · in all">${Math.max(0, Math.round((now - (d.stepAt ?? d.started)) / 1000))}s · ${Math.max(0, Math.round((now - d.started) / 1000))}s</span>
+    html`<div class="dfm-progress"><span class="shimmer-text">${DIRECTION_STEPS[d.step] ?? "Working"}…</span><span class="faint" title="This step · in all">${Math.max(0, Math.round((now - (d.stepAt ?? d.started)) / 1000))} s · ${Math.max(0, Math.round((now - d.started) / 1000))}s</span>
       <button class="btn sm ghost" title=${`Stop ${aiName()}. Your design stays as it is.`} onClick=${stopDesignForMe}>Stop</button></div>
       ${d.step === "generate" && html`<div class="note">${IMAGE_PROVIDERS[d.provider] ?? "The image generator"} is making a new background image. This can take a minute.</div>`}`}
     ${d?.error && html`<div class="note warn">${d.error}</div>`}
@@ -1191,7 +1191,7 @@ const LAYOUT_TIPS = {
   stack: "Devices overlapping, e.g. a Mac and an iPhone",
   grid: "Every screen in a tidy grid",
   staircase: "Screens stepping up to the right",
-  rising: "Two screens leaning toward each other",
+  rising: "Two screens leaning towards each other",
 };
 
 /** Where the devices and headline sit, without changing colours or type. */
@@ -1236,7 +1236,7 @@ function MyTemplates({ has, sq }) {
             }}>Save template</button></div>
         </div>`
       : html`<button class="btn block" disabled=${!designHas} title=${designHas ? "Keep this design's look to use with any app's screenshots" : "Add a screenshot first"}
-          onClick=${() => setSaving({ name: s.sceneName && s.sceneName !== "Untitled" ? `${s.sceneName} look` : "My template", keep: false })}><${Icon} n="plus" s=${13} />Save this design as a template…</button>`}
+          onClick=${() => setSaving({ name: s.sceneName && !/^untitled/i.test(s.sceneName) ? `${s.sceneName} look` : "My template", keep: false })}><${Icon} n="plus" s=${13} />Save this design as a template…</button>`}
     ${list.length > 0 &&
     html`<div class="set-templates">${list.map(
       (t) => html`<div class="set-template mine" key=${t.id} role="button" tabindex="0" onClick=${() => has && applyMyTemplate(t.id)} title=${has ? "Use it with this design's screenshots" : "Add a screenshot first"}>

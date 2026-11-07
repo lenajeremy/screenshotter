@@ -189,7 +189,7 @@ function DeviceInspector({ id }) {
     // Grouped by what each is: the open iPhone Duo lays out like an iPad but is an iPhone.
     ...installed.map((m) => ({ value: m.name, label: m.name, group: /^iPhone/.test(m.name) ? "iPhone" : family(m.family) })),
     // A design made with a model whose art isn't installed keeps it, shown for what it is.
-    ...(d.device && !installed.some((m) => m.name === (model?.name ?? d.device)) ? [{ value: model?.name ?? d.device, label: model?.name ?? d.device, hint: "No Apple art", group: "Not installed" }] : []),
+    ...(d.device && !installed.some((m) => m.name === (model?.name ?? d.device)) ? [{ value: model?.name ?? d.device, label: model?.name ?? d.device, hint: "No device art", group: "Not installed" }] : []),
   ];
   // Transform: prefer the scene's value, fall back to where the layout put it.
   const X = d.x ?? e?.x;
@@ -222,10 +222,10 @@ function DeviceInspector({ id }) {
           <span>${d.video ? html`<${Icon} n="video" s=${11} />Recording · still at ${stillClock(d.screenshot)}` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} px` : ""}</span></div>
         ${d.video
           ? html`<div class="hero-actions">
-              <button class="btn sm" title="Choose the moment of the recording this device shows in images" onClick=${() => openStills(id)}><${Icon} n="image" s=${13} />Pick the still</button>
-              <button class="btn sm" onClick=${() => replaceMode(id)}><${Icon} n="replace" s=${13} />Replace</button>
+              <button class="btn sm" title="Choose the moment of the recording this device shows in images" onClick=${() => openStills(id)}><${Icon} n="image" s=${13} />Pick the still…</button>
+              <button class="btn sm" onClick=${() => replaceMode(id)}><${Icon} n="replace" s=${13} />Replace…</button>
             </div>`
-          : html`<button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>`}
+          : html`<button class="btn sm" onClick=${() => replaceMode(id)}>Replace…</button>`}
       </div>
 
       ${/* Frame style always comes first, where it was clicked; a device's own settings follow it. */ ""}
@@ -261,7 +261,7 @@ function DeviceInspector({ id }) {
         ${bands.length > 1 &&
         html`<div class="row"><label>Band</label><${Dropdown} value=${d.band && bands.includes(d.band) ? d.band : ""} options=${bandOptions(bands)} search=${bands.length > 8}
           onChange=${(v) => upd((dev) => (dev.band = v || undefined))} /></div>`}
-        ${installed.length > 0 && model && !art && html`<div class="note">${model.name} has no Apple art installed${shown && shown.name !== model.name ? `, so it's shown as ${shown.name}` : ", so it's shown without hardware"}. Choose one from the list, or get more in Settings › Device art.</div>`}
+        ${installed.length > 0 && model && !art && html`<div class="note">${model.name} has no device art yet${shown && shown.name !== model.name ? `, so it's shown as ${shown.name}` : ", so it's shown without hardware"}. Choose one from the list, or get more in Settings › Devices.</div>`}
         ${e?.frame === "card" && art && html`<div class="note">${d.bezel === false ? "Shown without hardware." : "Websites are shown without hardware: Apple's device art is licensed for mock-ups of apps."}</div>`}
       <//>`
         : null}
@@ -348,7 +348,7 @@ function Recording({ id, d, upd }) {
     <div class="note">Play a screen recording inside this ${d.frame && d.frame !== "device" ? "frame" : "device"} when you export a video.</div>
     <div class="hstack wrap">
       <button class="btn sm" onClick=${() => input.current.click()}><${Icon} n="video" s=${13} />Attach a recording…</button>
-      ${clips.length > 0 && html`<${Dropdown} value="" placeholder="Or pick one you imported" options=${clips.slice(0, 20).map((f) => ({ value: f.path, label: base(f.path) }))} onChange=${(v) => v && upd((dev) => (dev.video = v))} />`}
+      ${clips.length > 0 && html`<${Dropdown} value="" placeholder="Or pick one you imported…" options=${clips.slice(0, 20).map((f) => ({ value: f.path, label: base(f.path) }))} onChange=${(v) => v && upd((dev) => (dev.video = v))} />`}
     </div>
     ${pick}
   <//>`;
@@ -523,7 +523,7 @@ function CaptionInspector() {
             t.x ??= e?.x;
             t.anchor ??= e?.anchor;
           }, "y")} />
-          <${Num} label="W" title="Width of the text block, % of the image" value=${st.width ?? e?.width} ...${pct} min=${0.1} max=${1.2} onChange=${(v) => upd((t) => (t.width = v && r4(v)), "w")} />
+          <${Num} label="W" title="Width of the text block, % of the design" value=${st.width ?? e?.width} ...${pct} min=${0.1} max=${1.2} onChange=${(v) => upd((t) => (t.width = v && r4(v)), "w")} />
         </div>
       <//>
       <${Section} title="Type details">
@@ -765,7 +765,7 @@ function ImageInspector({ id }) {
       <div class="insp-hero">
         <div class="pic img-pic"><img src=${pictureUrl(b.src)} /></div>
         <div class="meta"><b title=${base(b.src)}>${pictureName(b.src)}</b><span>${e ? `${Math.round(e.width * W0)} × ${Math.round(e.height * H0)} px` : ""}</span></div>
-        <button class="btn sm" onClick=${() => set({ replacingImage: id, leftTab: "images", leftOpen: true })}>Replace</button>
+        <button class="btn sm" onClick=${() => set({ replacingImage: id, leftTab: "images", leftOpen: true })}>Replace…</button>
       </div>
       <${Section} title="Shape">
         <${Seg} value=${outline} options=${IMAGE_SHAPES} onChange=${(v) => upd((x) => {
@@ -947,7 +947,7 @@ function SceneInspector() {
   // A recording or a screenshot on its own has its background in its Frame section.
   const framed = Boolean(sc.recording?.duration || (sc.plain && sc.devices?.length === 1));
   return html`
-    <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : sc.plain && sc.devices?.length === 1 ? "Screenshot" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
+    <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : sc.plain && sc.devices?.length === 1 ? "Screenshot" : "Whole design"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
     <div class="panel-body">
       ${sc.recording?.duration ? html`<${RecordingInspector} />` : sc.plain && sc.devices?.length === 1 ? html`<${PlainInspector} />` : null}
       ${!framed &&
@@ -966,7 +966,7 @@ function SceneInspector() {
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;
           const box = r >= 1 ? { width: "26px", height: 26 / r + "px" } : { width: 30 * r + "px", height: "30px" };
-          return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => setCanvasSize(c.value)}><i style=${box}></i>${c.label}</button>`;
+          return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""} × ${presets[c.value]?.height ?? ""}`} onClick=${() => setCanvasSize(c.value)}><i style=${box}></i>${c.label}</button>`;
         })}</div>
         <div class="row"><label>Exact size</label><${Dropdown} value=${presets[cur] ? cur : ""} options=${sizeOptions(presets)} placeholder=${custom ? "Custom size" : "A store size…"} search=${true} onChange=${setCanvasSize} /></div>
         ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${setLandscape} label="Landscape" />`}
@@ -983,7 +983,7 @@ function SceneInspector() {
       html`<${Section} title="This screen">
         <button class="bg-summary" onClick=${openCopyStyle}>
           <span class="sw ico"><${Icon} n="copy" s=${16} /></span>
-          <span class="grow"><b style=${{ display: "block" }}>Copy its style to the others</b><span class="note">Background, text style, film look or devices</span></span>
+          <span class="grow"><b style=${{ display: "block" }}>Copy its style to the others…</b><span class="note">Background, text style, film look or devices</span></span>
           <${Icon} n="right" s=${14} />
         </button>
       <//>`}

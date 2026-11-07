@@ -220,7 +220,7 @@ final class PickerView: NSView {
             pill(label, at: CGPoint(x: hole.midX, y: kind == .window ? hole.midY : hole.minY - 22))
         }
         if start == nil, hovered == nil {
-            let hint = kind == .area ? "Drag to choose an area  ·  Click for the whole screen  ·  Esc to cancel" : "Click a window to capture it  ·  Esc to cancel"
+            let hint = kind == .area ? "Drag to choose an area · click for the whole screen · Esc to cancel" : "Click a window to capture it · Esc to cancel"
             if screen.frame.contains(NSEvent.mouseLocation) { pill(hint, at: CGPoint(x: bounds.midX, y: bounds.maxY - 90)) }
         }
     }

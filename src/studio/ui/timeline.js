@@ -613,6 +613,8 @@ export function selectAnimation(i) {
 // ---------------------------------------------------------------------------------------------
 // Editing the scene's animations
 
+/** An effect's name; with no effect, an exit is "Disappear". */
+const fxName = (f, out) => (f === "none" && out ? "Disappear" : FX[f]);
 const FX = { none: "Appear", fade: "Fade", zoom: "Zoom", blur: "Blur", "scale-x": "Stretch across", "scale-y": "Stretch up", "slide-up": "Slide up", "slide-down": "Slide down", "slide-left": "Slide left", "slide-right": "Slide right" };
 const FX_ORDER = ["fade", "zoom", "blur", "scale-x", "scale-y", "slide-up", "slide-down", "slide-left", "slide-right", "none"];
 const EASE_NAMES = { "ease-out": "Slow down", "ease-in": "Speed up", "ease-in-out": "Smooth", linear: "Steady", "back-out": "Overshoot", spring: "Spring", bounce: "Bounce" };
@@ -663,7 +665,7 @@ function backdropMoveOf(a) {
 }
 const clipName = (a) =>
   targetsOf(a).includes(BACKDROP)
-    ? BACKDROP_MOVES[backdropMoveOf(a)]?.label ?? "Backdrop move"
+    ? BACKDROP_MOVES[backdropMoveOf(a)]?.label ?? "Background move"
     : kindOf(a) === "loop"
       ? LOOPS[loopOf(a)]?.label ?? "Loop"
       : a.path && !a.enter && !a.exit
@@ -672,7 +674,7 @@ const clipName = (a) =>
     ? a.exit ? "Leaves" : "Appears"
     : targetsOf(a).includes(CAMERA)
     ? (a.to?.zoom ?? 1) <= 1.001 ? "Pull back" : `${(a.to?.zoom ?? 1).toFixed(1)}× zoom`
-    : a.enter ? `${FX[a.enter]} in${a.by ? ` by ${a.by}` : ""}` : a.exit ? `${FX[a.exit]} out${a.by ? ` by ${a.by}` : ""}` : a.from && !a.to ? "From" : "Change";
+    : a.enter ? `${FX[a.enter]} in${a.by ? ` by ${a.by}` : ""}` : a.exit ? `${fxName(a.exit, true)}${a.exit === "none" ? "" : " out"}${a.by ? ` by ${a.by}` : ""}` : a.from && !a.to ? "From" : "Change";
 /** What a bar says on the timeline: a camera move's zoom fits a short bar ("1.8×", "1×" for a pull back);
  * its full name stays in the bar's tooltip. */
 const barName = (a) => (targetsOf(a).includes(CAMERA) && !targetsOf(a).includes(BACKDROP) ? `${(a.to?.zoom ?? 1) <= 1.001 ? 1 : (a.to?.zoom ?? 1).toFixed(1)}×` : clipName(a));
@@ -748,7 +750,7 @@ function AddPopover({ anchor, ids, onClose }) {
     onClose();
     addClip(ids, spec);
   };
-  const when = `at ${playhead.t.toFixed(1)}s`;
+  const when = `at ${playhead.t.toFixed(1)} s`;
   const head = (title) => html`<div class="add-head"><b>${title}</b><span>${when}</span></div>`;
   if (id === CAMERA)
     return html`<${Popover} anchor=${anchor} onClose=${onClose} class="add-pop" width=${270}>
@@ -773,7 +775,7 @@ function AddPopover({ anchor, ids, onClose }) {
     ${head(ids.length > 1 ? `${ids.length} items, together` : label(id))}
     <${Seg} value=${tab} onChange=${setTab} options=${[{ value: "enter", label: "Comes in" }, { value: "loop", label: "Keeps moving" }, { value: "change", label: "Changes" }, { value: "exit", label: "Leaves" }]} />
     ${tab === "enter" || tab === "exit"
-      ? html`<div class="fx-grid">${(tab === "enter" && texts ? ["slide-up", ...FX_ORDER.filter((f) => f !== "slide-up")] : FX_ORDER).map((f) => html`<button class="fx" key=${f} onClick=${() => add({ [tab]: f })}><${FxIcon} fx=${f} /><span>${FX[f]}</span></button>`)}</div>
+      ? html`<div class="fx-grid">${(tab === "enter" && texts ? ["slide-up", ...FX_ORDER.filter((f) => f !== "slide-up")] : FX_ORDER).map((f) => html`<button class="fx" key=${f} onClick=${() => add({ [tab]: f })}><${FxIcon} fx=${f} /><span>${fxName(f, tab === "exit")}</span></button>`)}</div>
         ${texts && tab === "enter" && html`<div class="note">Text can come in a word or a letter at a time: choose it in its settings after.</div>`}`
       : tab === "loop"
         ? html`<div class="fx-grid">${Object.entries(LOOPS).map(([name, l]) => html`<button class="fx" key=${name} onClick=${() => add({ loop: name })}><${LoopIcon} kind=${name} /><span>${l.label}</span></button>`)}</div>
@@ -794,10 +796,10 @@ export function AnimationSection({ id }) {
   const s = useStore();
   const mine = (s.scene.animations ?? []).map((a, i) => ({ a, i })).filter(({ a }) => targetsOf(a).includes(id));
   const ROWS = [
-    { kind: "enter", title: "Comes in", spec: { enter: isText(id) ? "slide-up" : "zoom" }, sum: (a) => `${FX[a.enter]}${a.by ? ` by ${a.by}` : ""} · ${a.at.toFixed(1)}s` },
+    { kind: "enter", title: "Comes in", spec: { enter: isText(id) ? "slide-up" : "zoom" }, sum: (a) => `${FX[a.enter]}${a.by ? ` by ${a.by}` : ""} · ${a.at.toFixed(1)} s` },
     { kind: "loop", title: "Keeps moving", spec: { loop: "float" }, sum: (a) => LOOPS[loopOf(a)]?.label ?? "Loop" },
-    { kind: "change", title: "Changes part way", spec: { change: "grow" }, sum: (a) => `${clipName(a)} · ${a.at.toFixed(1)}s` },
-    { kind: "exit", title: "Leaves", spec: { exit: "fade" }, sum: (a) => `${FX[a.exit]} · ${a.at.toFixed(1)}s` },
+    { kind: "change", title: "Changes", spec: { change: "grow" }, sum: (a) => `${clipName(a)} · ${a.at.toFixed(1)} s` },
+    { kind: "exit", title: "Leaves", spec: { exit: "fade" }, sum: (a) => `${fxName(a.exit, true)} · ${a.at.toFixed(1)} s` },
   ];
   const open = (i) => {
     if (!S.timelineOpen) openTimeline();
@@ -1229,7 +1231,7 @@ export function TimelineDock() {
               const dur = plays === Infinity ? Math.max(0, len - at) : animationEnd(a, ents) - a.at - (a.stagger ?? 0) * (targetsOf(a).length - 1);
               const cycle = (a.duration ?? DEFAULT_DURATION) * pps;
               return html`<div class="tl-bar ${e.id === CAMERA ? "camera" : e.id === BACKDROP ? "backdrop" : kindOf(a)} ${plays > 1 ? "rep" : ""} ${s.animSel === i ? "on" : ""} ${targetsOf(a).length > 1 ? "group" : ""}" key=${i} style=${{ left: at * pps + "px", width: Math.max(10, dur * pps) + "px", "--cyc": Math.max(4, cycle) + "px" }}
-                title=${`${clipName(a)} at ${at.toFixed(2)}s, ${plays > 1 ? `${(a.duration ?? DEFAULT_DURATION).toFixed(2)}s a time, ${plays === Infinity ? "until the end" : `${plays} times`}` : `${dur.toFixed(2)}s`}${targetsOf(a).length > 1 ? ` · with ${targetsOf(a).length - 1} other${targetsOf(a).length > 2 ? "s" : ""}` : ""}`}
+                title=${`${clipName(a)} at ${at.toFixed(2)} s, ${plays > 1 ? `${(a.duration ?? DEFAULT_DURATION).toFixed(2)} s a time, ${plays === Infinity ? "until the end" : `${plays} times`}` : `${dur.toFixed(2)} s`}${targetsOf(a).length > 1 ? ` · with ${targetsOf(a).length - 1} other${targetsOf(a).length > 2 ? "s" : ""}` : ""}`}
                 onPointerDown=${(ev) => dragBar(ev, i, k)}>
                 <span>${barName(a)}</span>
                 <i class="tl-edge" onPointerDown=${(ev) => dragBar(ev, i, k, true)}></i>
@@ -1456,14 +1458,14 @@ function FootageTrack({ pps, plan, len, on }) {
     e.preventDefault();
     e.stopPropagation();
     openMenu(e.clientX, e.clientY, [
-      i !== cur && { label: "Edit this clip", icon: "canvas", run: () => goToShot(i) },
+      i !== cur && { label: "Edit this screen", icon: "canvas", run: () => goToShot(i) },
       { label: "Duplicate", icon: "duplicate", run: () => addShot("copy", { at: i + 1, copyOf: i }) },
       many && { label: "Move earlier", icon: "left", disabled: i === 0, run: () => moveShot(i, -1) },
       many && { label: "Move later", icon: "right", disabled: i === n - 1, run: () => moveShot(i, 1) },
       many && (S.shots[i]?.video === false ? { label: "Put back in the video", icon: "video", run: () => setInVideo(i, true) } : { label: "Leave out of the video", icon: "video", disabled: plan.out.filter((o) => !o).length < 2, run: () => setInVideo(i, false) }),
-      many && { label: "See every clip on one sheet", icon: "grid", run: previewShots },
+      many && { label: "See every screen on one sheet", icon: "grid", run: previewShots },
       many && "-",
-      many && { label: "Delete this clip", icon: "trash", danger: true, run: () => deleteShot(i) },
+      many && { label: "Delete this screen", icon: "trash", danger: true, run: () => deleteShot(i) },
     ]);
   };
   const leftOut = many ? plan.shots.map((_, i) => i).filter((i) => plan.out[i]) : [];
@@ -1477,7 +1479,7 @@ function FootageTrack({ pps, plan, len, on }) {
           onClick=${() => pick(c.i)} onContextMenu=${(e) => menu(e, c.i)}>
         <${ClipFrames} scene=${c.scene} len=${c.len} pps=${pps} single=${!many} />
         ${many && html`<span class="clip-n">${c.i + 1}</span>`}
-        ${c.len * pps > 70 && html`<span class="clip-len">${c.len.toFixed(1)}s</span>`}
+        ${c.len * pps > 70 && html`<span class="clip-len">${c.len.toFixed(1)} s</span>`}
       </button>`,
     )}
     ${many && plan.shots.map((x, i) => plan.joins[i].type && html`<${TransitionChip} i=${i} t=${x.transition} key=${`t${i}`} at=${plan.starts[i] * pps + (plan.joins[i].duration * pps) / 2} />`)}
@@ -1754,8 +1756,8 @@ function CalloutInspector({ i, a }) {
     </div>
     <div class="panel-body">
       <div class="clip-targets">${ids.map((id) => html`<span class="pill">${label(id)}</span>`)}</div>
-      <${Seg} value=${a.exit ? "exit" : "enter"} options=${[{ value: "enter", label: "Appear" }, { value: "exit", label: "Disappear" }]} onChange=${setKind} />
-      <div class="note">A call-out arrives the way its style does: a lift rises off the screen, a loupe grows, an outline fades in. Call-outs aren't drawn on the canvas; they show in the exported video. Ones you don't time all appear a quarter of the way in.</div>
+      <${Seg} value=${a.exit ? "exit" : "enter"} options=${[{ value: "enter", label: "Appears" }, { value: "exit", label: "Leaves" }]} onChange=${setKind} />
+      <div class="note">A call-out arrives the way its style does: a lift rises off the screen, a loupe grows, an outline fades in. Call-outs show in the finished look (a moment after you stop, or ⌘R) and in the exported video. Ones you don't time all appear a quarter of the way in.</div>
       <${TimingAndEasing} i=${i} a=${a} many=${ids.length > 1} />
     </div>`;
 }
@@ -1810,7 +1812,7 @@ export function FootageInspector() {
   const len = p.to - p.from;
   return html`
     <div class="panel-head clip-head"><h2>Footage</h2><span class="sub">Part ${s.footageSel + 1} of ${parts.length}</span><span class="grow"></span>
-      <button class="icon-btn sm" title="Take this part out (⌫)" onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${14} /></button>
+      <button class="icon-btn sm" title="Delete this part (⌫)" onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${14} /></button>
       <button class="icon-btn sm" title="Close" onClick=${() => set({ footageSel: null })}><${Icon} n="x" s=${14} /></button>
     </div>
     <div class="panel-body">
@@ -1819,7 +1821,7 @@ export function FootageInspector() {
         <div class="row"><label>Recording</label><span class="mono">${clock(p.from)} – ${clock(p.to)}</span></div>
         <div class="row"><label>Length</label><span class="mono">${len.toFixed(1)} s</span></div>
       <//>
-      <button class="btn block danger" disabled=${parts.length < 2} onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${13} />Take this part out</button>
+      <button class="btn block danger" disabled=${parts.length < 2} onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${13} />Delete this part</button>
       <div class="note">${parts.length < 2 ? "Cut the footage first: move the playhead and press ⌘B." : "The screen, the webcam, your voice and the cursor all skip it, and everything after moves up. ⌘Z brings it back."}</div>
       <button class="btn block" onClick=${cutFootageHere}><${Icon} n="scissors" s=${13} />Cut at the playhead<span class="kbd">⌘B</span></button>
     </div>`;
@@ -1975,7 +1977,7 @@ export function ClipInspector() {
       <div class="clip-targets">${ids.map((id) => html`<span class="pill">${entityLabel(id)}</span>`)}${ids.length > 1 && html`<span class="note">Move as one group: zooms and turns are about their shared middle.</span>`}</div>
       <${Seg} value=${kind} options=${[{ value: "enter", label: "Comes in" }, { value: "loop", label: "Keeps moving" }, { value: "change", label: "Changes" }, { value: "exit", label: "Leaves" }]} onChange=${setKind} />
       ${kind === "loop" &&
-      html`<${Section} title="Keeps going">
+      html`<${Section} title="Keeps moving">
           <div class="fx-grid">${Object.entries(LOOPS).map(([name, l]) => html`<button class="fx ${loopOf(a) === name ? "on" : ""}" key=${name} onClick=${() => setLoop(name)}><${LoopIcon} kind=${name} /><span>${l.label}</span></button>`)}</div>
           <div class="note">It keeps going until the video ends.${a.path?.points ? " Drag the points on the canvas to shape its route." : " Drag it on the canvas to set how far it goes."}</div>
           ${a.path?.shape && html`<div class="row"><label>Size</label><${Slider} value=${a.path.size} min=${0.005} max=${0.15} step=${0.001} fallback=${DEFAULT_PATH_SIZE} format=${(v) => Math.round(v * (s.layout?.canvas.width ?? 1000)) + " px"} onChange=${(v) => setPath({ size: v })} /></div>`}
@@ -1988,7 +1990,7 @@ export function ClipInspector() {
             <div class="fx-grid">${FX_ORDER.map((f) => html`<button class="fx ${fx === f ? "on" : ""}" key=${f} onClick=${() => update(i, (x) => {
               x[kind] = f;
               delete x.amount;
-            })}><${FxIcon} fx=${f} /><span>${FX[f]}</span></button>`)}</div>
+            })}><${FxIcon} fx=${f} /><span>${fxName(f, kind === "exit")}</span></button>`)}</div>
             ${amount && html`<div class="row"><label>${amount.label}</label><${Slider} value=${a.amount} min=${amount.min} max=${amount.max} step=${0.01} fallback=${amount.fallback} format=${amount.format} onChange=${(v) => update(i, (x) => (x.amount = v), "amount")} /></div>`}
             ${fx !== "fade" && fx !== "none" && html`<${Switch} checked=${a.fade !== false} onChange=${(v) => update(i, (x) => (x.fade = v ? undefined : false))} label="Fade as well" />`}
             ${texts && html`<div class="row"><label>${kind === "enter" ? "Arrives" : "Leaves"}</label><${Seg} value=${a.by ?? "all"} options=${[{ value: "all", label: "As one" }, { value: "word", label: "By word" }, { value: "letter", label: "By letter" }]} onChange=${(v) => update(i, (x) => {
@@ -2012,7 +2014,7 @@ export function ClipInspector() {
             ${row("Blur", "blur", html`<${Slider} value=${to.blur} min=${0} max=${0.04} step=${0.001} fallback=${ownBlur} format=${(v) => (v > 0.0004 ? Math.round(v * W0) + " px" : "Sharp")} onChange=${(v) => setTo("blur", v)} />`)}
             ${devices && html`${row("3D tilt", "rotateX", html`<${Slider} value=${to.rotateX} min=${-60} max=${60} step=${1} centered fallback=${0} format=${(v) => v + "°"} onChange=${(v) => setTo("rotateX", v)} />`)}
               ${row("3D turn", "rotateY", html`<${Slider} value=${to.rotateY} min=${-75} max=${75} step=${1} centered fallback=${0} format=${(v) => v + "°"} onChange=${(v) => setTo("rotateY", v)} />`)}
-              <div class="note">3D tilt and turn show in Preview and the exported video. To rack focus, give two devices a Change at the same moment: blur one, sharpen the other.</div>`}
+              <div class="note">3D tilt and turn play on the canvas and in the exported video. To rack focus, give two devices a Change at the same moment: blur one, sharpen the other.</div>`}
             ${(texts || clays) && row(clays ? "Clay colour" : "Colour", "color", html`<${ColorButton} value=${to.color} auto="No change" onChange=${(v) => setTo("color", v)} />`)}
             ${marked && row("Marks drawn", "mark", html`<${Slider} value=${to.mark} min=${0} max=${1} step=${0.01} fallback=${1} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setTo("mark", v)} />`)}
             ${ratings && row("Stars", "value", html`<${Slider} value=${to.value} min=${0} max=${5} step=${0.1} fallback=${first.shape.value} format=${(v) => v.toFixed(1)} onChange=${(v) => setTo("value", v)} />`)}
@@ -2026,7 +2028,7 @@ export function ClipInspector() {
               ${point("start", first.shape.from)}
               ${point("end", first.shape.to)}
               ${row("Curve", "bend", html`<${Slider} value=${to.bend} min=${-1} max=${1} step=${0.01} centered fallback=${first.shape.bend} format=${(v) => (v ? Math.round(v * 100) + "%" : "Straight")} onChange=${(v) => setTo("bend", v)} />`)}
-              <div class="note">Start and End are where the ${first.shape.type} runs from and to, as a share of the image: 0% is the left or top edge.</div>`}
+              <div class="note">Start and End are where the ${first.shape.type} runs from and to, as a share of the design: 0% is the left or top edge.</div>`}
           <//>`}
       <${TimingAndEasing} i=${i} a=${a} many=${ids.length > 1} repeatable=${kind === "change"} loop=${kind === "loop"} />
       <button class="btn block" onClick=${() => playClip(a)}><${Icon} n="play" s=${13} />Play this animation</button>

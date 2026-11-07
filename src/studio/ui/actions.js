@@ -78,7 +78,7 @@ export async function applyMyTemplate(id) {
 
 async function applyTemplateFrom(url, id, name) {
   const body = setTemplateInput();
-  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Templates are made from your own screenshots." });
+  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Templates are made from your screenshots: drop one in, or press ⌘O." });
   try {
     const { screens } = await api(url, { id, ...body });
     checkpoint();
@@ -364,7 +364,7 @@ export function useCapture(path, { frame, video } = {}) {
 
 export function replaceMode(id) {
   set({ replacing: id, selected: id, leftTab: "captures", leftOpen: true });
-  toast({ kind: "ok", icon: "replace", title: `Choose a capture for ${entityLabel(id)}`, text: "Click any capture in the library, or drag one onto the device.", timeout: 4000 });
+  toast({ kind: "ok", icon: "replace", title: `Choose a screenshot for ${entityLabel(id)}`, text: "Click one in Screenshots, or drag one onto the device.", timeout: 4000 });
 }
 
 export function deleteEntity(id) {
@@ -424,7 +424,7 @@ export function duplicateEntity(id) {
     });
     set({ selected: `shape-${S.scene.shapes.length}` });
   } else if (id.startsWith("image-")) {
-    if ((S.scene.images ?? []).length >= 24) return toast({ kind: "warn", title: "Twenty-four images is the limit" });
+    if ((S.scene.images ?? []).length >= 24) return toast({ kind: "warn", title: "Twenty-four pictures is the limit", text: "Delete one to add another." });
     edit((d) => {
       const copy = clone(d.images[idx(id)]);
       copy.x = r4((e?.x ?? copy.x ?? 0.5) + 0.03);
@@ -735,7 +735,7 @@ export function addSticker(name, { at } = {}) {
  */
 export function addImage(src, { at, look = {} } = {}) {
   const images = S.scene.images ?? [];
-  if (images.length >= 24) return toast({ kind: "warn", title: "Twenty-four images is the limit" });
+  if (images.length >= 24) return toast({ kind: "warn", title: "Twenty-four pictures is the limit", text: "Delete one to add another." });
   const off = (images.length % 5) * 0.035;
   // Dropped somewhere, it goes there; otherwise where its look puts it (a logo at the top), else in
   // free space clear of the headline and devices, else over the top of the device.
@@ -758,7 +758,7 @@ export function replaceImage(id, src) {
 export const TEXT_PRESETS = {
   label: { text: "New feature", size: 0.026, weight: 650 },
   badge: { text: "NEW", size: 0.018, weight: 750, background: "#d2ff4d", color: "#0d1100", letterSpacing: 0.04 },
-  rating: { text: "★★★★★  4.9 on the App Store", size: 0.02, weight: 650 },
+  rating: { text: "★★★★★ 4.9 on the App Store", size: 0.02, weight: 650 },
   big: { text: "**2×** faster", size: 0.07, weight: 800, accentColor: "#ff5fa2" },
 };
 
@@ -857,7 +857,7 @@ export async function openSimulator() {
 
 export function captureSimulator() {
   const c = S.capture;
-  return task("Capturing simulator…", async () => {
+  return task("Capturing the Simulator…", async () => {
     const r = await api(
       "/api/capture/simulator",
       tidy({
@@ -875,7 +875,7 @@ export function captureSimulator() {
 
 export function recordSimulator(duration = 6) {
   const c = S.capture;
-  return task(`Recording ${duration}s…`, async () => {
+  return task(`Recording ${duration} s…`, async () => {
     const r = await api(
       "/api/record",
       tidy({
@@ -1140,10 +1140,10 @@ export async function exportImage() {
     renderResult(r, { preview: false, ms: performance.now() - started });
     touch("exported");
     refreshFiles();
-    toast({ kind: "ok", title: "Image exported", text: `${base(r.path)} · ${r.width}×${r.height}`, timeout: 9000, actions: resultActions(r, true) });
+    toast({ kind: "ok", title: "Image exported", text: `${base(r.path)} · ${r.width} × ${r.height}`, timeout: 9000, actions: resultActions(r, true) });
     for (const w of r.warnings ?? []) toast({ kind: "warn", title: "Note", text: w });
   } catch (e) {
-    fail(e, "Export failed");
+    fail(e, "Couldn't export the image");
   } finally {
     set({ rendering: null });
   }
@@ -1180,7 +1180,7 @@ export async function exportWholeSet() {
       actions: [...opened, { label: "Show in Finder", run: () => reveal(o.folders === "fastlane" ? r.screenshots : r.directory) }],
     });
   } catch (e) {
-    fail(e, "Set export failed");
+    fail(e, "Couldn't export the set");
   } finally {
     set({ rendering: null });
   }
@@ -1304,11 +1304,11 @@ export async function exportVideo() {
       }
     }
     const extra = r.versions?.length ? ` + ${r.versions.map((v) => v.label.split(" · ")[0] === "App Store" ? v.label : v.label.split(" · ")[0]).join(", ")}` : "";
-    toast({ kind: "ok", title: !shots ? "Video exported" : shots.length === 1 && allShots().length > 1 ? `Screen ${shots[0].at + 1}'s video exported` : `${shots.length}-screen video exported`, text: `${base(r.path)} · ${r.width}×${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, timeout: 9000, actions: resultActions(r, false) });
+    toast({ kind: "ok", title: !shots ? "Video exported" : shots.length === 1 && allShots().length > 1 ? `Screen ${shots[0].at + 1}'s video exported` : `${shots.length}-screen video exported`, text: `${base(r.path)} · ${r.width} × ${r.height} · ${r.duration?.toFixed?.(1)}s${extra}`, timeout: 9000, actions: resultActions(r, false) });
     const notes = [...(r.warnings ?? []), ...(r.versions ?? []).flatMap((v) => (v.warnings ?? []).map((w) => `${v.label}: ${w}`))];
     if (notes.length) toast({ kind: "warn", title: "Worth knowing", text: notes.slice(0, 3).join(" "), timeout: 12000 });
   } catch (e) {
-    fail(e, "Video export failed");
+    fail(e, "Couldn't export the video");
   } finally {
     job.done();
     set({ rendering: null });
@@ -1344,7 +1344,7 @@ async function exportEachVideo(shots) {
     const last = done[done.length - 1];
     toast({ kind: "ok", title: `${done.length} videos exported`, text: `One for each screen${sizes.length > 1 ? `, at ${sizes.length} sizes` : ""}.`, timeout: 9000, actions: resultActions(last, false) });
   } catch (e) {
-    fail(e, done.length ? `Video export stopped after ${done.length} of ${shots.length}` : "Video export failed");
+    fail(e, done.length ? `Video export stopped after ${done.length} of ${shots.length}` : "Couldn't export the video");
     if (done.length) refreshFiles();
   } finally {
     set({ rendering: null });
@@ -1806,7 +1806,7 @@ export async function copyImage(p) {
       const png = blob.type === "image/png" ? blob : await toPng(blob);
       await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
     }
-    toast({ kind: "ok", title: "Copied to clipboard", timeout: 2200 });
+    toast({ kind: "ok", title: "Copied to the clipboard", timeout: 2200 });
   } catch (e) {
     fail(e, "Couldn't copy");
   }
@@ -1999,7 +1999,7 @@ async function streamEdit(body, onProgress, signal) {
     res = await fetch("/api/ai-edit?stream=1", { method: "POST", headers: { "x-screenshotter": "studio", "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
   } catch (e) {
     if (signal?.aborted) throw e;
-    throw new Error("Lost connection to the Screenshotter engine.");
+    throw new Error("Lost connection to the Screenshotter engine. Choose File › Restart Engine, then try again.");
   }
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
@@ -2033,7 +2033,7 @@ const OP_NAMES = {
   subheadlineSize: "Subheadline size", font: "Font", headlineWeight: "Weight", weight: "Weight", letterSpacing: "Tracking",
   uppercase: "Uppercase", align: "Alignment", position: "Placement", shadow: "Shadow", glare: "Glare", frame: "Frame",
   device: "Model", side: "Side", highlights: "Call-outs", text: "Words", size: "Size", background: "Background", opacity: "Opacity",
-  canvas: "Image size", layout: "Arrangement", effects: "Film look", grain: "Grain", vignette: "Vignette", grade: "Colour grade",
+  canvas: "Size", layout: "Layout", effects: "Film look", grain: "Grain", vignette: "Vignette", grade: "Colour grade",
   edgeBlur: "Edge blur", screenshot: "Screenshot", texts: "Text", devices: "Device", blur: "Blur", dim: "Dim", look: "Look",
 };
 
@@ -2390,7 +2390,7 @@ export async function openRecording(r) {
   persist();
   if (r.cursor) {
     const n = await setAutoZoom(true);
-    if (n) toast({ kind: "ok", icon: "video", title: "Zooms added on your clicks", text: `${n} camera move${n === 1 ? "" : "s"} on the Camera row. Drag, change or delete any, or turn auto zoom off in the Recording panel.` });
+    if (n) toast({ kind: "ok", icon: "video", title: "Zooms added on your clicks", text: `${n} camera move${n === 1 ? "" : "s"} on the Camera row. Drag, change or delete any, or turn off Zoom in on clicks on the right.` });
   }
   await saveSceneNow();
 }
@@ -2415,7 +2415,7 @@ export async function openScene(id) {
 export async function saveNow() {
   if (!hasDesign(S.scene)) return toast({ kind: "warn", title: "Nothing to save yet", text: "Add a screenshot, a headline or a picture first." });
   await saveSceneNow();
-  toast({ kind: "ok", title: "Saved", text: `“${S.sceneName}” is in your scenes.`, timeout: 2200 });
+  toast({ kind: "ok", title: "Saved", text: `“${S.sceneName}” is in My designs.`, timeout: 2200 });
 }
 
 /** Rename a saved scene: to `to`, or to what the person types in a sheet. */
@@ -2463,7 +2463,7 @@ export async function pickUpAgentChanges(scenes, known) {
       set({ sceneStamp: saved.updatedAt });
       if (differs && elsewhere) {
         set({ shots: S.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) });
-        toast({ kind: "ok", icon: "spark", title: "An agent updated shot 1", timeout: 9000, actions: [{ label: "Show it", run: () => goToShot(0) }] });
+        toast({ kind: "ok", icon: "spark", title: "An agent updated screen 1", timeout: 9000, actions: [{ label: "Show it", run: () => goToShot(0) }] });
       } else if (differs) {
         setScene(saved.scene);
         set({ sceneName: saved.name, selected: null, render: null });
