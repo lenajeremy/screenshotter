@@ -212,7 +212,6 @@ function DeviceInspector({ id }) {
         ${frame === "browser" && html`<div class="row"><label>Address</label><${TextField} value=${d.url} placeholder="Page URL by default" onChange=${(v) => upd((dev) => (dev.url = v || undefined), "url")} /></div>`}
         ${frame === "window" && html`<div class="row"><label>Title</label><${TextField} value=${d.title} placeholder="Window title" onChange=${(v) => upd((dev) => (dev.title = v || undefined), "title")} /></div>`}
         ${(frame === "browser" || frame === "window") && html`<div class="row"><label>Chrome</label><${Seg} value=${d.chrome ?? "light"} options=${["light", "dark"]} onChange=${(v) => upd((dev) => (dev.chrome = v === "light" ? undefined : v))} /></div>`}
-        ${frame === "device" && html`<${Switch} checked=${Boolean(d.glare)} onChange=${(v) => upd((dev) => (dev.glare = v || undefined))} label="Glass glare" />`}
       <//>`;
   return html`
     <${Head} title=${entityLabel(id)} sub=${s.scene.devices.length > 1 ? `${i + 1} of ${s.scene.devices.length}` : ""} id=${id} />
@@ -229,6 +228,8 @@ function DeviceInspector({ id }) {
           : html`<button class="btn sm" onClick=${() => replaceMode(id)}>Replace</button>`}
       </div>
 
+      ${/* Frame style always comes first, where it was clicked; a device's own settings follow it. */ ""}
+      ${frameSection}
       ${frame === "device"
         ? html`<${Section} title="Device">
         ${installed.length
@@ -256,13 +257,14 @@ function DeviceInspector({ id }) {
             )}</div>
             <span class="swatch-name">${current}</span>
           </div></div>`}
+        ${art && html`<${Switch} checked=${Boolean(d.glare)} onChange=${(v) => upd((dev) => (dev.glare = v || undefined))} label="Glass glare" />`}
         ${bands.length > 1 &&
         html`<div class="row"><label>Band</label><${Dropdown} value=${d.band && bands.includes(d.band) ? d.band : ""} options=${bandOptions(bands)} search=${bands.length > 8}
           onChange=${(v) => upd((dev) => (dev.band = v || undefined))} /></div>`}
         ${installed.length > 0 && model && !art && html`<div class="note">${model.name} has no Apple art installed${shown && shown.name !== model.name ? `, so it's shown as ${shown.name}` : ", so it's shown without hardware"}. Choose one from the list, or get more in Settings › Device art.</div>`}
         ${e?.frame === "card" && art && html`<div class="note">${d.bezel === false ? "Shown without hardware." : "Websites are shown without hardware: Apple's device art is licensed for mock-ups of apps."}</div>`}
       <//>`
-        : frameSection}
+        : null}
 
       <${Section} title="Size & tilt" right=${d.rotateX || d.rotateY ? html`<button class="btn sm ghost" onClick=${() => upd((dev) => {
         delete dev.rotateX;
@@ -281,7 +283,6 @@ function DeviceInspector({ id }) {
 
       <${AnimationSection} id=${id} />
       <${More} id="device">
-        ${frame === "device" && frameSection}
         <${Section} title="Position" right=${custom ? html`<button class="btn sm ghost" title="Put it back where the layout places it" onClick=${() => upd((dev) => {
         for (const k of ["x", "y", "anchor", "height", "width", "rotate"]) delete dev[k];
       })}><${Icon} n="refresh" s=${12} />Auto-place</button>` : null}>
