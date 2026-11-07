@@ -269,7 +269,7 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
   };
   let lastGroup;
   return html`
-    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title} onClick=${() => setOpen(!open)}>
+    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title ?? (current ? `${current.label}${current.hint ? ` · ${current.hint}` : ""}` : undefined)} onClick=${() => setOpen(!open)}>
       ${trigger ??
       html`${icon && html`<${Icon} n=${icon} s=${14} />`}
         <span class="label">${current ? (render ? render(current) : html`${current.label}${current.hint && html`<span class="muted">${current.hint}</span>`}`) : html`<span class="muted">${placeholder}</span>`}</span>
