@@ -1,5 +1,34 @@
 # What's new
 
+## 0.13.0 · 7 November 2026
+
+### Highlights
+- **A calmer, cleaner Screenshotter.** Every screen was gone over for what's confusing, cramped or hard to read, and fixed: lime is the one accent, headings are plain and two-toned, section titles read as headings, buttons and switches are rounded like macOS's own, and every word on screen is easy to read (all of it now passes the contrast the eye needs).
+- **Each thing has one place.** The left side adds and picks; the right side changes. Text from Elements is chosen there and edited on the right, the background is picked on the left and adjusted on the right, and an item shows one **Animate it** row until it actually moves.
+- **Words as they look.** Retyping a headline (on the design or on the right) shows its accent words in their colour, with no asterisks: choose words and press ⌘B, or **Accent the chosen words**. **Star colour** is now **Accent colour**.
+- **Placeholders you won't ship.** A starting design's stand-in headline is marked on the canvas (never in the export), and exporting one asks first. A new screen in a set starts with fresh placeholder words, not a copy.
+- **Ask AI sits beside your design.** It opens in the right-hand panel (⇧⌘K floats it) and says what it changed in words, not code.
+- **Settings in tabs.** General, Ask AI, Photos & images, Devices and Shortcuts, a line under each setting, and the shortcuts 0.12 actually has.
+- **Recordings open as recordings, wherever they come from**, framed on a wallpaper with their own timeline, from the start screen as from the capture bar.
+- **Gradient stops you can drag.** A linear or radial gradient's colours sit on a bar under it: drag one, or nudge it with ← and →.
+- **Templates show what they look like** before you've added a screenshot, with a sample app; starting designs are all the store's portrait shape.
+- **The capture bar moves.** Drag its grip (or any gap) and it opens where you left it next time. In Record mode its button is red; Save to and Open say what they do.
+- **A camera panel that matches**, Discard on the recording pill asks first ("Discard?"), and the panel after a capture says where it went ("in Screenshots") and labels Copy and Save to….
+- **A shutter** when a screenshot is taken: macOS's own sound, quiet when sound effects are off (or with Shutter sound off in the bar's ⋯ menu).
+- **Five vivid gradients**: orchid, tangerine, lagoon, cobalt and fern, in Backgrounds › Looks.
+- **For agents, one command.** `Screenshotter mcp` is the app's own MCP server, so adding it to Claude Code, Codex or OpenCode is one line with nothing else to install.
+
+### Fixes
+- Captures of Screenshotter's own window aren't black any more.
+- Dropdowns, menus and notices are solid: what's behind them no longer shows through. Menus from the top bar and the timeline open above the design, not under it.
+- Escape closes Help and Settings.
+- New text and stickers land in free space (or on the phone's corner), never on the headline.
+- The Font menu shows the font a design uses; a narrow timeline fits its header; labels, sizes and zoom levels aren't cut short; the start screen's buttons fit the app's window.
+- Frame style stays at the top of a device's settings when you choose Device.
+- Exported set files are numbered (01.png, 02.png), with a screen's own name only when you gave it one.
+- The panel after a capture opens at its full size.
+- With Reduce motion on, nothing keeps animating; switches and checkboxes can be reached with the keyboard.
+
 ## 0.12.0 · 23 October 2026
 
 ### Highlights
