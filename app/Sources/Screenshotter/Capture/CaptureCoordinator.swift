@@ -242,7 +242,7 @@ import Combine
                 }
                 let hud = newHUD(on: region.screen)
                 hud.ready(file: url, image: NSImage(cgImage: image, size: .zero), title: files.destination == .clipboard ? "Screenshot copied" : "Screenshot saved",
-                          detail: "\(image.width) × \(image.height) · \(files.placeName)", isVideo: false)
+                          detail: "\(image.width) × \(image.height) · \(files.placeName(video: false))", isVideo: false)
             } catch {
                 fail("Couldn't take the screenshot", error)
             }
@@ -454,7 +454,7 @@ import Combine
                 }
                 let length = String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
                 hud.ready(file: rec.output, image: poster.map { NSImage(cgImage: $0, size: .zero) }, title: "Recording saved · \(length)",
-                          detail: "\(cameraURL != nil ? "With your camera · " : "")\(rec.files.placeName)", isVideo: true)
+                          detail: "\(cameraURL != nil ? "With your camera · " : "")\(rec.files.placeName(video: true))", isVideo: true)
             } catch {
                 hud.failed(error.localizedDescription)
             }

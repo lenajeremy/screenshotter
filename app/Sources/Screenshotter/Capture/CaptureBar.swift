@@ -57,9 +57,11 @@ struct CaptureBarActions {
 
 private let lime = Color(red: 0.82, green: 1, blue: 0.3)
 private let ink = Color(red: 0.09, green: 0.11, blue: 0.02)
+private let recordRed = Color(red: 0.94, green: 0.23, blue: 0.21)
 
-/// Icons, not words: each says what it is when you point at it. The camera and microphone pick
-/// from a small menu; the options (⋯) come last.
+/// Icons, mostly: each says what it is when you point at it, and the two that can't say it in a
+/// picture (where captures go, and opening the app) carry a word too. The camera and microphone
+/// pick from a small menu; the options (⋯) come last.
 struct CaptureBarView: View {
     @ObservedObject var model: CaptureModel
     let actions: CaptureBarActions
@@ -91,26 +93,32 @@ struct CaptureBarView: View {
             }
             line
             SaveToMenu(model: model, chooseFolder: actions.chooseFolder)
+            // Named as well as drawn: an arrow out of a square doesn't say "the app" at a glance.
             Button(action: actions.openStudio) {
-                Image(systemName: "arrow.up.forward.app").font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .frame(width: 32, height: 32)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06)))
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up.forward.app").font(.system(size: 13, weight: .semibold))
+                    Text("Open").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white.opacity(0.8))
+                .padding(.horizontal, 9).frame(height: 32)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06)))
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Open Screenshotter, to design with your captures")
             .accessibilityLabel("Open Screenshotter")
+            // Lime takes the picture; recording gets a red button of its own, the colour every
+            // record button is, rather than a red dot on the screenshot's lime.
             Button(action: actions.capture) {
                 Group {
                     if model.mode == .record {
-                        Circle().fill(Color(red: 0.95, green: 0.2, blue: 0.2)).frame(width: 13, height: 13)
-                            .overlay(Circle().strokeBorder(ink.opacity(0.25), lineWidth: 1))
+                        Circle().fill(Color.white).frame(width: 12, height: 12)
                     } else {
                         Image(systemName: "camera.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(ink)
                     }
                 }
                 .frame(width: 48, height: 32)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(lime))
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(model.mode == .record ? recordRed : lime))
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
@@ -198,7 +206,7 @@ struct SaveToMenu: View {
             Divider()
             Button("Choose Folder…", action: chooseFolder)
         } label: {
-            ChevronIcon(symbol: symbol, tint: .white.opacity(0.8), lit: false)
+            ChevronIcon(symbol: symbol, title: shortName, tint: .white.opacity(0.8), lit: false)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -208,6 +216,12 @@ struct SaveToMenu: View {
         .accessibilityLabel("Save to \(model.destinationName)")
     }
 
+    /// The destination's name, kept short so a long folder name doesn't stretch the bar.
+    private var shortName: String {
+        let name = model.destinationName
+        return name.count > 14 ? name.prefix(13).trimmingCharacters(in: .whitespaces) + "…" : name
+    }
+
     private func choice(_ title: String, _ icon: String, _ d: CaptureModel.Destination) -> some View {
         Button { model.destination = d } label: {
             if model.destination == d { Label(title, systemImage: "checkmark") } else { Label(title, systemImage: icon) }
@@ -215,15 +229,20 @@ struct SaveToMenu: View {
     }
 }
 
-/// An icon with a small arrow beside it: a button that opens a menu.
+/// An icon with a small arrow beside it (and, with `title`, a word between): a button that opens a menu.
 private struct ChevronIcon: View {
     let symbol: String
+    var title: String?
     let tint: Color
     let lit: Bool
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
+            if let title {
+                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(tint).lineLimit(1)
+                    .padding(.leading, 2).padding(.trailing, 1)
+            }
             Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.white.opacity(0.4))
         }
         .padding(.horizontal, 8).frame(height: 32)

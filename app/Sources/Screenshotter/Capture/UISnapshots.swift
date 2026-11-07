@@ -29,12 +29,22 @@ import SwiftUI
         pill.small = true
         save(RecordingPillView(state: pill, onPause: {}, onStop: {}, onDiscard: {}, setSmall: { _ in }), "3b-recording-pill-small", folder)
 
+        // Discard pressed once: the pill asks before throwing the recording away.
+        pill.small = false
+        pill.confirmingDiscard = true
+        save(RecordingPillView(state: pill, onPause: {}, onStop: {}, onDiscard: {}, setSmall: { _ in }), "3c-recording-pill-discard", folder)
+        pill.camera = false
+        pill.confirmingDiscard = false
+        save(RecordingPillView(state: pill, onPause: {}, onStop: {}, onDiscard: {}, setSmall: { _ in }), "3d-recording-pill-no-camera", folder)
+
+        // Where they went, worded as the coordinator words it.
+        let library = CaptureFiles(library: URL(fileURLWithPath: "/tmp"))
         let image = sample.flatMap { NSImage(contentsOf: $0) }
         let actions = CaptureHUD.Actions(edit: { _ in }, copy: { _ in }, saveAs: { _ in }, reveal: { _ in }, delete: { _ in })
         let shot = CaptureHUD.State()
         shot.image = image
         shot.title = "Screenshot saved"
-        shot.detail = "2560 × 1600 · in Screenshotter › raw"
+        shot.detail = "2560 × 1600 · \(library.placeName(video: false))"
         shot.file = URL(fileURLWithPath: "/tmp/x.png")
         shot.working = false
         save(CaptureHUDView(state: shot, actions: actions, close: {}, hover: { _ in }), "4-after-screenshot", folder)
@@ -42,11 +52,21 @@ import SwiftUI
         let rec = CaptureHUD.State()
         rec.image = image
         rec.title = "Recording saved · 0:42"
-        rec.detail = "With your camera · in Screenshotter › recordings"
+        rec.detail = "With your camera · \(library.placeName(video: true))"
         rec.file = URL(fileURLWithPath: "/tmp/x.mp4")
         rec.working = false
         rec.isVideo = true
         save(CaptureHUDView(state: rec, actions: actions, close: {}, hover: { _ in }), "5-after-recording", folder)
+
+        // Saved to a folder with a long name: the line wraps rather than being cut off.
+        let folderRec = CaptureHUD.State()
+        folderRec.image = image
+        folderRec.title = "Recording saved · 12:05"
+        folderRec.detail = "With your camera · \(CaptureFiles(library: library.library, destination: .folder, folder: "/Users/me/Movies/Client launch videos 2026").placeName(video: true))"
+        folderRec.file = URL(fileURLWithPath: "/tmp/x.mp4")
+        folderRec.working = false
+        folderRec.isVideo = true
+        save(CaptureHUDView(state: folderRec, actions: actions, close: {}, hover: { _ in }), "5d-after-recording-folder", folder)
 
         let saving = CaptureHUD.State()
         saving.title = "Saving your recording…"
@@ -71,7 +91,12 @@ import SwiftUI
         save(CaptureBarView(model: model, actions: noop), "7-bar-save-to-desktop", folder)
         model.bubbleShape = .rounded
         model.bubbleAspect = .landscape
-        save(BubbleStyleView(model: model).background(Color(white: 0.16)), "8-camera-style", folder)
+        let spot = BubbleStylePanel.Spot()
+        spot.corner = .bottomLeft
+        save(BubbleStyleView(model: model, spot: spot), "8-camera-style", folder)
+        model.bubbleShape = .circle
+        spot.corner = nil
+        save(BubbleStyleView(model: model, spot: spot), "8b-camera-style-circle", folder)
 
         // The area picker over a screen, mid-drag.
         let screen = NSScreen.main ?? NSScreen.screens[0]

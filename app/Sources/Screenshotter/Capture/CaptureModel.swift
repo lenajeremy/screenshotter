@@ -180,10 +180,11 @@ struct CaptureFiles {
         return url
     }
 
-    /// Where the HUD says it went.
-    var placeName: String {
+    /// Where the HUD says it went. The library's by the name the Studio lists it under
+    /// (Screenshots or Recordings), never its folder's.
+    func placeName(video: Bool) -> String {
         switch destination {
-        case .library: return "in Screenshotter"
+        case .library: return video ? "in Recordings" : "in Screenshots"
         case .desktop: return "on your Desktop"
         case .clipboard: return "on the clipboard"
         case .folder: return "in \(URL(fileURLWithPath: folder).lastPathComponent)"

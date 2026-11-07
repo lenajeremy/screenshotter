@@ -60,12 +60,16 @@ import SwiftUI
         watch = nil
     }
 
-    /// Size, outline, mirror and rim from the model, keeping the bubble's centre where it is.
+    /// Size, outline, mirror and rim from the model, keeping the bubble's centre where it is (or,
+    /// sitting in a corner, keeping it in that corner).
     private func apply() {
         let size = model.bubbleFrameSize
         let c = CGPoint(x: frame.midX, y: frame.midY)
         if abs(frame.width - size.width) > 0.5 || abs(frame.height - size.height) > 0.5 {
-            setFrame(CGRect(x: c.x - size.width / 2, y: c.y - size.height / 2, width: size.width, height: size.height), display: true)
+            var f = CGRect(x: c.x - size.width / 2, y: c.y - size.height / 2, width: size.width, height: size.height)
+            if let corner { f.origin = origin(in: corner, size: size) }
+            setFrame(f, display: true)
+            stylePanel?.spot.corner = corner
         }
         let bounds = CGRect(origin: .zero, size: size)
         container.frame = bounds
@@ -93,6 +97,7 @@ import SwiftUI
             self?.stylePanel?.place(beside: self?.frame ?? .zero)
         })
         stylePanel = panel
+        panel.spot.corner = corner
         panel.place(beside: frame)
         panel.orderFrontRegardless()
         panel.watchOutside()
@@ -100,6 +105,7 @@ import SwiftUI
 
     override func setFrameOrigin(_ point: NSPoint) {
         super.setFrameOrigin(point)
+        stylePanel?.spot.corner = corner
         if let stylePanel, stylePanel.isVisible { stylePanel.place(beside: frame) }
     }
 
@@ -107,11 +113,24 @@ import SwiftUI
 
     /// Into a corner of what's being recorded (before recording, of its screen).
     func move(to corner: Corner) {
+        setFrameOrigin(origin(in: corner, size: frame.size))
+    }
+
+    /// Where a bubble of `size` sits in `corner`: a little in from it.
+    private func origin(in corner: Corner, size: CGSize) -> CGPoint {
         let box = area ?? (screen ?? NSScreen.main)?.visibleFrame ?? frame
         let inset: CGFloat = 28
-        let x = corner == .topLeft || corner == .bottomLeft ? box.minX + inset : box.maxX - inset - frame.width
-        let y = corner == .bottomLeft || corner == .bottomRight ? box.minY + inset : box.maxY - inset - frame.height
-        setFrameOrigin(CGPoint(x: x, y: y))
+        let x = corner == .topLeft || corner == .bottomLeft ? box.minX + inset : box.maxX - inset - size.width
+        let y = corner == .bottomLeft || corner == .bottomRight ? box.minY + inset : box.maxY - inset - size.height
+        return CGPoint(x: x, y: y)
+    }
+
+    /// The corner it's sitting in, if it's where `move(to:)` leaves it (the style panel lights it).
+    private var corner: Corner? {
+        Corner.allCases.first { c in
+            let o = origin(in: c, size: frame.size)
+            return abs(o.x - frame.minX) < 2 && abs(o.y - frame.minY) < 2
+        }
     }
 
     /// As a recording starts: if it's off what's recorded, into its bottom left corner, so what you
@@ -142,6 +161,9 @@ import SwiftUI
 /// Screenshotter the active app (which would pull you out of a full-screen app mid-recording).
 /// A click anywhere else closes it.
 @MainActor final class BubbleStylePanel: NSPanel {
+    /// The corner the bubble's in, if any.
+    final class Spot: ObservableObject { @Published var corner: CameraBubble.Corner? }
+    let spot = Spot()
     private var outside: Any?
 
     init(model: CaptureModel, onCorner: @escaping (CameraBubble.Corner) -> Void) {
@@ -154,10 +176,7 @@ import SwiftUI
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let host = FirstClickHostingView(rootView: BubbleStyleView(model: model, onCorner: onCorner)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(white: 0.12).opacity(0.97)))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
-            .environment(\.colorScheme, .dark))
+        let host = FirstClickHostingView(rootView: BubbleStyleView(model: model, spot: spot, onCorner: onCorner))
         host.sizingOptions = [.intrinsicContentSize]
         contentView = host
     }
@@ -251,81 +270,223 @@ struct BubbleButton: View {
     }
 }
 
-/// The bubble's look: shape, roundness, proportions, size, mirror and rim.
+private let lime = Color(red: 0.82, green: 1, blue: 0.3)
+private let ink = Color(red: 0.09, green: 0.11, blue: 0.02)
+
+/// The bubble's look: where it sits, shape, roundness, proportions, size, mirror and rim. Drawn
+/// like the other HUDs (the after-capture panel, the pill), with controls of its own: native ones
+/// go grey in a panel that's never the active window, as this one never is.
 struct BubbleStyleView: View {
     @ObservedObject var model: CaptureModel
+    @ObservedObject var spot: BubbleStylePanel.Spot
     var onCorner: (CameraBubble.Corner) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Camera").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
-                Spacer()
-                // Straight into a corner (or drag it anywhere).
-                HStack(spacing: 4) {
-                    ForEach([CameraBubble.Corner.topLeft, .topRight, .bottomLeft, .bottomRight], id: \.self) { c in
-                        Button { onCorner(c) } label: { CornerGlyph(corner: c) }
-                            .buttonStyle(.plain)
-                            .help("Move to the \(c == .topLeft ? "top left" : c == .topRight ? "top right" : c == .bottomLeft ? "bottom left" : "bottom right") corner")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Camera").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                Text("Drag it anywhere, or pick a corner.").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+            }
+            row("Corner") {
+                HStack(spacing: 6) {
+                    ForEach(CameraBubble.Corner.allCases, id: \.self) { c in
+                        CornerButton(corner: c, on: spot.corner == c) { onCorner(c) }
                     }
                 }
             }
-            Picker("Shape", selection: $model.bubbleShape) {
-                Text("Circle").tag(CaptureModel.Shape.circle)
-                Text("Rounded").tag(CaptureModel.Shape.rounded)
-                Text("Square").tag(CaptureModel.Shape.square)
+            row("Shape") {
+                HUDPicker(selection: $model.bubbleShape, items: [(.circle, "Circle"), (.rounded, "Rounded"), (.square, "Square")])
             }
-            .pickerStyle(.segmented)
             if model.bubbleShape == .rounded {
-                HStack {
-                    Text("Roundness").frame(width: 72, alignment: .leading)
-                    Slider(value: $model.bubbleRoundness, in: 0.04...0.5)
-                }
+                row("Roundness") { HUDSlider(value: $model.bubbleRoundness, range: 0.04...0.5, label: "Roundness") }
             }
             if model.bubbleShape != .circle {
-                Picker("Proportions", selection: $model.bubbleAspect) {
-                    Text("1:1").tag(CaptureModel.Aspect.square)
-                    Text("4:3").tag(CaptureModel.Aspect.landscape)
-                    Text("3:4").tag(CaptureModel.Aspect.portrait)
+                row("Proportions") {
+                    HUDPicker(selection: $model.bubbleAspect, items: [(.square, "1:1"), (.landscape, "4:3"), (.portrait, "3:4")])
                 }
-                .pickerStyle(.segmented)
             }
-            HStack {
-                Text("Size").frame(width: 72, alignment: .leading)
-                Slider(value: $model.bubbleSize, in: 110...440)
-            }
-            Toggle("Mirror me", isOn: $model.bubbleMirrored)
-            Toggle("White border", isOn: $model.bubbleBorder)
+            row("Size") { HUDSlider(value: $model.bubbleSize, range: 110...440, label: "Size") }
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            Toggle("Mirror", isOn: $model.bubbleMirrored).toggleStyle(HUDSwitch())
+            Toggle("White border", isOn: $model.bubbleBorder).toggleStyle(HUDSwitch())
         }
         .font(.system(size: 12))
+        .foregroundStyle(.white.opacity(0.85))
         .padding(14)
-        .frame(width: 260)
+        .frame(width: 280)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.97)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func row<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Text(title).frame(width: 78, alignment: .leading)
+            content().frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: 24)
     }
 }
 
-/// A small screen with a dot in one corner.
-struct CornerGlyph: View {
+/// A small screen with the bubble in one of its corners; lime when that's where the bubble is.
+struct CornerButton: View {
     let corner: CameraBubble.Corner
-    var body: some View {
-        ZStack(alignment: corner == .topLeft ? .topLeading : corner == .topRight ? .topTrailing : corner == .bottomLeft ? .bottomLeading : .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 3).strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.2)
-            Circle().fill(Color.primary).frame(width: 6, height: 6).padding(3)
+    let on: Bool
+    let action: () -> Void
+    @State private var hover = false
+
+    private var name: String {
+        switch corner {
+        case .topLeft: return "top left"
+        case .topRight: return "top right"
+        case .bottomLeft: return "bottom left"
+        case .bottomRight: return "bottom right"
         }
-        .frame(width: 24, height: 17)
-        .contentShape(Rectangle())
+    }
+
+    var body: some View {
+        let screen = RoundedRectangle(cornerRadius: 5, style: .continuous)
+        let alignment: Alignment = corner == .topLeft ? .topLeading : corner == .topRight ? .topTrailing : corner == .bottomLeft ? .bottomLeading : .bottomTrailing
+        Button(action: action) {
+            ZStack(alignment: alignment) {
+                screen.fill(on ? lime.opacity(0.14) : Color.white.opacity(hover ? 0.1 : 0.05))
+                screen.strokeBorder(on ? lime : Color.white.opacity(hover ? 0.45 : 0.22), lineWidth: 1.2)
+                Circle().fill(on ? lime : Color.white.opacity(hover ? 0.95 : 0.7)).frame(width: 7, height: 7).padding(4)
+            }
+            .frame(width: 34, height: 23)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(on ? "In the \(name) corner" : "Move to the \(name) corner")
+        .accessibilityLabel("\(name.prefix(1).uppercased() + name.dropFirst()) corner")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// Choices in a row, drawn as the capture bar draws its own (the chosen one lit), with words.
+struct HUDPicker<T: Hashable>: View {
+    @Binding var selection: T
+    let items: [(T, String)]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.0) { item in
+                let on = item.0 == selection
+                Button { selection = item.0 } label: {
+                    Text(item.1).font(.system(size: 11.5, weight: on ? .semibold : .medium))
+                        .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
+                        .frame(maxWidth: .infinity).frame(height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? Color.white.opacity(0.15) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.05)))
+    }
+}
+
+/// A slider: a lime track filled up to a white knob. Drag or click anywhere along it.
+struct HUDSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let label: String
+    private let knob: CGFloat = 14
+
+    private var share: Double { min(max((value - range.lowerBound) / (range.upperBound - range.lowerBound), 0), 1) }
+
+    var body: some View {
+        GeometryReader { g in
+            let x = knob / 2 + CGFloat(share) * (g.size.width - knob)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.14)).frame(height: 4)
+                Capsule().fill(lime).frame(width: x, height: 4)
+                Circle().fill(Color.white).frame(width: knob, height: knob)
+                    .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
+                    .offset(x: x - knob / 2)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                let t = min(max((drag.location.x - knob / 2) / max(1, g.size.width - knob), 0), 1)
+                value = range.lowerBound + Double(t) * (range.upperBound - range.lowerBound)
+            })
+        }
+        .frame(height: 20)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue("\(Int((share * 100).rounded())) percent")
+        .accessibilityAdjustableAction { direction in
+            let step = (range.upperBound - range.lowerBound) / 20
+            switch direction {
+            case .increment: value = min(range.upperBound, value + step)
+            case .decrement: value = max(range.lowerBound, value - step)
+            @unknown default: break
+            }
+        }
+    }
+}
+
+/// An on/off switch with its label before it: lime when on.
+struct HUDSwitch: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack {
+                configuration.label
+                Spacer(minLength: 8)
+                ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                    Capsule().fill(configuration.isOn ? lime : Color.white.opacity(0.16))
+                    Circle().fill(configuration.isOn ? ink : Color.white).frame(width: 14, height: 14).padding(2)
+                        .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                }
+                .frame(width: 32, height: 18)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.15), value: configuration.isOn)
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
     }
 }
 
 /// While recording: a small bar with the time, pause, stop and discard. Screenshotter's own windows
 /// are never in the recording, so it can sit anywhere.
 @MainActor final class RecordingPill: NSPanel {
-    final class State: ObservableObject {
+    @MainActor final class State: ObservableObject {
         @Published var elapsed: TimeInterval = 0
         @Published var paused = false
         /// Shrunk to a dot and the time, out of the way.
         @Published var small = false
         /// The recording has the camera on (the pill offers to turn it off).
         @Published var camera = false
+        /// Discard was pressed once: it asks "Discard?" for a few seconds, and only a second press
+        /// throws the recording away (an alert mid-recording would get in the way of what's recorded).
+        @Published var confirmingDiscard = false
+        private var armedAt: Date?
+
+        /// The first press: ask, and stop asking after a while.
+        func askToDiscard() {
+            let at = Date()
+            armedAt = at
+            confirmingDiscard = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self, self.armedAt == at else { return }
+                self.cancelDiscard()
+            }
+        }
+
+        /// The second press counts only once the question has been up a moment, so a double
+        /// click on the bin doesn't answer it for you.
+        var discardConfirmable: Bool { confirmingDiscard && (armedAt.map { Date().timeIntervalSince($0) > 0.4 } ?? false) }
+
+        func cancelDiscard() {
+            armedAt = nil
+            confirmingDiscard = false
+        }
     }
     let state = State()
     private var timer: Timer?
@@ -334,7 +495,7 @@ struct CornerGlyph: View {
     private var pausedAt: Date?
     /// Where it was last left (its top centre), for the next recording.
     private static var spot: CGPoint?
-    static let fullSize = CGSize(width: 268, height: 48)
+    static let fullSize = CGSize(width: 270, height: 48)
     static let fullSizeWithCamera = CGSize(width: 306, height: 48)
     private var full: CGSize { state.camera ? RecordingPill.fullSizeWithCamera : RecordingPill.fullSize }
     static let smallSize = CGSize(width: 86, height: 32)
@@ -368,6 +529,7 @@ struct CornerGlyph: View {
     func setSmall(_ small: Bool) {
         let size = small ? RecordingPill.smallSize : full
         let top = CGPoint(x: frame.midX, y: frame.maxY)
+        state.cancelDiscard()
         state.small = small
         setFrame(CGRect(x: top.x - size.width / 2, y: top.y - size.height, width: size.width, height: size.height), display: true, animate: false)
         invalidateShadow()
@@ -425,24 +587,42 @@ struct RecordingPillView: View {
                 .background(Capsule().fill(Color(white: 0.09).opacity(0.94)))
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.1)))
             } else {
-                HStack(spacing: 8) {
-                    // The grip: drag the pill anywhere.
-                    ZStack {
-                        Image(systemName: "line.3.horizontal").font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.35)).rotationEffect(.degrees(90))
-                        WindowGrip()
+                HStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        // The grip: drag the pill anywhere.
+                        ZStack {
+                            Image(systemName: "line.3.horizontal").font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.35)).rotationEffect(.degrees(90))
+                            WindowGrip()
+                        }
+                        .frame(width: 14, height: 30)
+                        .help("Drag to move")
+                        dot
+                        Text(clock(state.elapsed)).font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+                            .frame(width: 46, alignment: .leading)
                     }
-                    .frame(width: 14, height: 30)
-                    .help("Drag to move")
-                    dot
-                    Text(clock(state.elapsed)).font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
-                        .frame(width: 46, alignment: .leading)
-                    Spacer(minLength: 0)
-                    PillButton(symbol: state.paused ? "play.fill" : "pause.fill", help: state.paused ? "Resume" : "Pause", action: onPause)
-                    PillButton(symbol: "stop.fill", help: "Stop", tint: .red, action: onStop)
-                    if state.camera { PillButton(symbol: "video.slash.fill", help: "Turn the camera off (your voice carries on)", action: onCameraOff) }
-                    PillButton(symbol: "trash", help: "Discard this recording", action: onDiscard)
-                    PillButton(symbol: "minus", help: "Shrink to a dot", action: { setSmall(true) })
+                    Spacer(minLength: 4)
+                    HStack(spacing: 6) {
+                        PillButton(symbol: state.paused ? "play.fill" : "pause.fill", help: state.paused ? "Resume" : "Pause", action: onPause)
+                        PillButton(symbol: "stop.fill", help: "Stop", tint: .red, action: onStop)
+                    }
+                    // Discard sits at the far end, past a line and the camera and shrink buttons,
+                    // so reaching for Stop can't land on it; asking, it takes their room.
+                    line
+                    if !state.confirmingDiscard {
+                        HStack(spacing: 6) {
+                            if state.camera { PillButton(symbol: "video.slash.fill", help: "Turn the camera off (your voice carries on)", action: onCameraOff) }
+                            PillButton(symbol: "minus", help: "Shrink to a dot", action: { setSmall(true) })
+                        }
+                        line
+                    }
+                    DiscardButton(asking: state.confirmingDiscard) {
+                        if !state.confirmingDiscard { state.askToDiscard() } else if state.discardConfirmable {
+                            state.cancelDiscard()
+                            onDiscard()
+                        }
+                    }
                 }
+                .animation(.easeOut(duration: 0.15), value: state.confirmingDiscard)
                 .padding(.leading, 8)
                 .padding(.trailing, 9)
                 .frame(width: state.camera ? RecordingPill.fullSizeWithCamera.width : RecordingPill.fullSize.width, height: RecordingPill.fullSize.height)
@@ -456,6 +636,8 @@ struct RecordingPillView: View {
         Circle().fill(state.paused ? Color.orange : Color.red).frame(width: 9, height: 9)
             .opacity(state.paused ? 1 : (Int(state.elapsed * 2) % 2 == 0 ? 1 : 0.35))
     }
+
+    private var line: some View { Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 18).padding(.horizontal, 8) }
 
     private func clock(_ t: TimeInterval) -> String {
         let s = max(0, Int(t))
@@ -502,6 +684,38 @@ struct PillButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
+        .onHover { hover = $0 }
+    }
+}
+
+/// The bin, which asks first: pressed once it widens (from its right edge, so it's still under
+/// the pointer) into a red "Discard?", and a second press throws the recording away.
+struct DiscardButton: View {
+    let asking: Bool
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if asking {
+                    Text("Discard?").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 12).frame(height: 30)
+                        .background(Capsule().fill(Color(red: 0.86, green: 0.2, blue: 0.19).opacity(hover ? 1 : 0.9)))
+                } else {
+                    Image(systemName: "trash").font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(hover ? Color(red: 1, green: 0.45, blue: 0.42) : .white)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.white.opacity(hover ? 0.16 : 0.08)))
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(asking ? "Click again to throw this recording away" : "Discard this recording")
+        .accessibilityLabel(asking ? "Confirm discarding this recording" : "Discard this recording")
         .onHover { hover = $0 }
     }
 }

@@ -33,7 +33,7 @@ import SwiftUI
 
     init(on screen: NSScreen, actions: Actions) {
         home = screen
-        super.init(contentRect: CGRect(x: 0, y: 0, width: 300, height: 260), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        super.init(contentRect: CGRect(x: 0, y: 0, width: 320, height: 260), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -135,7 +135,8 @@ private let lime = Color(red: 0.82, green: 1, blue: 0.3)
 private let ink = Color(red: 0.09, green: 0.11, blue: 0.02)
 
 /// What was captured and where it went, with a close button; the capture; then Edit and the
-/// smaller things to do with it, as icons.
+/// smaller things to do with it. Copy and Save to… are named (their icons alone don't say what
+/// they do); Show in Finder and Delete are the folder and the bin everyone knows.
 struct CaptureHUDView: View {
     @ObservedObject var state: CaptureHUD.State
     let actions: CaptureHUD.Actions
@@ -159,15 +160,16 @@ struct CaptureHUDView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).help("Edit in Screenshotter")
-                    HUDButton(symbol: "doc.on.doc", title: "Copy", done: "Copied") { actions.copy(file) }
-                    HUDButton(symbol: "square.and.arrow.down", title: "Save to…") { actions.saveAs(file) }
+                    HUDButton(symbol: "doc.on.doc", title: "Copy", done: "Copied", labelled: true) { actions.copy(file) }
+                    HUDButton(symbol: "square.and.arrow.down", title: "Save to…", labelled: true) { actions.saveAs(file) }
                     HUDButton(symbol: "folder", title: "Show in Finder") { actions.reveal(file) }
                     HUDButton(symbol: "trash", title: "Delete", danger: true) { actions.delete(file) }
                 }
             }
         }
         .padding(12)
-        .frame(width: 300)
+        // Wide enough for Copy and Save to… to carry their names beside a full-size Edit.
+        .frame(width: 320)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.97)))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
         .onHover(perform: hover)
@@ -185,8 +187,10 @@ struct CaptureHUDView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(state.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
                 if !state.detail.isEmpty {
+                    // Two lines rather than cut off, for a long folder name.
                     Text(state.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(state.failed ? 3 : 1)
+                        .lineLimit(state.failed ? 3 : 2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 4)
@@ -194,21 +198,36 @@ struct CaptureHUDView: View {
         }
     }
 
+    /// The capture at its own shape: as wide as the panel, or as tall as it may be for a tall
+    /// one, with no box around it to leave empty.
     @ViewBuilder private var thumb: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        ZStack {
-            shape.fill(Color.white.opacity(0.05))
-            if let image = state.image {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).clipShape(shape)
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if let image = state.image {
+            let size = CaptureHUDView.thumbSize(for: image.size)
+            ZStack {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    .frame(width: size.width, height: size.height).clipShape(shape)
+                // A hairline, so a dark capture doesn't melt into the dark panel.
+                shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
                 if state.isVideo {
                     Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white)
                         .frame(width: 34, height: 34).background(Circle().fill(Color.black.opacity(0.5)))
                 }
             }
+            .frame(width: size.width, height: size.height)
+            .frame(maxWidth: .infinity)
+            .onDrag { state.file.map { NSItemProvider(contentsOf: $0) ?? NSItemProvider() } ?? NSItemProvider() }
+            .help("Drag it into Finder, Slack, Figma…")
         }
-        .frame(width: 276, height: 156)
-        .onDrag { state.file.map { NSItemProvider(contentsOf: $0) ?? NSItemProvider() } ?? NSItemProvider() }
-        .help("Drag it into Finder, Slack, Figma…")
+    }
+
+    static let thumbBox = CGSize(width: 296, height: 184)
+
+    /// Fits `image` in `thumbBox`, keeping its proportions; never so thin it can't be grabbed.
+    static func thumbSize(for image: CGSize) -> CGSize {
+        guard image.width > 0, image.height > 0 else { return CGSize(width: thumbBox.width, height: 156) }
+        let scale = min(thumbBox.width / image.width, thumbBox.height / image.height)
+        return CGSize(width: max(48, (image.width * scale).rounded()), height: max(48, (image.height * scale).rounded()))
     }
 }
 
@@ -231,12 +250,14 @@ private struct CloseButton: View {
     }
 }
 
-/// One of the smaller actions, as an icon with its name in the tooltip. With `done`, it shows a
-/// tick for a moment once pressed (Copy has nothing else to show it worked).
+/// One of the smaller actions: an icon with its name in the tooltip, or (`labelled`) beside it.
+/// With `done`, it shows a tick for a moment once pressed, and says `done` when pointed at (Copy
+/// has nothing else to show it worked).
 struct HUDButton: View {
     let symbol: String
     let title: String
     var done: String?
+    var labelled = false
     var danger = false
     let action: () -> Void
     @State private var hover = false
@@ -249,13 +270,21 @@ struct HUDButton: View {
             didIt = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { didIt = false }
         } label: {
-            Image(systemName: didIt ? "checkmark" : symbol).font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(didIt ? lime : danger && hover ? Color(red: 1, green: 0.45, blue: 0.42) : .white.opacity(hover ? 1 : 0.8))
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(hover ? 0.13 : 0.06)))
-                .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                Image(systemName: didIt ? "checkmark" : symbol).font(.system(size: 12, weight: .semibold))
+                // The word stays put once pressed (the tick and the lime say it worked), so the
+                // buttons beside it don't shift.
+                if labelled { Text(title).font(.system(size: 11.5, weight: .medium)).lineLimit(1) }
+            }
+            .foregroundStyle(didIt ? lime : danger && hover ? Color(red: 1, green: 0.45, blue: 0.42) : .white.opacity(hover ? 1 : 0.8))
+            .padding(.horizontal, labelled ? 7 : 0)
+            .frame(minWidth: 30).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(hover ? 0.13 : 0.06)))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Its word in full: Edit beside it is the one that gives up the room.
+        .fixedSize(horizontal: labelled, vertical: false)
         .onHover { hover = $0 }
         .help(didIt ? done ?? title : title)
         .accessibilityLabel(title)
