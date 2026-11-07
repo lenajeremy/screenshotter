@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html, optionName } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, aiName, hasDesign, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, toast, touch, useStore, pictureUrl } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiName, clamp, hasDesign, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, toast, touch, useStore, pictureUrl } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import { openMenu } from "./menu.js";
 import {
@@ -445,13 +445,47 @@ function ColorBg() {
   const isGrad = Boolean(o.colors?.length) || o.type === "gradient" || o.type === "mesh" || o.type === "radial";
   const kind = o.type === "mesh" ? "mesh" : o.type === "radial" ? "radial" : isGrad ? "linear" : "solid";
   const colors = o.colors?.length ? o.colors : [o.color ?? "#1e1b4b", "#6d28d9", "#0ea5e9"];
+  // Solid and mesh take plain colours: a stop's position stays with linear and radial only.
+  const plainColors = colors.map((c) => String(c).trim().split(/\s+/)[0]);
   const setKind = (k) => {
-    if (k === "solid") setBackground({ type: "solid", color: colors[0] });
-    else if (k === "mesh") setBackground({ type: "mesh", colors: colors.length > 1 ? colors : [colors[0], "#6d28d9", "#0ea5e9"] });
+    if (k === "solid") setBackground({ type: "solid", color: plainColors[0] });
+    else if (k === "mesh") setBackground({ type: "mesh", colors: plainColors.length > 1 ? plainColors : [plainColors[0], "#6d28d9", "#0ea5e9"] });
     else if (k === "radial") setBackground({ type: "radial", colors: colors.length > 1 ? colors.slice(0, 2) : [colors[0], "#000000"] });
     else setBackground({ colors: colors.length > 1 ? colors : [colors[0], "#6d28d9"], angle: o.angle ?? 160 });
   };
   const preview = kind === "solid" ? colors[0] : kind === "radial" ? `radial-gradient(circle at 50% 40%, ${colors.join(", ")})` : `linear-gradient(${o.angle ?? 160}deg, ${colors.join(", ")})`;
+  // A stop is a colour with, maybe, where it sits ("#ff3b30 30%"); without one they're evenly spaced.
+  const stops = colors.map((c, i) => {
+    const [color, at] = String(c).trim().split(/\s+/);
+    const pos = parseFloat(at);
+    return { color, pos: Number.isFinite(pos) ? pos / 100 : colors.length > 1 ? i / (colors.length - 1) : 0 };
+  });
+  const setStops = (next, key) => edit((d) => {
+    const b = bgObj(d.background);
+    b.colors = next.map((x) => `${x.color} ${Math.round(x.pos * 100)}%`);
+    d.background = b;
+  }, key);
+  const bar = useRef();
+  const slide = (ev, i) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const r = bar.current.getBoundingClientRect();
+    const go = (e) => {
+      const pos = clamp((e.clientX - r.left) / r.width, 0, 1);
+      // A stop moves between its neighbours, so the order (and the list of colours) stays the same.
+      const lo = i > 0 ? stops[i - 1].pos + 0.01 : 0;
+      const hi = i < stops.length - 1 ? stops[i + 1].pos - 0.01 : 1;
+      stops[i] = { ...stops[i], pos: clamp(pos, lo, hi) };
+      setStops(stops, `bg.stop${i}`);
+    };
+    go(ev);
+    const up = () => {
+      window.removeEventListener("pointermove", go);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", go);
+    window.addEventListener("pointerup", up);
+  };
   const dial = useRef();
   const turn = (ev) => {
     ev.preventDefault();
@@ -471,15 +505,30 @@ function ColorBg() {
   return html`
     <${Seg} value=${kind} options=${[{ value: "solid", label: "Solid" }, { value: "linear", label: "Linear" }, { value: "radial", label: "Radial" }, { value: "mesh", label: "Mesh" }]} onChange=${setKind} />
     <div class="grad-preview" style=${{ background: preview }}></div>
+    ${(kind === "linear" || kind === "radial") &&
+    html`<div class="grad-bar" ref=${bar} title="Drag a stop to move where its colour sits" style=${{ background: `linear-gradient(90deg, ${colors.join(", ")})` }}>
+      ${stops.map((x, i) => html`<button class="grad-stop" key=${i} style=${{ left: x.pos * 100 + "%", background: x.color }} title=${`Stop ${i + 1} · ${Math.round(x.pos * 100)}%`} onPointerDown=${(e) => slide(e, i)}
+        onKeyDown=${(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          e.stopPropagation();
+          const lo = i > 0 ? stops[i - 1].pos + 0.01 : 0;
+          const hi = i < stops.length - 1 ? stops[i + 1].pos - 0.01 : 1;
+          stops[i] = { ...x, pos: clamp(x.pos + (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 0.1 : 0.01), lo, hi) };
+          setStops(stops, `bg.stop${i}`);
+        }}></button>`)}
+    </div>`}
     ${kind === "solid"
       ? html`<div class="swatches">${SOLIDS.map((c) => html`<button class="swatch ${colors[0] === c ? "on" : ""}" style=${{ background: c }} onClick=${() => setBackground({ type: "solid", color: c })}></button>`)}</div>
           <div class="row"><label>Colour</label><${ColorButton} value=${colors[0]} allowAuto=${false} onChange=${(c) => c && setBackground({ type: "solid", color: c }, "bg.color")} /></div>`
       : html`${colors.map(
           (c, i) => html`<div class="row"><label>${i === 0 && kind === "mesh" ? "Base" : `Stop ${i + 1}`}</label><div class="hstack">
-            <div class="grow"><${ColorButton} value=${c} allowAuto=${false} onChange=${(v) => v && edit((d) => {
+            <div class="grow"><${ColorButton} value=${stops[i].color} allowAuto=${false} onChange=${(v) => v && edit((d) => {
               const b = bgObj(d.background);
               b.colors = [...colors];
-              b.colors[i] = v;
+              // The colour changes; where it sits (if it was moved) stays.
+              const at = String(colors[i]).trim().split(/\s+/)[1];
+              b.colors[i] = at && kind !== "mesh" ? `${v} ${at}` : v;
               d.background = b;
             }, `bg.c${i}`)} /></div>
             ${colors.length > 2 && html`<button class="icon-btn sm" title="Remove stop" onClick=${() => edit((d) => {

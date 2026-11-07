@@ -24,6 +24,9 @@ export function parseColor(input: string | undefined): [number, number, number] 
   return named[s.toLowerCase()];
 }
 
+/** A gradient stop's colour, without the position it may carry ("#ff3b30 30%" → "#ff3b30"). */
+export const stopColor = (stop: string) => stop.trim().split(/\s+/)[0];
+
 export function luminance(color: string | undefined): number | undefined {
   const c = parseColor(color);
   if (!c) return undefined;
@@ -129,7 +132,7 @@ export function quickTone(input: BackgroundInput | undefined): "light" | "dark" 
   const { bg, source } = normalize(input);
   if (source) return source.tone;
   const colors = bg.colors ?? (bg.color ? [bg.color] : []);
-  const ls = colors.map((c) => luminance(c)).filter((l): l is number => l !== undefined);
+  const ls = colors.map((c) => luminance(stopColor(c))).filter((l): l is number => l !== undefined);
   if (!ls.length) return undefined;
   return ls.reduce((a, b) => a + b, 0) / ls.length > 0.42 ? "light" : "dark";
 }
@@ -305,7 +308,7 @@ export async function resolveBackground(
     return l === undefined ? fallback : l > 0.42 ? "light" : "dark";
   };
   const avg = (colors: string[]) => {
-    const ls = colors.map(luminance).filter((l): l is number => l !== undefined);
+    const ls = colors.map((c) => luminance(stopColor(c))).filter((l): l is number => l !== undefined);
     return ls.length ? ls.reduce((a, b) => a + b, 0) / ls.length : undefined;
   };
 
@@ -326,7 +329,7 @@ export async function resolveBackground(
         ...base,
         html: `<div class="bg" style="background:linear-gradient(${bg.angle ?? 160}deg, ${esc(colors.join(", "))})"></div>`,
         tone: look?.tone ?? (l !== undefined && l > 0.42 ? "light" : "dark"),
-        color: colors[0],
+        color: stopColor(colors[0]),
       };
     }
     case "radial": {
@@ -336,7 +339,7 @@ export async function resolveBackground(
         ...base,
         html: `<div class="bg" style="background:radial-gradient(circle at ${(bg.x ?? 0.5) * 100}% ${(bg.y ?? 0.3) * 100}%, ${esc(colors.join(", "))})"></div>`,
         tone: look?.tone ?? (l !== undefined && l > 0.42 ? "light" : "dark"),
-        color: colors[colors.length - 1].split(" ")[0],
+        color: stopColor(colors[colors.length - 1]),
       };
     }
     case "mesh": {

@@ -1625,3 +1625,7 @@ li.done .work-shot .scan { display: none; }
 /* Camera moves are short: their zoom ("1.8×") gets the whole bar, centred, cut cleanly rather than "1.". */
 .tl-bar.camera { padding: 0 3px; justify-content: center; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .tl-bar.camera span { text-overflow: clip; }
+/* A gradient's stops on a bar: drag one (or ← →) to move where its colour sits. */
+.grad-bar { position: relative; height: 14px; margin: 10px 8px 4px; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.grad-stop { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; padding: 0; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); cursor: ew-resize; }
+.grad-stop:focus-visible { outline: 2px solid var(--iris); outline-offset: 2px; }

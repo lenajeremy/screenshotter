@@ -31,7 +31,7 @@ export const BackgroundObjectSchema = z.object({
     .optional()
     .describe("Usually inferred: photo/unsplash/generate → photo, colors → gradient, color → solid."),
   color: z.string().optional(),
-  colors: z.array(z.string()).optional().describe("Gradient/mesh colours. For mesh the first is the base."),
+  colors: z.array(z.string()).optional().describe("Gradient/mesh colours. For mesh the first is the base. A linear or radial gradient's colour may carry where it sits: \"#ff3b30 30%\" (else they're evenly spaced)."),
   angle: z.number().optional().describe("Linear gradient angle, CSS degrees. Default 160."),
   x: z.number().optional().describe("Radial centre x (0–1)."),
   y: z.number().optional().describe("Radial centre y (0–1)."),
