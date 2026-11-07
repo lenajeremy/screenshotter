@@ -42,10 +42,14 @@ enum ScreenShot {
             let id = displayID(of: screen)
             guard let display = content.displays.first(where: { $0.displayID == id }) else { throw CaptureError.noDisplay }
             // Screenshotter itself, looked up among every app (not just those with a window showing
-            // now): leaving the app out keeps all its windows out, the pill and bubble that come later too.
+            // now): leaving the app out keeps its capture UI out, the pill and bubble that come later too.
+            // Its Studio window is put back: it's an app like any other, and people capture it too
+            // (left out, a capture of it came out black, or showed what was behind it).
             let everything = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let me = everything.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-            let filter = SCContentFilter(display: display, excludingApplications: me, exceptingWindows: [])
+            let studio = await MainActor.run { StudioWindow.visibleIDs() }
+            let keep = content.windows.filter { studio.contains($0.windowID) }
+            let filter = SCContentFilter(display: display, excludingApplications: me, exceptingWindows: keep)
             let scale = CGFloat(filter.pointPixelScale)
             if case .area(_, let rect) = region {
                 // AppKit's global coordinates → this display's points from its top left.

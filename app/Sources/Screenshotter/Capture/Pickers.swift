@@ -28,19 +28,21 @@ enum CaptureRegion {
     }
 }
 
-/// The on-screen windows of other apps, front to back, with their frames in AppKit coordinates.
+/// The on-screen windows of other apps (and Screenshotter's own Studio window, never its capture
+/// UI), front to back, with their frames in AppKit coordinates.
 struct OnScreenWindow {
     let id: CGWindowID
     let frame: CGRect
     let app: String
 
-    static func list() -> [OnScreenWindow] {
+    @MainActor static func list() -> [OnScreenWindow] {
         guard let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
         let me = ProcessInfo.processInfo.processIdentifier
+        let studio = StudioWindow.visibleIDs()
         return raw.compactMap { w in
             guard (w[kCGWindowLayer as String] as? Int) == 0,
-                  (w[kCGWindowOwnerPID as String] as? Int32) != me,
+                  (w[kCGWindowOwnerPID as String] as? Int32) != me || studio.contains(w[kCGWindowNumber as String] as? CGWindowID ?? 0),
                   (w[kCGWindowAlpha as String] as? Double ?? 1) > 0.05,
                   let id = w[kCGWindowNumber as String] as? CGWindowID,
                   let b = w[kCGWindowBounds as String] as? [String: CGFloat],

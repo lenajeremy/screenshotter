@@ -143,6 +143,12 @@ final class StudioWebView: WKWebView, NSDraggingSource {
 final class StudioWindow: NSWindow {
     static let topBarHeight: CGFloat = 52
 
+    /// The window numbers of the Studio windows showing now: captures keep these, and leave out
+    /// the rest of the app (the capture bar, pickers, pill, bubble and panels).
+    @MainActor static func visibleIDs() -> Set<CGWindowID> {
+        Set(NSApp.windows.compactMap { $0 is StudioWindow && $0.isVisible && $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
+    }
+
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 880),
                    styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
