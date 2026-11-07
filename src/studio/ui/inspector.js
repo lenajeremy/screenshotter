@@ -219,7 +219,7 @@ function DeviceInspector({ id }) {
       <div class="insp-hero ${d.video ? "rec" : ""}">
         <div class="pic"><img src=${thumbUrl(d.screenshot, 120)} /></div>
         <div class="meta"><b title=${base(d.video ?? d.screenshot)}>${base(d.video ?? d.screenshot)}</b>
-          <span>${d.video ? html`<${Icon} n="video" s=${11} />Recording · still at ${stillClock(d.screenshot)}` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} on canvas` : ""}</span></div>
+          <span>${d.video ? html`<${Icon} n="video" s=${11} />Recording · still at ${stillClock(d.screenshot)}` : e ? `${Math.round(e.width * (s.layout.canvas.width))} × ${Math.round(e.height * s.layout.canvas.height)} px` : ""}</span></div>
         ${d.video
           ? html`<div class="hero-actions">
               <button class="btn sm" title="Choose the moment of the recording this device shows in images" onClick=${() => openStills(id)}><${Icon} n="image" s=${13} />Pick the still</button>
@@ -311,11 +311,11 @@ function DeviceInspector({ id }) {
             const extent = v === undefined ? 0.4 : Math.round(v * 100) / 100;
             dev.fade = typeof dev.fade === "number" || !dev.fade ? extent : { ...dev.fade, extent };
           }, "fade")} /></div>`}
-        <div class="note">Blur a device to put it out of focus behind a sharp one. Fade dissolves one edge of it into the background${d.fade ? `: the ${typeof d.fade === "number" ? "bottom" : d.fade.edge ?? "bottom"} edge` : ""}.</div>
+        <div class="note">Blur puts it out of focus behind a sharp one; Fade dissolves an edge into the background${d.fade ? `: the ${typeof d.fade === "number" ? "bottom" : d.fade.edge ?? "bottom"} edge` : ""}.</div>
       <//>
 
       <${Section} title="Shadow">
-        <div class="chips">${SHADOWS.map((sh) => html`<button class="chip sm ${(typeof d.shadow === "string" ? d.shadow : d.shadow ? "custom" : "medium") === sh ? "on" : ""}" onClick=${() => upd((dev) => (dev.shadow = sh === "medium" ? undefined : sh))}>${optionName(sh)}</button>`)}</div>
+        <${Seg} value=${typeof d.shadow === "string" ? d.shadow : d.shadow ? "custom" : "medium"} options=${SHADOWS.map((sh) => ({ value: sh, label: optionName(sh) }))} onChange=${(sh) => upd((dev) => (dev.shadow = sh === "medium" ? undefined : sh))} />
       <//>
 
       <${Highlights} i=${i} d=${d} />
@@ -418,7 +418,7 @@ function Highlights({ i, d }) {
     html`<div class="note">Click text to highlight it:</div><div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => upd((dev) => {
       dev.highlights = [...(dev.highlights ?? []), { style: "lift", text: b.text }];
     })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`}
-    ${!hs.length && !ocr && html`<div class="note">Draw attention to one part of the screen: lift it out, magnify it, or dim everything else. Press <b>Find text</b> and click the words you want to call out. Call-outs show in Preview.</div>`}
+    ${!hs.length && !ocr && html`<div class="note">Lift out, magnify or spotlight part of the screen: press <b>Find text</b>, then click the words. They show in the finished look and exports.</div>`}
     ${hs.length > 0 && html`<button class="btn sm" onClick=${() => upd((dev) => (dev.highlights = [...(dev.highlights ?? []), { style: "lift" }]))}><${Icon} n="plus" s=${12} />Add another</button>`}
   <//>`;
 }
@@ -764,7 +764,7 @@ function ImageInspector({ id }) {
     <div class="panel-body">
       <div class="insp-hero">
         <div class="pic img-pic"><img src=${pictureUrl(b.src)} /></div>
-        <div class="meta"><b title=${base(b.src)}>${pictureName(b.src)}</b><span>${e ? `${Math.round(e.width * W0)} × ${Math.round(e.height * H0)} on canvas` : ""}</span></div>
+        <div class="meta"><b title=${base(b.src)}>${pictureName(b.src)}</b><span>${e ? `${Math.round(e.width * W0)} × ${Math.round(e.height * H0)} px` : ""}</span></div>
         <button class="btn sm" onClick=${() => set({ replacingImage: id, leftTab: "images", leftOpen: true })}>Replace</button>
       </div>
       <${Section} title="Shape">
@@ -856,7 +856,8 @@ function FrameSection() {
     <${Section} title="Look">
       <div class="row"><label>Padding</label><${Slider} value=${Math.max(0, (1 - (s.scene.devices[0]?.height ?? 1)) / 2)} min=${0} max=${0.25} step=${0.005} reset=${0} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => setFrame({ padding: v ?? 0 })} /></div>
       <div class="row"><label>Corners</label><${Slider} value=${s.scene.devices[0]?.radius ?? 0} min=${0} max=${0.12} step=${0.002} reset=${0} format=${(v) => (v ? Math.round(v * 1000) / 10 + "%" : "Square")} onChange=${(v) => setFrame({ radius: v ?? 0 })} /></div>
-      <div class="row"><label>Shadow</label><div class="chips">${["none", "soft", "medium", "strong"].map((sh) => html`<button class="chip sm ${(s.scene.devices[0]?.shadow ?? "none") === sh ? "on" : ""}" onClick=${() => setFrame({ shadow: sh })}>${sh[0].toUpperCase() + sh.slice(1)}</button>`)}</div></div>
+      <div class="lbl">Shadow</div>
+      <${Seg} value=${s.scene.devices[0]?.shadow ?? "none"} options=${["none", "soft", "medium", "strong"].map((sh) => ({ value: sh, label: optionName(sh) }))} onChange=${(sh) => setFrame({ shadow: sh })} />
       <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
         <span class="sw" style=${{ background: still ? `${still} center / cover, var(--check)` : "var(--check)" }}></span>
         <span class="grow"><b style=${{ display: "block" }}>Background</b><span class="note">${(s.scene.devices[0]?.height ?? 1) < 1 ? "Shows round the recording" : "Add padding to see it round the recording"}</span></span>
@@ -899,7 +900,7 @@ function RecordingInspector() {
     html`<${Section} title="Zoom">
       <${Switch} checked=${Boolean(rec.autoZoom)} label="Zoom in on clicks" onChange=${(v) => setAutoZoom(v)} />
       ${rec.autoZoom && html`<div class="row"><label>How far</label><${Slider} value=${rec.zoom ?? 1.8} min=${1.2} max=${3} step=${0.1} reset=${1.8} format=${(v) => v.toFixed(1) + "×"} onChange=${(v) => setAutoZoom(true, v ?? 1.8)} /></div>`}
-      <div class="note">${rec.autoZoom ? "Its zooms are on the Camera row: drag, change or delete any. Turning this off removes only the ones it made." : "Zoom in where you click, and back out after."}</div>
+      <div class="note">${rec.autoZoom ? "Its zooms are on the Camera row of the timeline. Off removes only the ones it made." : "Zoom in where you click, and back out after."}</div>
       <${Switch} checked=${Boolean(rec.follow)} label="Follow the cursor when zoomed in" onChange=${(v) => setRecording({ follow: v })} />
     <//>`}
     <${Section} title="Sound">

@@ -1815,8 +1815,8 @@ export function FootageInspector() {
     </div>
     <div class="panel-body">
       <${Section} title="This part">
-        <div class="row"><label>On the timeline</label><span class="mono">${clock(p.at)} – ${clock(p.at + len)}</span></div>
-        <div class="row"><label>Of the recording</label><span class="mono">${clock(p.from)} – ${clock(p.to)}</span></div>
+        <div class="row"><label>Timeline</label><span class="mono">${clock(p.at)} – ${clock(p.at + len)}</span></div>
+        <div class="row"><label>Recording</label><span class="mono">${clock(p.from)} – ${clock(p.to)}</span></div>
         <div class="row"><label>Length</label><span class="mono">${len.toFixed(1)} s</span></div>
       <//>
       <button class="btn block danger" disabled=${parts.length < 2} onClick=${() => deleteFootagePart(s.footageSel)}><${Icon} n="trash" s=${13} />Take this part out</button>
@@ -1848,7 +1848,7 @@ export function SoundInspector() {
       <//>
       <${Section} title="Timing">
         <div class="row"><label>Starts at</label><${Num} value=${c.at} min=${0} max=${videoLength()} step=${0.1} digits=${2} unit="s" onChange=${(v) => v !== undefined && placeSound(i, v, videoLength(), "at")} /></div>
-        <div class="note">${clock(long)} long: ${clock(c.from ?? 0)} to ${clock((c.from ?? 0) + long)} of ${whole}. It moves only into the room beside it (pieces never overlap); ← and → nudge it.</div>
+        <div class="note">${clock(long)} long: ${clock(c.from ?? 0)} to ${clock((c.from ?? 0) + long)} of ${whole}. ← and → nudge it; pieces never overlap.</div>
       <//>
       <div class="hstack">
         <button class="btn" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>

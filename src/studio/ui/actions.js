@@ -740,7 +740,8 @@ export function addImage(src, { at, look = {} } = {}) {
   // Dropped somewhere, it goes there; otherwise where its look puts it (a logo at the top), else in
   // free space clear of the headline and devices, else over the top of the device.
   const h = look.height ?? 0.1;
-  const c = at ?? { x: look.x ?? 0.5 + off, y: look.y ?? (freeRowFor(h / 2.4, h * 1.1) ?? onDeviceRow()) + off };
+  const free = freeRowFor(h / 2.4, h * 1.1);
+  const c = at ?? (look.x !== undefined || look.y !== undefined || free !== null ? { x: look.x ?? 0.5 + off, y: look.y ?? free + off } : onDeviceCorner(h, off));
   edit((d) => (d.images = [...(d.images ?? []), { src, height: 0.1, ...look, x: r4(c.x), y: r4(c.y) }]));
   touch("image");
   set({ selected: `image-${images.length + 1}` });
@@ -800,6 +801,15 @@ function freeRowFor(size, need = size * 2.4) {
     at = Math.max(at, b);
   }
   return best ? best.y : null;
+}
+
+/** A picture with no clear band: on the top right corner of the device, like a badge on it. */
+function onDeviceCorner(h, off) {
+  const d = (S.layout?.entities ?? []).find((e) => e.kind === "device");
+  if (!d) return { x: 0.5 + off, y: 0.5 + off };
+  const W = S.layout?.canvas?.width ?? 1, H = S.layout?.canvas?.height ?? 1;
+  const w = (h * H) / W;
+  return { x: clamp(d.x + d.width / 2 - w * 0.25 - off, w / 2, 1 - w / 2), y: clamp(Math.max(0, d.y - d.height / 2) + h * 0.25 + off, h / 2, 1 - h / 2) };
 }
 
 /** With no clear band: over the top of the device's visible part, where it covers the least that matters
