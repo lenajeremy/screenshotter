@@ -10,6 +10,9 @@ export const html = htm.bind(h);
 // ---------------------------------------------------------------------------------------------
 // Segmented control
 
+/** An option's value as a name people read: "warm-film" → "Warm film". */
+export const optionName = (v) => String(v).charAt(0).toUpperCase() + String(v).slice(1).replace(/-/g, " ");
+
 export function Seg({ value, options, onChange, class: cls = "" }) {
   const ref = useRef();
   const [thumb, setThumb] = useState(null);
@@ -565,61 +568,142 @@ export function TextField({ value, onChange, placeholder, multiline = false, row
   return multiline ? html`<textarea rows=${rows} ...${props}></textarea>` : html`<input ...${props} />`;
 }
 
+/** The words as they look while retyping them: accent words in the accent (no ** to see), lines as breaks. */
+export const accentEditHtml = (text, accentCss = "") => {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const css = accentCss.replace(/"/g, "'");
+  return String(text ?? "")
+    .split(/\*\*(.+?)\*\*/g)
+    .map((part, i) => {
+      const h = esc(part).replace(/\\n|\n/g, "<br>");
+      return i % 2 ? `<span data-acc style="${css}">${h}</span>` : h;
+    })
+    .join("");
+};
+
+/** Back to the stored words: accent runs (and anything a paste made bold) as **…**, breaks as new lines. */
+export const accentFromEdit = (el) => {
+  const runs = [];
+  const add = (t, acc) => {
+    const last = runs[runs.length - 1];
+    if (last && last.acc === acc) last.t += t;
+    else runs.push({ t, acc });
+  };
+  const walk = (n, acc) =>
+    n.childNodes.forEach((c) => {
+      if (c.nodeType === 3) return add(c.data, acc);
+      if (c.nodeName === "BR") return add("\n", false);
+      // A new line typed in the middle comes as a block of its own.
+      if (c.nodeName === "DIV" && runs.length && !runs[runs.length - 1].t.endsWith("\n")) add("\n", false);
+      walk(c, acc || c.hasAttribute?.("data-acc") || c.nodeName === "B" || c.nodeName === "STRONG");
+    });
+  walk(el, false);
+  return runs
+    .map(({ t, acc }) => {
+      if (!acc || !t.trim()) return t;
+      const [, lead, mid, trail] = t.match(/^(\s*)([\s\S]*?)(\s*)$/);
+      return `${lead}**${mid}**${trail}`;
+    })
+    .join("")
+    .replace(/ /g, " ")
+    .replace(/\n+$/, "");
+};
+
+/** ⌘B while retyping: the chosen words become accent words, or plain again if they already are. */
+export const toggleAccentIn = (root, accentCss = "") => {
+  const sel = getSelection();
+  if (!sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  if (r.collapsed || !root.contains(r.commonAncestorContainer)) return;
+  const accOf = (n) => (n.nodeType === 3 ? n.parentElement : n)?.closest?.("[data-acc]");
+  const acc = accOf(r.startContainer);
+  const pick = (node) => {
+    sel.removeAllRanges();
+    const nr = document.createRange();
+    nr.selectNodeContents(node);
+    sel.addRange(nr);
+  };
+  if (acc && acc === accOf(r.endContainer)) {
+    // Out of the accent: the accent splits around them.
+    const tail = document.createRange();
+    tail.setStart(r.endContainer, r.endOffset);
+    tail.setEnd(acc, acc.childNodes.length);
+    const after = tail.extractContents();
+    const plain = document.createElement("span");
+    plain.textContent = r.extractContents().textContent;
+    acc.after(plain);
+    if (after.textContent) {
+      const rest = acc.cloneNode(false);
+      rest.append(after);
+      plain.after(rest);
+    }
+    if (!acc.textContent) acc.remove();
+    return pick(plain);
+  }
+  const span = document.createElement("span");
+  span.setAttribute("data-acc", "");
+  span.style.cssText = accentCss;
+  span.textContent = r.extractContents().textContent;
+  r.insertNode(span);
+  pick(span);
+};
+
+
+/** How accent words look while being typed in a panel (the design's own colour shows on the canvas). */
+const ACCENT_MARK = "color: var(--lime); font-weight: 650";
+
 /**
- * A text box for words that can carry **accent** spans, with a button that wraps (or unwraps)
- * the selected words in stars, so nobody has to know the markup.
+ * Words that can carry **accent** words, shown as they look: accent words marked, no stars to see.
+ * Choose words and press the button (or ⌘B) to make them accent words, or plain again.
  */
 export function AccentText({ value, onChange, placeholder, rows = 2, onFocus }) {
   const ref = useRef();
+  const last = useRef(null);
+  // Only words changed from outside (undo, Ask AI) redraw the field; typing never moves the caret.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || value === last.current) return;
+    last.current = value ?? "";
+    el.innerHTML = accentEditHtml(value ?? "", ACCENT_MARK);
+  }, [value]);
+  const emit = () => {
+    const v = accentFromEdit(ref.current);
+    last.current = v;
+    onChange(v);
+  };
   const toggle = (e) => {
     e.preventDefault(); // keep the text selection
     const el = ref.current;
     if (!el) return;
-    const v = el.value;
-    let a = el.selectionStart;
-    let b = el.selectionEnd;
-    if (a === b) {
-      // Nothing selected: use the word under the cursor.
-      while (a > 0 && /\S/.test(v[a - 1])) a--;
-      while (b < v.length && /\S/.test(v[b])) b++;
+    const sel = getSelection();
+    // Nothing chosen: the word under the caret.
+    if (sel.rangeCount && sel.getRangeAt(0).collapsed && sel.modify) {
+      sel.modify("move", "backward", "word");
+      sel.modify("extend", "forward", "word");
     }
-    if (a === b) return;
-    let next;
-    let sel;
-    if (v.slice(a - 2, a) === "**" && v.slice(b, b + 2) === "**") {
-      next = v.slice(0, a - 2) + v.slice(a, b) + v.slice(b + 2);
-      sel = [a - 2, b - 2];
-    } else if (b - a > 4 && v.slice(a, a + 2) === "**" && v.slice(b - 2, b) === "**") {
-      next = v.slice(0, a) + v.slice(a + 2, b - 2) + v.slice(b);
-      sel = [a, b - 4];
-    } else {
-      next = `${v.slice(0, a)}**${v.slice(a, b)}**${v.slice(b)}`;
-      sel = [a + 2, b + 2];
-    }
-    onChange(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(sel[0], sel[1]);
-    });
+    toggleAccentIn(el, ACCENT_MARK);
+    emit();
   };
   return html`<div class="accent-field">
-    <textarea ref=${ref} class="textarea" rows=${rows} value=${value ?? ""} placeholder=${placeholder} onFocus=${onFocus}
-      title="Enter to finish · Shift+Enter for a new line"
-      onInput=${(e) => onChange(e.target.value)}
+    <div ref=${ref} class="textarea rich" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder=${placeholder ?? ""} style=${{ minHeight: rows * 1.45 + 1.1 + "em" }} onFocus=${onFocus}
+      title="Enter to finish · Shift+Enter for a new line · ⌘B makes the chosen words accent words"
+      onInput=${emit}
+      onPaste=${(e) => (e.preventDefault(), document.execCommand("insertText", false, e.clipboardData.getData("text/plain")))}
       onKeyDown=${(e) => {
         e.stopPropagation();
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") return toggle(e);
         // Enter finishes, like the canvas's own text editing; Shift+Enter breaks the line.
         if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing) {
           e.preventDefault();
           e.target.blur();
         }
       }}
-      onBlur=${(e) => {
-        const trimmed = e.target.value.replace(/\s+$/, "");
-        if (trimmed !== e.target.value) onChange(trimmed);
-      }}></textarea>
-    <button class="accent-btn" onMouseDown=${toggle} title="Wraps the selected words in **stars** so they take the star colour. Click again to undo.">
-      <${Icon} n="spark" s=${12} />Colour selected words
+      onBlur=${() => {
+        const v = accentFromEdit(ref.current).replace(/\s+$/, "");
+        if (v !== (value ?? "")) onChange(v);
+      }}></div>
+    <button class="accent-btn" onMouseDown=${toggle} title="Makes the chosen words accent words (⌘B), in the accent colour. Again to make them plain.">
+      <${Icon} n="palette" s=${12} />Accent the chosen words
     </button>
   </div>`;
 }

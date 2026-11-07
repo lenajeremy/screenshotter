@@ -606,11 +606,11 @@ try {
     ];
     const bySize = await (await post("/api/export-set", { name: "Set test", sizes })).json();
     const rel = (p: string) => path.relative(bySize.directory, p);
-    assert.deepEqual(bySize.sizes.flatMap((x: { files: Array<{ path: string }> }) => x.files.map((f) => rel(f.path))), ["en-US/iPhone 6.9/01 Intro the app.png", "en-US/iPhone 6.9/02 Screen 2.png", "en-US/Watch Ultra 3/01 Screen 1.png"]);
+    assert.deepEqual(bySize.sizes.flatMap((x: { files: Array<{ path: string }> }) => x.files.map((f) => rel(f.path))), ["en-US/iPhone 6.9/01 Intro the app.png", "en-US/iPhone 6.9/02.png", "en-US/Watch Ultra 3/01.png"]);
     assert.equal(bySize.sizes[1].files[0].width, 422);
     assert(existsSync(path.join(bySize.directory, "Contact sheets", "iPhone 6.9.png")));
     const lane = await (await post("/api/export-set", { name: "Set test", sizes: sizes.slice(0, 1), folders: "fastlane", format: "jpeg", contactSheets: false })).json();
-    assert.equal(path.relative(lane.directory, lane.sizes[0].files[1].path), "screenshots/en-US/iPhone 6.9 - 02 Screen 2.jpg");
+    assert.equal(path.relative(lane.directory, lane.sizes[0].files[1].path), "screenshots/en-US/iPhone 6.9 - 02.jpg");
     assert.equal(lane.screenshots, path.join(lane.directory, "screenshots"));
     assert(!existsSync(path.join(lane.directory, "Contact sheets")));
     assert.equal((await post("/api/export-set", { name: "Empty", sizes: [] })).status, 400);

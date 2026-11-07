@@ -26,8 +26,13 @@ const waves = new Map();
 /** How long a file's sound runs: its waveform's length once read, else the recording's; unknown: undefined. */
 export function sourceLength(src, scene = S.scene) {
   const w = waves.get(src)?.value;
+  // A recording's own sound ends with the recording, even where its audio runs a few frames longer:
+  // the same limit before its waveform has been read and after.
+  if (src === recordingVideo(scene) && scene.recording?.duration) {
+    const own = scene.recording.duration + takeCuts(scene).reduce((n, k) => n + k.to - k.from, 0);
+    return w?.duration > 0 ? Math.min(w.duration, own) : own;
+  }
   if (w?.duration > 0) return w.duration;
-  if (src === recordingVideo(scene) && scene.recording?.duration) return scene.recording.duration + takeCuts(scene).reduce((n, k) => n + k.to - k.from, 0);
   return undefined;
 }
 

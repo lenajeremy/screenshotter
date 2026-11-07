@@ -1,7 +1,7 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { createContext } from "preact";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Dropdown, html } from "./controls.js";
+import { Dropdown, accentEditHtml, accentFromEdit, html, toggleAccentIn } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, followVideo, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
@@ -9,7 +9,7 @@ import { textPieces, unitMode } from "./animate.js";
 import { CURSOR_ART, clickAt, cursorAt, cursorKindAt } from "./cursor.js";
 import { cursorTrack } from "./recording.js";
 import { S, STORE_GAP, activeScreens, allGroups, api, clamp, edit, entityLabel, fileUrl, persistPrefs, r4, set, setScene, thumbUrl, touch, useStore, pictureUrl, layoutCache, rememberLayout, knownLayout, hasDesign } from "./store.js";
-import { addDevice, addShot, addSize, carryDeviceOver, finishedAsked, finishedLook, moveShotTo, openCopyStyle, setInVideo, deleteShot, goToShot, goToSize, moveShot, recordingFor, removeSize, replaceMode, screenName, sizeLabel, updateShot } from "./actions.js";
+import { addDevice, addShot, addSize, isPlaceholder, carryDeviceOver, finishedAsked, finishedLook, moveShotTo, openCopyStyle, setInVideo, deleteShot, goToShot, goToSize, moveShot, recordingFor, removeSize, replaceMode, screenName, sizeLabel, updateShot } from "./actions.js";
 import { sizeOptions } from "./inspector.js";
 import { bendThrough, curveMid, isLine, renderShape } from "./shapes.js";
 
@@ -150,6 +150,16 @@ const accentStyle = (accent) => ({
   fontStyle: accent.italic ? "italic" : undefined,
 });
 
+/** An accent's look as CSS text, for the words being retyped (just bolder when it has no look of its own). */
+const accentCss = (accent) => {
+  const st = accentStyle(accent);
+  if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) st.fontWeight = "bolder";
+  return Object.entries(st)
+    .filter(([, v]) => v !== undefined && v !== "")
+    .map(([k, v]) => `${k.replace(/^Webkit/, "-webkit-").replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())}: ${v}`)
+    .join("; ");
+};
+
 /** A screen with nothing on it yet but its backdrop: it asks for a screenshot (one with words or pictures only gets a small button). */
 const bare = (sc) => !sc.texts?.length && !sc.images?.length && !sc.shapes?.length && !sc.headline && !sc.subheadline;
 
@@ -279,7 +289,10 @@ function DeviceEnt({ e, W, H }) {
     const bar = s.height * e.menuBar;
     Object.assign(screen, { top: (s.y + bar) * 100 + "%", height: (s.height - bar) * 100 + "%", objectPosition: "top", borderRadius: 0 });
   }
-  const tags = [dev.video && (S.stillPick?.id === e.id ? "Still" : "▶ Recording")].filter(Boolean);
+  // "▶ Recording" says a device plays a video: in a recording's own design (and on its webcam) that's
+  // already plain, so it only shows elsewhere, and "Still" while its still is being picked.
+  const picking = S.stillPick?.id === e.id;
+  const tags = [dev.video && (picking ? "Still" : !scene.recording && !dev.fixed && "▶ Recording")].filter(Boolean);
   // Soft focus and fade, like the render: blur is a fraction of canvas width (or canvas px).
   const cw = layout?.canvas.width || W;
   const blur = dev.blur ? (dev.blur <= 0.5 ? dev.blur * W : (dev.blur * W) / cw) : 0;
@@ -474,13 +487,13 @@ function TextEnt({ e, H, editing, onDone }) {
     sel.removeAllRanges();
     sel.addRange(r);
   }, [editing]);
-  const finish = (ev, part) => {
-    const text = ev.target.innerText.replace(/\n+$/, "");
-    onDone(part, text);
-  };
+  const finish = (ev, part) => onDone(part, accentFromEdit(ev.target));
   const keys = (ev, part) => {
     ev.stopPropagation();
-    if (ev.key === "Escape") {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "b") {
+      ev.preventDefault();
+      toggleAccentIn(ev.currentTarget, accentCss(accent));
+    } else if (ev.key === "Escape") {
       ev.preventDefault();
       onDone(null);
     } else if (ev.key === "Enter" && !ev.shiftKey) {
@@ -490,10 +503,15 @@ function TextEnt({ e, H, editing, onDone }) {
   };
   const editable = (part, text, cls) =>
     editing
-      ? html`<div class="editing ${cls}" data-part=${part} contenteditable="plaintext-only" onBlur=${(ev) => finish(ev, part)} onKeyDown=${(ev) => keys(ev, part)}>${text}</div>`
+      ? html`<div class="editing ${cls}" data-part=${part} contenteditable="true" title="⌘B makes the chosen words accent words" dangerouslySetInnerHTML=${{ __html: accentEditHtml(text, accentCss(accent)) }}
+          onPaste=${(ev) => (ev.preventDefault(), document.execCommand("insertText", false, ev.clipboardData.getData("text/plain")))}
+          onBlur=${(ev) => finish(ev, part)} onKeyDown=${(ev) => keys(ev, part)}></div>`
       : html`<div class=${cls} data-part=${part} style=${part === "headline" ? lines : undefined}>${part === "subheadline" ? rich(text, accent, by) : hl(rich(text, accent, by))}</div>`;
   if (e.kind === "caption") {
-    return html`<div ref=${ref} style=${base}>
+    // Stand-in words are marked on the canvas (never in the export), so nobody ships them by mistake.
+    const stand = !editing && !shot.ghost && isPlaceholder(scene.headline);
+    return html`<div ref=${ref} class=${stand ? "placeholder" : ""} style=${base}>
+      ${stand && html`<span class="ph-tag">Write your headline · double-click</span>`}
       ${(e.text || editing) && editable("headline", e.text ?? "", "h")}
       ${(e.subtext || editing === "subheadline") && html`<div class="s" style=${{ fontSize: (e.subSize || e.size * 0.46) * H + "px", fontFamily: e.subFont, fontWeight: style.subheadlineWeight, lineHeight: 1.25 }}>${editing ? editable("subheadline", e.subtext ?? "", "") : rich(e.subtext, accent, by)}</div>`}
     </div>`;

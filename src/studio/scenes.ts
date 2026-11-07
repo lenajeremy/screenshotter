@@ -21,6 +21,8 @@ export interface SavedScene {
   chat?: unknown[];
   /** The app's icon (a picture's path), for the store page preview. */
   appIcon?: string;
+  /** The app's name, for the store page preview (the design's own name is often "Untitled design"). */
+  appName?: string;
   /**
    * A video of several shots: each one's length and how it comes in, and (after the first, which is
    * `scene`) its scene. Absent for a single design.
@@ -243,7 +245,7 @@ function cleanGroups(raw: unknown[]): SavedGroup[] {
     .filter((g) => g.shots.length);
 }
 
-export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; groups?: unknown; appIcon?: unknown; by?: "agent" }): SceneSummary {
+export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; groups?: unknown; appIcon?: unknown; appName?: unknown; by?: "agent" }): SceneSummary {
   if (!input.scene || typeof input.scene !== "object" || !Array.isArray((input.scene as { devices?: unknown }).devices)) throw new Error("A scene needs a devices array");
   const now = new Date().toISOString();
   const existing = validId(input.id) ? read(input.id) : undefined;
@@ -252,6 +254,7 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
   const chat = Array.isArray(input.chat) ? input.chat.slice(-60) : existing?.chat;
   // The app icon: as sent, cleared with null, else kept (an agent's save doesn't send one).
   const appIcon = input.appIcon === null ? undefined : typeof input.appIcon === "string" && input.appIcon ? input.appIcon : existing?.appIcon;
+  const appName = input.appName === null ? undefined : typeof input.appName === "string" && input.appName.trim() ? input.appName.trim().slice(0, 60) : existing?.appName;
   // Only a change to the design counts as an edit: not a rename, nor saving it unchanged (switching
   // scenes, opening the Scenes page), so the list keeps its order.
   // Shots: as sent, cleared with null (a single design again), else kept (an agent saving the first).
@@ -268,7 +271,7 @@ export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown;
     JSON.stringify(existing.groups ?? null) !== JSON.stringify(groups ?? null);
   // Who made the last change: the Studio's own saves clear an agent's mark.
   const by = changed ? input.by : existing.by;
-  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, ...(appIcon ? { appIcon } : {}), shots, groups, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
+  const saved: SavedScene = { id, name, scene: input.scene as SavedScene["scene"], chat, ...(appIcon ? { appIcon } : {}), ...(appName ? { appName } : {}), shots, groups, createdAt: existing?.createdAt ?? now, updatedAt: changed ? now : existing.updatedAt, by };
   write(saved);
   if (changed || !existsSync(thumbFile(id))) scheduleThumb(id);
   return summarize(saved);

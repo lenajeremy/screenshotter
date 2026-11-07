@@ -1,6 +1,6 @@
 // Right panel: properties of the selection, or of the scene when nothing is selected.
 import { useRef, useState } from "preact/hooks";
-import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
+import { AccentText, ColorButton, Dropdown, Num, Seg, Slider, Section, Switch, TextField, html, optionName } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, api, base, clamp, edit, entityLabel, fail, fileUrl, isVideo, pictureName, r4, set, thumbUrl, useStore, pictureUrl } from "./store.js";
 import { addShot, addSize, deleteEntity, duplicateEntity, openCopyStyle, openStills, replaceMode, setBackdropAcross, setCanvasSize, setLandscape, uploadFiles } from "./actions.js";
@@ -23,7 +23,15 @@ const FONTS = [
   { value: "Fraunces", label: "Fraunces", hint: "Google", font: "Fraunces" },
   { value: "Outfit", label: "Outfit", hint: "Google", font: "Outfit" },
   { value: "Plus Jakarta Sans", label: "Plus Jakarta Sans", hint: "Google", font: "Plus Jakarta Sans" },
+  // The ones templates use, so a design that has one can show it, and others can pick it.
+  { value: "Inter Tight", label: "Inter Tight", hint: "Google", font: "Inter Tight" },
+  { value: "Bricolage Grotesque", label: "Bricolage Grotesque", hint: "Google", font: "Bricolage Grotesque" },
+  { value: "Nunito", label: "Nunito", hint: "Google", font: "Nunito" },
+  { value: "Caveat", label: "Caveat", hint: "Google", font: "Caveat" },
+  { value: "Bangers", label: "Bangers", hint: "Google", font: "Bangers" },
 ];
+/** The font menu, with the design's own font in it even when it isn't one of ours (never "Choose…"). */
+const fontOptions = (font) => (!font || font === "sf-pro" || FONTS.some((o) => o.value === font) ? FONTS : [{ value: font, label: font, hint: "This design", font }, ...FONTS]);
 const WEIGHTS = [
   { value: 400, label: "Regular" },
   { value: 500, label: "Medium" },
@@ -48,6 +56,8 @@ export function Inspector() {
   else if (s.timelineOpen && s.soundSel != null && soundClips(s.scene)[s.soundSel]) body = html`<${SoundInspector} />`;
   else if (s.timelineOpen && s.footageSel != null && footageParts(s.scene)[s.footageSel]) body = html`<${FootageInspector} />`;
   else if (!id) body = html`<${SceneInspector} />`;
+  // A recording's webcam is a bubble, not a device: its own settings, no frames or tilt.
+  else if (id.startsWith("device-") && s.scene.devices[Number(id.split("-")[1]) - 1]?.fixed && s.scene.devices[Number(id.split("-")[1]) - 1]?.video) body = html`<${WebcamInspector} id=${id} />`;
   else if (id.startsWith("device-")) body = html`<${DeviceInspector} id=${id} />`;
   else if (id === "caption") body = html`<${CaptionInspector} />`;
   else if (id.startsWith("shape-")) body = html`<${ShapeInspector} id=${id} />`;
@@ -174,7 +184,8 @@ function DeviceInspector({ id }) {
   const bands = art?.bands?.[current] ?? [];
   const family = (f) => (f === "iphone" ? "iPhone" : f === "ipad" ? "iPad" : f === "watch" ? "Apple Watch" : f === "mac" ? "Mac" : f);
   const modelOpts = [
-    { value: "", label: "Match the screenshot", hint: e?.device ?? "" },
+    // "Auto" is the device that matches the screenshot's size; it fits the button with that device beside it.
+    { value: "", label: "Auto", hint: e?.device ?? "" },
     // Grouped by what each is: the open iPhone Duo lays out like an iPad but is an iPhone.
     ...installed.map((m) => ({ value: m.name, label: m.name, group: /^iPhone/.test(m.name) ? "iPhone" : family(m.family) })),
     // A design made with a model whose art isn't installed keeps it, shown for what it is.
@@ -262,6 +273,10 @@ function DeviceInspector({ id }) {
           dev.rotateX = rx || undefined;
           dev.rotateY = ry || undefined;
         }, "3d")} />
+        <div class="row"><label>Tilt, turn</label><div class="grid2">
+          <${Num} label="↕" title="Tilt: the top leans away" value=${d.rotateX ?? 0} unit="°" digits=${1} min=${-60} max=${60} onChange=${(v) => upd((dev) => (dev.rotateX = v || undefined), "rx")} />
+          <${Num} label="↔" title="Turn: the right edge turns away" value=${d.rotateY ?? 0} unit="°" digits=${1} min=${-70} max=${70} onChange=${(v) => upd((dev) => (dev.rotateY = v || undefined), "ry")} />
+        </div></div>
       <//>
 
       <${AnimationSection} id=${id} />
@@ -275,10 +290,6 @@ function DeviceInspector({ id }) {
         <div class="row"><label>Position</label><div class="grid2">
           <${Num} label="X" title="Horizontal: 0% left edge, 100% right edge" value=${X} ...${pct} onChange=${(v) => place({ x: v === undefined ? undefined : r4(v) }, "x")} />
           <${Num} label="Y" title="Vertical: 0% top, 100% bottom" value=${Y} ...${pct} onChange=${(v) => place({ y: v === undefined ? undefined : r4(v) }, "y")} />
-        </div></div>
-        <div class="row"><label>3D</label><div class="grid2">
-          <${Num} label="↕" title="Tilt: top leans away" value=${d.rotateX ?? 0} unit="°" digits=${1} min=${-60} max=${60} onChange=${(v) => upd((dev) => (dev.rotateX = v || undefined), "rx")} />
-          <${Num} label="↔" title="Turn: right edge turns away" value=${d.rotateY ?? 0} unit="°" digits=${1} min=${-70} max=${70} onChange=${(v) => upd((dev) => (dev.rotateY = v || undefined), "ry")} />
         </div></div>
         <div class="note">Tip: drag the device on the canvas. Hold ⌥ to turn snapping off.${s.shots ? " Drag it onto the gap between two screens to put it across both; drag it onto the next screen to move it there." : ""}</div>
         ${s.shots &&
@@ -303,7 +314,7 @@ function DeviceInspector({ id }) {
       <//>
 
       <${Section} title="Shadow">
-        <div class="chips">${SHADOWS.map((sh) => html`<button class="chip sm ${(typeof d.shadow === "string" ? d.shadow : d.shadow ? "custom" : "medium") === sh ? "on" : ""}" onClick=${() => upd((dev) => (dev.shadow = sh === "medium" ? undefined : sh))}>${sh}</button>`)}</div>
+        <div class="chips">${SHADOWS.map((sh) => html`<button class="chip sm ${(typeof d.shadow === "string" ? d.shadow : d.shadow ? "custom" : "medium") === sh ? "on" : ""}" onClick=${() => upd((dev) => (dev.shadow = sh === "medium" ? undefined : sh))}>${optionName(sh)}</button>`)}</div>
       <//>
 
       <${Highlights} i=${i} d=${d} />
@@ -368,7 +379,7 @@ function Pad3D({ rx, ry, onChange }) {
   return html`<div class="pad3d" ref=${ref} onPointerDown=${down} onDblClick=${() => onChange(0, 0)} title="Drag to tilt · double-click to flatten">
     <div class="phone" style=${{ transform: `rotateX(${rx}deg) rotateY(${ry}deg)` }}></div>
     <div class="puck" style=${{ left: 50 + (ry / RY) * 50 + "%", top: 50 - (rx / RX) * 50 + "%" }}></div>
-    <span class="lbl-y">tilt ${Math.round(rx)}°</span><span class="lbl-x">turn ${Math.round(ry)}°</span>
+    <span class="pad-cap">${rx || ry ? "Drag to tilt · double-click for flat" : "Drag to tilt it in 3D"}</span>
   </div>`;
 }
 
@@ -419,7 +430,7 @@ function TypeControls({ part, font, weight, color, onFont, onWeight, onColor, al
   const basic = part !== "rest";
   const rest = part !== "basic";
   return html`
-    ${basic && html`<div class="row"><label>Font</label><${Dropdown} value=${font ?? ""} options=${FONTS} search onChange=${onFont} render=${(o) => html`<span style=${{ fontFamily: o.font }}>${o.label}</span>`} /></div>
+    ${basic && html`<div class="row"><label>Font</label><${Dropdown} value=${font === "sf-pro" ? "" : font ?? ""} options=${fontOptions(font)} search onChange=${onFont} render=${(o) => html`<span style=${{ fontFamily: o.font }}>${o.label}</span>`} /></div>
       <div class="row"><label>Colour</label><${ColorButton} value=${color} auto=${colorAuto} onChange=${onColor} /></div>`}
     ${rest && html`<div class="row"><label>Weight</label><${Dropdown} value=${nearestWeight(weight ?? 700)} options=${WEIGHTS} onChange=${onWeight} /></div>
       ${onAlign && html`<div class="row"><label>Align</label><${Seg} class="icons" value=${align ?? "center"} options=${[{ value: "left", label: "", icon: "alignL", title: "Left" }, { value: "center", label: "", icon: "alignC", title: "Centre" }, { value: "right", label: "", icon: "alignR", title: "Right" }]} onChange=${onAlign} /></div>`}
@@ -432,24 +443,24 @@ function TypeControls({ part, font, weight, color, onFont, onWeight, onColor, al
 const ACCENT_MARKS = [
   { value: "", label: "None" },
   { value: "highlight", label: "Marker" },
-  { value: "underline", label: "Under" },
-  { value: "squiggle", label: "Wavy" },
+  { value: "underline", label: "Underline" },
+  { value: "squiggle", label: "Wavy underline" },
   { value: "pill", label: "Pill" },
 ];
 const LINE_MARKS = [
   { value: "", label: "None" },
-  { value: "underline", label: "Under" },
-  { value: "strike", label: "Strike" },
+  { value: "underline", label: "Underline" },
+  { value: "strike", label: "Strikethrough" },
   { value: "highlight", label: "Marker" },
 ];
 
 /** Marks on the words, lines under or through them, and an outline: the headline's or a text's. */
 function Emphasis({ v, upd, starColor }) {
   return html`<${Section} title="Emphasis">
-    <div class="row"><label>Accent</label><${Seg} value=${v.accentMark ?? ""} options=${ACCENT_MARKS} onChange=${(x) => upd((t) => (t.accentMark = x || undefined))} /></div>
+    <div class="row"><label>Accent</label><${Dropdown} value=${v.accentMark ?? ""} options=${ACCENT_MARKS} onChange=${(x) => upd((t) => (t.accentMark = x || undefined))} /></div>
     ${v.accentMark &&
-    html`<div class="row"><label></label><${ColorButton} value=${v.accentMarkColor} auto=${starColor ? "Star colour" : "Yellow"} autoColor=${starColor ?? "#ffd60a"} onChange=${(x) => upd((t) => (t.accentMarkColor = x), "amc")} /></div>`}
-    <div class="row"><label>Lines</label><${Seg} value=${v.decoration ?? ""} options=${LINE_MARKS} onChange=${(x) => upd((t) => (t.decoration = x || undefined))} /></div>
+    html`<div class="row"><label></label><${ColorButton} value=${v.accentMarkColor} auto=${starColor ? "Accent colour" : "Yellow"} autoColor=${starColor ?? "#ffd60a"} onChange=${(x) => upd((t) => (t.accentMarkColor = x), "amc")} /></div>`}
+    <div class="row"><label>Lines</label><${Dropdown} value=${v.decoration ?? ""} options=${LINE_MARKS} onChange=${(x) => upd((t) => (t.decoration = x || undefined))} /></div>
     ${v.decoration &&
     html`<div class="row"><label></label><${ColorButton} value=${v.decorationColor} auto=${v.decoration === "highlight" ? "Yellow" : "Text colour"} autoColor=${v.decoration === "highlight" ? "#ffd60a" : undefined} onChange=${(x) => upd((t) => (t.decorationColor = x), "dc")} /></div>`}
     <div class="row"><label>Outline</label><${ColorButton} value=${v.stroke} auto="None" onChange=${(x) => upd((t) => (t.stroke = x), "stroke")} /></div>
@@ -478,8 +489,7 @@ function CaptionInspector() {
       <${Section} title="Words">
         <${AccentText} rows=${2} value=${sc.headline} placeholder="Headline" onChange=${(v) => edit((d) => (d.headline = v || undefined), "headline")} />
         <${TextField} value=${sc.subheadline} placeholder="Subheadline (optional)" onChange=${(v) => edit((d) => (d.subheadline = v || undefined), "subheadline")} />
-        <div class="row"><label>Star colour</label><${ColorButton} value=${st.accentColor} auto="Bold only" onChange=${(v) => upd((t) => (t.accentColor = v), "accent")} /></div>
-        <div class="note">Words in **stars** take this colour, in the headline and in extra text that doesn't pick its own.</div>
+        <div class="row"><label>Accent colour</label><${ColorButton} value=${st.accentColor} auto="Bold only" onChange=${(v) => upd((t) => (t.accentColor = v), "accent")} /></div>
       <//>
       <${Section} title="Style">
         <${TypeControls} part="basic" font=${st.font} weight=${st.headlineWeight} color=${st.color}
@@ -544,9 +554,8 @@ function TextInspector({ id }) {
     <div class="panel-body">
       <${Section} title="Words">
         <${AccentText} rows=${2} value=${t.text} onChange=${(v) => upd((x) => (x.text = v), "text")} />
-        <div class="row"><label>Star colour</label><${ColorButton} value=${t.accentColor} auto=${headAccent ? "Same as headline" : "Bold only"} autoColor=${headAccent}
+        <div class="row"><label>Accent colour</label><${ColorButton} value=${t.accentColor} auto=${headAccent ? "Same as headline" : "Bold only"} autoColor=${headAccent}
           onChange=${(v) => upd((x) => (x.accentColor = v), "accent")} /></div>
-        <div class="note">Words in **stars** take the star colour${headAccent ? " (the headline's until you pick one)" : ""}.</div>
       <//>
       <${Section} title="Style">
         <${TypeControls} part="basic" font=${t.font} weight=${t.weight} color=${t.color}
@@ -899,7 +908,14 @@ function RecordingInspector() {
 }
 
 /** The webcam's bubble over a recording: its shape, its size and a ring. It's moved on the design. */
-function BubbleSection() {
+/** The webcam, chosen on the design: its shape, size and ring (the same as the recording's Webcam settings). */
+function WebcamInspector({ id }) {
+  return html`
+    <${Head} title="Webcam" id=${id} />
+    <div class="panel-body"><${BubbleSection} bare /></div>`;
+}
+
+function BubbleSection({ bare } = {}) {
   const s = useStore();
   const i = s.scene.devices.findIndex((d) => d.fixed && d.video);
   if (i < 0) return null;
@@ -907,11 +923,11 @@ function BubbleSection() {
   const upd = (fn, key) => edit((sc) => fn(sc.devices[i]), key && `bubble.${key}`);
   const r = d.radius ?? 0;
   const shape = r >= 0.45 ? "circle" : r > 0.01 ? "rounded" : "square";
-  return html`<${Section} title="Webcam">
+  return html`<${Section} title=${bare ? "Bubble" : "Webcam"}>
     <div class="row"><label>Shape</label><${Seg} value=${shape} options=${[{ value: "circle", label: "Circle" }, { value: "rounded", label: "Rounded" }, { value: "square", label: "Square" }]} onChange=${(v) => upd((x) => (x.radius = v === "circle" ? 0.5 : v === "rounded" ? 0.18 : 0))} /></div>
     <div class="row"><label>Size</label><${Slider} value=${d.height} min=${0.08} max=${0.6} step=${0.005} format=${(v) => Math.round(v * 100) + "%"} onChange=${(v) => v && upd((x) => (x.height = Math.round(v * 1000) / 1000), "size")} /></div>
     <${Switch} checked=${Boolean(d.ring)} label="A white ring round it" onChange=${(v) => upd((x) => (x.ring = v || undefined))} />
-    <div class="note">Drag it on the design to move it. Moves you made while recording are on its row of the timeline.</div>
+    <div class="note">Drag it on the design to move it.</div>
   <//>`;
 }
 
@@ -931,7 +947,7 @@ function SceneInspector() {
   return html`
     <div class="panel-head"><h2>${sc.recording?.duration ? "Recording" : sc.plain && sc.devices?.length === 1 ? "Screenshot" : "Whole image"}</h2><span class="sub">${s.layout ? `${s.layout.canvas.width} × ${s.layout.canvas.height}` : ""}</span></div>
     <div class="panel-body">
-      ${sc.recording?.duration ? html`<${RecordingInspector} />` : sc.plain && sc.devices?.length === 1 ? html`<${PlainInspector} />` : html`<div class="intro">Click anything in the design to change it. With nothing selected, these are the settings for the whole image.</div>`}
+      ${sc.recording?.duration ? html`<${RecordingInspector} />` : sc.plain && sc.devices?.length === 1 ? html`<${PlainInspector} />` : null}
       ${!framed &&
       html`<${Section} title="Background">
         <button class="bg-summary" onClick=${() => set({ leftTab: "backgrounds", leftOpen: true })}>
@@ -944,16 +960,16 @@ function SceneInspector() {
           <div class="note">${sc.backgroundSpan ? `One background across all ${s.shots.length} screens, each showing its slice. Changing it here changes it everywhere.` : "Lay this background across every screen, one panorama, each showing its slice."}</div>`}
       <//>`}
       <${Treatment} />
-      <${Section} title="Image size">
+      ${!sc.recording?.duration && html`<${Section} title="Size">
         <div class="canvas-presets">${canvases.map((c) => {
           const r = c.w / c.h;
           const box = r >= 1 ? { width: "26px", height: 26 / r + "px" } : { width: 30 * r + "px", height: "30px" };
           return html`<button class="cpreset ${cur === c.value ? "on" : ""}" title=${c.hint ?? `${presets[c.value]?.width ?? ""}×${presets[c.value]?.height ?? ""}`} onClick=${() => setCanvasSize(c.value)}><i style=${box}></i>${c.label}</button>`;
         })}</div>
-        <div class="row"><label>All sizes</label><${Dropdown} value=${presets[cur] ? cur : ""} options=${sizeOptions(presets)} placeholder=${custom ? "Custom size" : "Every store slot…"} search=${true} onChange=${setCanvasSize} /></div>
+        <div class="row"><label>Exact size</label><${Dropdown} value=${presets[cur] ? cur : ""} options=${sizeOptions(presets)} placeholder=${custom ? "Custom size" : "A store size…"} search=${true} onChange=${setCanvasSize} /></div>
         ${presets[cur]?.platform !== "watch" && presets[cur]?.width !== presets[cur]?.height && html`<${Switch} checked=${Boolean(sc.landscape)} onChange=${setLandscape} label="Landscape" />`}
-        ${!sc.recording?.duration && html`<div class="row"><label>Also at</label><${Dropdown} value=${null} options=${sizeOptions(presets)} placeholder="Add a size…" search=${true} onChange=${addSize} title="Make every screen again at another size: iPad, Apple Watch, Google Play…" /></div>`}
-      <//>
+        ${!sc.recording?.duration && html`<div class="row"><label>More sizes</label><${Dropdown} value=${null} options=${sizeOptions(presets)} placeholder="Add a size…" search=${true} onChange=${addSize} title="Make every screen again at another size: iPad, Apple Watch, Google Play…" /></div>`}
+      <//>`}
       ${!sc.recording?.duration && !sc.plain && html`<${Section} title="Screens">
         <div class="note">${s.shots?.length > 1 ? `This design has ${s.shots.length} screens, side by side like the App Store shows them.` : "Make this a set: more screens beside this one, like the App Store shows them."}</div>
         <button class="btn block" onClick=${() => (s.shots?.length > 1 ? addShot("copy", { at: s.shots.length, copyOf: s.shots.length - 1 }) : addShot("copy"))}><${Icon} n="plus" s=${13} />Add a screen</button>

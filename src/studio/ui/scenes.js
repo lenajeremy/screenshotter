@@ -343,7 +343,8 @@ export function ScenesPage() {
   const counts = {};
   for (const x of all) for (const k of x.kinds ?? []) counts[k] = (counts[k] ?? 0) + 1;
   const kinds = KINDS.filter((k) => counts[k.id]);
-  const kind = p.kind !== "all" && counts[p.kind] ? p.kind : "all";
+  // With only a few designs there's no filter to see, so none applies.
+  const kind = all.length >= 8 && p.kind !== "all" && counts[p.kind] ? p.kind : "all";
   const sort = ORDER[p.sort] ? p.sort : "edited";
   const list = all.filter((x) => (kind === "all" || x.kinds?.includes(kind)) && matches(x, q)).sort(ORDER[sort]);
   const current = all.find((x) => x.id === s.sceneId);
@@ -367,9 +368,8 @@ export function ScenesPage() {
 
   return html`<div class="scenes-page" role="dialog" aria-label="My designs">
     <header class="sp-bar" data-drag>
-      <div class="brand">
-        <div class="brand-mark"></div>
-        <span class="brand-name">Screenshotter</span>
+      <div class="brand" data-nodrag>
+        <button class="btn ghost sp-back" onClick=${closeScenesPage} title="Back to the editor (Esc)"><${Icon} n="left" s=${15} /><span>${current ? current.name : "Back to editor"}</span></button>
         <span class="crumb-sep">/</span>
         <span class="sp-crumb">My designs</span>
       </div>
@@ -380,7 +380,6 @@ export function ScenesPage() {
       </div>
       <span class="spacer"></span>
       <div class="hstack" data-nodrag>
-        <button class="btn ghost sp-back" onClick=${closeScenesPage} title="Back to the editor (Esc)"><${Icon} n="left" s=${15} /><span>${current ? current.name : "Back to editor"}</span></button>
         <button class="btn primary" onClick=${() => start("blank")}><${Icon} n="plus" s=${14} w=${2.2} />New design</button>
       </div>
     </header>
@@ -388,7 +387,7 @@ export function ScenesPage() {
       <div class="sp-inner">
         <div class="sp-head">
           <h1>My designs</h1>
-          <p>Every design saves itself here as you work. Pick one up, or start something new.</p>
+          <p>Every design saves itself here as you work.</p>
         </div>
         <div class="sp-starts">
           <button class="sp-start" onClick=${() => start("blank")}>
@@ -411,7 +410,7 @@ export function ScenesPage() {
         ${shelf === "exported"
           ? html`<${ExportsGrid} />`
           : all.length
-          ? html`<div class="sp-toolbar">
+          ? html`${all.length >= 8 && html`<div class="sp-toolbar">
                 <div class="sp-chips">
                   <button class="chip ${kind === "all" ? "on" : ""}" onClick=${() => prefs({ kind: "all" })}>All<span class="n">${all.length}</span></button>
                   ${kinds.map((k) => html`<button class="chip ${kind === k.id ? "on" : ""}" onClick=${() => prefs({ kind: k.id })}><${Icon} n=${k.icon} s=${13} />${k.label}<span class="n">${counts[k.id]}</span></button>`)}
@@ -422,7 +421,7 @@ export function ScenesPage() {
                   <button class=${p.layout !== "list" ? "on" : ""} title="Grid" onClick=${() => prefs({ layout: "grid" })}><${Icon} n="grid" s=${15} /></button>
                   <button class=${p.layout === "list" ? "on" : ""} title="List" onClick=${() => prefs({ layout: "list" })}><${Icon} n="list" s=${15} /></button>
                 </div>
-              </div>
+              </div>`}
               ${!list.length
                 ? html`<div class="sp-empty"><${Icon} n="search" s=${22} /><b>${q ? `No designs match “${q.trim()}”` : "No designs here"}</b>
                     <button class="btn sm" onClick=${() => (setQ(""), prefs({ kind: "all" }))}>Show all designs</button></div>`

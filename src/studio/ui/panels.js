@@ -1,8 +1,8 @@
 // Left panels: Screenshots, Templates, Backdrop, Text and Shapes. Also the layers list and the exports grid.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html } from "./controls.js";
+import { AccentText, ColorButton, Dropdown, Seg, Slider, Section, Switch, TextField, html, optionName } from "./controls.js";
 import { Icon, LayoutIcon } from "./icons.js";
-import { IMAGE_PROVIDERS, S, aiName, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, toast, touch, useStore, pictureUrl } from "./store.js";
+import { IMAGE_PROVIDERS, S, aiName, hasDesign, api, base, edit, entityLabel, fail, fileUrl, isVideo, persistPrefs, pictureName, refreshFiles, set, thumbUrl, toast, touch, useStore, pictureUrl } from "./store.js";
 import { renderShape, shapeSpec } from "./shapes.js";
 import { openMenu } from "./menu.js";
 import {
@@ -97,7 +97,7 @@ function SimulatorForm() {
       <${Switch} checked=${c.system} onChange=${(v) => setCap({ system: v })} label="Show system apps" />
     </div>`}
     <div class="grid2" style=${{ gridTemplateColumns: "1fr auto" }}>
-      <button class="btn primary" disabled=${Boolean(s.busy)} onClick=${captureSimulator}><${Icon} n="camera" s=${15} />Capture</button>
+      <button class="btn ${capturePrimary(s)}" disabled=${Boolean(s.busy)} onClick=${captureSimulator}><${Icon} n="camera" s=${15} />Capture</button>
       <button class="btn" disabled=${Boolean(s.busy)} title="Record 6 seconds of the screen" onClick=${() => recordSimulator(6)}><${Icon} n="record" s=${14} style=${{ color: "#ff5d5d" }} />Record</button>
     </div>
   </div>`;
@@ -115,7 +115,7 @@ function WebForm() {
       }} /></div>
     <div class="chips">${vps.map((v) => html`<button class="chip sm ${c.viewport === v ? "on" : ""}" onClick=${() => setCap({ viewport: v })}>${v}</button>`)}</div>
     <div class="row"><label>Look</label><${Seg} value=${c.scheme} options=${[{ value: "light", label: "Light", icon: "sun" }, { value: "dark", label: "Dark", icon: "moon" }]} onChange=${(v) => setCap({ scheme: v })} /></div>
-    <button class="btn primary" disabled=${Boolean(s.busy)} onClick=${captureWeb}><${Icon} n="globe" s=${15} />Capture page</button>
+    <button class="btn ${capturePrimary(s)}" disabled=${Boolean(s.busy)} onClick=${captureWeb}><${Icon} n="globe" s=${15} />Capture page</button>
   </div>`;
 }
 
@@ -136,7 +136,7 @@ function MacForm() {
     <div class="hstack"><div class="grow"><${Dropdown} value=${c.macWindow} options=${opts} search placeholder=${wins ? "Choose a window" : "Loading windows…"} onChange=${(v) => setCap({ macWindow: v })} /></div>
       <button class="icon-btn" title="Refresh" onClick=${load}><${Icon} n="refresh" s=${14} /></button></div>
     <div class="note">macOS may ask to allow <b>Screen Recording</b> for Screenshotter the first time.</div>
-    <button class="btn primary" disabled=${Boolean(s.busy)} onClick=${captureMac}><${Icon} n="monitor" s=${15} />Capture ${c.macWindow ? "window" : "screen"}</button>
+    <button class="btn ${capturePrimary(s)}" disabled=${Boolean(s.busy)} onClick=${captureMac}><${Icon} n="monitor" s=${15} />Capture ${c.macWindow ? "window" : "screen"}</button>
   </div>`;
 }
 
@@ -192,6 +192,9 @@ function Shot({ f, used, replacing }) {
   </div>`;
 }
 
+/** Capture is the panel's main button only while the design is empty; after that Export is the one. */
+const capturePrimary = (s) => (hasDesign(s.scene) || s.shots ? "" : "primary");
+
 export function CapturesPanel() {
   const s = useStore();
   const c = s.capture;
@@ -205,7 +208,7 @@ export function CapturesPanel() {
     </div>
     <div class="panel-body">
       <div class="intro">Bring in a screenshot of your app, then click it to put it in the design.</div>
-      <div class="row"><label>Add them</label><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "In a device" }, { value: "none", label: "No frame" }, { value: "card", label: "Rounded" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
+      <div class="row" title="How new screenshots come in: in a device, with no frame, or with rounded corners"><label>Frame</label><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "Device" }, { value: "none", label: "None" }, { value: "card", label: "Rounded" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
       ${s.replacing &&
       html`<div class="insp-hero" style=${{ boxShadow: "inset 0 0 0 1px var(--iris)", background: "var(--iris-soft)" }}>
         <${Icon} n="replace" s=${16} />
@@ -524,7 +527,13 @@ function PhotoBg() {
     if (!hits && q) search();
   }, []);
   const current = o.photo?.startsWith("unsplash:") ? o.photo.slice(9) : null;
+  // Without a key the search can't work: say so first, rather than after a search comes back empty.
+  const keyless = !S.opts?.unsplashKey;
   return html`
+    ${keyless
+      ? html`<div class="empty-note">Searching Unsplash's free photos needs an access key (free, from unsplash.com).
+          <button class="btn sm" onClick=${() => set({ modal: { kind: "settings", tab: "photos" } })}>Add a key in Settings</button></div>`
+      : html`
     <div class="input-wrap"><${Icon} n="search" s=${14} /><input class="input" placeholder="Search Unsplash: misty mountains, linen…" value=${q} onInput=${(e) => setQ(e.target.value)}
       onKeyDown=${(e) => {
         e.stopPropagation();
@@ -536,7 +545,8 @@ function PhotoBg() {
         onClick=${() => setBackground({ ...keepTreatment(S.scene.background), photo: `unsplash:${h.id}` })}><img loading="lazy" src=${h.thumb} /></button>`)}</div>
       ${!hits.length && html`<div class="empty-note">No free photos found.</div>`}
       <div class="note">Photos from <a href="https://unsplash.com" target="_blank">Unsplash</a>. Credits are added to each render's metadata.</div>
-      ${!S.opts?.unsplashKey && html`<div class="note warn">Searching Unsplash needs a free access key. <a href="#" onClick=${(e) => (e.preventDefault(), set({ modal: { kind: "settings" } }))}>Add one in Settings</a></div>`}`}
+`}
+`}
     <div class="divider"></div>
     <button class="btn" onClick=${() => file.current.click()}><${Icon} n="upload" s=${14} />Use your own photo</button>
     <input type="file" ref=${file} hidden accept="image/*" onChange=${async (e) => {
@@ -561,11 +571,11 @@ function AiBg() {
   const [text, setText] = useState(typeof o.generate === "string" ? o.generate : o.generate?.prompt ?? "");
   return html`
     <${TextField} multiline rows=${3} value=${text} placeholder="Soft pastel sand dunes at golden hour, gentle haze" onChange=${setText} />
-    <button class="btn primary" disabled=${!providers.length || !text.trim()} onClick=${() => setBackground({ ...keepTreatment(S.scene.background), generate: text.trim(), ...(o.seed !== undefined ? { seed: o.seed } : {}) })}>
+    <button class="btn" disabled=${!providers.length || !text.trim()} onClick=${() => setBackground({ ...keepTreatment(S.scene.background), generate: text.trim(), ...(o.seed !== undefined ? { seed: o.seed } : {}) })}>
       <${Icon} n="wand" s=${15} />Use this prompt</button>
     ${o.generate && html`<button class="btn sm" onClick=${() => edit((d) => (d.background = { ...bgObj(d.background), seed: ((bgObj(d.background).seed ?? 0) + 1) % 100 }))}><${Icon} n="refresh" s=${13} />New variation</button>`}
     <div class="note">${providers.length
-      ? html`Generated with <b>${providers[0]}</b> when you render, then cached for this prompt.`
+      ? html`Made with <b>${IMAGE_PROVIDERS[providers[0]] ?? providers[0]}</b> when the design is drawn, then kept for this prompt.`
       : html`Set <code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>REPLICATE_API_TOKEN</code> or <code>FAL_KEY</code> in your shell profile, then restart Screenshotter.`}</div>
   `;
 }
@@ -615,7 +625,7 @@ export function Finish() {
     <div class="row"><label>Vignette</label><${Slider} value=${vig} min=${0} max=${1} step=${0.01} fallback=${0} format=${(v) => Math.round(v * 100)} onChange=${(v) => setFx("vignette", v)} /></div>
     <${Switch} checked=${Boolean(fx.edgeBlur)} onChange=${(v) => setFx("edgeBlur", v || undefined)} label="Blur where devices leave the canvas" />
     <div class="lbl">Colour grade (affects the background, not your screenshot)</div>
-    <div class="chips">${(s.opts?.grades ?? ["none"]).map((g) => html`<button class="chip sm ${grade === g ? "on" : ""}" onClick=${() => setFx("grade", g)}>${g}</button>`)}</div>
+    <div class="chips">${(s.opts?.grades ?? ["none"]).map((g) => html`<button class="chip sm ${grade === g ? "on" : ""}" onClick=${() => setFx("grade", g)}>${optionName(g)}</button>`)}</div>
   <//>`;
 }
 
@@ -624,10 +634,10 @@ export function BackgroundsPanel() {
   const [mode, setMode] = useState(() => currentMode(S.scene.background));
   return html`<div class="panel left">
     <div class="panel-head"><h2>Backgrounds</h2>
-      <button class="btn sm ${currentMode(s.scene.background) === "none" ? "" : "ghost"}" title="No background: export a transparent PNG" onClick=${() => setBackground({ type: "transparent" })}>Transparent</button>
+      <button class="btn sm ${currentMode(s.scene.background) === "none" ? "" : "ghost"}" title="No background: export a transparent PNG" onClick=${() => setBackground({ type: "transparent" })}><span class="checker-chip"></span>No background</button>
     </div>
     <div class="panel-body">
-      <div class="intro">What sits behind your design. Pick a wallpaper or a look, or use your own colours or photo. Its effects are in the settings on the right.</div>
+      <div class="intro">Pick what sits behind your design. Adjust it on the right.</div>
       <${Seg} value=${mode} onChange=${setMode} options=${[{ value: "looks", label: "Looks" }, { value: "color", label: "Colours" }, { value: "photo", label: "Photos" }, { value: "ai", label: "AI image" }]} />
       ${mode === "looks" && html`<${Looks} />`}
       ${mode === "color" && html`<div class="vstack">${html`<${ColorBg} />`}</div>`}
@@ -642,6 +652,9 @@ export function BackgroundsPanel() {
 
 /** Text and shapes share a tab in the rail: this switches between the two halves. */
 
+/** Words as people read them: no ** around the accent words, lines joined. */
+const plainWords = (t) => String(t ?? "").replace(/\*\*/g, "").replace(/\\n|\n/g, " ").trim();
+
 export function TextPanel({ tabs }) {
   const s = useStore();
   const scene = s.scene;
@@ -650,13 +663,12 @@ export function TextPanel({ tabs }) {
   return html`<div class="panel left">
     ${tabs ?? html`<div class="panel-head"><h2>Text</h2></div>`}
     <div class="panel-body">
-      <div class="intro">A headline sells the screen. Add labels or badges for extra detail. Double-click any text in the design to retype it.</div>
+      <div class="intro">Add text here; retype it on the design (double-click) or on the right.</div>
       <${Section} title="Headline">
         ${hasCaption
-          ? html`<div class="text-card ${s.selected === "caption" ? "on" : ""}" onClick=${() => set({ selected: "caption" })}>
-              <${AccentText} rows=${2} value=${scene.headline} placeholder="Headline" onChange=${(v) => edit((d) => (d.headline = v || undefined), "headline")} />
-              <${TextField} value=${scene.subheadline} placeholder="Subheadline (optional)" onChange=${(v) => edit((d) => (d.subheadline = v || undefined), "subheadline")} />
-            </div>`
+          ? html`<button class="text-row ${s.selected === "caption" ? "on" : ""}" title="Choose the headline: its words and style are on the right" onClick=${() => set({ selected: "caption", rightOpen: true })}>
+              <${Icon} n="text" s=${14} /><span class="grow">${plainWords(scene.headline) || "Headline"}</span>${scene.subheadline && html`<span class="muted">+ subheadline</span>`}
+            </button>`
           : html`<button class="btn block" onClick=${addCaption}><${Icon} n="plus" s=${14} />Add a headline</button>`}
       <//>
       <${Section} title="Add extra text">
@@ -670,16 +682,16 @@ export function TextPanel({ tabs }) {
       <${Section} title="Extra text" count=${texts.length}>
         ${texts.length
           ? texts.map(
-              (t, i) => html`<div class="text-card ${s.selected === `text-${i + 1}` ? "on" : ""}" onClick=${() => set({ selected: `text-${i + 1}` })}>
-                <div class="hstack" style=${{ alignItems: "flex-start" }}><div class="grow"><${AccentText} rows=${1} value=${t.text} onFocus=${() => set({ selected: `text-${i + 1}` })} onChange=${(v) => edit((d) => (d.texts[i].text = v), `text${i}`)} /></div>
-                  <button class="icon-btn sm" title="Remove" onClick=${(e) => {
-                    e.stopPropagation();
-                    edit((d) => d.texts.splice(i, 1));
-                    set({ selected: null });
-                  }}><${Icon} n="trash" s=${13} /></button></div>
+              (t, i) => html`<div class="text-row ${s.selected === `text-${i + 1}` ? "on" : ""}" role="button" tabindex="0" title="Choose it: its words and style are on the right" onClick=${() => set({ selected: `text-${i + 1}`, rightOpen: true })}>
+                <${Icon} n="text" s=${14} /><span class="grow">${plainWords(t.text) || "Text"}</span>
+                <button class="icon-btn sm" title="Remove" onClick=${(e) => {
+                  e.stopPropagation();
+                  edit((d) => d.texts.splice(i, 1));
+                  set({ selected: null });
+                }}><${Icon} n="trash" s=${13} /></button>
               </div>`,
             )
-          : html`<div class="empty-note">Labels, badges and ratings you add appear here. Double-click text on the canvas to retype it.</div>`}
+          : html`<div class="empty-note">Labels, badges and ratings you add show here.</div>`}
       <//>
     </div>
   </div>`;
@@ -860,7 +872,7 @@ export function ShapesPanel({ tabs }) {
   return html`<div class="panel left">
     ${tabs ?? html`<div class="panel-head"><h2>Shapes</h2>${shapes.length > 0 && html`<span class="sub">${shapes.length}</span>`}</div>`}
     <div class="panel-body">
-      <div class="intro">Drag a shape onto your design and drop it where you want it (or click to add it in the middle). Then move, resize, rotate and recolour it.</div>
+      <div class="intro">Drag one onto the design, or click it to add it.</div>
       <${Section} title="Colour">
         <div class="tints">
           ${TINTS.map((c) => html`<button class="tint ${c === tint ? "on" : ""}" title=${c} style=${{ background: c }} onClick=${() => set({ shapeTint: c })}></button>`)}
@@ -894,7 +906,7 @@ export function ShapesPanel({ tabs }) {
       <//>`}
       ${dev &&
       html`<${Section} title="Snap to text on the screen" collapsible open=${false} id="shape-snap">
-        <div class="note">Optional. Instead of placing a mark yourself, pick words on the screen: the mark lands on them and follows the device when it moves.</div>
+        <div class="note">Or pick words on the screen: the mark sits on them and moves with the device.</div>
         <div class="row"><label>Add a</label><${Seg} value=${s.shapeMark} options=${MARKS} onChange=${(v) => set({ shapeMark: v })} /></div>
         ${ocr
           ? html`<div class="ocr">${ocr.map((b) => html`<button title=${b.text} onClick=${() => addShape(s.shapeMark, { tint, around: { device: di + 1 > 1 ? di + 1 : undefined, text: b.text } })}>${b.text}</button>`)}${!ocr.length && html`<span class="note">No text found.</span>`}</div>`
@@ -1097,7 +1109,7 @@ export function DesignForMe() {
   return html`<div class="dfm">
     <div class="dfm-head">
       <div><b>Design it for me</b><span>${aiName()} looks at your screens and proposes three directions. Pick the one you like.</span></div>
-      <button class="btn primary sm" disabled=${d?.busy || !s.scene.devices.length || (ai && !ai.available)} onClick=${designForMe}>
+      <button class="btn sm spark-btn" disabled=${d?.busy || !s.scene.devices.length || (ai && !ai.available)} onClick=${designForMe}>
         ${d?.busy ? html`<span class="spinner"></span>Designing…` : html`<${Icon} n="spark" s=${13} />${d?.items?.length ? "Three more" : "Design it"}`}
       </button>
     </div>
@@ -1113,7 +1125,7 @@ export function DesignForMe() {
         <b>${x.name}</b><span>${x.summary}</span>
       </button>`,
     )}</div>`}
-    ${ai && !ai.available && html`<div class="note">Needs Claude Code, Codex or an API key (Settings › AI Edit).</div>`}
+    ${ai && !ai.available && html`<div class="note">Needs Claude Code, Codex or an API key (Settings › Ask AI).</div>`}
   </div>`;
 }
 
@@ -1233,11 +1245,11 @@ export function DesignsPanel() {
   const setBody = setTemplateInput();
   const sq = encodeURIComponent(JSON.stringify(setBody));
   return html`<div class="panel left">
-    <div class="panel-head"><h2>Templates</h2><span class="sub">${s.recipes.length}</span></div>
+    <div class="panel-head"><h2>Templates</h2></div>
     <div class="panel-body">
-      <div class="intro">Finished designs made from your screenshot, your headline and your app's colours. One click to try one; undo goes back. Ask AI (⌘K) can design three for you.</div>
+      <div class="intro">Designs made from your screenshot and its colours. Click one to try it; ⌘Z goes back.</div>
       <${Section} title="Whole sets" count=${s.setTemplates?.length}>
-        <div class="note">Five screens in one look, made from your screenshots in order and your words: a hero, three features and a close.</div>
+        <div class="note">Five screens in one look: a hero, three features and a close.</div>
         ${!has && html`<div class="empty-note">Add a screenshot and each set shows a preview made from it.</div>`}
         <${Shelf} grid="set-templates" show=${3} items=${setsFor(s.setTemplates ?? [], form)} render=${(t) => html`<button class="set-template" key=${t.id} disabled=${!has} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
             <div class="strip" style=${{ aspectRatio: STRIP_SHAPE[form] ?? STRIP_SHAPE.phone }}>${has && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>

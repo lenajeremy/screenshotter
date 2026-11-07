@@ -673,6 +673,9 @@ const clipName = (a) =>
     : targetsOf(a).includes(CAMERA)
     ? (a.to?.zoom ?? 1) <= 1.001 ? "Pull back" : `${(a.to?.zoom ?? 1).toFixed(1)}× zoom`
     : a.enter ? `${FX[a.enter]} in${a.by ? ` by ${a.by}` : ""}` : a.exit ? `${FX[a.exit]} out${a.by ? ` by ${a.by}` : ""}` : a.from && !a.to ? "From" : "Change";
+/** What a bar says on the timeline: a camera move's zoom fits a short bar ("1.8×", "1×" for a pull back);
+ * its full name stays in the bar's tooltip. */
+const barName = (a) => (targetsOf(a).includes(CAMERA) && !targetsOf(a).includes(BACKDROP) ? `${(a.to?.zoom ?? 1) <= 1.001 ? 1 : (a.to?.zoom ?? 1).toFixed(1)}×` : clipName(a));
 const snap = (t) => Math.round(t * 20) / 20;
 
 const update = (i, fn, key) =>
@@ -800,6 +803,14 @@ export function AnimationSection({ id }) {
     if (!S.timelineOpen) openTimeline();
     selectAnimation(i);
   };
+  // A still design doesn't need four empty rows on every item: one row says it can move, and
+  // opens the timeline on this item's row, where its + adds the first animation.
+  if (!mine.length && !s.timelineOpen)
+    return html`<${Section} title="Animation">
+      <div class="anim-rows"><button class="anim-row" title="Open the timeline (⌘T) on this item's row" onClick=${() => (openTimeline(), set({ animRows: [id], animSel: null }))}>
+        <span class="ar-name">Animate it</span><span class="ar-val">On the timeline</span><${Icon} n="right" s=${12} />
+      </button></div>
+    <//>`;
   return html`<${Section} title="Animation">
     <div class="anim-rows">${ROWS.map((r) => {
       const got = mine.filter(({ a }) => kindOf(a) === r.kind);
@@ -807,7 +818,7 @@ export function AnimationSection({ id }) {
         <span class="ar-name">${r.title}</span><span class="ar-val">${got.length ? got.map(({ a }) => r.sum(a)).join(", ") : "None"}</span><${Icon} n=${got.length ? "right" : "plus"} s=${12} />
       </button>`;
     })}</div>
-    <div class="note">For videos. ${s.timelineOpen ? "The + on its row adds one at the playhead." : "The timeline (⌘T) shows when each one happens."}</div>
+    ${s.timelineOpen ? null : html`<div class="note">The timeline (⌘T) shows when each happens.</div>`}
   <//>`;
 }
 
@@ -924,6 +935,13 @@ export function deleteAnimation(i) {
 // The timeline under the canvas
 
 const ROW_ICON = { footage: "video", motion: "animate", camera: "camera", backdrop: "background", device: "phone", callout: "highlight", caption: "text", text: "text", image: "image", shape: "shapes", sound: "sound" };
+/** A row's icon: a recording's screen and its webcam aren't phones. */
+const rowIcon = (e, scene) => {
+  const d = e.kind === "device" ? scene.devices?.[e.index] : null;
+  if (d?.fixed) return "webcam";
+  if (d && scene.recording?.duration) return "monitor";
+  return ROW_ICON[e.kind];
+};
 /** The row for the design's own motion (not an item). */
 const MOTION_ROW = "motion";
 /** The row for the video's clips: its footage and pictures, one after another. */
@@ -1163,7 +1181,7 @@ export function TimelineDock() {
       html`<button class="btn sm primary" title="Cut the sound in two at the playhead (⌘B)" onClick=${cutSoundHere}><${Icon} n="scissors" s=${13} />Cut at the playhead</button>
         ${s.soundSel !== null && html`<button class="btn sm" title="Delete the chosen piece of sound (⌫)" onClick=${() => deleteSound(s.soundSel)}><${Icon} n="trash" s=${13} />Delete piece</button>`}`}
       <span class="grow"></span>
-      ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this screen is on, its transitions included." : "How long the video runs. It's never shorter than the animations need."}>${s.shots?.length > 1 ? `Screen ${s.shot + 1}` : "Length"}
+      ${s.scene.recording?.duration ? html`<span class="tl-len" title="A recording runs its own length">Recording · ${clock(len)}</span>` : html`<label class="tl-len" title=${s.shots?.length > 1 ? "How long this screen is on, its transitions included." : "How long the video runs. It's never shorter than the animations need."}><span class="tl-len-name">${s.shots?.length > 1 ? `Screen ${s.shot + 1}` : "Length"}</span>
         <${Num} value=${s.shots?.length > 1 ? len : s.exportOpts.video.duration} min=${1} max=${60} step=${0.5} digits=${1} unit="s" onChange=${(v) => {
           if (S.shots?.length > 1) return updateShot(S.shot, { length: v ?? undefined });
           set({ exportOpts: { ...S.exportOpts, video: { ...S.exportOpts.video, duration: v ?? 6 } } });
@@ -1182,7 +1200,7 @@ export function TimelineDock() {
         <div class="tl-corner">${list.length ? `${list.length} animation${list.length === 1 ? "" : "s"}` : "Items"}</div>
         ${rows.map(
           (e) => html`<button class="tl-name ${e.kind === "callout" ? "sub" : ""} ${e.kind === "sound" ? "sound" : ""} ${chosen.includes(e.id) ? "on" : ""}" key=${e.id} title=${e.kind === "sound" ? "The video's sound: drag a piece to move it, its ends to trim it, and cut it at the playhead (⌘B)" : e.kind === "motion" ? "How the design moves on its own: change it in its Motion settings" : e.kind === "footage" ? "The video's clips, one after another: videos and pictures. The + at its end adds another." : "Click to choose; ⌘-click to choose several and animate them together. The + at the playhead adds how it moves."} onClick=${(ev) => pickRow(ev, e.id)}>
-            <${Icon} n=${ROW_ICON[e.kind]} s=${13} /><span>${e.kind === "motion" ? "On its own" : e.kind === "footage" ? "Footage" : label(e.id)}</span>
+            <${Icon} n=${rowIcon(e, s.scene)} s=${13} /><span>${e.kind === "motion" ? "On its own" : e.kind === "footage" ? "Footage" : label(e.id)}</span>
           </button>`,
         )}
       </div>
@@ -1213,7 +1231,7 @@ export function TimelineDock() {
               return html`<div class="tl-bar ${e.id === CAMERA ? "camera" : e.id === BACKDROP ? "backdrop" : kindOf(a)} ${plays > 1 ? "rep" : ""} ${s.animSel === i ? "on" : ""} ${targetsOf(a).length > 1 ? "group" : ""}" key=${i} style=${{ left: at * pps + "px", width: Math.max(10, dur * pps) + "px", "--cyc": Math.max(4, cycle) + "px" }}
                 title=${`${clipName(a)} at ${at.toFixed(2)}s, ${plays > 1 ? `${(a.duration ?? DEFAULT_DURATION).toFixed(2)}s a time, ${plays === Infinity ? "until the end" : `${plays} times`}` : `${dur.toFixed(2)}s`}${targetsOf(a).length > 1 ? ` · with ${targetsOf(a).length - 1} other${targetsOf(a).length > 2 ? "s" : ""}` : ""}`}
                 onPointerDown=${(ev) => dragBar(ev, i, k)}>
-                <span>${clipName(a)}</span>
+                <span>${barName(a)}</span>
                 <i class="tl-edge" onPointerDown=${(ev) => dragBar(ev, i, k, true)}></i>
               </div>`;
             })}
@@ -1278,7 +1296,7 @@ function TransitionChip({ i, t, at }) {
 
 // Shot pictures, remembered by what's in them (the newest few).
 const thumbs = new Map();
-function ShotThumb({ scene, film }) {
+function ShotThumb({ scene, film, single }) {
   const key = JSON.stringify(scene ?? null);
   const [img, setImg] = useState(thumbs.get(key));
   useEffect(() => {
@@ -1298,7 +1316,7 @@ function ShotThumb({ scene, film }) {
     return () => clearTimeout(timer);
   }, [key]);
   // On the video's timeline, the picture repeats along the shot like frames of film.
-  if (film) return img ? html`<i class="shot-film" style=${{ backgroundImage: `url(${img})` }}></i>` : html`<i class="shot-blank"></i>`;
+  if (film) return img ? html`<i class="shot-film ${single ? "single" : ""}" style=${{ backgroundImage: `url(${img})` }}></i>` : html`<i class="shot-blank"></i>`;
   return img ? html`<img src=${img} alt="" draggable=${false} />` : html`<i class="shot-blank"></i>`;
 }
 
@@ -1337,9 +1355,10 @@ function Frames({ file, from, to, pps }) {
 }
 
 /** A clip's look on the Footage row: its video's frames, or its picture. */
-function ClipFrames({ scene, len, pps }) {
+function ClipFrames({ scene, len, pps, single }) {
   const vid = footageOf(scene);
-  if (!vid) return html`<${ShotThumb} scene=${scene} film />`;
+  // A still design on its own is one picture for its whole length, not frames of film.
+  if (!vid) return html`<${ShotThumb} scene=${scene} film single=${single} />`;
   return html`<${Frames} file=${vid} from=${0} to=${len} pps=${pps} />`;
 }
 
@@ -1456,7 +1475,7 @@ function FootageTrack({ pps, plan, len, on }) {
           style=${{ left: c.at * pps + "px", width: Math.max(14, c.len * pps - (many ? 2 : 0)) + "px" }}
           title=${`${many ? `${c.i + 1} · ${screenName(c.i)} · ` : ""}${c.len.toFixed(1)} s${c.i === cur ? "" : ": click to edit it"}. Right-click for more.`}
           onClick=${() => pick(c.i)} onContextMenu=${(e) => menu(e, c.i)}>
-        <${ClipFrames} scene=${c.scene} len=${c.len} pps=${pps} />
+        <${ClipFrames} scene=${c.scene} len=${c.len} pps=${pps} single=${!many} />
         ${many && html`<span class="clip-n">${c.i + 1}</span>`}
         ${c.len * pps > 70 && html`<span class="clip-len">${c.len.toFixed(1)}s</span>`}
       </button>`,
@@ -1564,7 +1583,7 @@ function CameraInspector({ i, a }) {
       <button class="icon-btn sm" title="Close" onClick=${() => set({ animSel: null })}><${Icon} n="x" s=${14} /></button>
     </div>
     <div class="panel-body">
-      <div class="note">Drag the frame on the canvas to aim the camera, and a corner to zoom. The camera moves the whole picture, text included.</div>
+      <div class="note">Drag the frame on the design to aim, a corner to zoom.</div>
       <${Section} title="Goes to">
         <div class="row"><label>Zoom</label><${Slider} value=${zoom} min=${1} max=${6} step=${0.05} format=${(v) => (v <= 1.001 ? "All of it" : v.toFixed(1) + "×")} onChange=${(v) => setTo({ zoom: v ?? 1 }, "zoom")} /></div>
         <div class="row"><label>Look at</label><${Dropdown} value="" placeholder="An item…" options=${items} onChange=${aim} /></div>
@@ -1821,7 +1840,7 @@ export function SoundInspector() {
       <button class="icon-btn sm" title="Close" onClick=${() => set({ soundSel: null })}><${Icon} n="x" s=${14} /></button>
     </div>
     <div class="panel-body">
-      <div class="note">Drag the piece to move it, and its ends to trim it. To take a part out, cut at its start and its end (⌘B cuts at the playhead), then delete the piece between.</div>
+      <div class="note">Drag it to move it, its ends to trim it. ⌘B cuts at the playhead.</div>
       <${Section} title="Loudness">
         <div class="row"><label>Volume</label><${Slider} value=${c.volume ?? 1} min=${0} max=${1} step=${0.01} format=${(v) => `${Math.round(v * 100)}%`} onChange=${(v) => setPiece({ volume: v === undefined || v >= 0.995 ? undefined : r3(v) }, "volume")} /></div>
         <div class="row"><label>Fade in</label><${Slider} value=${c.fadeIn ?? 0} min=${0} max=${3} step=${0.1} format=${(v) => (v > 0 ? `${v.toFixed(1)} s` : "None")} onChange=${(v) => setPiece({ fadeIn: v ? r3(v) : undefined }, "fadeIn")} /></div>

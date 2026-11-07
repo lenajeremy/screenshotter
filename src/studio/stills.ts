@@ -69,10 +69,12 @@ export async function stillMoments(video: string, n = 8): Promise<{ duration: nu
   const kept: number[] = [];
   const keptLooks: Buffer[] = [];
   const spare: number[] = [];
+  // Moments spread through the recording: two a tenth of a second apart look the same to anyone.
+  const gap = Math.min(1, d / (n * 2));
   candidates.forEach((t, i) => {
     const look = looks[i];
     if (!look) return;
-    if (kept.length < n && !keptLooks.some((k) => alike(k, look))) {
+    if (kept.length < n && !keptLooks.some((k) => alike(k, look)) && kept.every((k) => Math.abs(k - t) >= gap)) {
       kept.push(t);
       keptLooks.push(look);
     } else spare.push(t);

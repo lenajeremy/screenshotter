@@ -149,7 +149,8 @@ export async function exportSet(input: ExportSetInput): Promise<ExportSetResult>
     const folder = ensureDir(fastlane ? path.join(screenshots, lang) : path.join(dir, lang, sizeName));
     const files: MockupResult[] = [];
     for (const [i, screen] of size.screens.entries()) {
-      const base = `${String(i + 1).padStart(2, "0")} ${fileName(screen.name ?? `Screen ${i + 1}`)}`;
+      // Numbered in store order; a screen's own name follows, when it was given one (not its headline).
+      const base = screen.name ? `${String(i + 1).padStart(2, "0")} ${fileName(screen.name)}` : String(i + 1).padStart(2, "0");
       const output = path.join(folder, `${fastlane ? `${sizeName} - ${base}` : base}.${ext}`);
       files.push(await createMockup({ ...screen.scene, format: input.format, jpegQuality: input.jpegQuality, quality: undefined, preview: false, deliveryWidth: undefined, output }));
       input.onFile?.(++done, total);

@@ -100,20 +100,21 @@ function Topbar() {
     </div>
     ${s.scenesOpen && html`<${ScenesPopover} anchor=${scenesBtn.current} />`}
     <div class="topbar-center">
-      ${(s.busy || s.rendering) && html`<div class="activity" data-nodrag><span class="spinner"></span><span>${(s.busy ?? s.rendering).label}</span></div>`}
+      ${s.busy && html`<div class="activity" data-nodrag><span class="spinner"></span><span>${s.busy.label}</span></div>`}
     </div>
     <span class="spacer"></span>
     <div class="hstack" data-nodrag>
       <button class="icon-btn" title="Undo (⌘Z)" disabled=${!s.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!s.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
       <span style=${{ width: "6px" }}></span>
-      <button class="btn ai" onClick=${() => (s.ai.open ? set({ ai: { ...s.ai, open: false } }) : openAI())} title="Describe a change in plain words and AI makes it (⌘K)"><${Icon} n="spark" s=${15} class="spark" />Ask AI<span class="kbd">⌘K</span></button>
-      <button class="btn primary" ref=${exportBtn} disabled=${!(hasDesign(s.scene) || s.shots) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => (s.exportOpen ? set({ exportOpen: false }) : openExport())}><${Icon} n="export" s=${15} w=${2} />Export</button>
+      <button class="btn ai" disabled=${blankDesign(s)} onClick=${() => (s.ai.open ? set({ ai: { ...s.ai, open: false } }) : openAI())} title="Describe a change in plain words and AI makes it (⌘K)"><${Icon} n="spark" s=${15} class="spark" />Ask AI<span class="kbd">⌘K</span></button>
+      <button class="btn primary" ref=${exportBtn} disabled=${blankDesign(s) || Boolean(s.rendering)} title="Save the finished image or video" onClick=${() => (s.exportOpen ? set({ exportOpen: false }) : openExport())}>${s.rendering ? html`<span class="spinner"></span>Exporting…` : html`<${Icon} n="export" s=${15} w=${2} />Export`}</button>
       <span class="topbar-sep"></span>
       <button class="icon-btn ${s.leftOpen ? "on" : ""}" title=${`${s.leftOpen ? "Hide" : "Show"} the left panel (⌥⌘S)`} onClick=${() => togglePanel("left")}><${Icon} n="sidebar" s=${16} /></button>
-      <button class="icon-btn ${s.rightOpen ? "on" : ""}" title=${`${s.rightOpen ? "Hide" : "Show"} the settings panel (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${16} /></button>
+      <button class="icon-btn ${s.rightOpen ? "on" : ""}" disabled=${blankDesign(s)} title=${`${s.rightOpen ? "Hide" : "Show"} the settings panel (⌥⌘I)`} onClick=${() => togglePanel("right")}><${Icon} n="sidebarR" s=${16} /></button>
     </div>
-    ${(s.busy || s.rendering) && html`<div class="progress-line ${s.rendering?.progress > 0 ? "known" : ""}" style=${s.rendering?.progress > 0 ? { "--p": s.rendering.progress } : undefined}></div>`}
+    ${/* An export shows its progress in one place, the card over the canvas; these are for other work. */ ""}
+    ${s.busy && !s.rendering && html`<div class="progress-line"></div>`}
     ${s.exportOpen && html`<${ExportPopover} anchor=${exportBtn.current} />`}
   </header>`;
 }
@@ -226,7 +227,7 @@ function SetExport() {
   const sizes = setSizes();
   const n = sizes.reduce((k, z) => k + z.screens.length, 0);
   const first = sizes[0];
-  const sample = first ? `${String(1).padStart(2, "0")} ${first.screens[0].name}` : "01 Screen";
+  const sample = first?.screens[0]?.given ? `01 ${first.screens[0].given}` : "01";
   const folder = first?.label.replace(/″/g, "") ?? "iPhone 6.9";
   return html`<div class="body">
     <div class="set-sum">${sizes.map((z) => html`<span><b>${z.label}</b> ${z.screens.length}</span>`)}</div>
@@ -263,8 +264,8 @@ const TABS = [
 /** Which rail tab the left panel's tab belongs to (Text, Shapes and Pictures are all Elements). */
 const railOf = (tab) => (isElementsTab(tab) ? "elements" : tab);
 
-/** The rail's tabs that apply to the design: a recording has no screenshots or templates to choose. */
-const tabsFor = (scene) => (scene.recording?.duration ? TABS.filter((t) => t.id === "backgrounds" || t.id === "elements") : TABS);
+/** Why a rail tab doesn't apply to this design (a recording has no screenshots or templates to choose); null if it does. */
+const offFor = (scene, id) => (scene.recording?.duration && (id === "captures" || id === "designs") ? "Not for a recording: it is the footage, and has its own look" : null);
 
 function Rail() {
   const s = useStore();
@@ -275,8 +276,9 @@ function Rail() {
     set(on && s.leftOpen ? { leftOpen: false } : { leftTab: tab, leftOpen: true });
     persistPrefs();
   };
-  return html`<nav class="rail">
-    ${tabsFor(s.scene).map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && railOf(s.leftTab) === t.id ? "on" : ""}" onClick=${() => pick(t.id)}>
+  // With a panel open, the tips would cover it, and the rail's own labels already say what each is.
+  return html`<nav class="rail ${s.leftOpen && !s.scenesPage ? "panel-open" : ""}">
+    ${TABS.map((t) => html`<button class="rail-btn ${!s.scenesPage && s.leftOpen && railOf(s.leftTab) === t.id ? "on" : ""}" disabled=${Boolean(offFor(s.scene, t.id))} title=${offFor(s.scene, t.id) ?? ""} onClick=${() => pick(t.id)}>
       <span class="ico"><${Icon} n=${t.icon} s=${18} /></span>
       <span class="rl">${t.label}</span>
       <span class="tip">${t.tip}</span>
@@ -293,7 +295,7 @@ function LeftPanel() {
   const s = useStore();
   if (isElementsTab(s.leftTab)) return html`<${ElementsPanel} />`;
   // A recording: its Backgrounds stand in for a tab it doesn't have.
-  const tab = tabsFor(s.scene).some((t) => t.id === s.leftTab) ? s.leftTab : "backgrounds";
+  const tab = offFor(s.scene, railOf(s.leftTab)) ? "backgrounds" : s.leftTab;
   const P = { captures: CapturesPanel, designs: DesignsPanel, backgrounds: BackgroundsPanel }[tab] ?? CapturesPanel;
   return html`<${P} />`;
 }
@@ -311,8 +313,8 @@ function Welcome() {
   const recent = s.scenes.filter((x) => x.id !== s.sceneId && x.devices > 0).slice(0, 4);
   const go = (source) => set({ leftTab: "captures", leftOpen: true, capture: { ...S.capture, source } });
   return html`<div class="hero"><div class="hero-inner welcome">
-    <h1>Make your app look <em>incredible.</em></h1>
-    <p>Start with a screenshot of your app. You get a finished design to make your own.</p>
+    <h1>Beautiful App Store screenshots, <em>in minutes.</em></h1>
+    <p>Drop in a screenshot or a recording of your app. It comes out designed, ready to make your own.</p>
     <button class="drop-target" onClick=${() => input.current.click()}>
       <span class="ico"><${Icon} n="upload" s=${24} /></span>
       <b>Drop a screenshot or a recording here</b>
@@ -326,7 +328,7 @@ function Welcome() {
       ${hasSim && html`<button class="alt" onClick=${() => go("simulator")} title=${booted ? `Grabs whatever ${booted.name} is showing, with a clean status bar` : "Opens an iPhone simulator and grabs its screen"}><${Icon} n="sim" s=${15} />From the iOS Simulator</button>`}
       <button class="alt" onClick=${() => go("web")} title="Type an address; it's captured on a phone or a desktop"><${Icon} n="globe" s=${15} />From a website</button>
       ${native && html`<button class="alt" onClick=${() => native.call("showBar", { mode: "record" }).catch(() => undefined)} title="Record your screen, with your voice and camera if you like; it opens here, ready to edit"><${Icon} n="video" s=${15} />Record your screen</button>`}
-      <button class="alt" onClick=${startWithWords} title="A screen of just words, stickers and doodles: no screenshot needed"><${Icon} n="text" s=${15} />Just words and doodles</button>
+      <button class="alt" onClick=${startWithWords} title="A screen of just words, stickers and doodles: no screenshot needed"><${Icon} n="text" s=${15} />Start with text</button>
       <button class="alt" onClick=${trySample} title="See what it does with a made-up app's screenshot"><${Icon} n="spark" s=${15} />Try a sample</button>
     </div>
     ${shots.length > 0 &&
@@ -379,15 +381,15 @@ function StartPicker() {
   };
   return html`<div class="hero start-pick"><div class="hero-inner">
     <h1>Pick how it <em>starts.</em></h1>
-    <p>Each one is made from your screenshot. You can change everything afterwards, and Templates has more.</p>
+    <p>Each one is made from your screenshot. Change anything afterwards; Templates has more.</p>
     <div class="sp-grid">${picks.map(
       (r) => html`<button class="sp-card ${busy === r.id ? "busy" : ""}" key=${r.id} title=${r.description} disabled=${Boolean(busy)} onClick=${() => pick(r.id)}>
-        <span class="sp-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=420&body=${q}`} alt="" />`}</span>
+        <span class="sp-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=420&body=${q}`} alt="" onLoad=${(e) => e.currentTarget.classList.add("ready")} />`}</span>
         <b>${r.name}</b>
       </button>`,
     )}</div>
     <div class="hstack sp-foot">
-      <button class="btn" onClick=${done}>Keep the first one<span class="kbd">↩</span></button>
+      <button class="btn primary" onClick=${done}>Use ${picks[0]?.name ?? "this one"}<span class="kbd">↩</span></button>
       <button class="btn ghost" onClick=${() => (done(), set({ leftTab: "designs", leftOpen: true }))}><${Icon} n="wand" s=${14} />See every template</button>
     </div>
   </div></div>`;
@@ -637,6 +639,21 @@ function chatPos() {
  * Ask AI as a chat: a panel you can move around the canvas. Each message builds on the ones
  * before it; each change Claude makes can be reverted from its message.
  */
+// What Ask AI changed, in words: "Turn · iPhone 18 Pro · −12°", not "rotateY device-1 -12".
+const OP_NAMES = {
+  background: "Background", headline: "Headline", subheadline: "Subheadline", rotateX: "Tilt", rotateY: "Turn", rotate: "Rotation",
+  device: "Device", color: "Colour", shadow: "Shadow", height: "Size", width: "Width", x: "Position", y: "Position", frame: "Frame",
+  accentColor: "Accent colour", font: "Font", weight: "Weight", size: "Text size", grain: "Grain", vignette: "Vignette", grade: "Colour grade",
+  motion: "Motion", animations: "Animation", canvas: "Image size", layout: "Layout", highlights: "Call-outs", texts: "Text", images: "Pictures",
+  shapes: "Shapes", effects: "Film look", textStyle: "Text style", blur: "Soft focus", fade: "Fade", finish: "Print finish", landscape: "Landscape",
+};
+const opName = (prop) => {
+  const last = String(prop ?? "").split(/[/.]/).filter((p) => p && !/^\d+$/.test(p)).pop() ?? "";
+  return OP_NAMES[last] ?? last.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
+};
+const opTarget = (t) => (!t || t === "scene" ? "" : entityLabel(t) || t);
+const opValue = (o) => (/rotate/.test(o.prop) && /^-?\d+(\.\d+)?$/.test(String(o.value)) ? `${String(o.value).replace("-", "−")}°` : String(o.value).replace(/\*\*/g, ""));
+
 function AIChat({ docked }) {
   const s = useStore();
   const ai = s.ai;
@@ -724,7 +741,7 @@ function AIChat({ docked }) {
                 ${m.took && html`<${WorkedFor} m=${m} />`}
                 ${m.ops?.length > 0 &&
                 html`<ul class="op-list">${m.ops.map(
-                  (o, i) => html`<li style=${{ "--i": i }}><span class="op-tick"><${Icon} n="check" s=${10} w=${3} /></span>${o.shot && html`<span class="op-shot" title=${`Screen ${o.shot}`}>${o.shot}</span>`}<b>${o.prop}</b><span class="op-target">${o.target}</span>${o.value && html`<span class="op-val" title=${o.value}>${o.color && html`<i style=${{ background: o.color }}></i>`}<span>${o.value}</span></span>`}</li>`,
+                  (o, i) => html`<li style=${{ "--i": i }}><span class="op-tick"><${Icon} n="check" s=${10} w=${3} /></span>${o.shot && html`<span class="op-shot" title=${`Screen ${o.shot}`}>${o.shot}</span>`}<b>${opName(o.prop)}</b><span class="op-target">${opTarget(o.target)}</span>${o.value && html`<span class="op-val" title=${o.value}>${o.color && html`<i style=${{ background: o.color }}></i>`}<span>${opValue(o)}</span></span>`}</li>`,
                 )}</ul>`}
                 <p>${m.fresh ? plain(m.text).split(/(\s+)/).map((w, i) => html`<span class="w" style=${{ "--i": Math.min(i, 60) }}>${w}</span>`) : plain(m.text)}</p>
                 ${m.remembered?.length > 0 && html`<div class="remembered"><${Icon} n="spark" s=${11} /><span>Remembered for next time: ${m.remembered.map((r) => `“${r}”`).join(", ")}</span></div>`}
@@ -833,6 +850,7 @@ function JsonDrawer() {
 
 function Settings() {
   const s = useStore();
+  useEscape(() => set({ modal: null }));
   const [info, setInfo] = useState(null);
   const [key, setKey] = useState("");
   const [unsplashKey, setUnsplashKey] = useState("");
@@ -871,12 +889,22 @@ function Settings() {
     { value: "claude-fable-5-1", label: "Claude Fable 5.1", hint: "most capable" },
   ];
   const engine = aiEngine();
+  // One part at a time, so each setting is a line, not a page of reading. "art" was the device art card.
+  const [tab, setTab] = useState(() => ({ art: "devices", ai: "ai", photos: "images" })[s.modal?.tab] ?? "general");
+  const TABS = [
+    { value: "general", label: "General" },
+    { value: "ai", label: "Ask AI" },
+    { value: "images", label: "Photos & images" },
+    { value: "devices", label: "Devices" },
+    { value: "keys", label: "Shortcuts" },
+  ];
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && set({ modal: null })}>
     <div class="sheet">
-      <div class="sheet-head"><h2>Settings</h2><button class="icon-btn" onClick=${() => set({ modal: null })}><${Icon} n="x" s=${16} /></button></div>
+      <div class="sheet-head"><h2>Settings</h2><button class="icon-btn" title="Close (Esc)" onClick=${() => set({ modal: null })}><${Icon} n="x" s=${16} /></button></div>
+      <div class="settings-tabs"><${Seg} value=${tab} options=${TABS} onChange=${setTab} /></div>
       <div class="sheet-body">
-        <div class="card">
-          <h4><${Icon} n="spark" s=${15} style=${{ color: "var(--pink)" }} />AI Edit
+        ${tab === "ai" && html`<div class="card">
+          <h4><${Icon} n="spark" s=${15} style=${{ color: "var(--lime)" }} />Ask AI
             <span class="grow"></span>
             ${engine === "codex"
               ? ai?.codex
@@ -893,8 +921,8 @@ function Settings() {
             persist();
           }} /></div>
           ${engine === "codex"
-            ? html`<div class="note">Describe a change and Codex edits the design, using your signed-in <b>Codex</b> (${ai?.codex ? "found" : html`not found; install it with <code>brew install codex</code> and run <code>codex</code> once`}). It uses the model set in Codex${ai?.codexModel ? html` (<b>${ai.codexModel}</b>)` : ""}. Codex sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design when a request is about how it looks. Your original files stay on your Mac.</div>`
-            : html`<div class="note">Describe a change and Claude edits the design. It uses your <b>Anthropic API key</b> if one is set, otherwise your signed-in <b>Claude Code</b> (${ai?.claudeCode ? "found" : "not found; install it and run claude once"}). Claude sees the scene settings (file paths replaced by placeholders) and, if you allow it, a small preview of the design when a request is about how it looks (questions and exact edits go without, so they're quicker). Your original files stay on your Mac.</div>`}
+            ? html`<div class="note">Uses <b>Codex</b> on this Mac${ai?.codex ? "" : html` (not found: <code>brew install codex</code>, then run <code>codex</code> once)`}, with the model set in Codex${ai?.codexModel ? html` (${ai.codexModel})` : ""}. Your files stay on your Mac.</div>`
+            : html`<div class="note">Uses your API key if one is set, else <b>Claude Code</b> on this Mac${ai?.claudeCode ? "" : " (not found: install it and run claude once)"}. Your files stay on your Mac.</div>`}
           <${Switch} checked=${s.ai.preview !== false} onChange=${(v) => {
             set({ ai: { ...S.ai, preview: v } });
             persist();
@@ -906,13 +934,14 @@ function Settings() {
                   <button class="btn" disabled=${!key.trim() || saving} onClick=${() => saveKey(key.trim())}>Save</button>
                   ${info?.hasApiKey && html`<button class="btn ghost" disabled=${saving} onClick=${() => saveKey("")}>Remove</button>`}
                 </div></div>`
-              : html`<div class="note">To use an API key, start the Studio with <code>ANTHROPIC_API_KEY</code> set.</div>`}
+              : html`<div class="note">In the browser, an API key comes from <code>ANTHROPIC_API_KEY</code>.</div>`}
             <div class="row"><label>Model</label><${Dropdown} value=${s.ai.model} options=${models} onChange=${(v) => {
               set({ ai: { ...S.ai, model: v } });
               persist();
             }} /></div>`}
         </div>
-        <div class="card">
+        <${HouseStyle} />`}
+        ${tab === "general" && html`<div class="card">
           <h4><${Icon} n="folder" s=${15} />Output folder</h4>
           <div class="hstack"><span class="mono grow" style=${{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-2)" }}>${shortPath(s.opts?.outputRoot)}</span>
             <button class="btn sm" onClick=${() => reveal(s.opts.outputRoot)}>Show</button>
@@ -927,23 +956,23 @@ function Settings() {
           </div>
           <div class="note">Your screenshots, designs and exports live here.</div>
         </div>
-        <${DeviceArt} />
-        <${HouseStyle} />
         <div class="card">
           <h4><${Icon} n="code" s=${15} />For developers</h4>
-          <div class="note">Every design is plain JSON: exactly what an AI agent sends to make this image. You can read it, edit it and apply it.</div>
+          <div class="note">Every design is JSON, as an agent would send it: read it, edit it, apply it.</div>
           <div class="hstack"><button class="btn sm" onClick=${() => set({ modal: null, jsonOpen: true })}>Show this design as JSON</button><span class="kbd">⌥⌘J</span></div>
         </div>
-        <div class="card">
+        ${info?.version && html`<div class="note" style=${{ textAlign: "center" }}>Screenshotter ${info.version} · engine on ${location.host} · Node ${info.node ?? ""}</div>`}`}
+        ${tab === "devices" && html`<${DeviceArt} />`}
+        ${tab === "images" && html`<div class="card">
           <h4><${Icon} n="image" s=${15} />Photos</h4>
-          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> for background photos needs a free access key: at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a>, make a new app (any name) and copy its <b>Access Key</b>. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : "Photos you've already chosen keep working without one."}</div>
+          <div class="note">Searching <a href="https://unsplash.com" target="_blank">Unsplash</a> needs a free access key: make an app at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a> and copy its Access Key. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : ""}</div>
           ${native
             ? html`<div class="row"><label>Access key</label><div class="hstack">
                 <input class="input grow mono" type="password" placeholder=${info?.hasUnsplashKey ? "•••••••••• saved in Keychain" : "Unsplash Access Key"} value=${unsplashKey} onInput=${(e) => setUnsplashKey(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
                 <button class="btn" disabled=${!unsplashKey.trim() || saving} onClick=${() => saveUnsplashKey(unsplashKey.trim())}>Save</button>
                 ${info?.hasUnsplashKey && html`<button class="btn ghost" disabled=${saving} onClick=${() => saveUnsplashKey("")}>Remove</button>`}
               </div></div>`
-            : html`<div class="note">Start the Studio with <code>UNSPLASH_ACCESS_KEY</code> set to use one.</div>`}
+            : html`<div class="note">In the browser, the key comes from <code>UNSPLASH_ACCESS_KEY</code>.</div>`}
         </div>
         <div class="card">
           <h4><${Icon} n="wand" s=${15} />AI backgrounds</h4>
@@ -953,16 +982,19 @@ function Settings() {
               set({ ai: { ...S.ai, imageQuality: v } });
               persistPrefs();
             }} /></div>
-            <div class="note">${s.ai.imageQuality === "best" ? "Best: the finest detail. A new image takes a minute or more." : "Fast: a new image in about half a minute, with a little less fine detail. Best takes a minute or more."} Images you already have are kept either way.</div>`}
-        </div>
-        <div class="card">
+            <div class="note">${s.ai.imageQuality === "best" ? "Best: the finest detail, a minute or more for each." : "Fast: about half a minute for each, with a little less detail."}</div>`}
+        </div>`}
+        ${tab === "keys" && html`<div class="card">
           <h4><${Icon} n="bolt" s=${15} />Shortcuts</h4>
           <div class="shortcuts">
             ${[
               ["Ask AI", "⌘K"],
-              ["Quick preview", "⌘R"],
+              ["Ask AI in the panel, or floating", "⇧⌘K"],
+              ["Show the finished look now", "⌘R"],
               ["Export image / video", "⌘E / ⇧⌘E"],
-              ["Edit / Preview", "⌘1 / ⌘2"],
+              ["Timeline", "⌘T"],
+              ["Play / pause", "Space"],
+              ["Cut at the playhead", "⌘B"],
               ["My designs", "⇧⌘O"],
               ["Focus mode (hide both panels)", "⌘\\"],
               ["Undo / Redo", "⌘Z / ⇧⌘Z"],
@@ -974,8 +1006,7 @@ function Settings() {
               ["Import from clipboard", "⌘V"],
             ].map(([a, b]) => html`<span>${a}</span><span class="kbd">${b}</span>`)}
           </div>
-        </div>
-        ${info?.version && html`<div class="note" style=${{ textAlign: "center" }}>Screenshotter ${info.version} · engine on ${location.host} · Node ${info.node ?? ""}</div>`}
+        </div>`}
       </div>
     </div>
   </div>`;
@@ -1105,6 +1136,34 @@ export async function openWhatsNew(all = true) {
   }
 }
 
+/** Escape closes the sheet that uses this. */
+function useEscape(close) {
+  useEffect(() => {
+    const key = (e) => e.key === "Escape" && (e.preventDefault(), close());
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, []);
+}
+
+/** Where every release's full notes are. */
+const CHANGELOG_URL = "https://screenshotter-umber.vercel.app/changelog.html";
+/**
+ * A release in a few lines: each highlight's bold lead (the first six), and the fixes as a count;
+ * the full notes are on the website.
+ */
+function releaseSummary(r) {
+  const out = [];
+  let fixes = 0;
+  for (const sec of r.sections) {
+    if (/fix/i.test(sec.title ?? "")) fixes += sec.items.length;
+    else for (const it of sec.items) out.push(it.match(/^<strong>(.*?)<\/strong>/)?.[0] ?? it);
+  }
+  const shown = out.slice(0, 6);
+  if (out.length > 6) shown.push(`And ${out.length - 6} more.`);
+  if (fixes) shown.push(`${fixes} fix${fixes === 1 ? "" : "es"}.`);
+  return shown;
+}
+
 /** Release notes, newest first; the first time after an update it opens by itself. */
 function WhatsNew() {
   const m = S.modal;
@@ -1119,20 +1178,16 @@ function WhatsNew() {
   }, []);
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
     <div class="sheet whats-new">
-      <div class="sheet-head"><h2>${m.fresh ? `What's new in Screenshotter ${m.version}` : "What's new"}</h2><button class="icon-btn" onClick=${close}><${Icon} n="x" s=${16} /></button></div>
+      <div class="sheet-head"><h2>${m.fresh ? `What's new in Screenshotter ${m.version}` : "What's new"}</h2><button class="icon-btn" title="Close (Esc)" onClick=${close}><${Icon} n="x" s=${16} /></button></div>
       <div class="sheet-body">
         ${m.releases.map(
           (r, i) => html`<section class="release" style=${{ "--i": i }}>
             <div class="release-head"><span class="release-v">${r.version}</span>${r.date && html`<span class="faint">${r.date}</span>`}${r.version === m.version && html`<span class="pill ok">This version</span>`}</div>
-            ${r.sections.map(
-              (sec) => html`<div class="release-sec">
-                ${sec.title && html`<h4>${sec.title}</h4>`}
-                <ul>${sec.items.map((it) => html`<li dangerouslySetInnerHTML=${{ __html: it }}></li>`)}</ul>
-              </div>`,
-            )}
+            ${releaseSummary(r).map((it) => html`<div class="release-sec"><ul><li dangerouslySetInnerHTML=${{ __html: it }}></li></ul></div>`)}
           </section>`,
         )}
-        <div class="hstack"><button class="btn primary" onClick=${close}>Got it</button></div>
+        <div class="hstack"><button class="btn primary" onClick=${close}>Got it</button>
+          <button class="btn ghost" onClick=${() => (native ? native.call("openURL", { url: CHANGELOG_URL }) : window.open(CHANGELOG_URL, "_blank"))}>See every change<${Icon} n="right" s=${13} /></button></div>
       </div>
     </div>
   </div>`;
@@ -1140,23 +1195,28 @@ function WhatsNew() {
 
 function Help() {
   const close = () => set({ modal: null });
+  useEscape(close);
+  // The four steps in order, then the rest you can do along the way.
   const steps = [
-    ["sim", "1 · Add a screenshot", "Drop in an image, or capture your app from the iOS Simulator, a website or a Mac window. They collect under Screenshots."],
-    ["wand", "2 · Pick a look", `Templates has finished designs made from your screenshot; Backgrounds has macOS wallpapers, looks, colours and photos. ${aiName()} can design three for you in Ask AI.`],
-    ["canvas", "3 · Make it yours", "Click anything in the design and its settings show on the right; with nothing selected, they're the whole design's. Drag to move, pull a corner to resize, use the round handle to rotate, double-click text to retype it. Right-click for more."],
-    ["shapes", "Add more", "Elements has text, badges, arrows, shapes, stickers and pictures. Drag one onto the design, or click it."],
-    ["animate", "Make it move", "The timeline (⌘T) opens under the design. Choose a row, move the playhead to when it should happen, and add how it moves. Space plays."],
-    ["spark", "Or just ask", "Press Ask AI (⌘K) and describe the change: “tilt the phone and use a sunset background”. Undo (⌘Z) reverts anything."],
-    ["export", "4 · Export", "Export saves the image (PNG, JPEG or WebP), the whole set, or a video when the design moves. As you work, the design shows its finished look: grain, finishes and colour."],
-    ["grid", "My designs", "Every design saves itself as you work. My designs (⇧⌘O) has them all, and everything you've exported."],
+    ["sim", "Add a screenshot or a recording", "Drop one in, or capture the Simulator, a website or your Mac. They collect under Screenshots."],
+    ["wand", "Pick a look", "Templates has designs made from your screenshot; Backgrounds has wallpapers, colours and photos."],
+    ["canvas", "Make it yours", "Click anything to change it on the right. Drag to move, pull a corner to resize, double-click text to retype it."],
+    ["export", "Export", "An image, the whole App Store set, or a video when it moves (⌘E)."],
   ];
-
-
+  const also = [
+    ["shapes", "Add more", "Elements has text, badges, arrows, stickers and pictures."],
+    ["animate", "Make it move", "The timeline (⌘T): choose a row, move the playhead, press +. Space plays."],
+    ["spark", "Or just ask", `Ask AI (⌘K): “tilt the phone and use a sunset background”. ${aiName()} can also design three for you. ⌘Z undoes anything.`],
+    ["grid", "My designs", "Every design saves itself as you work (⇧⌘O)."],
+  ];
+  const row = ([icon, title, text], i) => html`<div class="help-row"><span class="ico">${i === undefined ? html`<${Icon} n=${icon} s=${18} />` : html`<b class="help-n">${i + 1}</b>`}</span><div><b>${title}</b><div class="note" style=${{ fontSize: "12.5px" }}>${text}</div></div></div>`;
   return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
     <div class="sheet">
-      <div class="sheet-head"><h2>How Screenshotter works</h2><button class="icon-btn" onClick=${close}><${Icon} n="x" s=${16} /></button></div>
+      <div class="sheet-head"><h2>How Screenshotter works</h2><button class="icon-btn" title="Close (Esc)" onClick=${close}><${Icon} n="x" s=${16} /></button></div>
       <div class="sheet-body">
-        ${steps.map(([icon, title, text]) => html`<div class="help-row"><span class="ico"><${Icon} n=${icon} s=${18} /></span><div><b>${title}</b><div class="note" style=${{ fontSize: "12.5px" }}>${text}</div></div></div>`)}
+        ${steps.map((x, i) => row(x, i))}
+        <div class="lbl help-also">Also</div>
+        ${also.map((x) => row(x))}
         <div class="hstack">
           <button class="btn ghost" onClick=${() => (native ? native.call("openURL", { url: `${location.origin}/docs` }) : window.open("/docs", "_blank"))}><${Icon} n="book" s=${14} />Full documentation</button>
           <button class="btn ghost" onClick=${() => openWhatsNew(true)}><${Icon} n="spark" s=${14} />What's new</button>
@@ -1181,7 +1241,7 @@ function Confirm() {
     <div class="sheet" style=${{ width: "400px" }}>
       <div class="sheet-head"><h2>${m.title}</h2></div>
       <div class="sheet-body"><div class="note" style=${{ fontSize: "13px" }}>${m.text}</div></div>
-      <div class="sheet-foot"><button class="btn" onClick=${() => answerConfirm(false)}>Cancel</button>
+      <div class="sheet-foot"><button class="btn" onClick=${() => answerConfirm(false)}>${m.cancel ?? "Cancel"}</button>
         <button class="btn ${m.danger ? "" : "primary"}" style=${m.danger ? { background: "var(--danger)", color: "#fff" } : null} autoFocus onClick=${() => answerConfirm(true)}>${m.confirm ?? "OK"}</button></div>
     </div>
   </div>`;
@@ -1351,7 +1411,9 @@ function StorePage() {
   const tileH = platform === "watch" ? 210 : wide ? Math.round(((page - 56) * ch) / cw) : platform === "ipad" ? 380 : 430;
   const tileW = Math.round((tileH * cw) / ch);
   const thumbs = useStoreThumbs(size.screens.map((x) => x.scene), Math.min(900, Math.round(tileW * 2)));
-  const name = (s.sceneName || "Your app").replace(/\s*·\s*(App Store|Google Play).*$/i, "") || "Your app";
+  // The app's own name, once given; until then the design's (minus "· App Store"), and never "Untitled design".
+  const fallback = (s.sceneName || "").replace(/\s*·\s*(App Store|Google Play).*$/i, "");
+  const name = s.appName || (/^untitled/i.test(fallback) ? "" : fallback);
   const close = () => set({ modal: null });
   useEffect(() => {
     const key = (e) => {
@@ -1372,8 +1434,9 @@ function StorePage() {
       <div class="sheet-body store-body">
         <div class="store-page ${platform}" style=${{ width: page + "px" }}>
           <div class="stp-head">
-            <${StoreIcon} name=${name} />
-            <div class="stp-meta"><b>${name}</b><span>${device} app</span><button class="stp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
+            <${StoreIcon} name=${name || "App"} />
+            <div class="stp-meta"><input class="stp-name" value=${name} placeholder="Your app's name" title="The app's name, as the store shows it" spellcheck=${false}
+              onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} onChange=${(e) => (set({ appName: e.target.value.trim() || null }), persist())} /><span>${device} app</span><button class="stp-get ${play ? "play" : ""}" tabIndex="-1">${play ? "Install" : "Get"}</button></div>
           </div>
           <div class="stp-row" style=${{ "--tile-h": tileH + "px", gap: Math.round(tileW * STORE_GAP) + "px" }}>
             ${size.screens.map((x, i) => html`<div class="stp-shot ${platform}" key=${i} title=${`${String(i + 1).padStart(2, "0")} · ${x.name}`} style=${{ width: tileW + "px", height: tileH + "px" }}>
@@ -1395,7 +1458,8 @@ const plain = (v) => (typeof v === "string" ? v.replace(/\*\*(.+?)\*\*/g, "$1") 
 function Toasts() {
   const s = useStore();
   const icons = { ok: "check", err: "alert", warn: "alert", ai: "spark" };
-  return html`<div class="toasts">${s.toasts.map(
+  // The two newest; older ones wait their turn rather than stack up over the design.
+  return html`<div class="toasts">${s.toasts.slice(-2).map(
     (t) => html`<div class="toast ${t.kind} ${t.leaving ? "leaving" : ""}" key=${t.id}>
       <span class="ti"><${Icon} n=${t.icon ?? icons[t.kind] ?? "info"} s=${13} w=${2.2} /></span>
       <div class="tb"><b>${plain(t.title)}</b>${t.text && html`<span class="d">${plain(t.text)}</span>`}
@@ -1449,20 +1513,25 @@ function Resizer({ side }) {
   return html`<div class="resizer ${side}" title="Drag to resize. Double-click for the usual width." onPointerDown=${down} onDblClick=${reset}></div>`;
 }
 
+/** Nothing to set or ask about yet: the start screen, or choosing how a new design starts. */
+const blankDesign = (s) => !(hasDesign(s.scene) || s.shots) || Boolean(s.starting);
+
 function App() {
   const s = useStore();
   if (s.bootError) {
     return html`<div class="hero"><div class="hero-inner"><h1>Couldn't reach the <em>engine.</em></h1><p>${s.bootError}</p><button class="btn primary" onClick=${() => location.reload()}>Try again</button></div></div>`;
   }
   if (!s.ready) return html`<div class="boot"><div class="boot-mark"></div></div>`;
-  return html`<div class="app ${s.leftOpen ? "" : "left-closed"} ${s.rightOpen ? "" : "right-closed"}" style=${{ "--left-w": s.leftW ? s.leftW + "px" : null, "--right-w": s.rightW ? s.rightW + "px" : null }}>
+  // Before there's a design (the start screen, picking how it starts) there's nothing to set: no settings panel.
+  const right = s.rightOpen && !blankDesign(s);
+  return html`<div class="app ${s.leftOpen ? "" : "left-closed"} ${right ? "" : "right-closed"}" style=${{ "--left-w": s.leftW ? s.leftW + "px" : null, "--right-w": s.rightW ? s.rightW + "px" : null }}>
     <${Topbar} />
     <${Rail} />
     <${LeftPanel} />
     <${Stage} />
-    ${s.ai.open && s.ai.docked && s.rightOpen ? html`<aside class="panel right chat"><${AIChat} docked /></aside>` : html`<${Inspector} />`}
+    ${s.ai.open && s.ai.docked && right ? html`<aside class="panel right chat"><${AIChat} docked /></aside>` : right ? html`<${Inspector} />` : null}
     ${s.leftOpen && html`<${Resizer} side="l" />`}
-    ${s.rightOpen && html`<${Resizer} side="r" />`}
+    ${right && html`<${Resizer} side="r" />`}
     ${s.scenesPage && html`<${ScenesPage} />`}
     ${s.modal?.kind === "settings" && html`<${Settings} />`}
     ${s.modal?.kind === "confirm" && html`<${Confirm} />`}

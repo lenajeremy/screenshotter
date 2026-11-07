@@ -1,7 +1,7 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
 import { setAutoZoom } from "./recording.js";
-import { DEFAULT_SCENE, S, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
+import { DEFAULT_SCENE, S, clamp, fileUrl, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -238,15 +238,37 @@ export function addDevice(path, at = {}) {
   }
   // A fresh scene's first screen starts from a design that works, not a plain layout.
   const pristine = !S.scene.devices?.length && !S.scene.headline && !S.scene.layout && !S.scene.effects && S.scene.background === DEFAULT_SCENE.background && at.x === undefined && !at.frame;
+  // A recording on a new design opens as a recording (framed on a wallpaper, its own timeline), the
+  // same wherever it comes from; only one the browser can't read goes into a device.
+  if (video && pristine) return openRecordingFile(video, path).then((ok) => ok || addDeviceNow(next, video, pristine));
+  return addDeviceNow(next, video, pristine);
+}
+
+function addDeviceNow(next, video, pristine) {
   setScene(next);
   set({ selected: `device-${next.devices.length}`, replacing: null });
-  // A recording: first choose the moment it shows (its first frame is often blank).
-  if (video) openStills(`device-${next.devices.length}`);
+  // A recording's still (the moment it shows in images) is chosen from the inspector when wanted;
+  // the picker no longer opens by itself.
   if (pristine) {
     // A new design starts from a finished one; the start screen offers others to pick from.
     set({ selected: null, designing: true, starting: !video });
     return applyRecipe("bold-hero", { silent: true }).finally(() => set({ designing: false }));
   }
+}
+
+/** Open a recording file as a recording design: its size and length read from the video itself. */
+async function openRecordingFile(video, poster) {
+  const meta = await new Promise((done) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.muted = true;
+    v.onloadedmetadata = () => done({ width: v.videoWidth, height: v.videoHeight, duration: v.duration });
+    v.onerror = () => done(null);
+    v.src = fileUrl(video);
+  });
+  if (!meta?.duration || !meta.width) return false;
+  await openRecording({ video, poster, ...meta, name: base(video).replace(/\.[^.]+$/, "") });
+  return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -709,8 +731,10 @@ export function addImage(src, { at, look = {} } = {}) {
   const images = S.scene.images ?? [];
   if (images.length >= 24) return toast({ kind: "warn", title: "Twenty-four images is the limit" });
   const off = (images.length % 5) * 0.035;
-  // Dropped somewhere, it goes there; otherwise where its look puts it (a logo at the top), else near the middle.
-  const c = at ?? { x: look.x ?? 0.5 + off, y: look.y ?? 0.2 + off };
+  // Dropped somewhere, it goes there; otherwise where its look puts it (a logo at the top), else in
+  // free space clear of the headline and devices, else over the top of the device.
+  const h = look.height ?? 0.1;
+  const c = at ?? { x: look.x ?? 0.5 + off, y: look.y ?? (freeRowFor(h / 2.4, h * 1.1) ?? onDeviceRow()) + off };
   edit((d) => (d.images = [...(d.images ?? []), { src, height: 0.1, ...look, x: r4(c.x), y: r4(c.y) }]));
   touch("image");
   set({ selected: `image-${images.length + 1}` });
@@ -735,7 +759,7 @@ export function addText(kind = "label") {
   const preset = TEXT_PRESETS[kind] ?? TEXT_PRESETS.label;
   const n = (S.scene.texts?.length ?? 0) + 1;
   const y = freeRowFor(preset.size);
-  const item = { ...preset, x: 0.5, y: r4(y ?? 0.12 + ((n - 1) % 5) * 0.06), anchor: "middle", align: "center" };
+  const item = { ...preset, x: 0.5, y: r4(y ?? onDeviceRow() + ((n - 1) % 5) * 0.05), anchor: "middle", align: "center" };
   // No clear space: sit on top of the design in a pill, so it's readable over the screen.
   if (y === null && !item.background) Object.assign(item, { background: "rgba(0,0,0,0.72)", color: "#ffffff" });
   edit((d) => {
@@ -746,22 +770,23 @@ export function addText(kind = "label") {
 
 /**
  * The middle of the biggest empty horizontal band (clear of devices, the headline and other
- * text) that fits text of this size, as a fraction of the height; null if nothing fits.
+ * text) that fits text of this size (or a band `need` tall), as a fraction of the height; null if
+ * nothing fits.
  */
-function freeRowFor(size) {
+function freeRowFor(size, need = size * 2.4) {
   const ents = S.layout?.entities ?? [];
   const taken = [];
   for (const e of ents) {
     if (e.kind === "device") taken.push([e.y - e.height / 2, e.y + e.height / 2]);
     else {
       // Text boxes aren't measured here; estimate from the font size (two lines for captions).
-      const h = e.kind === "caption" ? e.size * 2.3 + (e.subSize ?? 0) * 2.8 : e.size * 1.6;
+      // The subheadline's room only when there is one: always counting it hid the gap under the headline.
+      const h = e.kind === "caption" ? e.size * 2.3 + (S.scene.subheadline ? (e.subSize ?? 0) * 2.8 : 0) : e.size * 1.6;
       const top = e.anchor === "middle" ? e.y - h / 2 : e.anchor === "bottom" ? e.y - h : e.y;
       taken.push([top, top + h]);
     }
   }
   taken.sort((a, b) => a[0] - b[0]);
-  const need = size * 2.4;
   let best = null;
   let at = 0.03;
   for (const [t, b] of [...taken, [0.97, 1]]) {
@@ -769,6 +794,14 @@ function freeRowFor(size) {
     at = Math.max(at, b);
   }
   return best ? best.y : null;
+}
+
+/** With no clear band: over the top of the device's visible part, where it covers the least that matters
+ * (never over the headline). The middle of the design when there's no device. */
+function onDeviceRow() {
+  const d = (S.layout?.entities ?? []).find((e) => e.kind === "device");
+  if (!d) return 0.5;
+  return clamp(Math.max(0, d.y - d.height / 2) + 0.08, 0.1, 0.9);
 }
 
 export function addCaption() {
@@ -1049,9 +1082,41 @@ export async function restoreVersion(file) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Placeholder words: the stand-in headlines starting designs and templates come with.
+
+const PLACEHOLDERS = ["Say what it does,\n**in a few words**", "The **first thing**\nit does well", "**Another thing**\npeople love", "And **one more**\nreason", "**Loved** by people\nlike you"];
+const norm = (h) => String(h ?? "").replace(/\\n/g, "\n").replace(/\s+$/, "");
+/** Whether a headline is still a stand-in nobody has written over. */
+export const isPlaceholder = (h) => PLACEHOLDERS.includes(norm(h));
+
+/**
+ * Before an export: if a screen still has stand-in words, say so (they'd ship as the copy). Writing
+ * them first starts retyping the headline; true goes ahead.
+ */
+async function placeholdersOk() {
+  const screens = (allShots() ?? [{ scene: S.scene }]).map((x, i) => ({ i, scene: !S.shots || i === S.shot ? S.scene : x.scene }));
+  const left = screens.filter((x) => isPlaceholder(x.scene.headline));
+  if (!left.length) return true;
+  const go = await confirmDialog({
+    title: left.length === 1 ? "The headline is still a placeholder" : `${left.length} headlines are still placeholders`,
+    text: `“${norm(left[0].scene.headline).replace(/\*\*/g, "").replace(/\n/g, " ")}” is a stand-in. Export it as it is, or write ${left.length === 1 ? "yours" : "them"} first.`,
+    confirm: "Export anyway",
+    cancel: "Write the headline",
+  });
+  if (!go) {
+    if (S.shots && left[0].i !== S.shot) goToShot(left[0].i);
+    set({ selected: "caption", rightOpen: true, exportOpen: false });
+    const { canvasApi } = await import("./canvas.js");
+    setTimeout(() => canvasApi.editText("caption"), 60);
+  }
+  return go;
+}
+
 export async function exportImage() {
   if (!hasDesign(S.scene)) return toast({ kind: "warn", title: "Nothing to export yet", text: "Add a screenshot, a headline or a picture first." });
   if (S.rendering) return;
+  if (!(await placeholdersOk())) return;
   const started = performance.now();
   set({ rendering: { label: "Exporting the image…" }, exportOpen: false });
   try {
@@ -1071,12 +1136,13 @@ export async function exportImage() {
 /** Every size of the design, each with its screens in store order: what a set export and the store page show. */
 export function setSizes() {
   const groups = allGroups() ?? [{ shots: activeScreens() }];
-  return groups.map((g, gi) => ({ index: gi, label: sizeLabel(g.shots[0].scene), screens: g.shots.map((x, i) => ({ scene: x.scene, name: shotName(x, i) })) }));
+  return groups.map((g, gi) => ({ index: gi, label: sizeLabel(g.shots[0].scene), screens: g.shots.map((x, i) => ({ scene: x.scene, name: shotName(x, i), given: x.name })) }));
 }
 
 /** Export every screen of every size at full size, into numbered files, with a contact sheet per size. */
 export async function exportWholeSet() {
   if (S.rendering) return;
+  if (!(await placeholdersOk())) return;
   const o = S.exportOpts.set;
   const sizes = setSizes();
   const n = sizes.reduce((k, z) => k + z.screens.length, 0);
@@ -1084,7 +1150,7 @@ export async function exportWholeSet() {
   const started = performance.now();
   set({ rendering: { label: `Exporting ${n} images…` }, exportOpen: false });
   try {
-    const r = await api(`/api/export-set${historyQuery()}`, { name: S.sceneName, sizes: sizes.map((z) => ({ label: z.label, screens: z.screens.map((x) => ({ scene: clone(x.scene), name: x.name })) })), folders: o.folders, format: o.format, jpegQuality: o.format === "jpeg" ? S.exportOpts.jpegQuality : undefined, contactSheets: o.sheets });
+    const r = await api(`/api/export-set${historyQuery()}`, { name: S.sceneName, sizes: sizes.map((z) => ({ label: z.label, screens: z.screens.map((x) => ({ scene: clone(x.scene), name: x.given })) })), folders: o.folders, format: o.format, jpegQuality: o.format === "jpeg" ? S.exportOpts.jpegQuality : undefined, contactSheets: o.sheets });
     const sheet = r.sizes.find((z) => z.contactSheet)?.contactSheet;
     if (sheet) renderResult({ path: sheet, width: 0, height: 0, sheet: true }, { preview: false, ms: performance.now() - started });
     const opened = sheet ? [{ label: "Open the sheet", run: () => openViewer(sheet) }] : [];
@@ -1188,6 +1254,7 @@ export async function exportVideo() {
   const shots = exportScreens();
   if (!(shots ?? [{ scene: S.scene }]).some((x) => hasDesign(x.scene))) return toast({ kind: "warn", title: "Nothing to export yet", text: "Add a screenshot, a headline or a picture first." });
   if (S.rendering) return;
+  if (!(await placeholdersOk())) return;
   // Several screens, one video each: export them one after another.
   if (shots && shots.length > 1 && S.exportOpts.video.join === false) return exportEachVideo(shots);
   const o = S.exportOpts.video;
@@ -1634,6 +1701,11 @@ export async function addShot(from = "copy", { at, copyOf } = {}) {
     }
   }
   at = Math.max(0, Math.min(shots.length, at ?? (S.shots ? S.shot : 0) + 1));
+  // A new screen copies the look, not the words: the same headline twice is never what a set wants.
+  if (from === "copy" && copyOf === undefined && scene.headline !== undefined) {
+    scene.headline = PLACEHOLDERS[Math.min(at, PLACEHOLDERS.length - 1)];
+    delete scene.subheadline;
+  }
   checkpoint();
   shots.splice(at, 0, { scene, transition: { type: "fade", duration: 0.5 } });
   set({ shots, shot: S.shots ? (S.shot >= at ? S.shot + 1 : S.shot) : at === 0 ? 1 : 0 });
@@ -2119,6 +2191,7 @@ export async function newScene() {
     animRows: [],
     sceneName: "Untitled design",
     appIcon: null,
+    appName: null,
     past: [],
     future: [],
     selected: null,
@@ -2216,6 +2289,7 @@ export async function openScreenshot(r) {
     animRows: [],
     sceneName: r.name || "Screenshot",
     appIcon: null,
+    appName: null,
     past: [],
     future: [],
     selected: null,
@@ -2286,6 +2360,7 @@ export async function openRecording(r) {
     animRows: [],
     sceneName: r.name || "Recording",
     appIcon: null,
+    appName: null,
     past: [],
     future: [],
     selected: null,
@@ -2312,7 +2387,7 @@ export async function openScene(id) {
     // A video of several shots opens on its first; a design at several sizes on its first size.
     const shots = saved.shots?.length > 1 ? saved.shots.map((x, i) => (i === 0 ? { ...x, scene: saved.scene } : x)) : null;
     const groups = saved.groups?.length > 1 ? saved.groups : null;
-    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, starting: false, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, past: [], future: [], selected: null, render: null, scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
+    set({ scene: saved.scene, shots, shot: 0, groups, group: 0, sceneId: saved.id, sceneStamp: saved.updatedAt, stillPick: null, starting: false, animSel: null, soundSel: null, animRows: [], sceneName: saved.name, appIcon: saved.appIcon ?? null, appName: saved.appName ?? null, past: [], future: [], selected: null, render: null, scenesOpen: false, scenesPage: false, ai: { ...S.ai, thread: saved.chat ?? [] } });
     scheduleLayout(0);
     persist();
   } catch (e) {

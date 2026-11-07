@@ -54,6 +54,8 @@ export const S = {
   sceneName: "Untitled design",
   /** The app's icon (a picture in the library), for the store page preview; null shows its initial. */
   appIcon: null,
+  /** The app's name on the store page preview; null shows the design's name. */
+  appName: null,
   /** The saved scene being edited (null until it has something in it). */
   sceneId: null,
   /**
@@ -122,7 +124,8 @@ export const S = {
   animRows: [],
   playing: false,
   /** docked: Ask AI fills the right-hand panel instead of floating over the canvas. */
-  ai: { open: false, docked: false, busy: false, text: "", error: null, history: [], thread: [], model: "", engine: "", preview: true, context: true, last: null, imageQuality: "fast" },
+  // Docked by default: floating, it covered the design it's talking about.
+  ai: { open: false, docked: true, busy: false, text: "", error: null, history: [], thread: [], model: "", engine: "", preview: true, context: true, last: null, imageQuality: "fast" },
   pulse: [],
   toasts: [],
   modal: null,
@@ -332,12 +335,13 @@ const snapshot = () => ({
   scene: S.scene,
   sceneName: S.sceneName,
   appIcon: S.appIcon,
+  appName: S.appName,
   sceneId: S.sceneId,
   shots: S.shots,
   shot: S.shot,
   groups: S.groups,
   group: S.group,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiDocked: S.ai.docked, layoutV: 3 },
+  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiPanel: S.ai.docked ? "docked" : "floating", layoutV: 3 },
 });
 export function persist() {
   syncSpans();
@@ -491,6 +495,7 @@ export function saveBody() {
     id: S.sceneId ?? undefined,
     name: S.sceneName,
     appIcon: S.appIcon ?? null,
+    appName: S.appName ?? null,
     scene: first[0].scene,
     shots: shots ? shots.map((x, i) => (i === 0 ? { name: x.name, length: x.length, transition: x.transition } : x)) : null,
     groups,
@@ -561,6 +566,7 @@ export async function restore() {
   if (Array.isArray(saved.groups) && saved.groups.length > 1) Object.assign(patch, { groups: saved.groups, group: Math.min(saved.groups.length - 1, Math.max(0, saved.group ?? 0)) });
   if (saved.sceneName) patch.sceneName = saved.sceneName;
   if (typeof saved.appIcon === "string") patch.appIcon = saved.appIcon;
+  if (typeof saved.appName === "string") patch.appName = saved.appName;
   if (saved.sceneId) patch.sceneId = saved.sceneId;
   // Tabs that were merged or moved: Shapes joined Text; Layers and Exports left the rail.
   // Text and Shapes were one panel for a while, with a switch between them (addTab).
@@ -573,7 +579,8 @@ export async function restore() {
   if (Number.isFinite(ui.tlH)) patch.tlH = ui.tlH;
   if (ui.exportOpts) patch.exportOpts = { ...S.exportOpts, ...ui.exportOpts, video: { ...S.exportOpts.video, ...(ui.exportOpts.video ?? {}) }, set: { ...S.exportOpts.set, ...(ui.exportOpts.set ?? {}) } };
   if (ui.capture) patch.capture = { ...S.capture, ...ui.capture };
-  patch.ai = { ...S.ai, model: ui.aiModel ?? "", engine: ui.aiEngine === "codex" || ui.aiEngine === "claude" ? ui.aiEngine : "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", docked: ui.aiDocked === true, history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
+  patch.ai = { ...S.ai, model: ui.aiModel ?? "", engine: ui.aiEngine === "codex" || ui.aiEngine === "claude" ? ui.aiEngine : "", preview: ui.aiPreview !== false, imageQuality: ui.imageQuality === "best" ? "best" : "fast", // aiPanel replaced aiDocked when docked became the default (aiDocked had saved the old default).
+    docked: ui.aiPanel !== "floating", history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
   if (ui.scenesPrefs) patch.scenesPrefs = { ...S.scenesPrefs, ...ui.scenesPrefs };
   set(patch);

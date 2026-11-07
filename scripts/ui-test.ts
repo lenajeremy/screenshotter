@@ -148,13 +148,14 @@ const CHECKS: Record<string, Check> = {
       return /255, 0, 0/.test(cs.backgroundColor) && mask.includes("url") && t.getBoundingClientRect().width > 4 ? "ok" : `colour ${cs.backgroundColor}, mask ${mask.slice(0, 40)}`;
     });
   },
-  async "the squiggly underline draws, and Wavy is in the Text panel"(page) {
+  async "the squiggly underline draws, and Wavy underline is the headline's Accent"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Say it **wavy**", textStyle: { accentMark: "squiggle", accentColor: "#e0662a" } }), selected: "caption", rightOpen: true });
     await page.waitForTimeout(1500);
     return S(page, () => {
       const mark = [...document.querySelectorAll<HTMLElement>(".stage .artboard .mark")].some((x) => (x.style.backgroundImage || "").includes("svg"));
-      const wavy = [...document.querySelectorAll(".panel.right button")].some((b) => b.textContent?.trim() === "Wavy");
-      return mark && wavy ? "ok" : `mark ${mark}, Wavy option ${wavy}`;
+      // Accent is a dropdown now: its button shows the mark in use.
+      const wavy = [...document.querySelectorAll(".panel.right .dd-btn")].some((b) => b.textContent?.trim() === "Wavy underline");
+      return mark && wavy ? "ok" : `mark ${mark}, Wavy underline shown ${wavy}`;
     });
   },
   async "the store page's app icon can be chosen, and is still there after a reload"(page) {
@@ -209,15 +210,20 @@ const CHECKS: Record<string, Check> = {
     await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
     await page.waitForTimeout(1000);
     const welcome = await S(page, () => Boolean(document.querySelector(".welcome")));
-    await page.locator(".welcome-alt .alt", { hasText: "Just words" }).click();
+    await page.locator(".welcome-alt .alt", { hasText: "Start with text" }).click();
     await page.waitForTimeout(1600);
     const r = await S(page, async () => {
       const st = await import("/ui/store.js" as string);
       const a = await import("/ui/actions.js" as string);
       const exportOn = !([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Export") as HTMLButtonElement | undefined)?.disabled;
-      await a.exportImage();
+      // Its headline is the stand-in, so Export asks first; going ahead exports it as it is.
+      const going = a.exportImage();
+      await new Promise((r) => setTimeout(r, 400));
+      const asked = st.S.modal?.kind === "confirm" && /placeholder/i.test(st.S.modal.title);
+      ([...document.querySelectorAll(".sheet-foot button")].find((b) => b.textContent?.includes("Export anyway")) as HTMLButtonElement | undefined)?.click();
+      await going;
       for (let i = 0; i < 100 && st.S.rendering; i++) await new Promise((r) => setTimeout(r, 400));
-      const exported = st.S.toasts.some((t: { title: string }) => /exported/i.test(t.title));
+      const exported = asked && st.S.toasts.some((t: { title: string }) => /exported/i.test(t.title));
       // The editor stays put; the finished look settles over the design.
       let finished = false;
       for (let i = 0; i < 60 && !finished; i++) {
@@ -244,7 +250,7 @@ const CHECKS: Record<string, Check> = {
   async "a design of just words comes back after a reload"(page) {
     await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
     await page.waitForTimeout(800);
-    await page.locator(".welcome-alt .alt", { hasText: "Just words" }).click();
+    await page.locator(".welcome-alt .alt", { hasText: "Start with text" }).click();
     await page.waitForTimeout(1400);
     await S(page, async () => (await import("/ui/store.js" as string)).flushPersist?.());
     await page.waitForTimeout(900);
