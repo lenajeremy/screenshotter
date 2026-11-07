@@ -11,6 +11,9 @@ let package = Package(
     dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")],
     targets: [
         .executableTarget(name: "Screenshotter", dependencies: [.product(name: "Sparkle", package: "Sparkle")], path: "Sources/Screenshotter"),
-        .testTarget(name: "ScreenshotterTests", dependencies: ["Screenshotter"], path: "Tests/ScreenshotterTests"),
+        // Sparkle.framework is built beside the test bundle (Products/Debug), which isn't on its search
+        // path by default: without this, `swift test` can't load the bundle at all.
+        .testTarget(name: "ScreenshotterTests", dependencies: ["Screenshotter"], path: "Tests/ScreenshotterTests",
+                    linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@loader_path/../../.."])]),
     ]
 )
