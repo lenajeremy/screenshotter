@@ -28,6 +28,8 @@ export interface Recipe {
   description: string;
   /** Screens it needs at least (the first one is reused when there are fewer). */
   screens: number;
+  /** A wide (16:9) design rather than one at the screenshot's own store size. */
+  wide?: boolean;
   build(ctx: RecipeContext): MockupInput;
 }
 
@@ -239,6 +241,7 @@ export const RECIPES: Recipe[] = [
   },
   {
     id: "depth",
+    wide: true,
     name: "Depth of field",
     description: "A big screen softly out of focus behind a sharp phone.",
     screens: 1,
@@ -274,6 +277,7 @@ export const RECIPES: Recipe[] = [
   },
   {
     id: "staircase",
+    wide: true,
     name: "Staircase",
     description: "Screens stepping up to the right over a halftone-printed painting.",
     screens: 2,
@@ -288,6 +292,7 @@ export const RECIPES: Recipe[] = [
   },
   {
     id: "mosaic",
+    wide: true,
     name: "Mosaic",
     description: "Every screen side by side, for the last image of a set or a launch post.",
     screens: 3,
@@ -407,6 +412,7 @@ export const RECIPES: Recipe[] = [
   },
   {
     id: "how-to",
+    wide: true,
     name: "How-to",
     description: "Numbered steps and an arrow on the screen, with instructions beside it.",
     screens: 1,
@@ -432,6 +438,7 @@ export const RECIPES: Recipe[] = [
   },
   {
     id: "dissolve",
+    wide: true,
     name: "Dissolve",
     description: "Two screens melting into the dark over an ember glow.",
     screens: 1,

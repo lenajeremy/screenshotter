@@ -164,7 +164,8 @@ const copiedOut = new Set<string>();
 
 function allowedFile(p: string): boolean {
   const resolved = path.resolve(p);
-  return [outputRoot(), cacheDir(""), bezelsDir()].some((root) => resolved === root || resolved.startsWith(root + path.sep));
+  // The bundled sample too (read only), so templates can show previews before there's a screenshot.
+  return [outputRoot(), cacheDir(""), bezelsDir(), path.join(uiDir(), "sample")].some((root) => resolved === root || resolved.startsWith(root + path.sep));
 }
 
 /** The Studio scene an export came from, kept in its request sidecar, for the library's history. */
@@ -399,6 +400,8 @@ async function options() {
     colouredArt: COLOURED_ART,
     // Unsplash's photo search has an access key to use (UNSPLASH_ACCESS_KEY).
     unsplashKey: Boolean(process.env.UNSPLASH_ACCESS_KEY?.trim()),
+    // The built-in sample screenshot, for template previews before there's a screenshot of your own.
+    sample: existsSync(path.join(uiDir(), "sample", "mise-tonight.png")) ? path.join(uiDir(), "sample", "mise-tonight.png") : undefined,
     aiProviders: [
       process.env.OPENAI_API_KEY && "openai",
       (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY) && "gemini",
@@ -591,7 +594,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     }
     return send(200, whatsNew(file, version()));
   }
-  if (req.method === "GET" && url.pathname === "/api/recipes") return send(200, RECIPES.map(({ id, name, description, screens }) => ({ id, name, description, screens })));
+  if (req.method === "GET" && url.pathname === "/api/recipes") return send(200, RECIPES.map(({ id, name, description, screens, wide }) => ({ id, name, description, screens, ...(wide ? { wide } : {}) })));
   // A small render of a recipe with your own screens, cached by recipe, screens and words.
   if (req.method === "GET" && url.pathname === "/api/recipe-preview") {
     let body: { devices: Array<{ screenshot: string; video?: string }>; headline?: string; subheadline?: string };

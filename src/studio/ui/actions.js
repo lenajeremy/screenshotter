@@ -31,7 +31,7 @@ export const recipeInput = (scene = S.scene) => ({
 let recipeAsk = 0;
 export async function applyRecipe(id, { quiet = false, silent = false } = {}) {
   const body = recipeInput();
-  if (!body.devices.length) return toast({ kind: "warn", title: "Add a screenshot first", text: "Templates are made from your own screenshot." });
+  if (!body.devices.length) return needScreenshot();
   const ask = ++recipeAsk;
   try {
     const { scene } = await api("/api/recipe", { id, ...body });
@@ -59,7 +59,13 @@ export function setTemplateInput() {
 }
 
 /** Make the set (at the size on the canvas) a whole-set template, from its own screenshots and words: one undo step. */
+/** A template picked before there's a screenshot: say how to add one, or start with the sample. */
+function needScreenshot() {
+  toast({ kind: "warn", title: "Add a screenshot first", text: "Templates are made from your screenshot: drop one in, or press ⌘O.", actions: [{ label: "Use the sample", run: () => trySample() }] });
+}
+
 export async function applySetTemplate(id) {
+  if (!setTemplateInput().devices.length) return needScreenshot();
   const name = S.setTemplates?.find((t) => t.id === id)?.name ?? "the template";
   return applyTemplateFrom("/api/set-template", id, name);
 }

@@ -349,9 +349,11 @@ function Welcome() {
 const stop = (e) => e.stopPropagation();
 
 /** Starting designs to offer first, best suited to how many screenshots there are. */
+// Starting designs keep the store's portrait shape, so they sit side by side at one size; the wide
+// (16:9) ones are in Templates.
 function starterTemplates(recipes, n) {
-  const order = n >= 3 ? ["mosaic", "rising", "staircase", "bold-hero", "tilted", "depth", "gallery", "art-director"] : n === 2 ? ["rising", "staircase", "bold-hero", "tilted", "depth", "gallery", "art-director", "dissolve"] : ["bold-hero", "tilted", "depth", "gallery", "art-director", "risograph", "callout", "dissolve"];
-  return order.map((id) => recipes.find((r) => r.id === id)).filter((r) => r && r.screens <= Math.max(1, n));
+  const order = n >= 2 ? ["rising", "bold-hero", "tilted", "gallery", "art-director", "risograph", "callout", "review"] : ["bold-hero", "tilted", "gallery", "art-director", "risograph", "callout", "review", "award"];
+  return order.map((id) => recipes.find((r) => r.id === id)).filter((r) => r && !r.wide && r.screens <= Math.max(1, n));
 }
 
 /**

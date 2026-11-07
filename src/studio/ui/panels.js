@@ -1238,30 +1238,34 @@ function useShotForm(shot) {
 
 export function DesignsPanel() {
   const s = useStore();
-  const body = recipeInput(s.scene);
-  const has = body.devices.length > 0;
+  const own = recipeInput(s.scene);
+  const has = own.devices.length > 0;
+  // Before there's a screenshot, the previews show the built-in sample app, so the panel shows what each looks like.
+  const sample = !has && s.opts?.sample;
+  const body = sample ? { devices: [{ screenshot: sample }] } : own;
   const form = useShotForm(body.devices[0]?.screenshot);
   const q = encodeURIComponent(JSON.stringify(body));
-  const setBody = setTemplateInput();
+  const setBody = sample ? { devices: Array.from({ length: 5 }, () => ({ screenshot: sample })), words: [] } : setTemplateInput();
   const sq = encodeURIComponent(JSON.stringify(setBody));
+  const shows = has || Boolean(sample);
   return html`<div class="panel left">
     <div class="panel-head"><h2>Templates</h2></div>
     <div class="panel-body">
       <div class="intro">Designs made from your screenshot and its colours. Click one to try it; ⌘Z goes back.</div>
       <${Section} title="Whole sets" count=${s.setTemplates?.length}>
         <div class="note">Five screens in one look: a hero, three features and a close.</div>
-        ${!has && html`<div class="empty-note">Add a screenshot and each set shows a preview made from it.</div>`}
-        <${Shelf} grid="set-templates" show=${3} items=${setsFor(s.setTemplates ?? [], form)} render=${(t) => html`<button class="set-template" key=${t.id} disabled=${!has} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
-            <div class="strip" style=${{ aspectRatio: STRIP_SHAPE[form] ?? STRIP_SHAPE.phone }}>${has && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>
+        ${!has && html`<div class="empty-note">${sample ? "Shown with a sample app. Add your screenshot to use one." : "Add a screenshot and each set shows a preview made from it."}</div>`}
+        <${Shelf} grid="set-templates" show=${3} items=${setsFor(s.setTemplates ?? [], form)} render=${(t) => html`<button class="set-template" key=${t.id} onClick=${() => applySetTemplate(t.id)} title=${t.description}>
+            <div class="strip" style=${{ aspectRatio: STRIP_SHAPE[form] ?? STRIP_SHAPE.phone }}>${shows && html`<img loading="lazy" src=${`/api/set-template-preview?id=${t.id}&w=640&body=${sq}`} />`}</div>
             <b>${t.name}${t.forms?.includes(form) ? html` <em class="made-for">For ${FORM_NAME[form]}</em>` : ""}</b><span>${t.description}</span>
           </button>`} />
       <//>
       <${MyTemplates} has=${has} sq=${sq} />
       <${Section} title="Single screens" count=${s.recipes.length}>
-        ${!has && html`<div class="empty-note">Add a screenshot and each template shows a preview made from it.</div>`}
-        <${Shelf} grid="recipes" show=${6} items=${s.recipes} render=${(r) => html`<button class="recipe" key=${r.id} disabled=${!has} onClick=${() => applyRecipe(r.id)} title=${r.description}>
-            <div class="recipe-img">${has && html`<img loading="lazy" src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} />`}</div>
-            <b>${r.name}</b><span>${r.description}</span>
+        ${!has && html`<div class="empty-note">${sample ? "Shown with a sample app. Add your screenshot to use one." : "Add a screenshot and each template shows a preview made from it."}</div>`}
+        <${Shelf} grid="recipes" show=${6} items=${s.recipes} render=${(r) => html`<button class="recipe" key=${r.id} onClick=${() => applyRecipe(r.id)} title=${r.description}>
+            <div class="recipe-img">${shows && html`<img loading="lazy" src=${`/api/recipe-preview?id=${r.id}&w=320&body=${q}`} />`}</div>
+            <b>${r.name}${r.wide ? html` <em class="made-for">16:9</em>` : ""}</b><span>${r.description}</span>
           </button>`} />
       <//>
       ${has && html`<${Arrangement} />`}
