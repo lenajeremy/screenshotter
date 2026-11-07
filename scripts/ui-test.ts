@@ -238,10 +238,10 @@ const CHECKS: Record<string, Check> = {
     await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
     await page.waitForTimeout(800);
     await S(page, async (p: string) => (await import("/ui/actions.js" as string)).addDevice(p), shot);
-    await page.locator(".start-pick .sp-card").first().waitFor({ timeout: 20000 });
-    const cards = await page.locator(".start-pick .sp-card").count();
+    await page.locator(".start-pick .pick-card").first().waitFor({ timeout: 20000 });
+    const cards = await page.locator(".start-pick .pick-card").count();
     await page.waitForFunction(() => !(window as any).studio.state.designing, null, { timeout: 30000 });
-    await page.locator(".start-pick .sp-card", { hasText: "Tilted" }).click();
+    await page.locator(".start-pick .pick-card", { hasText: "Tilted" }).click();
     await page.waitForFunction(() => !(window as any).studio.state.starting, null, { timeout: 30000 });
     await page.waitForTimeout(800);
     const r = await S(page, () => ({ canvas: Boolean(document.querySelector(".stage .artboard")), pick: Boolean(document.querySelector(".start-pick")), tilted: (window as any).studio.state.scene.layout === "tilted" }));

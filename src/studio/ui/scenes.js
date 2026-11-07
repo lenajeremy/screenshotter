@@ -370,7 +370,7 @@ export function ScenesPage() {
     <header class="sp-bar" data-drag>
       <div class="brand" data-nodrag>
         <button class="btn ghost sp-back" onClick=${closeScenesPage} title="Back to the editor (Esc)"><${Icon} n="left" s=${15} /><span>${current ? current.name : "Back to the editor"}</span></button>
-        <span class="crumb-sep">/</span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
         <span class="sp-crumb">My designs</span>
       </div>
       <div class="sp-search input-wrap" data-nodrag>

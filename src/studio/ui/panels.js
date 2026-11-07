@@ -208,7 +208,8 @@ export function CapturesPanel() {
     </div>
     <div class="panel-body">
       <div class="intro">Bring in a screenshot of your app, then click it to put it in the design.</div>
-      <div class="row" title="How new screenshots come in: in a device, with no frame, or as the screen alone"><label>Frame</label><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "Device" }, { value: "none", label: "None" }, { value: "card", label: "Screen only" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
+      <div class="lbl">Frame for new screenshots</div>
+      <div title="How new screenshots come in: in a device, with no frame, or as the screen alone"><${Seg} value=${c.frame ?? "device"} options=${[{ value: "device", label: "Device" }, { value: "none", label: "None" }, { value: "card", label: "Screen only" }]} onChange=${(v) => (setCap({ frame: v }), persistPrefs())} /></div>
       ${s.replacing &&
       html`<div class="insp-hero" style=${{ boxShadow: "inset 0 0 0 1px var(--iris)", background: "var(--iris-soft)" }}>
         <${Icon} n="replace" s=${16} />

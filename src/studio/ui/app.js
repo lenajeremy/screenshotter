@@ -83,7 +83,7 @@ function Topbar() {
     <div class="brand">
       <div class="brand-mark"></div>
       <span class="brand-name">Screenshotter</span>
-      <span class="crumb-sep">/</span>
+      <span class="crumb-sep" aria-hidden="true">/</span>
       <div class="scene-switch ${s.scenesOpen ? "open" : ""}" data-nodrag ref=${scenesBtn}>
         <input class="scene-name" value=${s.sceneName} spellcheck=${false} title="Rename this design"
           onKeyDown=${(e) => {
@@ -384,13 +384,13 @@ function StartPicker() {
   return html`<div class="hero start-pick"><div class="hero-inner">
     <h1>Pick how it <em>starts.</em></h1>
     <p>Each one is made from your screenshot. Change anything afterwards; Templates has more.</p>
-    <div class="sp-grid">${picks.map(
-      (r) => html`<button class="sp-card ${busy === r.id ? "busy" : ""}" key=${r.id} title=${r.description} disabled=${Boolean(busy)} onClick=${() => pick(r.id)}>
-        <span class="sp-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=420&body=${q}`} alt="" onLoad=${(e) => e.currentTarget.classList.add("ready")} />`}</span>
+    <div class="pick-grid">${picks.map(
+      (r) => html`<button class="pick-card ${busy === r.id ? "busy" : ""}" key=${r.id} title=${r.description} disabled=${Boolean(busy)} onClick=${() => pick(r.id)}>
+        <span class="pick-img">${!s.designing && html`<img src=${`/api/recipe-preview?id=${r.id}&w=420&body=${q}`} alt="" onLoad=${(e) => e.currentTarget.classList.add("ready")} />`}</span>
         <b>${r.name}</b>
       </button>`,
     )}</div>
-    <div class="hstack sp-foot">
+    <div class="hstack pick-foot">
       <button class="btn primary" onClick=${done}>Use ${picks[0]?.name ?? "this one"}<span class="kbd">↩</span></button>
       <button class="btn ghost" onClick=${() => (done(), set({ leftTab: "designs", leftOpen: true }))}><${Icon} n="wand" s=${14} />See every template</button>
     </div>
@@ -593,7 +593,7 @@ function AIWork() {
           ${x.key === "generate" &&
           html`<span class="step-note">${x.reason && html`<b class="why">Why a new image: </b>${x.reason}<br />`}${x.prompt ? `“${x.prompt.length > 110 ? x.prompt.slice(0, 110).trim() + "…" : x.prompt}”` : ""}${active ? html`<br />${x.provider === "openai" ? (s.ai.imageQuality === "best" ? "At Best quality this usually takes a minute or more." : "This usually takes about half a minute.") : "This can take a minute."}${w.draft ? " Use it now to skip the wait: the image appears on the canvas when it's made." : ""}` : ""}</span>`}
           ${x.key === "check" && w.checkImage && html`<div class="work-shot ${x.moments ? "sheet" : ""}"><img src=${w.checkImage} onLoad=${scroll} /><i class="scan"></i></div>`}
-          ${x.key === "frames" && x.image && html`<div class="work-shot sheet"><img src=${x.image} onLoad=${scroll} /><i class="scan"></i></div>`}
+          ${x.key === "frames" && x.image && html`<div class="work-shot moments"><img src=${x.image} onLoad=${scroll} /><i class="scan"></i></div>`}
         </div></li>`;
       })}
     </ol>
