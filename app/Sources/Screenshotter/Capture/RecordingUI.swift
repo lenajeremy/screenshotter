@@ -645,25 +645,28 @@ struct RecordingPillView: View {
     }
 }
 
-/// Moves its window when dragged; a click that doesn't move it calls `onClick`.
+/// Moves its window when dragged; a click that doesn't move it calls `onClick`, a drag that does `onMoved`.
 struct WindowGrip: NSViewRepresentable {
     var onClick: (() -> Void)?
     var onRightClick: (() -> Void)?
+    var onMoved: (() -> Void)?
     func makeNSView(context: Context) -> GripView { GripView() }
     func updateNSView(_ view: GripView, context: Context) {
         view.onClick = onClick
         view.onRightClick = onRightClick
+        view.onMoved = onMoved
     }
 
     final class GripView: NSView {
         var onClick: (() -> Void)?
         var onRightClick: (() -> Void)?
+        var onMoved: (() -> Void)?
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func rightMouseDown(with event: NSEvent) { onRightClick?() }
         override func mouseDown(with event: NSEvent) {
             let before = window?.frame.origin
             window?.performDrag(with: event)
-            if let onClick, window?.frame.origin == before { onClick() }
+            if window?.frame.origin == before { onClick?() } else { onMoved?() }
         }
         override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
     }

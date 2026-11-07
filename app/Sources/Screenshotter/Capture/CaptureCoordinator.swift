@@ -56,7 +56,8 @@ import Combine
             },
             close: { [weak self] in self?.hideBar() },
             resized: { [weak self] in self?.bar?.recentre() },
-            chooseFolder: { [weak self] in self?.chooseFolder() }))
+            chooseFolder: { [weak self] in self?.chooseFolder() },
+            moved: { [weak self] in self?.bar?.moved() }))
         self.bar = bar
         // The bar takes the keyboard without making Screenshotter the active app, which would
         // switch you out of a full-screen app to the desktop.

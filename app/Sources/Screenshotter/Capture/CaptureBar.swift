@@ -27,23 +27,48 @@ import SwiftUI
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onEscape() }
 
-    /// Shows the bar near the bottom of the screen the pointer is on.
+    /// Where the bar was last moved to, on whichever screen it opens: its centre across the screen
+    /// (a share of the width) and its height above the bottom (points). None until it's been moved.
+    static let spotKey = "captureBarSpot"
+
+    /// Shows the bar on the screen the pointer is on: where it was last moved to, else near the bottom.
     func present() {
         contentView?.layoutSubtreeIfNeeded()
         let size = contentView?.fittingSize ?? CGSize(width: 760, height: 64)
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main ?? NSScreen.screens[0]
         let v = screen.visibleFrame
-        setFrame(CGRect(x: v.midX - size.width / 2, y: v.minY + 64, width: size.width, height: size.height), display: true)
+        var origin = CGPoint(x: v.midX - size.width / 2, y: v.minY + 64)
+        if let spot = UserDefaults.standard.array(forKey: Self.spotKey) as? [Double], spot.count == 2 {
+            origin = CGPoint(x: v.minX + spot[0] * v.width - size.width / 2, y: v.minY + spot[1])
+        }
+        setFrame(Self.kept(CGRect(origin: origin, size: size), in: v), display: true)
         makeKeyAndOrderFront(nil)
         orderFrontRegardless()
     }
 
-    /// Keeps it centred when it grows or shrinks (the recording options come and go).
+    /// Keeps it centred where it is when it grows or shrinks (the recording options come and go),
+    /// and on its screen.
     func recentre() {
         guard isVisible, let size = contentView?.fittingSize else { return }
         let center = frame.midX
-        setFrame(CGRect(x: center - size.width / 2, y: frame.minY, width: size.width, height: size.height), display: true)
+        let v = (screen ?? NSScreen.main)?.visibleFrame ?? frame
+        setFrame(Self.kept(CGRect(x: center - size.width / 2, y: frame.minY, width: size.width, height: size.height), in: v), display: true)
+    }
+
+    /// Dragged somewhere: remember it, for the next time the bar opens.
+    func moved() {
+        guard let v = (screen ?? NSScreen.main)?.visibleFrame, v.width > 0 else { return }
+        setFrame(Self.kept(frame, in: v), display: true)
+        UserDefaults.standard.set([Double((frame.midX - v.minX) / v.width), Double(frame.minY - v.minY)], forKey: Self.spotKey)
+    }
+
+    /// A frame moved back onto the screen, so the bar can never be left out of reach.
+    static func kept(_ r: CGRect, in v: CGRect) -> CGRect {
+        var r = r
+        r.origin.x = min(max(r.minX, v.minX + 8), max(v.minX + 8, v.maxX - r.width - 8))
+        r.origin.y = min(max(r.minY, v.minY + 8), max(v.minY + 8, v.maxY - r.height - 8))
+        return r
     }
 }
 
@@ -53,6 +78,8 @@ struct CaptureBarActions {
     var close: () -> Void
     var resized: () -> Void
     var chooseFolder: () -> Void
+    /// The bar was dragged somewhere new.
+    var moved: () -> Void = {}
 }
 
 private let lime = Color(red: 0.82, green: 1, blue: 0.3)
@@ -70,6 +97,14 @@ struct CaptureBarView: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            // The grip: drag the bar anywhere (its gaps and edges drag it too).
+            ZStack {
+                Image(systemName: "line.3.horizontal").font(.system(size: 11, weight: .bold)).foregroundStyle(.white.opacity(0.3)).rotationEffect(.degrees(90))
+                WindowGrip(onMoved: actions.moved)
+            }
+            .frame(width: 12, height: 32)
+            .help("Drag to move")
+            .accessibilityLabel("Move the bar")
             IconButton(symbol: "xmark", help: "Close (Esc)", action: actions.close)
             line
             Segmented(selection: $model.mode, items: [(.screenshot, "camera.viewfinder", "Screenshot"), (.record, "record.circle", "Record")])
@@ -144,8 +179,11 @@ struct CaptureBarView: View {
             .fixedSize()
             .help("Options")
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 4)
+        .padding(.trailing, 8)
         .frame(height: 46)
+        // Behind the buttons, so a drag on a gap or an edge moves the bar; the buttons still take their clicks.
+        .background(WindowGrip(onMoved: actions.moved))
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.96)))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.1)))
         .fixedSize()
