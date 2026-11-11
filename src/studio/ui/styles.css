@@ -1960,3 +1960,7 @@ li.done .work-shot .scan { display: none; }
 .bd-mention { color: var(--text); font-weight: 600; }
 .bd-picker-head { margin: 6px 8px 2px; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
 .bd-reopen { height: 26px; padding: 0 10px; }
+/* A token's name: click to rename it everywhere it's used */
+.bd-token-name { min-width: 0; height: 28px; display: flex; align-items: center; padding: 0 6px; margin-left: -6px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: text; }
+.bd-token-name:hover { background: var(--bg-3, rgba(255, 255, 255, 0.06)); }
+input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 0 6px; }

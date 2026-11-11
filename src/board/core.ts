@@ -966,6 +966,42 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
 /** The CSS every board is drawn with, in the Studio and in exports alike. */
 export const BOARD_CSS = "*,*::before,*::after{box-sizing:border-box}img{display:block}";
 
+/** A token's name as CSS has it: "--brand" (a name given as "brand" gets its dashes). */
+export const tokenName = (name: string) => (name.trim().startsWith("--") ? name.trim() : `--${name.trim()}`);
+
+/**
+ * Steps that rename a token and every var() that uses it, as one change: layers' CSS, coloured words,
+ * vectors (attributes, gradients, markup), shapes' settings, and other tokens that point at it. They
+ * are the component's own, not changes made in its copies, so copies keep following their component.
+ */
+export function renameTokenOps(board: Board, from: string, to: string): Op[] {
+  const a = tokenName(from);
+  const z = tokenName(to);
+  const at = board.tokens.findIndex((t) => t.name === a);
+  if (at < 0) throw new OpError(`There's no token ${a} on this board.`);
+  if (!/^--[A-Za-z0-9_-]+$/.test(z)) throw new OpError(`"${to}" can't be a token name: use letters, digits, - and _.`);
+  if (a === z) return [];
+  if (board.tokens.some((t) => t.name === z)) throw new OpError(`There's a token ${z} already.`);
+  // var(--brand) and var(--brand, …), but not var(--brand-2).
+  const re = new RegExp(`var\\(\\s*${a.replace(/[-]/g, "\\-")}(?=\\s*[,)])`, "g");
+  const swap = (v: string) => v.replace(re, `var(${z}`);
+  const ops: Op[] = [{ op: "token", name: z, value: board.tokens[at].value, index: at }];
+  for (const n of Object.values(board.nodes)) {
+    const p: Extract<Op, { op: "set" }> = { op: "set", id: n.id, sync: true };
+    for (const [k, v] of Object.entries(n.style)) if (swap(v) !== v) (p.style ??= {})[k] = swap(v);
+    for (const [k, v] of Object.entries(n.attrs ?? {})) if (swap(v) !== v) (p.attrs ??= {})[k] = swap(v);
+    for (const f of ["text", "svg", "defs"] as const) if (n[f] && swap(n[f]!) !== n[f]) p[f] = swap(n[f]!);
+    if (n.shape && JSON.stringify(n.shape).includes("var(")) {
+      const shape = Object.fromEntries(Object.entries(n.shape).map(([k, v]) => [k, typeof v === "string" ? swap(v) : v]));
+      if (JSON.stringify(shape) !== JSON.stringify(n.shape)) p.shape = shape;
+    }
+    if (Object.keys(p).length > 3) ops.push(p);
+  }
+  for (const t of board.tokens) if (t.name !== a && swap(t.value) !== t.value) ops.push({ op: "token", name: t.name, value: swap(t.value) });
+  ops.push({ op: "token", name: a, value: null });
+  return ops;
+}
+
 export function tokenCss(board: Board): string {
   return board.tokens.map((t) => `${t.name}:${t.value}`).join(";");
 }

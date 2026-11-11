@@ -319,6 +319,26 @@ const CHECKS: Record<string, Check> = {
     agentman.sessions[1].state = "idle";
     return /Helper is working on it/.test(String(shown)) && !/Design agent is working/.test(String(shown)) ? "ok" : `the thread shows "${shown}"`;
   },
+  async "on a board, a token is renamed from the token list, everywhere it's used, and undone in one step"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    boards.changeBoard(t.id, [{ op: "token", name: "--brand", value: "#ff3b30" }, { op: "set", id: phone, style: { backgroundColor: "var(--brand)" } }], "agent");
+    await page.waitForTimeout(1500);
+    await S(page, async () => (await import("/ui/board-state.js" as string)).select([]));
+    await page.waitForTimeout(300);
+    await page.locator(".bd-token button.bd-token-name", { hasText: "brand" }).click();
+    await page.locator("input.bd-token-name").fill("primary");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(900);
+    const b = boards.getBoard(t.id);
+    const renamed = b.tokens.map((x) => x.name).join() === "--primary" && b.nodes[phone].style.backgroundColor === "var(--primary)";
+    const drawn = await S(page, (id: string) => getComputedStyle(document.querySelector(`.bd-world [data-bid="${id}"]`)!).backgroundColor, phone);
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(900);
+    const back = boards.getBoard(t.id);
+    const undone = back.tokens.map((x) => x.name).join() === "--brand" && back.nodes[phone].style.backgroundColor === "var(--brand)";
+    return renamed && drawn === "rgb(255, 59, 48)" && undone ? "ok" : `renamed: ${renamed}, drawn ${drawn}, undone: ${undone}`;
+  },
   async "on a board, dragging with the comment tool comments on that part of the artboard"(page) {
     const t = await openTestBoard(page);
     await page.keyboard.press("c");

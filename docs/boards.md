@@ -72,6 +72,8 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
 
 - **Comments, round two** (12 November, from the user's first use): an agent at work on a thread shows as "… is working on it" with moving dots, and a ring on the pin (the Studio asks Agentman for its agents' states every 2.5 s while a thread waits: `GET /api/board/agents`). @name stays in the words, marked, and can tag any agent Agentman runs (it joins the board's agents). Only the person resolves; agents reply. A resolved thread offers **Reopen**, not a second check mark. There's no To row and no default recipient: a comment reaches only the agents @-tagged in it (the user: "i just want to add a comment... if i tag an agent, i want it to respond").
 
+- **Renaming tokens** (12 November): click a token's name in the list (or an agent's board_edit token with rename). `renameTokenOps` renames every `var()` using it, in layers' CSS, words, vector attributes and gradients, shapes and other tokens, as one step; the steps are the component's own (sync), so copies don't take them as their own changes.
+
 **Decisions:**
 
 - The design is HTML and CSS, not a vector format. The browser engine does the layout, the text and the drawing, an agent writes it fluently, and code comes out of it nearly as is.
@@ -92,6 +94,5 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
    - smart guides inside frames
    - component variants and properties
    - per-fill visibility
-   - renaming a token, rewriting its `var()` references (copies of components need care: their own changes are overrides)
 6. **Pen tool**: drawing paths, and editing a path's points.
 7. **Speed:** memoised layers for boards with thousands of layers.

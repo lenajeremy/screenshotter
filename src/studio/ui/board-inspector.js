@@ -1,7 +1,7 @@
 // The board's right panel: a layer's CSS in plain words (layout, size, flex, fill, border, shadow,
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, round, serializeSvg, sizeWord, styleText, subtree, vectorName } from "./board-core.js";
+import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, renameTokenOps, round, serializeSvg, sizeWord, styleText, subtree, vectorName } from "./board-core.js";
 import { B, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, shiftSteps, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
@@ -1156,7 +1156,7 @@ function BoardPanel() {
     <div class="panel-body bd-insp">
       <${Section} title="Tokens" count=${tokens.length || undefined} right=${html`<button class="icon-btn sm" title="Add a token" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${14} /></button>`}>
         <p class="bd-note">Colours, sizes and fonts with a name. Any layer can use one as <code>var(--name)</code>, so changing it here changes them all. Every colour picker on the board lists the colour ones.</p>
-        ${tokens.map((t) => html`<${TokenRow} key=${t.name} t=${t} tokens=${tokens} uses=${uses.get(t.name)} onChange=${(v) => setToken(t.name, v, true)} onRemove=${() => setToken(t.name, null)} />`)}
+        ${tokens.map((t) => html`<${TokenRow} key=${t.name} t=${t} tokens=${tokens} uses=${uses.get(t.name)} onChange=${(v) => setToken(t.name, v, true)} onRemove=${() => setToken(t.name, null)} onRename=${(to) => renameToken(t.name, to)} />`)}
         ${adding && html`<${NewToken} onDone=${(name, value) => (setAdding(false), name && setToken(name, value || "#000000"))} />`}
       <//>
       <${Section} title="Agents">
@@ -1202,13 +1202,30 @@ function selectUses(list) {
   if (moved) requestAnimationFrame(() => fit(pick));
 }
 
-function TokenRow({ t, tokens, uses = [], onChange, onRemove }) {
+/** Rename a token, and every var() that uses it, as one step (copies of components keep following). */
+function renameToken(from, to) {
+  const name = to.trim().replace(/^--/, "");
+  if (!name || `--${name}` === from) return;
+  try {
+    commit(renameTokenOps(B.board, from, name), { label: "Rename token" });
+  } catch (e) {
+    toast({ kind: "info", title: "Couldn't rename it", text: e.message, timeout: 4000 });
+  }
+}
+
+function TokenRow({ t, tokens, uses = [], onChange, onRemove, onRename }) {
   // A colour, or a var() of another token that comes to one.
   const color = Boolean(tokenColor(t.value, tokens));
   const [draft, setDraft] = useState(null);
+  const [naming, setNaming] = useState(null);
   const n = uses.length;
   return html`<div class="bd-token">
-    <code title=${t.name}>${t.name.slice(2)}</code>
+    ${naming !== null
+      ? html`<input class="input bd-mono bd-token-name" autoFocus value=${naming} aria-label="Token name"
+          onInput=${(e) => setNaming(e.target.value.replace(/[^A-Za-z0-9_-]/g, "-"))}
+          onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur(), e.key === "Escape" && setNaming(null))}
+          onBlur=${() => (naming !== null && onRename(naming), setNaming(null))} />`
+      : html`<button class="bd-token-name" title=${`${t.name}: click to rename it (everywhere it's used)`} onClick=${() => setNaming(t.name.slice(2))}><code>${t.name.slice(2)}</code></button>`}
     ${color ? html`<${BoardColor} value=${t.value} tokens=${tokens.filter((x) => x.name !== t.name)} onMakeToken=${null} allowAuto=${false} onChange=${(c) => c && onChange(c)} />` : html`<input class="input bd-mono" value=${draft ?? t.value} onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} onBlur=${() => (draft !== null && draft.trim() && onChange(draft.trim()), setDraft(null))} />`}
     <button class="bd-uses" disabled=${!n} title=${n ? `Used by ${n} layer${n === 1 ? "" : "s"}: click to select ${n === 1 ? "it" : "them"}` : "No layer uses it yet"} onClick=${() => selectUses(uses)}>${n}×</button>
     <button class="icon-btn sm" title="Remove" onClick=${onRemove}><${Icon} n="x" s=${12} /></button>

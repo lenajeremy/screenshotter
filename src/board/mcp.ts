@@ -12,6 +12,8 @@ import { outputRoot, slug } from "../util/files.js";
 import {
   applyOps,
   expandOps,
+  renameTokenOps,
+  tokenName,
   addHtmlOps,
   canHold,
   flattenSvgOps,
@@ -67,7 +69,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
-- Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
+- Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
@@ -169,7 +171,12 @@ const ChangeSchema = z.discriminatedUnion("do", [
     page: z.string().optional().describe("The page's id. Default: the first page."),
   }),
   z.object({ do: z.literal("page"), name: z.string().describe("A new page's name, or the new name for `id`."), id: z.string().optional(), delete: z.boolean().optional() }),
-  z.object({ do: z.literal("token"), name: z.string().describe('A CSS custom property name ("--brand" or "brand").'), value: z.string().nullable().describe("Its value, or null to remove it.") }),
+  z.object({
+    do: z.literal("token"),
+    name: z.string().describe('A CSS custom property name ("--brand" or "brand").'),
+    value: z.string().nullable().optional().describe("Its value, or null to remove it."),
+    rename: z.string().optional().describe("A new name for it: every var() that uses it, on every layer and token, is changed to the new name."),
+  }),
   z.object({ do: z.literal("component"), id: z.string().describe("A frame to make a component (or, with remove, to make ordinary again)."), remove: z.boolean().optional() }),
   z.object({
     do: z.literal("copy"),
@@ -565,8 +572,15 @@ export function registerBoardTools(server: McpServer) {
               }
               break;
             case "token":
+              if (c.rename !== undefined) {
+                ops.push(...renameTokenOps(b, c.name, c.rename));
+                if (c.value !== undefined) ops.push({ op: "token", name: tokenName(c.rename), value: c.value });
+                results.push({ token: tokenName(c.name), renamed: tokenName(c.rename) });
+                break;
+              }
+              if (c.value === undefined) throw new Error(`Give the token ${tokenName(c.name)} a value (null removes it), or a new name with rename.`);
               ops.push({ op: "token", name: c.name, value: c.value });
-              results.push({ token: c.name.startsWith("--") ? c.name : `--${c.name}`, value: c.value });
+              results.push({ token: tokenName(c.name), value: c.value });
               break;
             case "component":
               need(c.id);

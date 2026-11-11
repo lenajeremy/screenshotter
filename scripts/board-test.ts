@@ -206,6 +206,43 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   check(!b.nodes[c1].instanceOf && b.nodes[c1].children!.every((x) => !b.nodes[x].master), "deleting the component leaves its copies as ordinary layers");
 }
 
+// Renaming a token renames every var() that uses it, as one change, and copies keep following.
+{
+  const { renameTokenOps } = await import("../src/board/core.js");
+  let b = emptyBoard("t", "T", "now");
+  const run = (ops: Op[]) => {
+    const r = applyOps(b, expandOps(b, ops));
+    b = r.board;
+    return r.inverse;
+  };
+  run([
+    { op: "token", name: "--brand", value: "#ff3b30" },
+    { op: "token", name: "--brand-2", value: "#0a84ff" },
+    { op: "token", name: "--accent", value: "var(--brand)" },
+  ]);
+  const got = htmlToNodes(`<div data-name="Card" style="display:flex;background:var(--brand);border:2px solid var(--brand-2);color:var(--brand, red)"><p style="margin:0">Hi <span style="color:var(--brand)">there</span></p><svg viewBox="0 0 10 10"><defs><linearGradient id="g"><stop offset="0" style="stop-color:var(--brand)"/></linearGradient></defs><circle cx="5" cy="5" r="4" fill="var(--brand)"/></svg></div>`);
+  run([{ op: "add", nodes: got.nodes, ids: got.roots, parent: null, page: b.pages[0].id }]);
+  const card = got.roots[0];
+  run(componentOps(b, card));
+  const t = instanceTree(b, card, null);
+  run([{ op: "add", nodes: t.nodes, ids: [t.id], parent: null, page: b.pages[0].id }]);
+  const before = JSON.stringify(b);
+  const undo = run(renameTokenOps(b, "brand", "primary"));
+  const all = JSON.stringify(b.nodes);
+  check(b.tokens.map((x) => x.name).join() === "--primary,--brand-2,--accent" && b.tokens[2].value === "var(--primary)", "renaming a token keeps its place, and tokens that point at it follow");
+  check(!all.includes("var(--brand)") && !all.includes("var(--brand,") && all.includes("var(--brand-2)") && all.includes("var(--primary, red)"), "every var() using it is renamed (styles, words, vector attributes, gradients), and not a token whose name starts the same");
+  check(!Object.values(b.nodes).some((n) => n.overrides?.length), "renaming isn't a change made in the component's copies");
+  b = applyOps(b, undo).board;
+  check(JSON.stringify(b) === before, "undoing it puts every name back");
+  let refused = "";
+  try {
+    renameTokenOps(b, "brand", "brand-2");
+  } catch (e) {
+    refused = (e as Error).message;
+  }
+  check(/already/.test(refused), "a token can't be renamed to one that's there already");
+}
+
 // Who worked on a board is kept on it, but it isn't the design: undo leaves it be.
 {
   const at = "2026-11-11T10:00:00.000Z";
@@ -337,6 +374,10 @@ const splitTree = await call("board_read", { board, what: "tree", node: logoId }
 check(/one piece/.test(flatTree.text) && (splitTree.text.match(/vector </g) ?? []).length === 4, "an agent flattens a vector to one piece and splits it into parts again");
 const html = await call("board_read", { board, what: "html", node: card });
 check(html.text.includes("background-color:var(--brand)") && html.text.includes("border-radius:24px") && html.text.includes("opacity:0.9"), "styles go on as CSS (numbers as px, except opacity)");
+const renamed = await call("board_edit", { board, changes: [{ do: "token", name: "brand", rename: "primary" }] });
+const tokensNow = await call("board_read", { board, what: "tokens" });
+const cardHtml = await call("board_read", { board, what: "html", node: card });
+check(renamed.json.results[0].renamed === "--primary" && /--primary/.test(tokensNow.text) && !/"--brand"/.test(tokensNow.text) && /var\(--primary\)/.test(cardHtml.text), "an agent renames a token, and the layers using it follow");
 const shot = await call("board_screenshot", { board, nodes: [art] });
 check(shot.images.length === 1 && pngSize(shot.images[0]).width === 390 && pngSize(shot.images[0]).height === 844, "the screenshot is the artboard's size");
 writeFileSync(path.join(out, "welcome.png"), shot.images[0]);
