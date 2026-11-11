@@ -173,6 +173,48 @@ const CHECKS: Record<string, Check> = {
     if (after !== "Row Two,Row Three,Row One") return `after the drag: ${after}`;
     return undone === "Row One,Row Two,Row Three" ? "ok" : `after undo: ${undone}`;
   },
+  async "on a board, deep layers are easy to reach: double-click, ⌘, right-click → Select layer, and ⌘K clears the panels"(page) {
+    const t = await openTestBoard(page);
+    const st = async () => S(page, async () => {
+      const m = await import("/ui/board-state.js" as string);
+      return { sel: m.B.sel.map((id: string) => m.B.board.nodes[id].name).join(), hover: m.B.hover ? m.B.board.nodes[m.B.hover].name : null, editing: Boolean(m.B.editing), left: m.B.leftOpen, right: m.B.rightOpen };
+    });
+    // Double-click goes straight to the deepest layer, three frames down, and into its words.
+    const two = await boxOf(page, t.byName("Two"));
+    await page.mouse.dblclick(two.x + 8, two.y + two.height / 2);
+    await page.waitForTimeout(300);
+    const a = await st();
+    if (a.sel !== "Two" || !a.editing) return `double-click selected ${a.sel} (typing: ${a.editing})`;
+    await page.keyboard.press("Escape");
+    // Holding ⌘ shows the deepest layer under the pointer before any click.
+    const row3 = t.byName("Row Three");
+    const icon = boards.getBoard(t.id).nodes[row3].children![0];
+    const ib = await boxOf(page, icon);
+    await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2, { steps: 3 });
+    await page.keyboard.down("Meta");
+    await page.waitForTimeout(150);
+    const held = await st();
+    await page.keyboard.up("Meta");
+    if (held.hover !== boards.getBoard(t.id).nodes[icon].name) return `with ⌘ held, the pointer shows ${held.hover}`;
+    // Right-click lists every layer under the pointer, deepest first; picking one selects it.
+    await page.mouse.click(ib.x + ib.width / 2, ib.y + ib.height / 2, { button: "right" });
+    await page.locator(".ctx-item", { hasText: "Select layer…" }).click();
+    await page.waitForTimeout(150);
+    const listed = await S(page, () => [...document.querySelectorAll(".ctx-item .ctx-label")].map((x) => x.textContent).join(","));
+    if (!listed.startsWith("Frame,Row Three,List,Phone")) return `Select layer lists ${listed}`;
+    await page.locator(".ctx-item", { hasText: "Row Three" }).click();
+    await page.waitForTimeout(150);
+    const picked = await st();
+    if (picked.sel !== "Row Three") return `Select layer picked ${picked.sel}`;
+    // ⌘K hides both panels, and brings both back.
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(200);
+    const hidden = await st();
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(200);
+    const shown = await st();
+    return !hidden.left && !hidden.right && shown.left && shown.right ? "ok" : `⌘K: hidden ${hidden.left}/${hidden.right}, shown ${shown.left}/${shown.right}`;
+  },
   async "on a board, the frame tool draws an artboard and text is typed in place"(page) {
     const t = await openTestBoard(page);
     const c = (await page.locator(".bd-canvas").boundingBox())!;

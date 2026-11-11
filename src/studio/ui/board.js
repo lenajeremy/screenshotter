@@ -917,13 +917,33 @@ const hasOverrides = (id) => subtree(B.board, id).some((x) => node(x)?.overrides
 // =============================================================================================
 // The layer menu
 
-export function openLayerMenu(x, y) {
+/** Every layer under the pointer, deepest first, to pick one however deep it is. */
+function selectLayerMenu(x, y, stack) {
+  openMenu(
+    x,
+    y,
+    stack.slice(0, 16).map((id) => {
+      const n = node(id);
+      return { label: n.name, icon: layerIcon(n), disabled: n.locked, run: () => select(id), hover: (on) => bset({ hover: on ? id : null }) };
+    }),
+  );
+}
+
+/** ⌘K: both side panels away for room on the canvas, or both back. */
+export function togglePanels() {
+  const open = B.leftOpen !== false || B.rightOpen !== false;
+  bset({ leftOpen: !open, rightOpen: !open });
+}
+
+export function openLayerMenu(x, y, { stack = [] } = {}) {
   const s = sel();
   const one = s.length === 1 ? node(s[0]) : null;
   const frame = one?.type === "frame";
   const any = s.length > 0;
   const vectors = any && s.every((id) => node(id).type === "vector");
   openMenu(x, y, [
+    stack.length > 1 && { label: "Select layer…", icon: "layers", run: () => setTimeout(() => selectLayerMenu(x, y, stack)) },
+    stack.length > 1 && "-",
     any && { label: "Copy", icon: "copy", kbd: "⌘C", run: () => document.execCommand("copy") },
     { label: "Paste", icon: "paste", kbd: "⌘V", run: () => navigator.clipboard?.readText?.().then((t) => t && onPaste({ preventDefault() {}, clipboardData: { files: [], getData: (k) => (k === "text/plain" ? t : "") } })).catch(() => toast({ kind: "info", title: "Press ⌘V to paste", timeout: 2400 })) },
     any && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: duplicateSelection },
@@ -983,6 +1003,7 @@ function onKey(e) {
   if (m && e.shiftKey && k === "h") return take(), toggleAll("hidden");
   if (m && e.shiftKey && k === "l") return take(), toggleAll("locked");
   if (m && e.shiftKey && k === "k") return take(), pickImages();
+  if (m && !e.altKey && (k === "k" || e.code === "KeyK")) return take(), togglePanels();
   if (m && e.altKey && k === "c") return take(), copyStyles();
   if (m && e.altKey && k === "v") return take(), pasteStyles();
   if (m && e.altKey && k === "s") return take(), bset({ leftOpen: !B.leftOpen });
@@ -1038,6 +1059,8 @@ export function boardCommand(name) {
     delete: deleteSelection,
     exportImage: () => document.querySelector(".bd-topbar .btn.primary")?.click(),
     toggleLeft: () => bset({ leftOpen: !B.leftOpen }),
+    // ⌘K (the app's menu sends it as "ai"): boards have no Ask AI, so it makes room on the canvas instead.
+    ai: togglePanels,
     toggleRight: () => bset({ rightOpen: !B.rightOpen }),
     save: () => toast({ kind: "ok", icon: "check", title: "Boards save themselves", text: "Every change is on disk as you make it.", timeout: 2400 }),
   }[name];

@@ -5,7 +5,10 @@ import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, set, useStore } from "./store.js";
 
-/** Open a menu at the pointer. `items`: {label, icon, kbd, run, danger, disabled} or "-" for a divider. */
+/**
+ * Open a menu at the pointer. `items`: {label, icon, kbd, run, danger, disabled, hover} or "-" for a
+ * divider; `hover(true/false)` is told when the item is pointed at (or picked with the arrow keys).
+ */
 export function openMenu(x, y, items) {
   const clean = items.filter(Boolean).filter((it, i, all) => it !== "-" || (i > 0 && i < all.length - 1 && all[i - 1] !== "-"));
   if (clean.length) set({ menu: { x, y, items: clean } });
@@ -56,6 +59,13 @@ export function ContextMenu() {
       removeEventListener("resize", closeMenu);
       removeEventListener("wheel", closeMenu);
     };
+  }, [m, active]);
+  // What a pointed-at item is about shows while it's pointed at (a layer outlined on the canvas, say).
+  useEffect(() => {
+    const it = m && active >= 0 ? m.items[active] : null;
+    if (!it || it === "-" || !it.hover) return;
+    it.hover(true);
+    return () => it.hover(false);
   }, [m, active]);
   if (!m) return null;
   const run = (it) => {

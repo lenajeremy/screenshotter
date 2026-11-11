@@ -463,6 +463,23 @@ addEventListener("keyup", (e) => {
   }
 });
 
+/**
+ * Every layer under a point on screen, deepest (front-most) first, then the ones holding it: what
+ * right-click → Select layer lists.
+ */
+export function layersAt(clientX, clientY) {
+  const out = [];
+  for (const el of document.elementsFromPoint(clientX, clientY)) {
+    const h = el.closest?.("[data-bid]");
+    if (!h || !h.closest(".bd-world")) continue;
+    for (const id of [h.dataset.bid, ...ancestors(B.board, h.dataset.bid)]) if (node(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** The deepest layer a press on `id` can pick (a locked one passes it to what holds it). */
+const deepestFor = (id) => [id, ...ancestors(B.board, id)].find((x) => !node(x)?.locked) ?? null;
+
 /** The layer a click on `id` (the deepest one hit) means, by how deep the selection already is. */
 export function pickFor(e, id) {
   const board = B.board;
@@ -482,7 +499,22 @@ export function pickFor(e, id) {
   return chain.length >= 2 ? chain[chain.length - 2] : chain[0];
 }
 
+// Where the pointer last was, so holding ⌘ can show the deepest layer there without a move.
+let pointer = null;
+function hoverAt(clientX, clientY, deep) {
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el?.closest?.(".bd-canvas") || el.closest("[data-label]")) return;
+  const hit = el.closest("[data-bid]");
+  const id = hit ? (deep ? deepestFor(hit.dataset.bid) : pickFor({}, hit.dataset.bid)) : null;
+  if (id !== B.hover) bset({ hover: id });
+}
+for (const [type, deep] of [["keydown", true], ["keyup", false]])
+  addEventListener(type, (e) => {
+    if ((e.key === "Meta" || e.key === "Control") && B.id && B.tool === "move" && pointer && !B.dragging) hoverAt(pointer.x, pointer.y, deep);
+  });
+
 function hoverMove(e) {
+  pointer = { x: e.clientX, y: e.clientY };
   if (e.buttons || (B.tool !== "move" && B.tool !== "comment") || spaceDown) return;
   const hit = e.target.closest?.("[data-bid]");
   const label = e.target.closest?.("[data-label]");
@@ -1130,15 +1162,11 @@ function dblclick(e) {
   const label = e.target.closest?.("[data-label]");
   if (label) return bset({ renaming: label.dataset.label });
   if (!hit) return;
-  const chain = [hit.dataset.bid, ...ancestors(B.board, hit.dataset.bid)];
-  const cur = B.sel.length === 1 ? chain.indexOf(B.sel[0]) : -1;
-  const target = cur > 0 ? chain[cur - 1] : cur === 0 ? chain[0] : pickFor(e, hit.dataset.bid);
+  // Straight to the deepest layer under the pointer, past every frame holding it (and into its words, if it's text).
+  const target = deepestFor(hit.dataset.bid);
   if (!target) return;
-  if (node(target)?.type === "text" && (cur === 0 || target === chain[0])) {
-    select(target);
-    return startTextEdit(target);
-  }
   select(target);
+  if (node(target)?.type === "text") startTextEdit(target);
 }
 
 function contextMenu(e) {
@@ -1147,7 +1175,7 @@ function contextMenu(e) {
   const label = e.target.closest?.("[data-label]");
   const id = label ? label.dataset.label : hit ? pickFor(e, hit.dataset.bid) : null;
   if (id && !B.sel.includes(id)) select(id);
-  openLayerMenu(e.clientX, e.clientY, { at: toWorld(e.clientX, e.clientY) });
+  openLayerMenu(e.clientX, e.clientY, { at: toWorld(e.clientX, e.clientY), stack: layersAt(e.clientX, e.clientY) });
 }
 
 async function dropFiles(e) {
