@@ -6,6 +6,7 @@ import { B, bset, closeBoard, commit, currentPage, node, redo, select, selectedA
 import { BoardCanvas, canvasEl, elOf, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AssetsPanel } from "./board-assets.js";
+import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
@@ -35,9 +36,9 @@ export function BoardApp() {
     <${BoardTopbar} />
     ${b.leftOpen && html`<aside class="panel bd-left">
       <div class="bd-left-tabs" role="tablist">
-        ${[["layers", "Layers"], ["assets", "Assets"]].map(([id, label]) => html`<button role="tab" aria-selected=${(b.leftTab ?? "layers") === id} class=${(b.leftTab ?? "layers") === id ? "on" : ""} onClick=${() => bset({ leftTab: id })}>${label}</button>`)}
+        ${[["layers", "Layers"], ["assets", "Assets"], ["comments", "Comments"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${(b.leftTab ?? "layers") === id} class=${(b.leftTab ?? "layers") === id ? "on" : ""} onClick=${() => bset({ leftTab: id })}>${label}${id === "comments" && openCount() > 0 && html`<span class="n">${openCount()}</span>`}</button>`)}
       </div>
-      ${(b.leftTab ?? "layers") === "assets" ? html`<${AssetsPanel} />` : html`<${PagesList} /><${LayersList} />`}
+      ${(b.leftTab ?? "layers") === "assets" ? html`<${AssetsPanel} />` : b.leftTab === "comments" ? html`<${CommentsPanel} />` : html`<${PagesList} /><${LayersList} />`}
     </aside>`}
     <main class="bd-stage"><${BoardCanvas} /></main>
     ${b.rightOpen && html`<aside class="panel bd-right"><${Inspector} /></aside>`}
@@ -50,6 +51,7 @@ const TOOLS = [
   { id: "rect", icon: "square", label: "Rectangle", key: "R" },
   { id: "text", icon: "text", label: "Text", key: "T" },
   { id: "image", icon: "image", label: "Image", key: "⇧⌘K" },
+  { id: "comment", icon: "comment", label: "Comment", key: "C" },
   { id: "hand", icon: "hand", label: "Pan", key: "H or Space" },
 ];
 
@@ -958,7 +960,7 @@ export function openLayerMenu(x, y) {
 // =============================================================================================
 // Keys
 
-const TOOL_KEYS = { v: "move", f: "frame", r: "rect", t: "text", h: "hand" };
+const TOOL_KEYS = { v: "move", f: "frame", r: "rect", t: "text", c: "comment", h: "hand" };
 
 function onKey(e) {
   if (!S.boardId || S.modal || S.menu) return;
@@ -1011,6 +1013,8 @@ function onKey(e) {
   if (k === "[") return take(), restack("back");
   if (TOOL_KEYS[k] && !e.altKey) return take(), bset({ tool: TOOL_KEYS[k] });
   if (k === "backspace" || k === "delete") return take(), deleteSelection();
+  if (k === "escape" && (B.thread || B.draft)) return take(), closeThread();
+  if (k === "escape" && B.tool === "comment") return take(), bset({ tool: "move", hover: null });
   if (k === "escape") return take(), selectParent();
   if (k === "enter") return take(), selectChildren();
   if (k === "tab") return take(), selectNextSibling(e.shiftKey);

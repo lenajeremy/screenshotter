@@ -33,6 +33,14 @@ export const B = {
   guides: [],
   /** What's being dragged on the canvas: move, resize, marquee, draw, pan. */
   dragging: null,
+  /** The board's comments and the agents who worked on it, kept apart from the design (and its undo). */
+  comments: { rev: 0, threads: [], agents: {} },
+  /** The comment thread open by its pin, or a new comment being written (its anchor). */
+  thread: null,
+  draft: null,
+  showResolved: false,
+  /** Changes when the comments or the board's agents do (from the server's poll answer). */
+  talk: "",
 };
 
 const listeners = new Set();
@@ -245,6 +253,25 @@ async function reload({ quiet = false, agent = false } = {}) {
   if (!quiet && agent) set({});
 }
 
+/** Told (before, after) whenever the comments are loaded again. */
+export const commentListeners = new Set();
+
+/** The board's comments and agents, which change apart from the design: the person's, or an agent's answer. */
+export async function loadComments() {
+  const id = B.id;
+  if (!id) return;
+  try {
+    const c = await api(`/api/board/comments?id=${encodeURIComponent(id)}`);
+    if (id !== B.id) return;
+    const before = B.comments;
+    const thread = B.thread && !c.threads.some((t) => t.id === B.thread) ? null : B.thread;
+    bset({ comments: { rev: c.rev, threads: c.threads ?? [], agents: c.agents ?? {} }, thread });
+    for (const l of commentListeners) l(before, B.comments);
+  } catch {
+    // The board went, or the engine is restarting: the next poll tries again.
+  }
+}
+
 let poll = 0;
 function startPolling() {
   clearInterval(poll);
@@ -254,6 +281,10 @@ function startPolling() {
       const r = await api(`/api/board/rev?id=${encodeURIComponent(B.id)}`);
       const working = r.working ?? [];
       if (working.join() !== B.working.join()) bset({ working });
+      if (r.talk !== undefined && r.talk !== B.talk) {
+        B.talk = r.talk;
+        loadComments();
+      }
       if (B.board && r.rev > B.board.rev && !saving()) await reload({ agent: r.by === "agent" });
     } catch {
       // The board was deleted, or the engine is restarting: try again next time.
@@ -268,7 +299,7 @@ export async function openBoard(id) {
   try {
     const board = await api(`/api/board?id=${encodeURIComponent(id)}`);
     const remembered = rememberedView(id);
-    Object.assign(B, { id, board, page: remembered?.page && board.pages.some((p) => p.id === remembered.page) ? remembered.page : board.pages[0]?.id, sel: [], hover: null, editing: null, renaming: null, past: [], future: [], tool: "move", working: [], drop: null, guides: [], open: new Set() });
+    Object.assign(B, { id, board, page: remembered?.page && board.pages.some((p) => p.id === remembered.page) ? remembered.page : board.pages[0]?.id, sel: [], hover: null, editing: null, renaming: null, past: [], future: [], tool: "move", working: [], drop: null, guides: [], open: new Set(), comments: { rev: 0, threads: [], agents: board.agents ?? {} }, thread: null, draft: null, talk: "" });
     if (remembered?.view) B.view = remembered.view;
     else B.view = { ...B.view, fitPending: true };
     set({ boardId: id, scenesPage: false, scenesOpen: false });
@@ -276,6 +307,7 @@ export async function openBoard(id) {
       localStorage.setItem("board:last", id);
     } catch {}
     startPolling();
+    loadComments();
     notify();
   } catch (e) {
     fail(e, "Couldn't open the board");
@@ -285,7 +317,7 @@ export async function openBoard(id) {
 export function closeBoard({ toLibrary = true } = {}) {
   rememberView();
   clearInterval(poll);
-  Object.assign(B, { id: null, board: null, sel: [], editing: null, past: [], future: [] });
+  Object.assign(B, { id: null, board: null, sel: [], editing: null, past: [], future: [], thread: null, draft: null, comments: { rev: 0, threads: [], agents: {} } });
   try {
     localStorage.removeItem("board:last");
   } catch {}

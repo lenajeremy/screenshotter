@@ -16,6 +16,7 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - `board_list`, `board_create`, `board_read` (overview, tree, measured tree, HTML, tokens)
   - `board_write_html`, `board_edit` (batch: style, text, rename, delete, duplicate, move, visibility, lock, image, artboard, page, token)
   - `board_screenshot`, `board_export`, `board_done`
+  - `board_comments`, `board_comment` (see Comments below)
 - **The Studio editor** (`src/studio/ui/board*.js`):
   - **Library:** a Boards shelf with thumbnails, an "agent at work" badge, and New board.
   - **Canvas:** the real HTML on an endless canvas. Pick, go in and out, and ⌘-click to go deep. Move with snapping, reorder inside flex and drag out into another frame, resize. Frame, rectangle and text tools, plus images.
@@ -52,6 +53,16 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - **Speed:** layers redraw only when they change (every change gives the layers round it new objects); the canvas goes on the GPU while it moves. About 1–2 ms of work a frame on 1,800 layers.
   - **Agents:** `sticker:`/`art:` image sources, and `shape` and `device` changes.
 
+- **Comments** (same day, `src/board/comments.ts`, `agentman.ts`, `studio/ui/board-comments.js`):
+  - **Who worked on a board:** every change an agent makes through the MCP records it in `board.agents` (an `agent` step, like `working`: not part of the design, nothing to undo, no new revision): its Agentman session id, how that was found, its kind, its name, when, and its artboards.
+  - **Finding the agent's session** (once per MCP server, which lives as long as its agent): walk up the process tree; an ancestor with `~/.claude/sessions/<pid>.json` (or under `CLAUDE_CONFIG_DIR`) is a Claude Code session, `claude:<sessionId>`. Else the tmux pane's name when Agentman runs the agent (`agentman-claude-<uuid>`, `agentman-codex-…`). Else the only agent of its kind Agentman lists in the MCP server's folder, marked as a guess (`how: "folder"`); with two there, none is picked. Agentman's own name for the session is used when it's running.
+  - **Storage:** `<library>/.studio/boards/comments/<id>.json`, under its own lock, with a revision the Studio polls (`talk` in `/api/board/rev`). Threads have an anchor (a layer and the point on it clicked, or an artboard, a rect in its coordinates and the layers mostly inside it, with every name as it was), messages (the person's or an agent's), resolved, and for each of the person's messages who it went to and how that went (sending, delivered, queued, failed with why).
+  - **Sending:** the Studio server saves the comment, answers, then sends `send_message` to each recipient's session over Agentman's socket (`~/.agentman/am.sock`; `SCREENSHOTTER_AGENTMAN_SOCKET` points elsewhere, which every test does). The message starts `(From Screenshotter)` and gives the board's name and id, the comment's id, what it's on (layer names and ids), the words, the thread so far for a reply, and how to answer (`board_comment`). Who it goes to: who was in the thread, else the agents that worked on its artboard, else the board's only agent (`defaultRecipients` in the core, used by both sides).
+  - **Agents:** `board_comments` (open threads for me, or all, on one board or every one, with `waitingOnYou`) and `board_comment` (reply, resolve or reopen, or start a thread on a layer).
+  - **Studio:** a comment tool (**C**): click pins to the layer under the pointer, drag comments on a region. Pins (the message count; a lime dot for an agent's unseen answer, amber for a message that didn't reach someone), a thread card by its pin (replies, resolve, delete, how each message was sent, **Try again**), **To** chips and an @ picker of the board's agents, a toast when an agent answers, and a **Comments** tab with the agents who worked on the board.
+  - **Tests:** a stand-in Agentman (`scripts/fake-agentman.ts`) for `test:board` (finding the session from the process, delivery, refusals, Agentman not running, the tools) and two checks in `test:ui` (pin, send, reply, resolve; a region).
+  - **Limits:** an agent started outside Agentman that isn't Claude Code, and shares its folder with another agent of its kind, can't be told apart (its comments say so). A Claude session Agentman didn't start gets messages only when its turn ends (Agentman's hook delivery, shown as "gets it when its turn ends"). Agentman refuses messages while the agent waits on a question; the comment says to answer it, then Try again.
+
 **Decisions:**
 
 - The design is HTML and CSS, not a vector format. The browser engine does the layout, the text and the drawing, an agent writes it fluently, and code comes out of it nearly as is.
@@ -63,7 +74,7 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
 ## Next, in rough order
 
 1. **Released app.** The board tools reach agents once a release ships them: the installed app's MCP is the released one.
-2. **Comments** pinned to layers, which agents can read and resolve.
+2. **Comments, next:** mentions of other agents by an agent, editing a sent message, and comments in exports or the device frame.
 3. **Code out:** copy as JSX or Tailwind (Paper has Tailwind and React CSS). `board_read` gets a `jsx` view.
 4. **Prototype mode:** click through artboards linked by layers, full screen.
 5. **More editing:**

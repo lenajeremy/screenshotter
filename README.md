@@ -212,6 +212,7 @@ A **board** is a design canvas made of real HTML and CSS: pages of artboards (a 
 - **Components:** make a frame a component (⌥⌘K, or right-click) and place copies of it (from **Components** on the left, the right panel, or by duplicating or pasting the component). Change the component and every copy changes; change a copy's words, colours or anything else and that copy keeps the change, until you **Reset** it. Layers inside a copy can be changed or hidden but not added, moved or deleted; **Detach** (⌥⌘B) makes a copy ordinary layers again.
 - **Commands:** copy and paste (layers copy as HTML, and HTML from anywhere pastes as layers), duplicate (⌘D), wrap in a flex frame (⇧A) or a plain frame (⌥⌘G), ungroup (⇧⌘G), add or remove flex keeping every layer where it is (⇧A / ⌥⇧A), copy and paste styles (⌥⌘C / ⌥⌘V), bring forward and back (] [ ⌘] ⌘[).
 - **Export** saves the artboards (or the selection) as PNG or JPEG at 1×, 2× or 3×, copies them as HTML, or puts an artboard **in a device frame**: it becomes the screen of a new design, ready to be an App Store screenshot.
+- **Comments:** press **C**, then click a layer to pin a comment to it, or drag over part of an artboard to comment on that area. A comment goes to the agents that worked on that artboard (change who under **To**, or type **@** to pick one of the board's agents) through Agentman, your agent manager: it lands in the agent's own chat, so you see it and its answer in Agentman too. The agent answers in the thread, usually after changing the design, and its reply shows by the pin. Each message says whether it reached the agent, is waiting for the agent's turn to end, or couldn't be sent and why (Agentman isn't running, the agent's session has ended, it's waiting on a question), with **Try again**. The thread resolves (✓) or deletes; **Comments** (beside Layers and Assets) lists them all, and the agents who've worked on the board. Comments aren't part of the design, so undo leaves them alone.
 
 Boards save as you go. An agent's change appears on your canvas within a second, as one step you can undo, and the artboards it's working on are outlined with an **Agent** label until it's done.
 
@@ -293,6 +294,8 @@ Notification prompts are different: `simctl` can't pre-grant them, and iOS keeps
 | `board_edit` | Many changes at once: styles, words, rename, delete, duplicate, move, hide, lock, images, artboards, pages, tokens, Screenshotter's shapes, a screenshot or artboard in a device frame, and components (make one, place copies that follow it, reset or detach a copy) |
 | `board_screenshot` | A picture of an artboard or any layer, drawn as the Studio draws it, with every layer's box if asked |
 | `board_export` / `board_done` | Save layers as PNG or JPEG files; say you've finished, so the Studio stops showing you at work |
+| `board_comments` | The person's comments on boards: open threads addressed to the agent (or every one), with the layers each is on and whether it's waiting on the agent |
+| `board_comment` | Reply in a comment's thread, resolve or reopen it, or start a thread on a layer |
 
 For Claude Code there's also a skill, `skills/screenshot-design/SKILL.md`: the design guide plus the working loop (capture, read the screen, compose, crop into details, compare variants in a grid, refine). Copy the `skills/screenshot-design` folder into `~/.claude/skills/` (or a project's `.claude/skills/`) to use it; `npm run skill` regenerates it from the guide.
 
@@ -373,6 +376,7 @@ Simulator captures keep iOS's own status bar. By default the values are set with
 | `SCREENSHOTTER_CACHE_DIR` | Photo, AI image and OCR helper cache (default `~/.cache/screenshotter`) |
 | `SCREENSHOTTER_STUDIO_PORT` | Studio port (default 4545) |
 | `SCREENSHOTTER_BEZELS_DIR` | Folder of Apple product bezels to use as device art (default `~/Library/Application Support/Screenshotter/Bezels`) |
+| `SCREENSHOTTER_AGENTMAN_SOCKET` | Agentman's socket, which board comments reach agents through (default `AGENTMAN_SOCKET`, else `~/.agentman/am.sock`) |
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `REPLICATE_API_TOKEN` / `FAL_KEY` | AI background providers, used in that order |
 | `SCREENSHOTTER_OPENAI_IMAGE_MODEL`, `SCREENSHOTTER_GEMINI_IMAGE_MODEL`, `SCREENSHOTTER_REPLICATE_MODEL`, `SCREENSHOTTER_FAL_MODEL` | Override the image model per provider (OpenAI defaults to `gpt-image-2`) |
 | `SCREENSHOTTER_IMAGE_QUALITY` | `fast` (default: OpenAI's medium quality, about half a minute per new image) or `best` (high quality, a minute or more). The Studio sets this in Settings › AI backgrounds |
