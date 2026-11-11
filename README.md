@@ -197,6 +197,20 @@ The side panels start closed so the design has the room. The rail on the left ha
 
 **Agents and your scenes:** an agent using the MCP server can list your scenes, open one, and save a design back. What it saves is a new scene unless you asked it to change one in place; if that scene is open, the agent's version appears on your canvas within a few seconds with an **Undo** (it's one ordinary undo step), and a scene an agent adds is announced with an **Open** button. The agent finds your library by itself: the Studio notes which folder it's using each time it starts, and files an agent brings from elsewhere are copied into that folder.
 
+### Boards
+
+A **board** is a design canvas made of real HTML and CSS: pages of artboards (a phone screen, a desktop page, a card), each a tree of layers (frames, text, images and vectors) with its own CSS. It's where an agent can prototype a screen or a flow for you to see before anything is built, and where you can change it after. **My designs › Boards** lists them; **New board** starts one.
+
+- **The canvas** draws every artboard as the HTML it is, on an endless canvas: scroll or drag with space held (or **H**) to pan, pinch or ⌘-scroll to zoom, ⇧0 for 100%, ⇧1 to fit the page, ⇧2 to zoom to the selection.
+- **Selecting:** a click picks the layer sitting on the artboard; double-click goes a layer in (and into a text's words); ⌘-click picks the layer right under the pointer; **Esc** and **Enter** select the parent and the children; **Tab** steps through siblings. A click on an artboard's background selects it, a drag there selects what's inside, and its name above it moves it.
+- **Changing things:** drag to move (artboards snap to each other), drag a layer along its flex row or column to reorder it, or past its frame's edge into another frame; the handles resize. **F**, **R** and **T** draw a frame (an artboard on the empty canvas; the right panel offers phone, tablet, desktop, watch, App Store and social sizes), a rectangle and text. Pictures come from **⇧⌘K**, a drop or a paste.
+- **The layer list** opens frames, renames (double-click or ⌘R), hides (⇧⌘H), locks (⇧⌘L) and moves layers by dragging, into a frame or between layers.
+- **The right panel** is the layer's CSS in words: position, size (**Fixed**, **Fit**, **Fill** or **Relative** for each side), flex (direction, the alignment pad, gap, padding, wrap, spread), absolute position, clip, opacity and blend, corners, fill, border, shadow, type and the picture. **CSS** at the bottom edits all of it as text. With nothing selected it shows the board's **tokens** (CSS custom properties any layer can use as `var(--name)`).
+- **Commands:** copy and paste (layers copy as HTML, and HTML from anywhere pastes as layers), duplicate (⌘D), wrap in a flex frame (⇧A) or a plain frame (⌥⌘G), ungroup (⇧⌘G), add or remove flex keeping every layer where it is (⇧A / ⌥⇧A), copy and paste styles (⌥⌘C / ⌥⌘V), bring forward and back (] [ ⌘] ⌘[).
+- **Export** saves the artboards (or the selection) as PNG or JPEG at 1×, 2× or 3×, copies them as HTML, or puts an artboard **in a device frame**: it becomes the screen of a new design, ready to be an App Store screenshot.
+
+Boards save as you go. An agent's change appears on your canvas within a second, as one step you can undo, and the artboards it's working on are outlined with an **Agent** label until it's done.
+
 Everything is saved in your output folder: `~/Pictures/Screenshotter` for the app (change it in **Settings**), or `./screenshots` / `SCREENSHOTTER_OUTPUT_DIR` for the browser Studio and the MCP server. Point the MCP server's `SCREENSHOTTER_OUTPUT_DIR` at the same folder and captures your agents take appear in the app too. The Studio and the MCP server take turns on the simulator, so you and an agent can work at the same time.
 
 ### Device art
@@ -225,6 +239,10 @@ Things you can ask for:
 - *"Take a screenshot of the Today screen, lift the 'Add a task' row, and put it on the meadow-motion look at 16:9 for our changelog."*
 - *"Make a 6-second video of the onboarding flow playing inside an iPhone on a cloud background."*
 - *"Capture our landing page on desktop and iPhone and show them together, laptop behind phone."*
+
+### Designing on a board
+
+To show a design before it's built, an agent makes a board (`board_create`) and writes HTML onto it: an artboard first (one element with a width and height, e.g. 402×874 for an iPhone screen), then one visual group at a time into it (`board_write_html` with `target`), so you watch the screen come together. Only inline styles count; flexbox does the layout. It checks its work with `board_screenshot`, changes layers in place with `board_edit`, and calls `board_done` when it's finished. Ask for things like *"Design the onboarding for the habit app on a board: three phone screens, our colours as tokens."*
 
 ### Reaching a specific screen
 
@@ -265,6 +283,12 @@ Notification prompts are different: `simctl` can't pre-grant them, and iOS keeps
 | `save_scene` | Put a design into the Studio's Scenes, editable there by hand: one screen, a set (`shots`), or a set at several sizes (`sizes`). A new scene by default; replaces an existing one only with its id and `replace: true`. Saving just the first screen keeps the other sizes |
 | `export_scene_set` | Every screen of every size of a saved design at full size, numbered in store order, with a contact sheet per size; folders by size or ready for `fastlane deliver` |
 | `list_mockup_options` | Devices and colours, looks, canvases, layouts, grades |
+| `board_list` / `board_create` | The boards in the Studio (pages, artboards with sizes), and a new empty one |
+| `board_read` | A board's overview, a layer tree with ids and sizes (measured if asked), a layer as HTML, or its tokens |
+| `board_write_html` | Add layers from HTML with inline styles: new artboards, or into (or beside, or instead of) a frame |
+| `board_edit` | Many changes at once: styles, words, rename, delete, duplicate, move, hide, lock, images, artboards, pages, tokens |
+| `board_screenshot` | A picture of an artboard or any layer, drawn as the Studio draws it, with every layer's box if asked |
+| `board_export` / `board_done` | Save layers as PNG or JPEG files; say you've finished, so the Studio stops showing you at work |
 
 For Claude Code there's also a skill, `skills/screenshot-design/SKILL.md`: the design guide plus the working loop (capture, read the screen, compose, crop into details, compare variants in a grid, refine). Copy the `skills/screenshot-design` folder into `~/.claude/skills/` (or a project's `.claude/skills/`) to use it; `npm run skill` regenerates it from the guide.
 
