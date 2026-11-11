@@ -114,7 +114,7 @@ commentListeners.add((before, after) => {
       continue;
     }
     const m = t.messages.find((x) => !had.has(x.id) && x.by !== "person");
-    if (m) toast({ kind: "ok", icon: "comment", title: `${authorOf(m)} ${t.messages[0] === m ? "commented" : "replied"}`, text: m.text.slice(0, 120), timeout: 8000, actions: [{ label: "Show", run: () => openThread(t.id) }] });
+    if (m) toast({ kind: "ok", icon: "comment", title: `${authorOf(m)} ${t.messages[0] === m ? "commented" : "replied"}`, text: plainWords(m.text).slice(0, 120), timeout: 8000, actions: [{ label: "Show", run: () => openThread(t.id) }] });
   }
 });
 
@@ -178,6 +178,89 @@ function withMentions(text) {
   out.push(text.slice(at));
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Messages as Markdown, as agents write them: paragraphs, lists, **bold**, *italic*, `code`, code
+// blocks, links and @names. Built as elements (never HTML from the words), so nothing in one runs.
+
+const INLINE_MD = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\))/g;
+
+function inline(text) {
+  const out = [];
+  let at = 0;
+  for (const m of text.matchAll(INLINE_MD)) {
+    if (m.index > at) out.push(withMentions(text.slice(at, m.index)));
+    if (m[1]) out.push(html`<code>${m[1].slice(1, -1)}</code>`);
+    else if (m[2]) out.push(html`<b>${inline(m[2].slice(2, -2))}</b>`);
+    else if (m[3]) out.push(html`<i>${inline(m[3].slice(1, -1))}</i>`);
+    // Links open in the browser (the app sends a new window's link there).
+    else if (m[4]) out.push(html`<a href=${m[6]} target="_blank" rel="noopener noreferrer" title=${m[6]}>${inline(m[5])}</a>`);
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push(withMentions(text.slice(at)));
+  return out;
+}
+
+/** Lines of a paragraph or list item, with their breaks. */
+const withBreaks = (text) => text.split("\n").flatMap((l, k) => (k ? [html`<br />`, ...inline(l)] : inline(l)));
+
+const OL = /^\s*(\d+)[.)]\s+/;
+const UL = /^\s*[-*•]\s+/;
+const FENCE = /^\s*```/;
+const HEAD = /^\s*#{1,6}\s+/;
+
+export function markdown(text) {
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+    if (FENCE.test(line)) {
+      const code = [];
+      i++;
+      while (i < lines.length && !FENCE.test(lines[i])) code.push(lines[i++]);
+      i++;
+      blocks.push(html`<pre><code>${code.join("\n")}</code></pre>`);
+      continue;
+    }
+    if (OL.test(line) || UL.test(line)) {
+      const ordered = OL.test(line);
+      const re = ordered ? OL : UL;
+      const start = ordered ? Number(OL.exec(line)[1]) : undefined;
+      const items = [];
+      while (i < lines.length && re.test(lines[i])) {
+        let item = lines[i++].replace(re, "");
+        // A line indented under an item carries it on.
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !OL.test(lines[i]) && !UL.test(lines[i])) item += "\n" + lines[i++].trim();
+        items.push(item);
+      }
+      const lis = items.map((it) => html`<li>${withBreaks(it)}</li>`);
+      blocks.push(ordered ? html`<ol start=${start}>${lis}</ol>` : html`<ul>${lis}</ul>`);
+      continue;
+    }
+    if (HEAD.test(line)) {
+      blocks.push(html`<p class="h">${inline(line.replace(HEAD, ""))}</p>`);
+      i++;
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !OL.test(lines[i]) && !UL.test(lines[i]) && !FENCE.test(lines[i]) && !HEAD.test(lines[i])) para.push(lines[i++]);
+    blocks.push(html`<p>${withBreaks(para.join("\n"))}</p>`);
+  }
+  return blocks;
+}
+
+/** Words without their Markdown, for one-line previews. */
+const plainWords = (text) =>
+  String(text ?? "")
+    .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, "$1")
+    .replace(/[*`#]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /** The agents named with @ in some words (board agents first, then Agentman's others). */
 function mentioned(text) {
@@ -389,7 +472,7 @@ function Working({ w }) {
 function Message({ t, m }) {
   return html`<div class="bd-msg">
     <div class="who"><span class="av ${m.by === "person" ? "" : "agent"}">${initial(m)}</span><b>${authorOf(m)}</b><span class="when">${ago(m.createdAt)}</span></div>
-    <p class="txt">${withMentions(m.text)}</p>
+    <div class="txt bd-md">${markdown(m.text)}</div>
     ${(m.to ?? []).map((key) => html`<${DeliveryLine} key=${key} t=${t} m=${m} k=${key} />`)}
   </div>`;
 }
@@ -538,7 +621,7 @@ export function CommentsPanel() {
               <span class="av ${first.by === "person" ? "" : "agent"}">${initial(first)}</span>
               <span class="body">
                 <span class="top"><b>${anchorLabel(t.anchor)}</b><span class="when">${ago(t.updatedAt)}</span></span>
-                <span class="txt">${first.text}</span>
+                <span class="txt">${plainWords(first.text)}</span>
                 ${(state || pageName(t.anchor.page)) && html`<span class="meta ${notSent(t) && !t.resolved ? "warn" : unseen(t) && !t.resolved ? "new" : ""}">${[pageName(t.anchor.page), state].filter(Boolean).join(" · ")}</span>`}
               </span>
             </button>`;

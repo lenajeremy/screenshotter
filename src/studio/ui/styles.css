@@ -1957,7 +1957,20 @@ li.done .work-shot .scan { display: none; }
 .bd-pin.busy::after { content: ""; position: absolute; inset: -4px; border-radius: inherit; border: 1.5px solid rgba(255, 255, 255, 0.55); animation: bd-pin-busy 1.6s ease-out infinite; pointer-events: none; }
 @keyframes bd-pin-busy { from { opacity: 0.9; transform: scale(0.92); } to { opacity: 0; transform: scale(1.35); } }
 @media (prefers-reduced-motion: reduce) { .bd-dots i, .bd-pin.busy::after { animation: none; opacity: 0.6; } }
-.bd-mention { color: var(--text); font-weight: 600; }
+.bd-mention { color: var(--ok); font-weight: 600; background: rgba(74, 222, 128, 0.12); border-radius: 4px; padding: 0 3px; white-space: nowrap; }
+/* A message's Markdown */
+.bd-msg .txt.bd-md { white-space: normal; }
+.bd-md p { margin: 0 0 6px; }
+.bd-md p:last-child, .bd-md ol:last-child, .bd-md ul:last-child, .bd-md pre:last-child { margin-bottom: 0; }
+.bd-md p.h { font-weight: 650; margin-top: 2px; }
+.bd-md ol, .bd-md ul { margin: 2px 0 6px; padding-left: 18px; }
+.bd-md li { margin: 3px 0; padding-left: 2px; }
+.bd-md li::marker { color: var(--text-3); }
+.bd-md b { font-weight: 650; }
+.bd-md code { font: 11.5px var(--mono); padding: 1px 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.bd-md pre { margin: 4px 0 6px; padding: 8px 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.06); overflow-x: auto; }
+.bd-md pre code { padding: 0; background: none; white-space: pre; }
+.bd-md a { color: var(--text); text-decoration: underline; text-decoration-color: var(--text-3); text-underline-offset: 2px; }
 .bd-picker-head { margin: 6px 8px 2px; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
 .bd-reopen { height: 26px; padding: 0 10px; }
 /* A token's name: click to rename it everywhere it's used */

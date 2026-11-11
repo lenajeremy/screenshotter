@@ -317,8 +317,19 @@ const CHECKS: Record<string, Check> = {
     await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Helper"), null, { timeout: 8000 }).catch(() => undefined);
     const sent = agentman.sent.find((x) => x.sessionId === "codex:helper");
     const onBoard = boards.getBoard(t.id).agents?.["codex:helper"]?.name;
-    const mark = await S(page, () => document.querySelector(".bd-thread .bd-msg .bd-mention")?.textContent ?? "");
-    return sent?.text.includes("Hey @Helper can you tidy this row?") && onBoard === "Helper" && mark === "@Helper" ? "ok" : `sent: ${Boolean(sent)}, on the board as: ${onBoard}, marked: "${mark}"`;
+    const mark = await S(page, () => {
+      const m = document.querySelector(".bd-thread .bd-msg .bd-mention");
+      return m ? `${m.textContent} ${getComputedStyle(m).color}` : "";
+    });
+    if (!sent?.text.includes("Hey @Helper can you tidy this row?") || onBoard !== "Helper" || mark !== "@Helper rgb(74, 222, 128)") return `sent: ${Boolean(sent)}, on the board as: ${onBoard}, marked: "${mark}"`;
+    // An agent's answer in Markdown reads as it was meant: a list, bold, code, a link, nothing that runs.
+    const th = talk.getComments(t.id).threads.find((x) => x.messages.some((m) => m.text.includes("tidy this row")))!;
+    talk.reply(t.id, th.id, { by: "codex:helper", name: "Helper", text: "Tidied:\n\n1. **Spacing** to `16px`\n2. A [guide](https://example.com) and <img src=x onerror=alert(1)>" });
+    const md = await page.waitForFunction(() => {
+      const last = [...document.querySelectorAll(".bd-thread .bd-md")].pop();
+      return last && last.querySelectorAll("ol li").length === 2 ? { b: last.querySelector("b")?.textContent, code: last.querySelector("code")?.textContent, a: last.querySelector("a")?.getAttribute("target"), img: Boolean(last.querySelector("img")) } : null;
+    }, null, { timeout: 6000 }).then((h) => h.jsonValue(), () => null);
+    return md && md.b === "Spacing" && md.code === "16px" && md.a === "_blank" && !md.img ? "ok" : `the Markdown reply drew ${JSON.stringify(md)}`;
   },
   async "on a board, changes still being saved go to their own board when another is opened"(page) {
     const t = await openTestBoard(page);
