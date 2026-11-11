@@ -14,6 +14,8 @@ import { startStudio } from "../src/studio/server.js";
 import { closeBrowser } from "../src/render/browser.js";
 import type { MockupInput } from "../src/render/schema.js";
 import { encodePng } from "../src/util/png.js";
+// Tests never ask the Keychain (macOS would ask the person to allow it).
+process.env.SCREENSHOTTER_NO_KEYCHAIN = "1";
 
 const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-studio-test-"));
 const saved = Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SCREENSHOTTER_CLAUDE_PATH", "SCREENSHOTTER_CODEX_PATH", "SCREENSHOTTER_OUTPUT_DIR", "SCREENSHOTTER_STYLE_FILE", "SCREENSHOTTER_SEEN_FILE", "SCREENSHOTTER_STUDIO_FILE", "OPENAI_API_KEY", "SCREENSHOTTER_CACHE_DIR"].map((k) => [k, process.env[k]]));

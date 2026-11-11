@@ -15,6 +15,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import { chromium, webkit, type Browser, type Page } from "playwright";
+// Tests never ask the Keychain (macOS would ask the person to allow it).
+process.env.SCREENSHOTTER_NO_KEYCHAIN = "1";
 
 // A library of its own, set before the Studio's modules read where the library is.
 const tmp = mkdtempSync(path.join(os.tmpdir(), "screenshotter-ui-"));

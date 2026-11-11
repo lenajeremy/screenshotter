@@ -8,6 +8,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+// Tests never ask the Keychain (macOS would ask the person to allow it).
+process.env.SCREENSHOTTER_NO_KEYCHAIN = "1";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fakeAgentman } from "./fake-agentman.js";
 import { sendableText, sessionInFolder } from "../src/board/agentman.js";
@@ -39,6 +41,19 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   const part = icon.nodes[svg.children![0]];
   check(svg.type === "svg" && svg.style.width === "24px" && !svg.svg && svg.attrs?.viewBox === "0 0 24 24" && !svg.attrs.onclick && svg.children?.length === 1, "an svg is a vector in parts, made safe, sized from its viewBox");
   check(part.type === "vector" && part.tag === "path" && part.attrs?.d === "M0 0h24v24" && part.name === "Path", "its path is a part of its own, with its attributes");
+
+  // Unsplash sources on boards: words are a search ("#2" the second photo); an id names one photo.
+  const { unsplashRef, isUnsplash } = await import("../src/board/photos.js");
+  check(unsplashRef("unsplash:ramen bowl").ref === "unsplash:search:ramen bowl" && unsplashRef("unsplash:ramen bowl #2").pick === 1 && unsplashRef("unsplash:skateboards").ref === "unsplash:search:skateboards", "unsplash:<words> is a search, and #2 takes the second photo");
+  check(unsplashRef("unsplash:TWTxHN2QIGc").ref === "unsplash:TWTxHN2QIGc" && isUnsplash("https://unsplash.com/photos/ramen-dish-TWTxHN2QIGc") && !isUnsplash("/Users/me/a.png"), "an id or a photo's page names one photo");
+  const { unsplashKey } = await import("../src/util/keys.js");
+  const savedKey = process.env.UNSPLASH_ACCESS_KEY;
+  process.env.UNSPLASH_ACCESS_KEY = " k-from-the-app ";
+  const fromApp = await unsplashKey();
+  delete process.env.UNSPLASH_ACCESS_KEY;
+  const none = await unsplashKey();
+  if (savedKey !== undefined) process.env.UNSPLASH_ACCESS_KEY = savedKey;
+  check(fromApp === "k-from-the-app" && none === undefined, "the Unsplash key comes from the app when it hands one over; tests never ask the Keychain");
 
   // Vectors: parts, defs, words, groups; HTML out and back.
   const art = htmlToNodes(`<svg width="100" height="50" fill="none"><defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/></linearGradient></defs><g transform="translate(5 5)" onclick="x()"><rect x="0" y="0" width="20" height="10" rx="2" fill="url(#g)"/><circle cx="40" cy="20" r="8" stroke="#000"/></g><text x="60" y="30" font-size="12">Hi <tspan fill="red">there</tspan></text><a href="javascript:bad()"><path d="m10 40l20 0"/></a></svg>`);

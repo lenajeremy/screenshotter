@@ -9,6 +9,11 @@ MainActor.assumeIsolated {
         let contents = Bundle.main.bundleURL.appendingPathComponent("Contents")
         let node = contents.appendingPathComponent("Helpers/node").path
         let server = contents.appendingPathComponent("Resources/engine/dist/index.js").path
+        // The Unsplash key saved in Settings › Photos, as the app gives its own engine: an agent's
+        // engine is a process of its own, and searches with the same key.
+        if (ProcessInfo.processInfo.environment["UNSPLASH_ACCESS_KEY"] ?? "").isEmpty, let unsplash = Keychain.load("unsplash") {
+            setenv("UNSPLASH_ACCESS_KEY", unsplash, 1)
+        }
         var argv: [UnsafeMutablePointer<CChar>?] = ([node, server] + args.dropFirst(2)).map { strdup($0) } + [nil]
         execv(node, &argv)
         FileHandle.standardError.write(Data("Screenshotter couldn't start its MCP server: \(node): \(String(cString: strerror(errno)))\n".utf8))

@@ -43,6 +43,7 @@ import { builtinSvg, stickerNames, artNames } from "../render/images.js";
 import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
 import { htmlToNodes, type BoardNode } from "./core.js";
+import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photos.js";
 import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, summarizeBoard } from "./store.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
 import { describeAnchor, getComments, keysOf, reply, startThread, threadForAgent } from "./comments.js";
@@ -66,6 +67,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
 - Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
+- Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
 - Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment; the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
@@ -153,7 +155,7 @@ const ChangeSchema = z.discriminatedUnion("do", [
   }),
   z.object({ do: z.literal("visibility"), ids: z.array(z.string()).min(1), hidden: z.boolean() }),
   z.object({ do: z.literal("lock"), ids: z.array(z.string()).min(1), locked: z.boolean() }),
-  z.object({ do: z.literal("image"), id: z.string(), src: z.string().describe("A file path or URL for the image layer.") }),
+  z.object({ do: z.literal("image"), id: z.string(), src: z.string().describe('A file path or URL for the image layer, or "unsplash:<words>" for the top free Unsplash photo ("#2" for the second).') }),
   z.object({
     do: z.literal("artboard"),
     name: z.string(),
@@ -354,6 +356,8 @@ export function registerBoardTools(server: McpServer) {
         const made = addHtmlOps(a.html, parent, { page, index });
         if (!made.roots.length) throw new Error("The HTML had nothing to draw (no elements or words).");
         inlineBuiltins(made.nodes, made.warnings);
+        const photos: string[] = [];
+        await placePhotos(made.nodes, made.warnings, photos);
         adoptImages(made.nodes, made.warnings);
         // New artboards go where asked, else to the right of the others.
         if (!parent) {
@@ -373,7 +377,7 @@ export function registerBoardTools(server: McpServer) {
         const changed = changeBoard(b.id, ops, "agent");
         const after = changed.board;
         changeBoard(b.id, workingOps(after, made.roots, await whoAmI()), "agent");
-        const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), warnings: made.warnings.length ? made.warnings : undefined })];
+        const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), photos: photos.length ? [...new Set(photos)] : undefined, warnings: made.warnings.length ? made.warnings : undefined })];
         if (a.preview) {
           const root = rootOf(after, made.roots[0]);
           const { images } = await drawLayers(after, [root], { scale: 1, maxEdge: 1400 });
@@ -396,6 +400,8 @@ export function registerBoardTools(server: McpServer) {
         let b = findBoard(a.board);
         const ops: Op[] = [];
         const results: unknown[] = [];
+        const photos: string[] = [];
+        const photoWarnings: string[] = [];
         const touched: string[] = [];
         const need = (id: string) => {
           if (!b.nodes[id]) throw new Error(`There's no layer ${id} on this board.`);
@@ -405,7 +411,14 @@ export function registerBoardTools(server: McpServer) {
           switch (c.do) {
             case "style":
               for (const id of c.ids) need(id);
-              for (const id of c.ids) ops.push({ op: "set", id, style: styleOf(c.style) });
+              for (const id of c.ids) {
+                const style = styleOf(c.style);
+                // url(unsplash:…) becomes a photo the layer's shape (each layer its own size).
+                const n = b.nodes[id];
+                const box = { width: pxValue(style.width ?? n.style.width) ?? 1200, height: pxValue(style.height ?? n.style.height) ?? 800 };
+                for (const [k, v] of Object.entries(style)) if (v && /url\(\s*['"]?(unsplash:|https?:\/\/unsplash\.com\/photos\/)/i.test(v)) style[k] = await cssWithPhotos(v, box, photoWarnings, photos);
+                ops.push({ op: "set", id, style });
+              }
               touched.push(...c.ids);
               results.push({ styled: c.ids.length });
               break;
@@ -503,6 +516,14 @@ export function registerBoardTools(server: McpServer) {
             case "image": {
               const n = need(c.id);
               if (n.type !== "image") throw new Error(`${n.name} isn't an image layer.`);
+              if (isUnsplash(c.src)) {
+                const p = await unsplashPicture(c.src, { width: pxValue(n.style.width) ?? 1200, height: pxValue(n.style.height) ?? 800 });
+                if (p.credit) photos.push(p.credit);
+                ops.push({ op: "set", id: c.id, src: p.src });
+                touched.push(c.id);
+                results.push({ image: c.id });
+                break;
+              }
               const got = adoptImage(c.src);
               if (got.warning) throw new Error(got.warning);
               ops.push({ op: "set", id: c.id, src: got.src });
@@ -633,7 +654,7 @@ export function registerBoardTools(server: McpServer) {
         }
         const changed = changeBoard(b.id, ops, "agent");
         changeBoard(b.id, workingOps(changed.board, touched, await whoAmI()), "agent");
-        return [text({ results, rev: changed.board.rev })];
+        return [text({ results, rev: changed.board.rev, photos: photos.length ? [...new Set(photos)] : undefined, warnings: photoWarnings.length ? photoWarnings : undefined })];
       }),
   );
 

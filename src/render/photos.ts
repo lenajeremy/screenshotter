@@ -3,6 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { asJpeg, wallpaperFile } from "./wallpapers.js";
 import path from "node:path";
 import { cacheDir, resolveUserPath } from "../util/files.js";
+import { unsplashKey } from "../util/keys.js";
 
 /** A background photo on disk, with attribution when it came from a service. */
 export interface Photo {
@@ -44,15 +45,15 @@ function readMeta(file: string): Omit<Photo, "path"> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Unsplash: its official API with an access key (UNSPLASH_ACCESS_KEY, Settings › Photos in the
-// app); a photo already chosen downloads without one.
+// Unsplash: its official API with an access key (Settings › Photos in the app, handed to the
+// engine as UNSPLASH_ACCESS_KEY or read from the Keychain); a photo already chosen downloads without one.
 
 export const UNSPLASH_KEY_NEEDED =
   "Unsplash search needs a free access key now: make an app at unsplash.com/developers, copy its Access Key, and add it in Settings › Photos.";
 
 /** Free Unsplash photos for a query (the raw results, premium ones left out). */
 export async function unsplashResults(query: string, o: { perPage: number; page?: number; orientation?: string }): Promise<any[]> {
-  const key = process.env.UNSPLASH_ACCESS_KEY?.trim();
+  const key = await unsplashKey();
   const qs = `query=${encodeURIComponent(query)}&per_page=${o.perPage}&page=${o.page ?? 1}${o.orientation ? `&orientation=${o.orientation}` : ""}`;
   const res = key
     ? await fetch(`https://api.unsplash.com/search/photos?${qs}`, { headers: { Authorization: `Client-ID ${key}`, "Accept-Version": "v1" }, signal: AbortSignal.timeout(15_000) })
@@ -69,7 +70,7 @@ async function unsplashById(id: string, width: number): Promise<Photo> {
   const w = width > 2400 ? 3200 : 2400;
   const file = path.join(cacheDir("unsplash"), `${id}-${w}.jpg`);
   if (!existsSync(file)) {
-    const key = process.env.UNSPLASH_ACCESS_KEY?.trim();
+    const key = await unsplashKey();
     // Where the photo is (the download link points at it, and names its photographer).
     const link = `https://unsplash.com/photos/${encodeURIComponent(id)}/download?force=true&w=${w}`;
     const hop = await fetch(link, { redirect: "manual" }).catch(() => undefined);
