@@ -42,19 +42,30 @@ export async function unsplashPicture(ref: string, box: { width: number; height:
 
 const CSS_UNSPLASH = /url\(\s*(['"]?)((?:unsplash:|https?:\/\/unsplash\.com\/photos\/)[^'")]+)\1\s*\)/gi;
 
-/** CSS with each url(unsplash:…) made the photo's file. */
-export async function cssWithPhotos(value: string, box: { width: number; height: number }, warnings: string[], credits: string[]): Promise<string> {
+/**
+ * CSS with each url(unsplash:…) made the photo's file; null when one couldn't be had (the search
+ * is used up for the hour, say), so the layer keeps what it had rather than losing its picture.
+ */
+export async function cssWithPhotos(
+  value: string,
+  box: { width: number; height: number },
+  warnings: string[],
+  credits: string[],
+  picture: typeof unsplashPicture = unsplashPicture,
+): Promise<string | null> {
   let out = value;
+  let failed = false;
   for (const m of [...value.matchAll(CSS_UNSPLASH)]) {
     try {
-      const p = await unsplashPicture(m[2], box);
+      const p = await picture(m[2], box);
       out = out.replace(m[0], `url("${p.src}")`);
       if (p.credit) credits.push(p.credit);
     } catch (e) {
-      warnings.push(`${m[2]}: ${(e as Error).message}`);
+      warnings.push(`${m[2]}: ${(e as Error).message} The layer keeps what it had.`);
+      failed = true;
     }
   }
-  return out;
+  return failed ? null : out;
 }
 
 const boxOf = (n: BoardNode) => ({ width: pxValue(n.style.width) ?? 1200, height: pxValue(n.style.height) ?? 800 });
@@ -72,6 +83,11 @@ export async function placePhotos(nodes: Record<string, BoardNode>, warnings: st
         n.src = "";
       }
     }
-    for (const [k, v] of Object.entries(n.style)) if (/url\(\s*['"]?(unsplash:|https?:\/\/unsplash\.com\/photos\/)/i.test(v)) n.style[k] = await cssWithPhotos(v, boxOf(n), warnings, credits);
+    for (const [k, v] of Object.entries(n.style)) {
+      if (!/url\(\s*['"]?(unsplash:|https?:\/\/unsplash\.com\/photos\/)/i.test(v)) continue;
+      const done = await cssWithPhotos(v, boxOf(n), warnings, credits);
+      if (done === null) delete n.style[k];
+      else n.style[k] = done;
+    }
   }
 }

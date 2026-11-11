@@ -46,6 +46,16 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   const { unsplashRef, isUnsplash } = await import("../src/board/photos.js");
   check(unsplashRef("unsplash:ramen bowl").ref === "unsplash:search:ramen bowl" && unsplashRef("unsplash:ramen bowl #2").pick === 1 && unsplashRef("unsplash:skateboards").ref === "unsplash:search:skateboards", "unsplash:<words> is a search, and #2 takes the second photo");
   check(unsplashRef("unsplash:TWTxHN2QIGc").ref === "unsplash:TWTxHN2QIGc" && isUnsplash("https://unsplash.com/photos/ramen-dish-TWTxHN2QIGc") && !isUnsplash("/Users/me/a.png"), "an id or a photo's page names one photo");
+  const { cssWithPhotos } = await import("../src/board/photos.js");
+  const warned: string[] = [];
+  const credited: string[] = [];
+  const box = { width: 400, height: 225 };
+  const placed = await cssWithPhotos("url(unsplash:ramen) center / cover", box, warned, credited, async () => ({ src: "/lib/ramen.jpg", credit: "Photo by A" }));
+  const used = await cssWithPhotos("url(unsplash:mars rover) center / cover", box, warned, credited, async () => {
+    throw new Error("This Unsplash key's searches are used up for the hour.");
+  });
+  check(placed === 'url("/lib/ramen.jpg") center / cover' && credited.join() === "Photo by A", "url(unsplash:…) becomes the photo's file, with its credit");
+  check(used === null && /used up/.test(warned.join()) && /keeps what it had/.test(warned.join()), "a photo that can't be had leaves the layer as it was, and says why");
   const { unsplashKey } = await import("../src/util/keys.js");
   const savedKey = process.env.UNSPLASH_ACCESS_KEY;
   process.env.UNSPLASH_ACCESS_KEY = " k-from-the-app ";

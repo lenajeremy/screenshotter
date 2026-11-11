@@ -416,7 +416,13 @@ export function registerBoardTools(server: McpServer) {
                 // url(unsplash:…) becomes a photo the layer's shape (each layer its own size).
                 const n = b.nodes[id];
                 const box = { width: pxValue(style.width ?? n.style.width) ?? 1200, height: pxValue(style.height ?? n.style.height) ?? 800 };
-                for (const [k, v] of Object.entries(style)) if (v && /url\(\s*['"]?(unsplash:|https?:\/\/unsplash\.com\/photos\/)/i.test(v)) style[k] = await cssWithPhotos(v, box, photoWarnings, photos);
+                for (const [k, v] of Object.entries(style)) {
+                  if (!v || !/url\(\s*['"]?(unsplash:|https?:\/\/unsplash\.com\/photos\/)/i.test(v)) continue;
+                  // A photo that can't be had leaves the property as it was (the warning says why).
+                  const done = await cssWithPhotos(v, box, photoWarnings, photos);
+                  if (done === null) delete style[k];
+                  else style[k] = done;
+                }
                 ops.push({ op: "set", id, style });
               }
               touched.push(...c.ids);
