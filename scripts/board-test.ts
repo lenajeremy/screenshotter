@@ -13,7 +13,7 @@ process.env.SCREENSHOTTER_NO_KEYCHAIN = "1";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fakeAgentman } from "./fake-agentman.js";
 import { sendableText, sessionInFolder } from "../src/board/agentman.js";
-import { OpError, applyOps, componentOps, defaultRecipients, detachOps, emptyBoard, expandOps, flattenSvgOps, htmlToNodes, instanceTree, mapPath, nodeHtml, parseHtml, parsePath, parseStyle, resetOps, splitSvgOps, styleText, treeText, vectorFit, vectorTransform, type Board, type Op } from "../src/board/core.js";
+import { OpError, addHtmlOps, applyOps, componentOps, defaultRecipients, detachOps, emptyBoard, expandOps, flattenSvgOps, htmlToNodes, instanceTree, mapPath, nodeHtml, parseHtml, parsePath, parseStyle, resetOps, splitSvgOps, styleText, treeText, vectorFit, vectorTransform, type Board, type Op } from "../src/board/core.js";
 
 let failures = 0;
 const check = (ok: unknown, what: string) => {
@@ -313,6 +313,12 @@ const shaped = await call("board_edit", { board, changes: [{ do: "shape", type: 
 check(shaped.json.results.every((r: any) => r.shape), "an agent adds Screenshotter's shapes, in a frame or on the page");
 const dev = await call("board_edit", { board, changes: [{ do: "device", artboard: second.json.created[0].id, height: 300, x: 1500, y: 0 }] });
 check(dev.json.results[0].device && dev.json.results[0].picture.endsWith(".png"), "an agent puts an artboard in a device frame");
+// In one batch, each change works from the ones before it: a copy placed after its component was restyled has the new style.
+const pillMade = await call("board_write_html", { board, target: art, html: `<div data-name="Pill" style="display:flex;padding:6px 12px;background:#dddddd"><span>Pill</span></div>` });
+const pill = pillMade.json.created[0].id;
+const batch = await call("board_edit", { board, changes: [{ do: "component", id: pill }, { do: "style", ids: [pill], style: { background: "#ff3b30" } }, { do: "copy", of: pill, into: art }] });
+const pillCopy = await call("board_read", { board, what: "html", node: batch.json.results[2].copy });
+check(/background:#ff3b30/.test(pillCopy.text), "in one board_edit, a copy placed after its component was restyled has the new style");
 const logo = await call("board_write_html", { board, target: art, html: `<svg width="64" height="64" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#111"/><circle cx="16" cy="16" r="6" fill="#d2ff4d"/><text x="16" y="28" text-anchor="middle" font-size="5" fill="#fff">GO</text></svg>` });
 const logoId = logo.json.created[0].id;
 const parts = await call("board_read", { board, what: "tree", node: logoId });
@@ -393,6 +399,35 @@ check((await call("board_list", {})).json[0].working.length === 0, "board_done c
   fake.sessions[0].question = { id: "q1" };
   const second = talk.reply(board, cid, { text: "Bigger still", by: "person" });
   check(!second.thread.resolved && second.message.to?.join() === AGENT, "a reply opens a resolved comment again and goes to who was in the thread");
+
+  // Two agents tagged: one answering doesn't end the wait on the other.
+  const both = talk.startThread(board, { layer: titleId }, { text: "Both of you, look at this", by: "person", to: [AGENT, "claude:someone-else"] });
+  talk.reply(board, both.thread.id, { text: "Looked.", by: "claude:someone-else", name: "Another agent" });
+  const tb = talk.getComments(board).threads.find((t) => t.id === both.thread.id)!;
+  check(talk.threadForAgent(store.getBoard(board), tb, new Set([AGENT])).waitingOnYou === true && talk.threadForAgent(store.getBoard(board), tb, new Set(["claude:someone-else"])).waitingOnYou === false, "with two agents tagged, one answering doesn't end the wait on the other");
+
+  // The Studio works out how a component change reaches its copies before it sends it; a copy an agent
+  // placed meanwhile still gets the change, and copies keep their own.
+  {
+    const made = addHtmlOps(`<div data-name="Chip" style="display:flex;padding:6px 10px;background:#eeeeee"><span style="color:#111111">New</span></div>`, art);
+    store.changeBoard(board, made.ops, "agent");
+    const chip = made.roots[0];
+    store.changeBoard(board, componentOps(store.getBoard(board), chip), "agent");
+    const place = () => {
+      const t = instanceTree(store.getBoard(board), chip, art);
+      store.changeBoard(board, [{ op: "add", nodes: t.nodes, ids: [t.id], parent: art }], "agent");
+      return t.id;
+    };
+    const firstCopy = place();
+    store.changeBoard(board, [{ op: "set", id: firstCopy, style: { background: "#000000" } }], "agent");
+    const studioSaw = store.getBoard(board);
+    const studioOps = expandOps(studioSaw, [{ op: "set", id: chip, style: { background: "#ffd93d", borderRadius: "999px" } }]);
+    const late = place();
+    const saved = store.changeBoard(board, studioOps, "studio", studioSaw.rev, { expand: false, reconcile: true });
+    const now = store.getBoard(board);
+    check(now.nodes[late].style.background === "#ffd93d" && now.nodes[late].style.borderRadius === "999px" && saved.repaired === true && saved.stale, "a copy an agent placed while the Studio's change to its component was on its way still gets the change");
+    check(now.nodes[firstCopy].style.background === "#000000" && now.nodes[firstCopy].style.borderRadius === "999px", "and a copy's own changes are kept");
+  }
   await talk.deliver(board, cid, second.message.id);
   const refused = talk.getComments(board).threads.find((t) => t.id === cid)!.messages[2].delivery?.[AGENT];
   check(refused?.status === "failed" && /question/.test(refused.error ?? ""), "when Agentman can't hand it over, the comment says why");
@@ -420,11 +455,12 @@ check((await call("board_list", {})).json[0].working.length === 0, "board_done c
 
   // Comments aren't the design: changing (and undoing) the board leaves them be.
   const before = talk.getComments(board).rev;
+  const threadCount = talk.getComments(board).threads.length;
   const ch = store.changeBoard(board, [{ op: "set", id: titleId, name: "Headline" }], "studio");
   store.changeBoard(board, ch.inverse, "studio");
-  check(talk.getComments(board).rev === before && talk.getComments(board).threads.length === 3, "changing and undoing the design leaves the comments as they were");
+  check(talk.getComments(board).rev === before && talk.getComments(board).threads.length === threadCount, "changing and undoing the design leaves the comments as they were");
   talk.remove(board, region.thread.id);
-  check(talk.getComments(board).threads.length === 2, "deleting a comment deletes its thread");
+  check(talk.getComments(board).threads.length === threadCount - 1, "deleting a comment deletes its thread");
   check(fake.sent.every((s) => s.sessionId === AGENT), "nothing went to an agent no one named");
 }
 await fake.close();

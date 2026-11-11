@@ -278,6 +278,47 @@ const CHECKS: Record<string, Check> = {
     const mark = await S(page, () => document.querySelector(".bd-thread .bd-msg .bd-mention")?.textContent ?? "");
     return sent?.text.includes("Hey @Helper can you tidy this row?") && onBoard === "Helper" && mark === "@Helper" ? "ok" : `sent: ${Boolean(sent)}, on the board as: ${onBoard}, marked: "${mark}"`;
   },
+  async "on a board, changes still being saved go to their own board when another is opened"(page) {
+    const t = await openTestBoard(page);
+    const other = boards.createBoard("The other board", "studio");
+    // The first save takes a while, so the second change waits in line behind it.
+    let held = false;
+    await page.route("**/api/board/ops", async (route) => {
+      if (!held) {
+        held = true;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      await route.continue();
+    });
+    await S(page, async () => {
+      const s = await import("/ui/board-state.js" as string);
+      s.commit([{ op: "rename", name: "First name" }]);
+      s.commit([{ op: "rename", name: "Second name" }]);
+    });
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), other.id);
+    await page.waitForTimeout(3500);
+    await page.unroute("**/api/board/ops");
+    const a = boards.getBoard(t.id).name;
+    const b = boards.getBoard(other.id).name;
+    return a === "Second name" && b === "The other board" ? "ok" : `the first board is "${a}", the other "${b}"`;
+  },
+  async "on a board, one agent answering doesn't hide another still at work"(page) {
+    const t = await openTestBoard(page);
+    const at = new Date().toISOString();
+    boards.changeBoard(t.id, [
+      { op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [t.byName("Phone")], at },
+      { op: "agent", agent: { key: "codex:helper", session: "codex:helper", how: "tmux", kind: "codex", name: "Helper", cwd: "/tmp/helper-app" }, artboards: [], at },
+    ], "agent");
+    const th = talk.startThread(t.id, { layer: t.byName("Row One") }, { text: "@Design agent @Helper both of you", by: "person", to: [AGENT, "codex:helper"] });
+    await talk.deliver(t.id, th.thread.id, th.message.id);
+    talk.reply(t.id, th.thread.id, { text: "Done my part.", by: AGENT, name: "Design agent" });
+    agentman.sessions[1].state = "busy";
+    await page.waitForTimeout(1200);
+    await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), th.thread.id);
+    const shown = await page.waitForFunction(() => [...document.querySelectorAll(".bd-thread .bd-working-on")].map((x) => x.textContent).join("|"), null, { timeout: 9000 }).then((h) => h.jsonValue(), () => "");
+    agentman.sessions[1].state = "idle";
+    return /Helper is working on it/.test(String(shown)) && !/Design agent is working/.test(String(shown)) ? "ok" : `the thread shows "${shown}"`;
+  },
   async "on a board, dragging with the comment tool comments on that part of the artboard"(page) {
     const t = await openTestBoard(page);
     await page.keyboard.press("c");

@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import path from "node:path";
 import { libraryFolder } from "../studio/scenes.js";
 import { ensureDir, resolveUserPath } from "../util/files.js";
-import { applyOps, emptyBoard, expandOps, newId, pxValue, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
+import { applyOps, emptyBoard, expandOps, newId, pxValue, reconcileOps, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
 
 const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));
 export const boardFile = (id: string) => path.join(dir(), `${id}.json`);
@@ -156,23 +156,37 @@ export interface Changed {
   inverse: Op[];
   /** Someone else changed the board since `base`: the caller should load it again. */
   stale: boolean;
+  /** Copies were brought in line with their components in the same save (load it again too). */
+  repaired?: boolean;
 }
 
 /**
  * Apply steps to the board on disk, as one change. Components' copies follow (`expand`), unless the
  * steps already include that (the Studio works it out as it shows the change).
  */
-export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?: number, { expand = true } = {}): Changed {
+export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?: number, { expand = true, reconcile = false } = {}): Changed {
   if (!validBoardId(id)) throw new Error("Unknown board");
   return withLock(id, () => {
     const current = read(id);
     if (!current) throw new Error("That board doesn't exist (it may have been deleted).");
-    const { board, inverse } = applyOps(current, expand ? expandOps(current, ops) : ops);
+    let { board, inverse } = applyOps(current, expand ? expandOps(current, ops) : ops);
+    // Steps worked out elsewhere (the Studio's, its copies already followed) may predate a copy
+    // someone else placed meanwhile: whatever they missed is put right here, in the same save.
+    let repaired = false;
+    if (reconcile && Object.values(board.nodes).some((n) => n.master)) {
+      const fix = reconcileOps(board);
+      if (fix.length) {
+        const r = applyOps(board, fix);
+        board = r.board;
+        inverse = [...r.inverse, ...inverse];
+        repaired = true;
+      }
+    }
     // Who is working where is bookkeeping, not a change to the design: the revision stays.
     const onlyWorking = ops.every((o) => o.op === "working" || o.op === "agent");
     const next: Board = onlyWorking ? board : { ...board, rev: current.rev + 1, updatedAt: new Date().toISOString(), by };
     write(next);
-    return { board: next, inverse, stale: base !== undefined && base !== current.rev };
+    return { board: next, inverse, stale: base !== undefined && base !== current.rev, repaired };
   });
 }
 

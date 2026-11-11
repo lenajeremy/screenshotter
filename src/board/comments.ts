@@ -419,7 +419,6 @@ export function keysOf(board: Board, me: { key: string; session?: string }): Set
 }
 
 export function threadForAgent(board: Board, t: CommentThread, mine: Set<string>) {
-  const last = t.messages[t.messages.length - 1];
   const whose = (m: CommentMessage) => (m.by === "person" ? "user" : mine.has(m.by) ? "you" : board.agents?.[m.by]?.name ?? m.name ?? "another agent");
   const lastFromMe = [...t.messages].reverse().findIndex((m) => mine.has(m.by));
   const after = lastFromMe < 0 ? t.messages : t.messages.slice(t.messages.length - lastFromMe);
@@ -428,8 +427,8 @@ export function threadForAgent(board: Board, t: CommentThread, mine: Set<string>
     on: describeAnchor(board, t.anchor),
     anchor: { artboard: t.anchor.artboard, ...(t.anchor.layer ? { layer: t.anchor.layer } : {}), ...(t.anchor.rect ? { rect: t.anchor.rect, layers: t.anchor.layers } : {}) },
     ...(t.resolved ? { resolved: true } : {}),
-    // The user wrote to this agent after it last answered.
-    waitingOnYou: !t.resolved && last?.by === "person" && after.some((m) => m.by === "person" && m.to?.some((k) => mine.has(k))),
+    // The user wrote to this agent after it last answered (another agent answering doesn't count).
+    waitingOnYou: !t.resolved && after.some((m) => m.by === "person" && m.to?.some((k) => mine.has(k))),
     messages: t.messages.map((m) => ({ id: m.id, from: whose(m), text: m.text, at: m.createdAt, ...(m.to?.length ? { to: m.to.map((k) => (mine.has(k) ? "you" : board.agents?.[k]?.name ?? k)) } : {}) })),
   };
 }

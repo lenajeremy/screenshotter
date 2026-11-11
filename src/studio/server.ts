@@ -877,9 +877,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/board/ops": {
       const b = await json<{ id: string; ops: Op[]; base?: number }>(req);
       // The Studio sends steps with components' copies already worked out.
-      const changed = changeBoard(b.id, b.ops, "studio", b.base, { expand: false });
+      // A copy placed meanwhile (by an agent) that they didn't know of is brought in line too.
+      const changed = changeBoard(b.id, b.ops, "studio", b.base, { expand: false, reconcile: true });
       if (!b.ops.every((o) => o.op === "working" || o.op === "agent")) scheduleBoardThumb(b.id);
-      return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale });
+      return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale || Boolean(changed.repaired) });
     }
     case "/api/board/comment":
       return send(200, await commentRoute(await json(req)));

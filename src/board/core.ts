@@ -1681,6 +1681,52 @@ export function resetOps(board: Board, id: string): Op[] {
   return ops;
 }
 
+/**
+ * Steps that bring every copy back in line with its component wherever it isn't its own: what a
+ * change worked out from an older state of the board left behind (the Studio's, say, while an agent
+ * placed another copy). A copy's own changes (its overrides) and where it sits are kept.
+ */
+export function reconcileOps(board: Board): Op[] {
+  const ops: Op[] = [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  for (const n of Object.values(board.nodes)) {
+    if (!n.master) continue;
+    const m = board.nodes[n.master];
+    if (!m) continue;
+    const skip = new Set(n.overrides ?? []);
+    const root = Boolean(n.instanceOf);
+    const p: Extract<Op, { op: "set" }> = { op: "set", id: n.id, sync: true };
+    for (const k of new Set([...Object.keys(m.style), ...Object.keys(n.style)])) {
+      if (skip.has(`style.${k}`) || (root && PLACEMENT.includes(k))) continue;
+      if (m.style[k] !== n.style[k]) (p.style ??= {})[k] = m.style[k] ?? null;
+    }
+    for (const k of new Set([...Object.keys(m.attrs ?? {}), ...Object.keys(n.attrs ?? {})])) {
+      if (skip.has(`attrs.${k}`)) continue;
+      if (m.attrs?.[k] !== n.attrs?.[k]) (p.attrs ??= {})[k] = m.attrs?.[k] ?? null;
+    }
+    for (const f of FIELDS) {
+      if (skip.has(f) || (f === "name" && root)) continue;
+      if (!same(m[f], n[f])) (p as Record<string, unknown>)[f] = m[f] ?? null;
+    }
+    if (Object.keys(p).length > 3) ops.push(p);
+    if (m.children && n.children) {
+      // Layers the component has that this copy lacks, and ones following a layer it no longer has here.
+      const have = new Set(n.children.map((c) => board.nodes[c]?.master));
+      for (const mc of m.children) {
+        if (!board.nodes[mc] || have.has(mc)) continue;
+        const t = followingCopy(board, mc, n.id);
+        ops.push({ op: "add", nodes: t.nodes, ids: [t.id], parent: n.id, index: mappedIndex(board, mc, n.id), sync: true });
+      }
+      const gone = n.children.filter((c) => {
+        const mm = board.nodes[c]?.master;
+        return mm !== undefined && !m.children!.includes(mm);
+      });
+      if (gone.length) ops.push({ op: "delete", ids: gone, sync: true });
+    }
+  }
+  return ops;
+}
+
 /** Steps that make a copy ordinary layers, no longer following its component. */
 export function detachOps(board: Board, id: string): Op[] {
   return subtree(board, id)

@@ -188,23 +188,31 @@ function keepSelection() {
 // ---------------------------------------------------------------------------------------------
 // The board on disk
 
+/**
+ * Changes waiting to be saved, each with the board it was made on: opening another board while
+ * one is still saving mustn't send the rest to the new one.
+ */
 let queue = [];
 let sending = false;
 let mineUntil = 0;
 
 function send(ops) {
-  queue.push(...ops);
+  if (!B.id || !ops.length) return;
+  const last = queue[queue.length - 1];
+  if (last && last.id === B.id) last.ops.push(...ops);
+  else queue.push({ id: B.id, ops: [...ops] });
   flush();
 }
 
+/** What's still to be saved on the open board. */
+const pendingHere = () => queue.filter((q) => q.id === B.id).flatMap((q) => q.ops);
+
 async function flush() {
-  if (sending || !queue.length || !B.id) return;
+  if (sending || !queue.length) return;
   sending = true;
-  const ops = queue;
-  queue = [];
-  const id = B.id;
+  const { id, ops } = queue.shift();
   try {
-    const r = await api("/api/board/ops", { id, ops, base: B.board?.rev });
+    const r = await api("/api/board/ops", { id, ops, base: id === B.id ? B.board?.rev : undefined });
     if (id === B.id) {
       if (r.stale) await reload({ quiet: true });
       else if (B.board) B.board = { ...B.board, rev: r.rev, updatedAt: r.updatedAt };
@@ -213,7 +221,7 @@ async function flush() {
   } catch (e) {
     fail(e, "Couldn't save the board");
     // Start again from what's on disk rather than drift from it.
-    await reload({ quiet: true }).catch(() => undefined);
+    if (id === B.id) await reload({ quiet: true }).catch(() => undefined);
   } finally {
     sending = false;
     if (queue.length) flush();
@@ -229,11 +237,12 @@ async function reload({ quiet = false, agent = false } = {}) {
   if (fresh.id !== B.id) return;
   // Changes not sent yet go on top of it.
   let board = fresh;
-  if (queue.length) {
+  const pending = pendingHere();
+  if (pending.length) {
     try {
-      board = applyOps(fresh, queue).board;
+      board = applyOps(fresh, pending).board;
     } catch {
-      queue = [];
+      queue = queue.filter((q) => q.id !== B.id);
     }
   }
   if (agent && B.board) {

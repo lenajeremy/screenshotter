@@ -10,6 +10,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { outputRoot, slug } from "../util/files.js";
 import {
+  applyOps,
+  expandOps,
   addHtmlOps,
   canHold,
   flattenSvgOps,
@@ -407,6 +409,7 @@ export function registerBoardTools(server: McpServer) {
           if (!b.nodes[id]) throw new Error(`There's no layer ${id} on this board.`);
           return b.nodes[id];
         };
+        let applied = 0;
         for (const c of a.changes) {
           switch (c.do) {
             case "style":
@@ -544,8 +547,6 @@ export function registerBoardTools(server: McpServer) {
               const id = newId();
               const style = { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", overflow: "hidden", ...Object.fromEntries(Object.entries(styleOf(c.style ?? {})).filter(([, v]) => v !== null)), width: `${c.width}px`, height: c.height === "fit-content" ? "fit-content" : `${c.height}px`, left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` } as Record<string, string>;
               ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, ids: [id], parent: null, page: pid });
-              // Later changes in this list can find it.
-              b = { ...b, nodes: { ...b.nodes, [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, pages: b.pages.map((p) => (p.id === pid ? { ...p, children: [...p.children, id] } : p)) };
               touched.push(id);
               results.push({ artboard: id, name: c.name, at: [spot.left, spot.top] });
               break;
@@ -570,8 +571,6 @@ export function registerBoardTools(server: McpServer) {
             case "component":
               need(c.id);
               ops.push(...(c.remove ? uncomponentOps(b, c.id) : componentOps(b, c.id)));
-              // Copies made later in this list need it to be one already.
-              b = { ...b, nodes: { ...b.nodes, [c.id]: { ...b.nodes[c.id], isComponent: c.remove ? undefined : true } } };
               results.push({ [c.remove ? "noLongerComponent" : "component"]: c.id });
               break;
             case "copy": {
@@ -656,6 +655,12 @@ export function registerBoardTools(server: McpServer) {
               ops.push(...resetOps(b, c.id));
               results.push({ reset: c.id });
               break;
+          }
+          // Later changes in the batch work from this one: a copy placed after its component was
+          // restyled takes the new style, and layers made earlier in the batch can be found.
+          if (ops.length > applied) {
+            b = applyOps(b, expandOps(b, ops.slice(applied))).board;
+            applied = ops.length;
           }
         }
         const changed = changeBoard(b.id, ops, "agent");

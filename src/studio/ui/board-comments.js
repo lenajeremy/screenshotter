@@ -140,11 +140,15 @@ async function loadLive() {
  * doing: at work on it, about to start, waiting for the person in Agentman, or nothing to show.
  */
 function waitingOn(t) {
-  const last = t.messages[t.messages.length - 1];
-  if (!last || last.by !== "person" || t.resolved) return [];
-  return (last.to ?? [])
+  if (t.resolved) return [];
+  // Each agent the person wrote to, if it hasn't answered since (another agent's answer doesn't count).
+  const keys = [...new Set(t.messages.filter((m) => m.by === "person").flatMap((m) => m.to ?? []))];
+  return keys
     .map((key) => {
-      const d = last.delivery?.[key];
+      let ask = -1;
+      t.messages.forEach((m, i) => m.by === "person" && m.to?.includes(key) && (ask = i));
+      if (ask < 0 || t.messages.slice(ask + 1).some((m) => m.by === key)) return null;
+      const d = t.messages[ask].delivery?.[key];
       if (!d || (d.status !== "delivered" && d.status !== "queued")) return null;
       const age = Date.now() - Date.parse(d.at);
       const state = live.board === B.id ? live.states[key] : undefined;
