@@ -32,9 +32,12 @@ function write(b: Board) {
 
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** Run `fn` holding the board's lock (a folder, which only one process can make at a time). */
-function withLock<T>(id: string, fn: () => T): T {
-  const lock = `${boardFile(id)}.lock`;
+/** Run `fn` holding the board's lock. */
+const withLock = <T>(id: string, fn: () => T): T => withFileLock(boardFile(id), fn);
+
+/** Run `fn` holding a file's lock (a folder, which only one process can make at a time). */
+export function withFileLock<T>(file: string, fn: () => T): T {
+  const lock = `${file}.lock`;
   const start = Date.now();
   for (;;) {
     try {
@@ -165,7 +168,8 @@ export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?
     const current = read(id);
     if (!current) throw new Error("That board doesn't exist (it may have been deleted).");
     const { board, inverse } = applyOps(current, expand ? expandOps(current, ops) : ops);
-    const onlyWorking = ops.every((o) => o.op === "working");
+    // Who is working where is bookkeeping, not a change to the design: the revision stays.
+    const onlyWorking = ops.every((o) => o.op === "working" || o.op === "agent");
     const next: Board = onlyWorking ? board : { ...board, rev: current.rev + 1, updatedAt: new Date().toISOString(), by };
     write(next);
     return { board: next, inverse, stale: base !== undefined && base !== current.rev };
@@ -176,12 +180,17 @@ export function deleteBoard(id: unknown) {
   if (!validBoardId(id)) throw new Error("Unknown board");
   rmSync(boardFile(id), { force: true });
   rmSync(boardThumb(id), { force: true });
+  rmSync(commentsFile(id), { force: true });
 }
+
+/** A board's comments live beside it (comments/<id>.json), apart from the design and its undo. */
+export const commentsFile = (id: string) => path.join(ensureDir(path.join(dir(), "comments")), `${id}.json`);
 
 export function duplicateBoard(id: unknown): Board {
   const b = getBoard(id);
   const now = new Date().toISOString();
-  const copy: Board = { ...structuredClone(b), id: newId(12), name: `${b.name} copy`, rev: 0, createdAt: now, updatedAt: now, by: "studio", working: {} };
+  // The agents (and the comments that go to them) stay with the original.
+  const copy: Board = { ...structuredClone(b), id: newId(12), name: `${b.name} copy`, rev: 0, createdAt: now, updatedAt: now, by: "studio", working: {}, agents: {} };
   write(copy);
   return copy;
 }

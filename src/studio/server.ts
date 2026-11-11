@@ -37,6 +37,7 @@ import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers } from "../board/render.js";
 import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
+import { deliver, getComments, markSending, remove, reply, setResolved, startThread, type AnchorInput } from "../board/comments.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
@@ -426,6 +427,45 @@ const CaptureSimSchema = z.object({
   duration: z.number().optional(),
 });
 
+const CommentSchema = z.discriminatedUnion("do", [
+  z.object({ do: z.literal("new"), id: z.string(), anchor: z.custom<AnchorInput>((v) => typeof v === "object" && v !== null), text: z.string(), to: z.array(z.string()).optional() }),
+  z.object({ do: z.literal("reply"), id: z.string(), comment: z.string(), text: z.string(), to: z.array(z.string()).optional() }),
+  z.object({ do: z.literal("resolve"), id: z.string(), comment: z.string(), resolved: z.boolean() }),
+  z.object({ do: z.literal("delete"), id: z.string(), comment: z.string(), message: z.string().optional() }),
+  z.object({ do: z.literal("retry"), id: z.string(), comment: z.string(), message: z.string(), agents: z.array(z.string()).min(1) }),
+]);
+
+/**
+ * The person's comments on a board. Each is saved before anything is sent; the agents it names are
+ * told through Agentman once the answer has gone back, and how that went is kept with the comment
+ * (the Studio's polling shows it).
+ */
+function commentRoute(body: unknown) {
+  const a = CommentSchema.parse(body);
+  const tell = (thread: string, message: string, only?: string[]) => void deliver(a.id, thread, message, only);
+  switch (a.do) {
+    case "new": {
+      const r = startThread(a.id, a.anchor, { text: a.text, by: "person", to: a.to });
+      tell(r.thread.id, r.message.id);
+      return { thread: r.thread, rev: r.rev };
+    }
+    case "reply": {
+      const r = reply(a.id, a.comment, { text: a.text, by: "person", to: a.to });
+      tell(r.thread.id, r.message.id);
+      return { thread: r.thread, rev: r.rev };
+    }
+    case "resolve":
+      return setResolved(a.id, a.comment, a.resolved, "person");
+    case "delete":
+      return remove(a.id, a.comment, a.message);
+    case "retry": {
+      const keys = markSending(a.id, a.comment, a.message, a.agents);
+      tell(a.comment, a.message, keys);
+      return { rev: getComments(a.id).rev };
+    }
+  }
+}
+
 async function route(req: http.IncomingMessage, res: http.ServerResponse, port: number): Promise<void> {
   // Only answer requests addressed to this machine by name. A web page on another domain that
   // resolves to 127.0.0.1 (DNS rebinding) would carry its own Host and is refused.
@@ -569,7 +609,14 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   if (req.method === "GET" && url.pathname === "/api/board") return send(200, getBoard(url.searchParams.get("id")));
   if (req.method === "GET" && url.pathname === "/api/board/rev") {
     const b = getBoard(url.searchParams.get("id"));
-    return send(200, { rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: summarizeBoard(b).working });
+    // `talk` changes with the comments and the agents who worked here, so the Studio fetches those again.
+    const agents = Object.values(b.agents ?? {});
+    const talk = `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}`;
+    return send(200, { rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: summarizeBoard(b).working, talk });
+  }
+  if (req.method === "GET" && url.pathname === "/api/board/comments") {
+    const b = getBoard(url.searchParams.get("id"));
+    return send(200, { ...getComments(b.id), agents: b.agents ?? {} });
   }
   if (req.method === "GET" && url.pathname === "/api/progress") {
     // How far along an export is, and about how long it has to go (from how fast it's been).
@@ -826,9 +873,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const b = await json<{ id: string; ops: Op[]; base?: number }>(req);
       // The Studio sends steps with components' copies already worked out.
       const changed = changeBoard(b.id, b.ops, "studio", b.base, { expand: false });
-      if (!b.ops.every((o) => o.op === "working")) scheduleBoardThumb(b.id);
+      if (!b.ops.every((o) => o.op === "working" || o.op === "agent")) scheduleBoardThumb(b.id);
       return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale });
     }
+    case "/api/board/comment":
+      return send(200, commentRoute(await json(req)));
     case "/api/board/delete":
       deleteBoard((await json<{ id: string }>(req)).id);
       return send(200, { ok: true });
