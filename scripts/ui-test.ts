@@ -223,7 +223,9 @@ const CHECKS: Record<string, Check> = {
     }, copyWords.id);
     await page.waitForTimeout(600);
     const kept = Boolean(boards.getBoard(t.id).nodes[copyWords.id]);
-    const icons = await S(page, () => [...document.querySelectorAll(".bd-comps .bd-comp")].length);
+    await page.locator(".bd-left-tabs button", { hasText: "Assets" }).click();
+    await page.waitForTimeout(300);
+    const icons = await S(page, () => [...document.querySelectorAll(".bd-assets .bd-asset.row")].length);
     if (copyWords.text !== "Uno") return `the copy says ${copyWords.text}`;
     if (!kept) return "a layer inside the copy was deleted";
     return icons === 1 ? "ok" : `${icons} components listed`;
@@ -251,6 +253,30 @@ const CHECKS: Record<string, Check> = {
     const widths = boards.getBoard(t.id).pages[0].children.map((id) => parseFloat(boards.getBoard(t.id).nodes[id].style.width!));
     if (new Set(tops).size !== 1) return `tops after aligning: ${tops}`;
     return widths.every((w, i) => w > widths0[i]) ? "ok" : `widths ${widths0} → ${widths}`;
+  },
+  async "on a board, assets from the rest of the app go into the selected frame, and filters apply"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), phone);
+    await page.locator(".bd-left-tabs button", { hasText: "Assets" }).click();
+    await page.waitForTimeout(400);
+    await page.locator(".bd-asset.shape", { hasText: "Star" }).click();
+    await page.waitForTimeout(400);
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), phone);
+    await page.locator(".bd-asset-grid.icons .bd-asset").first().click();
+    await page.waitForTimeout(900);
+    const kids = boards.getBoard(t.id).nodes[phone].children!.map((c) => boards.getBoard(t.id).nodes[c]);
+    const star = kids.find((n) => n.name === "Star");
+    const sticker = kids.find((n) => n.type === "svg" && !n.shape);
+    if (!star?.shape || !star.svg?.includes("<svg")) return "the star didn't land in the artboard as a shape";
+    if (!sticker) return "the sticker didn't land in the artboard";
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), star.id);
+    await page.waitForTimeout(300);
+    await page.locator(".bd-right section", { has: page.locator("h3", { hasText: "Filters" }) }).locator(".section-head .icon-btn").click();
+    await page.waitForTimeout(800);
+    const f = boards.getBoard(t.id).nodes[star.id].style.filter;
+    const drawn = await S(page, async (id: string) => getComputedStyle(document.querySelector(`.bd-world [data-bid="${id}"]`)!).filter, star.id);
+    return f === "blur(4px)" && /blur/.test(drawn) ? "ok" : `filter ${f}, drawn ${drawn}`;
   },
   async "pasting HTML onto a board makes layers"(page) {
     const t = await openTestBoard(page);

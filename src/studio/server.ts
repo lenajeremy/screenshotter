@@ -35,6 +35,7 @@ import { noteStudioFolder } from "../util/studio.js";
 import { changeBoard, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard } from "../board/store.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers } from "../board/render.js";
+import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
@@ -835,6 +836,24 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const copy = duplicateBoard((await json<{ id: string }>(req)).id);
       scheduleBoardThumb(copy.id, 200);
       return send(200, summarizeBoard(copy));
+    }
+    case "/api/board/device": {
+      // A screenshot, or one of the board's artboards drawn at 3x, in a device frame.
+      const a = await json<{ screenshot?: string; board?: string; node?: string; device?: string; color?: string; clay?: string }>(req);
+      let shot = a.screenshot;
+      if (!shot && a.board && a.node) {
+        const b = getBoard(a.board);
+        const { images } = await drawLayers(b, [a.node], { scale: 3, format: "png", transparent: false });
+        if (!images[a.node]) throw new HttpError(400, "That artboard has no size to draw.");
+        shot = path.join(cacheDir("board-artboards"), `${b.id}-${a.node}-${b.rev}.png`);
+        writeFileSync(shot, images[a.node]);
+      }
+      if (!shot) throw new HttpError(400, "Give a screenshot, or a board and an artboard");
+      return send(200, await deviceImage(shot, { device: a.device, color: a.color, clay: a.clay }));
+    }
+    case "/api/board/backdrop": {
+      const a = await json<{ background: unknown; width?: number; height?: number }>(req);
+      return send(200, { path: await backgroundPreview(a.background, a.width ?? 800, a.height ?? 1000) });
     }
     case "/api/board/export": {
       const a = await json<{ id: string; nodes: string[]; scale?: number; format?: "png" | "jpeg" }>(req);

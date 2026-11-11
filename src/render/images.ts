@@ -33,6 +33,19 @@ export const artNames = () => namesIn(ART_DIR);
 /** Illustrations in their own colours; every other one is drawn in one ink, to tint. */
 export const COLOURED_ART = ["confetti-colour", "memphis", "plant", "stars-night"];
 
+/** A built-in sticker's or illustration's SVG ("sticker:heart", "art:squiggle"), or undefined. */
+export function builtinSvg(src: string): { svg: string; mono: boolean } | undefined {
+  const m = /^(sticker|art):([a-z0-9-]+)$/i.exec(src.trim());
+  if (!m) return undefined;
+  try {
+    const art = m[1].toLowerCase() === "art";
+    const name = m[2].toLowerCase();
+    return { svg: readFileSync(path.join(art ? ART_DIR : STICKER_DIR, `${name}.svg`), "utf8"), mono: art && !COLOURED_ART.includes(name) };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Where a block's picture is: a built-in sticker or illustration, or a path. */
 function pictureFile(src: string): string {
   const m = /^(sticker|art):([a-z0-9-]+)$/i.exec(src);

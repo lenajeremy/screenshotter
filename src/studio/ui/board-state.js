@@ -1,7 +1,8 @@
 // Boards in the Studio: the open board, what's selected, undo, and keeping in step with the board
 // on disk, which agents change too (their changes show up within a second, as steps you can undo).
 import { useEffect, useReducer } from "preact/hooks";
-import { OpError, applyOps, expandOps, rootOf } from "./board-core.js";
+import { OpError, applyOps, expandOps, pxValue, rootOf } from "./board-core.js";
+import { shapeInBox } from "./shapes.js";
 import { S, api, fail, set, toast } from "./store.js";
 
 export const B = {
@@ -60,6 +61,37 @@ export const node = (id) => B.board?.nodes[id];
 export const currentPage = () => B.board?.pages.find((p) => p.id === B.page) ?? B.board?.pages[0];
 
 // ---------------------------------------------------------------------------------------------
+// Shapes: a vector layer made from one of Screenshotter's shapes is drawn again whenever its
+// settings or its size change, in the same step (so exports and agents see what the canvas shows).
+
+let measure = () => null;
+/** The canvas tells the board how big a layer is drawn (for a shape whose size isn't in px). */
+export const useMeasure = (fn) => (measure = fn);
+
+function withShapes(board, ops) {
+  return ops.map((op) => {
+    if (op.op === "add") {
+      let changed = false;
+      const nodes = { ...op.nodes };
+      for (const [id, n] of Object.entries(nodes)) {
+        if (!n.shape || n.svg) continue;
+        nodes[id] = { ...n, svg: shapeInBox(n.shape, pxValue(n.style.width) ?? 120, pxValue(n.style.height) ?? 120) };
+        changed = true;
+      }
+      return changed ? { ...op, nodes } : op;
+    }
+    if (op.op !== "set") return op;
+    const n = board.nodes[op.id];
+    const shape = op.shape === undefined ? n?.shape : op.shape;
+    if (!shape || !n) return op;
+    if (op.shape === undefined && !op.replaceStyle && !(op.style && ("width" in op.style || "height" in op.style))) return op;
+    const style = op.replaceStyle ? { ...op.replaceStyle } : { ...n.style, ...Object.fromEntries(Object.entries(op.style ?? {}).filter(([, v]) => v != null)) };
+    const box = measure(op.id);
+    return { ...op, svg: shapeInBox(shape, pxValue(style.width) ?? box?.width ?? 120, pxValue(style.height) ?? box?.height ?? 120) };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Changes: applied here at once, then sent to the board on disk in order.
 
 const HISTORY = 100;
@@ -74,8 +106,8 @@ export function commit(ops, { key = null, label } = {}) {
   if (!B.board || !ops.length) return;
   let res;
   try {
-    // Components' copies follow in the same step.
-    ops = expandOps(B.board, ops);
+    // Shapes are drawn to their new size, and components' copies follow, in the same step.
+    ops = expandOps(B.board, withShapes(B.board, ops));
     res = applyOps(B.board, ops);
   } catch (e) {
     if (e instanceof OpError) toast({ kind: "info", title: "That can't be done here", text: e.message, timeout: 7000 });
@@ -103,7 +135,7 @@ export function commit(ops, { key = null, label } = {}) {
 /** Show a change without keeping it (a drag in progress): `commit` the final one from `base`. */
 export function preview(base, ops) {
   try {
-    B.board = applyOps(base, expandOps(base, ops)).board;
+    B.board = applyOps(base, expandOps(base, withShapes(base, ops))).board;
     notify();
   } catch {
     // A move that isn't possible yet (into itself): keep showing the last good one.

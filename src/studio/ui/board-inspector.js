@@ -1,14 +1,14 @@
 // The board's right panel: a layer's CSS in plain words (layout, size, flex, fill, border, shadow,
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, parseStyle, pxValue, round, sizeWord, styleText, subtree } from "./board-core.js";
 import { B, bset, commit, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, stopComponent } from "./board.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
-import { ColorButton, Dropdown, Num, Section, Seg, Switch, html } from "./controls.js";
+import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { api, fail, toast } from "./store.js";
+import { api, fail, fileUrl, toast } from "./store.js";
 
 const ids = () => B.sel.filter((id) => node(id));
 /** Set CSS on every selected layer; `key` makes a run of changes one step of undo. */
@@ -39,7 +39,7 @@ export function Inspector() {
   return html`<div class="panel-head bd-ihead">
       <span class="ico"><${Icon} n=${layerIcon(n)} s=${15} /></span>
       <h2>${many ? `${list.length} layers` : n.name}</h2>
-      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : n.parent ? { frame: "Frame", text: "Text", image: "Image", svg: "Vector" }[n.type] : "Artboard"}</span>`}
+      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", svg: "Vector" }[n.type]}</span>`}
     </div>
     <div class="panel-body bd-insp">
       ${!many && html`<${ComponentSection} />`}
@@ -48,10 +48,15 @@ export function Inspector() {
       ${!many && n.parent && isFlex(node(n.parent)) && html`<${ChildSection} />`}
       ${allText && html`<${TypeSection} />`}
       ${!many && n.type === "image" && html`<${ImageSection} />`}
+      ${!many && n.shape && html`<${ShapeSection} />`}
+      ${!many && n.type === "svg" && !n.shape && html`<${VectorSection} />`}
       <${LookSection} />
-      ${!allText && n.type !== "image" && html`<${FillSection} />`}
-      <${BorderSection} />
-      <${ShadowSection} />
+      ${!allText && n.type !== "image" && n.type !== "svg" && html`<${FillSection} />`}
+      ${n.type !== "svg" && html`<${LineSection} kind="border" />`}
+      <${LineSection} kind="outline" />
+      ${n.type !== "svg" && html`<${ShadowSection} />`}
+      <${FiltersSection} />
+      <${SelectionColors} />
       ${!many && html`<${CssSection} key=${n.id} />`}
     </div>`;
 }
@@ -459,6 +464,30 @@ function asKind(f, kind) {
   return { kind, angle: kind === "conic" ? 0 : f.angle ?? 180, x: f.x ?? 50, y: f.y ?? 50, shape: f.shape ?? "circle", stops };
 }
 
+// Each fill, shadow and filter is one short row; its details open in a popover.
+
+const CHECK = "repeating-conic-gradient(#2a2a2f 0 25%, #1c1c20 0 50%) 0 0 / 10px 10px";
+
+/** A row that opens its editor in a popover: a swatch, a summary, and a remove button. */
+function PopRow({ swatch, label, sub, onRemove, children, width = 264, removeTitle = "Remove" }) {
+  const ref = useRef();
+  const [open, setOpen] = useState(false);
+  return html`<div class="bd-prow ${open ? "open" : ""}">
+    <button class="bd-prow-main" ref=${ref} onClick=${() => setOpen(!open)} title="Edit">
+      ${swatch !== undefined && html`<span class="bd-swatch" style=${{ background: swatch ? `${swatch}, ${CHECK}` : CHECK }}></span>`}
+      <span class="lbl">${label}</span>
+      ${sub && html`<span class="sub">${sub}</span>`}
+    </button>
+    <button class="icon-btn sm" title=${removeTitle} onClick=${onRemove}><${Icon} n="minus" s=${14} /></button>
+    ${open && html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${width} align="end"><div class="bd-pop-edit">${children}</div><//>`}
+  </div>`;
+}
+
+const solidSwatch = (c) => `linear-gradient(${c}, ${c})`;
+const fillLabel = (f) =>
+  f.kind === "solid" ? f.color : f.kind === "image" ? (f.url ?? "").split("/").pop() || "Picture" : f.kind === "css" ? "CSS" : `${f.kind[0].toUpperCase()}${f.kind.slice(1)}`;
+const fillSub = (f) => (f.kind === "linear" ? `${round(f.angle, 1)}°` : f.kind === "image" ? { cover: "Fill", contain: "Fit", auto: "Tile" }[f.size ?? "cover"] : f.stops ? `${f.stops.length} colours` : "");
+
 function FillSection() {
   const list = ids();
   const n = node(list[0]);
@@ -466,43 +495,58 @@ function FillSection() {
   const put = (next, key) => setStyle(fillsStyle(next), key);
   const add = () => put([fills.length ? { kind: "linear", angle: 180, stops: [{ color: "rgba(0,0,0,0)", pos: 0 }, { color: "rgba(0,0,0,0.4)", pos: 100 }] } : { kind: "solid", color: "#ffffff" }, ...fills]);
   return html`<${Section} title="Fill" right=${html`<button class="icon-btn sm" title=${fills.length ? "Add a fill on top" : "Add a fill"} onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
-    ${fills.map((f, i) => html`<${FillRow} key=${i} f=${f} k=${`fill${i}`} onChange=${(nf, key) => put(fills.map((x, j) => (j === i ? nf : x)), key)} onRemove=${() => put(fills.filter((_, j) => j !== i))} />`)}
+    ${fills.map((f, i) => {
+      const set = (patch, key) => put(fills.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `fill${i}:${key}`);
+      const swatch = f.kind === "image" ? (f.url ? `url("${f.url.startsWith("/") ? fileUrl(f.url) : f.url}") center / cover` : "") : f.kind === "solid" ? solidSwatch(f.color) : fillCss(f, true);
+      return html`<${PopRow} key=${i} swatch=${swatch} label=${fillLabel(f)} sub=${fillSub(f)} removeTitle="Remove this fill" onRemove=${() => put(fills.filter((_, j) => j !== i))}>
+        ${f.kind === "css"
+          ? html`<textarea class="textarea bd-mono" rows="3" onKeyDown=${(e) => e.stopPropagation()} onChange=${(e) => set({ css: e.target.value.trim() })}>${f.css}</textarea>`
+          : html`<${Seg} value=${f.kind} options=${FILL_KINDS} onChange=${(kind) => put(fills.map((x, j) => (j === i ? asKind(x, kind) : x)))} />
+            ${f.kind === "solid" && html`<${ColorPicker} value=${f.color} onChange=${(c) => c && set({ color: c }, "c")} />`}
+            ${f.stops && html`<${Gradient} f=${f} set=${set} />`}
+            ${f.kind === "image" && html`<${ImageFill} f=${f} set=${set} />`}`}
+      <//>`;
+    })}
   <//>`;
-}
-
-function FillRow({ f, k, onChange, onRemove }) {
-  const set = (patch, key) => onChange({ ...f, ...patch }, key && `${k}:${key}`);
-  const check = "repeating-conic-gradient(#2a2a2f 0 25%, #1c1c20 0 50%) 0 0 / 10px 10px";
-  const swatch = f.kind === "image" ? (f.url ? `url("${f.url.startsWith("/") ? `/file?path=${encodeURIComponent(f.url)}` : f.url}") center / cover` : "var(--panel-3)") : `${fillCss(f, true)}, ${check}`;
-  const kinds = f.kind === "css" ? html`<span class="bd-kind-css">CSS</span>` : html`<${Dropdown} value=${f.kind} options=${FILL_KINDS} btnClass="dd-btn bd-kind" onChange=${(kind) => onChange(asKind(f, kind))} />`;
-  return html`<div class="bd-fill">
-    <div class="bd-fill-head">
-      ${f.kind === "solid" ? html`<${ColorButton} value=${f.color} allowAuto=${false} onChange=${(c) => c && set({ color: c }, "c")} />` : html`<span class="bd-swatch" style=${{ background: swatch }}></span>`}
-      ${kinds}
-      <button class="icon-btn sm" title="Remove this fill" onClick=${onRemove}><${Icon} n="minus" s=${14} /></button>
-    </div>
-    ${f.kind === "css" && html`<input class="input bd-mono" value=${f.css} spellcheck=${false} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} onChange=${(e) => set({ css: e.target.value.trim() })} />`}
-    ${f.kind === "image" && html`<${ImageFill} f=${f} set=${set} />`}
-    ${f.stops && html`<${Gradient} f=${f} set=${set} />`}
-  </div>`;
 }
 
 function Gradient({ f, set }) {
   const stops = f.stops;
-  const setStop = (i, patch, key) => set({ stops: stops.map((x, j) => (j === i ? { ...x, ...patch } : x)) }, key && `s${i}${key}`);
+  const [active, setActive] = useState(0);
   const at = (i) => stops[i].pos ?? Math.round((i / Math.max(1, stops.length - 1)) * 100);
+  const cur = Math.min(active, stops.length - 1);
+  const setStop = (i, patch, key) => set({ stops: stops.map((x, j) => (j === i ? { ...x, pos: at(j), ...patch } : x)) }, key && `s${i}${key}`);
+  const bar = useRef();
+  // The stops sit on a strip of the gradient: drag one along it, click the strip to add one.
+  const dragStop = (i) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActive(i);
+    const r = bar.current.getBoundingClientRect();
+    const move = (ev) => setStop(i, { pos: Math.round(Math.max(0, Math.min(100, ((ev.clientX - r.left) / r.width) * 100))) }, "drag");
+    const up = () => (removeEventListener("pointermove", move), removeEventListener("pointerup", up));
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
+  const addAt = (e) => {
+    const r = bar.current.getBoundingClientRect();
+    const pos = Math.round(((e.clientX - r.left) / r.width) * 100);
+    set({ stops: [...stops.map((x, j) => ({ ...x, pos: at(j) })), { color: stops[cur].color, pos }].sort((a, b) => a.pos - b.pos) });
+  };
   return html`<div class="bd-grad">
+    <div class="bd-grad-bar" ref=${bar} style=${{ background: `linear-gradient(90deg, ${stops.map((x, i) => `${x.color} ${at(i)}%`).join(", ")}), ${CHECK}` }} onPointerDown=${addAt} title="Click to add a colour">
+      ${stops.map((x, i) => html`<i class=${i === cur ? "on" : ""} style=${{ left: `${at(i)}%`, background: x.color }} onPointerDown=${dragStop(i)}></i>`)}
+    </div>
     <div class="grid2">
       ${f.kind !== "radial" && html`<${Num} label=${html`<${Icon} n="rotate" s=${12} />`} title=${f.kind === "conic" ? "Starts at" : "Angle"} unit="°" value=${f.angle} onChange=${(v) => set({ angle: v ?? 0 }, "a")} />`}
-      ${f.kind === "radial" && html`<${Dropdown} value=${f.shape} options=${[{ value: "circle", label: "Circle" }, { value: "ellipse", label: "Ellipse" }]} onChange=${(v) => set({ shape: v })} />`}
+      ${f.kind === "radial" && html`<${Seg} value=${f.shape} options=${[{ value: "circle", label: "Circle" }, { value: "ellipse", label: "Ellipse" }]} onChange=${(v) => set({ shape: v })} />`}
       ${f.kind !== "linear" && html`<div class="bd-xy"><${Num} label="X" unit="%" value=${f.x} onChange=${(v) => set({ x: v ?? 50 }, "x")} /><${Num} label="Y" unit="%" value=${f.y} onChange=${(v) => set({ y: v ?? 50 }, "y")} /></div>`}
     </div>
-    ${stops.map((x, i) => html`<div class="bd-stop" key=${i}>
-        <${ColorButton} value=${x.color} allowAuto=${false} onChange=${(c) => c && setStop(i, { color: c }, "c")} />
-        <${Num} label="" unit="%" title="Where it sits along the gradient" value=${at(i)} min=${0} max=${100} onChange=${(v) => setStop(i, { pos: v ?? 0 }, "p")} />
-        <button class="icon-btn sm" title="Remove this colour" disabled=${stops.length <= 2} onClick=${() => set({ stops: stops.filter((_, j) => j !== i) })}><${Icon} n="x" s=${12} /></button>
-      </div>`)}
-    <button class="btn ghost sm bd-addstop" onClick=${() => set({ stops: [...stops.map((x, i) => ({ ...x, pos: at(i) })), { color: stops[stops.length - 1].color, pos: 100 }] })}><${Icon} n="plus" s=${12} />Add a colour</button>
+    <div class="bd-stop-head"><span>Colour ${cur + 1} of ${stops.length}</span>
+      <${Num} label="" unit="%" title="Where it sits along the gradient" value=${at(cur)} min=${0} max=${100} onChange=${(v) => setStop(cur, { pos: v ?? 0 }, "p")} />
+      <button class="icon-btn sm" title="Remove this colour" disabled=${stops.length <= 2} onClick=${() => (set({ stops: stops.filter((_, j) => j !== cur) }), setActive(0))}><${Icon} n="trash" s=${12} /></button>
+    </div>
+    <${ColorPicker} value=${stops[cur].color} onChange=${(c) => c && setStop(cur, { color: c }, "c")} />
   </div>`;
 }
 
@@ -535,18 +579,32 @@ function parseBorder(v) {
   return { width: Number(width ?? 1), style, color };
 }
 
-function BorderSection() {
+/** Border (inside the layer's box, part of its size) or outline (drawn round it, taking no room). */
+function LineSection({ kind }) {
   const list = ids();
   const n = node(list[0]);
-  const b = parseBorder(n.style.border) ?? (n.style.borderWidth || n.style.borderStyle ? { width: px(n.style.borderWidth) ?? 1, style: n.style.borderStyle ?? "solid", color: n.style.borderColor ?? "currentColor" } : null);
-  const put = (next, key) => setStyle({ border: next ? `${next.width}px ${next.style} ${next.color}` : null, borderWidth: null, borderStyle: null, borderColor: null }, key);
-  return html`<${Section} title="Border" right=${b ? html`<button class="icon-btn sm" title="Remove the border" onClick=${() => put(null)}><${Icon} n="minus" s=${14} /></button>` : html`<button class="icon-btn sm" title="Add a border" onClick=${() => put({ width: 1, style: "solid", color: "#e4e4e7" })}><${Icon} n="plus" s=${14} /></button>`}>
+  const outline = kind === "outline";
+  const b = outline
+    ? parseBorder(n.style.outline) ?? (n.style.outlineWidth ? { width: px(n.style.outlineWidth) ?? 1, style: n.style.outlineStyle ?? "solid", color: n.style.outlineColor ?? "currentColor" } : null)
+    : parseBorder(n.style.border) ?? (n.style.borderWidth || n.style.borderStyle ? { width: px(n.style.borderWidth) ?? 1, style: n.style.borderStyle ?? "solid", color: n.style.borderColor ?? "currentColor" } : null);
+  const put = (next, key) =>
+    setStyle(
+      outline
+        ? { outline: next ? `${next.width}px ${next.style} ${next.color}` : null, outlineWidth: null, outlineStyle: null, outlineColor: null, ...(next ? {} : { outlineOffset: null }) }
+        : { border: next ? `${next.width}px ${next.style} ${next.color}` : null, borderWidth: null, borderStyle: null, borderColor: null },
+      key,
+    );
+  const offset = px(n.style.outlineOffset) ?? 0;
+  return html`<${Section} title=${outline ? "Outline" : "Border"} right=${b ? html`<button class="icon-btn sm" title=${`Remove the ${kind}`} onClick=${() => put(null)}><${Icon} n="minus" s=${14} /></button>` : html`<button class="icon-btn sm" title=${outline ? "Add an outline: a line round the layer that takes no room" : "Add a border"} onClick=${() => put({ width: outline ? 2 : 1, style: "solid", color: outline ? "#4c8dff" : "#e4e4e7" })}><${Icon} n="plus" s=${14} /></button>`}>
     ${b &&
-    html`<div class="grid2">
-        <${Num} label="W" title="Width" value=${b.width} min=${0} onChange=${(v) => put({ ...b, width: v ?? 0 }, "bw")} />
-        <${Dropdown} value=${b.style} options=${["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1) }))} onChange=${(v) => put({ ...b, style: v })} />
+    html`<div class="bd-line">
+        <${ColorButton} value=${b.color === "currentColor" ? undefined : b.color} auto="Text colour" onChange=${(c) => put({ ...b, color: c ?? "currentColor" }, `${kind}c`)} />
+        <${Num} label="W" title="Width" value=${b.width} min=${0} onChange=${(v) => put({ ...b, width: v ?? 0 }, `${kind}w`)} />
       </div>
-      <${ColorButton} value=${b.color === "currentColor" ? undefined : b.color} auto="Text colour" onChange=${(c) => put({ ...b, color: c ?? "currentColor" }, "bc")} />`}
+      <div class="grid2">
+        <${Dropdown} value=${b.style} options=${["solid", "dashed", "dotted", "double"].map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1) }))} onChange=${(v) => put({ ...b, style: v })} />
+        ${outline && html`<${Num} label="Gap" title="How far out from the layer" value=${offset} onChange=${(v) => setStyle({ outlineOffset: v ? `${v}px` : null }, "oo")} />`}
+      </div>`}
   <//>`;
 }
 
@@ -561,7 +619,7 @@ function parseShadow(one) {
 }
 const shadowsOf = (v) => (!v || v === "none" ? [] : splitTop(v).map(parseShadow));
 
-/** Shadows: a list, each outside the layer or inside it (inset). Text gets text shadows. */
+/** Shadows: a list, each outside the layer or inside it. Text gets text shadows. */
 function ShadowSection() {
   const list = ids();
   const n = node(list[0]);
@@ -574,20 +632,164 @@ function ShadowSection() {
   return html`<${Section} title="Shadow" right=${html`<button class="icon-btn sm" title="Add a shadow" onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
     ${all.map((s, i) => {
       const set = (patch, key) => put(all.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `sh${i}${key}`);
-      return html`<div class="bd-shadow" key=${i}>
-        <div class="bd-shadow-nums ${text ? "three" : ""}">
+      return html`<${PopRow} key=${i} swatch=${solidSwatch(s.color)} label=${text ? "Text shadow" : s.inset ? "Inner shadow" : "Drop shadow"} sub=${`${s.x}, ${s.y}, ${s.blur}`} removeTitle="Remove this shadow" onRemove=${() => put(all.filter((_, j) => j !== i))}>
+        ${!text && html`<${Seg} value=${s.inset ? "in" : "out"} options=${[{ value: "out", label: "Outside" }, { value: "in", label: "Inside" }]} onChange=${(v) => set({ inset: v === "in" })} />`}
+        <div class="grid2">
           <${Num} label="X" value=${s.x} onChange=${(v) => set({ x: v ?? 0 }, "x")} />
           <${Num} label="Y" value=${s.y} onChange=${(v) => set({ y: v ?? 0 }, "y")} />
-          <${Num} label="B" title="Blur" value=${s.blur} min=${0} onChange=${(v) => set({ blur: v ?? 0 }, "b")} />
-          ${!text && html`<${Num} label="S" title="Spread" value=${s.spread} onChange=${(v) => set({ spread: v ?? 0 }, "s")} />`}
+          <${Num} label="Blur" value=${s.blur} min=${0} onChange=${(v) => set({ blur: v ?? 0 }, "b")} />
+          ${!text && html`<${Num} label="Spread" value=${s.spread} onChange=${(v) => set({ spread: v ?? 0 }, "s")} />`}
         </div>
-        <div class="bd-shadow-foot">
-          <${ColorButton} value=${s.color} allowAuto=${false} onChange=${(c) => c && set({ color: c }, "c")} />
-          ${!text && html`<button class="btn sm ${s.inset ? "" : "ghost"}" title=${s.inset ? "Inside the layer: click for outside" : "Outside the layer: click for inside"} onClick=${() => set({ inset: !s.inset })}>${s.inset ? "Inside" : "Outside"}</button>`}
-          <button class="icon-btn sm" title="Remove this shadow" onClick=${() => put(all.filter((_, j) => j !== i))}><${Icon} n="minus" s=${14} /></button>
-        </div>
-      </div>`;
+        <${ColorPicker} value=${s.color} onChange=${(c) => c && set({ color: c }, "c")} />
+      <//>`;
     })}
+  <//>`;
+}
+
+// Filters: CSS filter functions on the layer, or behind it (backdrop-filter), as Paper has them.
+const FILTERS = [
+  { id: "blur", label: "Blur", unit: "px", min: 0, max: 100, def: 4 },
+  { id: "brightness", label: "Brightness", unit: "%", min: 0, max: 300, def: 120 },
+  { id: "contrast", label: "Contrast", unit: "%", min: 0, max: 300, def: 120 },
+  { id: "grayscale", label: "Grayscale", unit: "%", min: 0, max: 100, def: 100 },
+  { id: "hue-rotate", label: "Hue rotate", unit: "deg", min: -180, max: 180, def: 90 },
+  { id: "invert", label: "Invert", unit: "%", min: 0, max: 100, def: 100 },
+  { id: "saturate", label: "Saturation", unit: "%", min: 0, max: 300, def: 150 },
+  { id: "sepia", label: "Sepia", unit: "%", min: 0, max: 100, def: 100 },
+  { id: "opacity", label: "Opacity", unit: "%", min: 0, max: 100, def: 60 },
+];
+
+/** "blur(4px) drop-shadow(0 1px 2px rgba(0,0,0,.2))" → [{fn, value, raw}], keeping brackets inside brackets. */
+function parseFilters(v) {
+  const out = [];
+  if (!v || v === "none") return out;
+  let depth = 0;
+  let cur = "";
+  for (const ch of v.trim()) {
+    cur += ch;
+    if (ch === "(") depth++;
+    if (ch === ")") {
+      depth--;
+      if (depth === 0) {
+        const m = /^\s*([a-z-]+)\((.*)\)\s*$/is.exec(cur);
+        if (m) {
+          const def = FILTERS.find((f) => f.id === m[1].toLowerCase());
+          const num = parseFloat(m[2]);
+          out.push(def && !Number.isNaN(num) ? { fn: def.id, value: def.unit === "%" && !/%/.test(m[2]) && def.id !== "blur" ? num * 100 : num } : { fn: m[1], raw: cur.trim() });
+        }
+        cur = "";
+      }
+    }
+  }
+  return out;
+}
+const filterCss = (list) => list.map((f) => f.raw ?? `${f.fn}(${round(f.value, 2)}${FILTERS.find((d) => d.id === f.fn)?.unit ?? ""})`).join(" ") || null;
+
+function FiltersSection() {
+  const list = ids();
+  const n = node(list[0]);
+  const layer = parseFilters(n.style.filter);
+  const back = parseFilters(n.style.backdropFilter ?? n.style.WebkitBackdropFilter ?? n.style.webkitBackdropFilter);
+  const all = [...layer.map((f) => ({ ...f, on: "layer" })), ...back.map((f) => ({ ...f, on: "backdrop" }))];
+  const put = (next, key) => {
+    const l = filterCss(next.filter((f) => f.on === "layer"));
+    const b = filterCss(next.filter((f) => f.on === "backdrop"));
+    setStyle({ filter: l, backdropFilter: b, WebkitBackdropFilter: b, webkitBackdropFilter: null }, key);
+  };
+  const add = () => put([...all, { fn: "blur", value: 4, on: "layer" }]);
+  return html`<${Section} title="Filters" right=${html`<button class="icon-btn sm" title="Add a filter: blur, brightness, contrast and more, on the layer or behind it" onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
+    ${all.map((f, i) => {
+      const def = FILTERS.find((d) => d.id === f.fn);
+      const set = (patch, key) => put(all.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `flt${i}${key}`);
+      const label = def ? `${f.on === "backdrop" ? "Backdrop " : ""}${f.on === "backdrop" ? def.label.toLowerCase() : def.label}` : f.fn;
+      return html`<${PopRow} key=${i} label=${label} sub=${def ? `${round(f.value, 1)}${def.unit === "deg" ? "°" : def.unit}` : "CSS"} removeTitle="Remove this filter" onRemove=${() => put(all.filter((_, j) => j !== i))}>
+        ${def
+          ? html`<${Seg} value=${f.on} options=${[{ value: "layer", label: "The layer" }, { value: "backdrop", label: "Behind it" }]} onChange=${(on) => set({ on })} />
+            <${Dropdown} value=${f.fn} options=${FILTERS.map((d) => ({ value: d.id, label: d.label }))} onChange=${(fn) => set({ fn, value: FILTERS.find((d) => d.id === fn).def })} />
+            <${Slider} value=${f.value} min=${def.min} max=${def.max} step=${def.unit === "px" ? 0.5 : 1} format=${(v) => `${round(v, 1)}${def.unit === "deg" ? "°" : def.unit}`} onChange=${(v) => set({ value: v }, "v")} />
+            ${f.on === "backdrop" && html`<p class="bd-note">Blurs or tints what shows through the layer: give it a see-through fill, like frosted glass.</p>`}`
+          : html`<p class="bd-note bd-mono">${f.raw}</p>`}
+      <//>`;
+    })}
+  <//>`;
+}
+
+// Selection colours: every colour used in the selection, to change them all at once.
+const COLOR_RE = /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)/gi;
+function SelectionColors() {
+  const list = ids();
+  const found = new Map();
+  for (const id of list)
+    for (const x of subtree(B.board, id)) {
+      const n = node(x);
+      for (const [k, v] of Object.entries(n.style)) for (const m of v.matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k }]);
+      for (const m of (n.text ?? "").matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: "text" }]);
+      if (n.shape) for (const k of ["fill", "stroke", "labelColor"]) if (typeof n.shape[k] === "string" && COLOR_RE.test(n.shape[k])) (COLOR_RE.lastIndex = 0), found.set(n.shape[k].toLowerCase(), [...(found.get(n.shape[k].toLowerCase()) ?? []), { id: x, k: `shape.${k}` }]);
+      COLOR_RE.lastIndex = 0;
+    }
+  if (found.size < 2) return null;
+  const replace = (from, to, key) => {
+    const ops = new Map();
+    for (const { id, k } of found.get(from)) {
+      const n = node(id);
+      const op = ops.get(id) ?? { op: "set", id };
+      const swap = (v) => v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), to);
+      if (k === "text") op.text = swap(op.text ?? n.text);
+      else if (k.startsWith("shape.")) op.shape = { ...(op.shape ?? n.shape), [k.slice(6)]: to };
+      else (op.style ??= {})[k] = swap(op.style?.[k] ?? n.style[k]);
+      ops.set(id, op);
+    }
+    commit([...ops.values()], { key: `selcolor:${key}`, label: "Colour" });
+  };
+  return html`<${Section} title="Selection colours" count=${found.size} collapsible open=${false} id="board-selcolors">
+    ${[...found.entries()].slice(0, 12).map(([c, uses]) => html`<div class="bd-selcolor" key=${c}><${ColorButton} value=${c} allowAuto=${false} onChange=${(to) => to && replace(c, to, c)} /><span class="n">${uses.length}×</span></div>`)}
+  <//>`;
+}
+
+// A shape (an arrow, a star, a badge…): its own settings, drawn again as they change.
+const SHAPE_NAMES = { arrow: "Arrow", line: "Line", ellipse: "Ellipse", rect: "Box", triangle: "Triangle", star: "Star", badge: "Number badge", laurel: "Laurel", rating: "Rating", burst: "Burst", ribbon: "Ribbon", bubble: "Bubble", tag: "Tag" };
+function ShapeSection() {
+  const id = ids()[0];
+  const n = node(id);
+  const sh = n.shape;
+  const t = sh.type;
+  const set = (patch, key) => commit([{ op: "set", id, shape: { ...sh, ...patch } }], { key: key ? `shape:${id}:${key}` : null, label: "Shape" });
+  const line = t === "arrow" || t === "line";
+  const words = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(t);
+  return html`<${Section} title=${SHAPE_NAMES[t] ?? "Shape"}>
+    ${!line && html`<div class="row"><label>Fill</label><${ColorButton} value=${sh.fill && sh.fill !== "none" ? sh.fill : undefined} auto="None" onChange=${(c) => set({ fill: c ?? "none" }, "fill")} /></div>`}
+    ${!words && html`<div class="row"><label>Stroke</label><${ColorButton} value=${sh.stroke && sh.stroke !== "none" ? sh.stroke : undefined} auto="None" onChange=${(c) => set({ stroke: c ?? "none" }, "stroke")} /></div>
+      ${sh.stroke && sh.stroke !== "none" && html`<div class="grid2">
+        <${Num} label="W" title="Stroke width" value=${sh.strokeWidth ?? 4} min=${0} onChange=${(v) => set({ strokeWidth: v ?? 0 }, "sw")} />
+        <${Dropdown} value=${sh.dash ?? "solid"} options=${[{ value: "solid", label: "Solid" }, { value: "dashed", label: "Dashed" }, { value: "dotted", label: "Dotted" }]} onChange=${(v) => set({ dash: v })} />
+      </div>`}`}
+    ${line && html`<div class="grid2">
+        <${Dropdown} value=${sh.head ?? (t === "arrow" ? "end" : "none")} options=${[{ value: "end", label: "Head at the end" }, { value: "start", label: "At the start" }, { value: "both", label: "Both ends" }, { value: "none", label: "No heads" }]} onChange=${(v) => set({ head: v })} />
+        <${Num} label="Bend" title="How far it curves (-100 to 100)" value=${Math.round((sh.bend ?? 0) * 100)} min=${-100} max=${100} onChange=${(v) => set({ bend: (v ?? 0) / 100 }, "bend")} />
+      </div>`}
+    ${t === "star" && html`<${Num} label="Points" value=${sh.points ?? 5} min=${3} max=${12} onChange=${(v) => set({ points: v ?? 5 }, "pts")} />`}
+    ${t === "rect" && html`<${Num} label="Round" title="Corner rounding, % of the shorter side" unit="%" value=${Math.round((sh.radius ?? 0) * 100)} min=${0} max=${50} onChange=${(v) => set({ radius: (v ?? 0) / 100 }, "rad")} />`}
+    ${t === "badge" && html`<div class="row"><label>Label</label><input class="input" value=${sh.label ?? "1"} maxLength="4" onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ label: e.target.value }, "label")} /></div>`}
+    ${words && html`<div class="row"><label>Words</label><input class="input" value=${sh.text ?? ""} onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ text: e.target.value }, "text")} /></div>`}
+    ${t === "laurel" && html`<div class="row"><label>Under it</label><input class="input" value=${sh.caption ?? ""} placeholder="App Store" onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ caption: e.target.value }, "cap")} /></div>`}
+    ${t === "rating" && html`<${Num} label="Stars" digits=${1} step=${0.1} value=${sh.value ?? 5} min=${0} max=${5} onChange=${(v) => set({ value: v ?? 5 }, "val")} />`}
+    ${(t === "badge" || words) && html`<div class="row"><label>Words colour</label><${ColorButton} value=${sh.labelColor} allowAuto=${false} onChange=${(c) => c && set({ labelColor: c }, "lc")} /></div>`}
+    <div class="bd-flex-opts">
+      ${!words && html`<label class="bd-check"><input type="checkbox" checked=${Boolean(sh.sketch)} onChange=${(e) => set({ sketch: e.target.checked })} />Hand-drawn</label>`}
+      <label class="bd-check"><input type="checkbox" checked=${Boolean(sh.shadow)} onChange=${(e) => set({ shadow: e.target.checked })} />Shadow</label>
+    </div>
+  <//>`;
+}
+
+/** A vector without shape settings (an icon, an illustration): its colour, for the parts drawn in "currentColor". */
+function VectorSection() {
+  const list = ids();
+  const n = node(list[0]);
+  const tintable = /currentColor/i.test(n.svg ?? "");
+  return html`<${Section} title="Vector">
+    ${tintable
+      ? html`<div class="row"><label>Colour</label><${ColorButton} value=${n.style.color} auto="Inherited" onChange=${(c) => setStyle({ color: c ?? null }, "vc")} /></div>`
+      : html`<p class="bd-note">Drawn in its own colours. Filters below can still shift them.</p>`}
   <//>`;
 }
 

@@ -25,6 +25,8 @@ export interface BoardNode {
   src?: string;
   /** A vector layer's <svg> markup. */
   svg?: string;
+  /** A vector layer drawn from one of Screenshotter's shapes (arrow, star, badge…): its settings, which `svg` is drawn from. */
+  shape?: Record<string, unknown>;
   hidden?: boolean;
   locked?: boolean;
   /** A component: the main one, which its copies follow. */
@@ -541,10 +543,16 @@ export interface HtmlOptions {
   hidden?: boolean;
 }
 
+/** CSS with each url(…) passed through `fn` (a local path made a loadable URL). */
+export function mapCssUrls(value: string, fn: (src: string) => string): string {
+  return value.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (_, _q: string, src: string) => `url("${fn(src.trim())}")`);
+}
+
 export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth = 0): string {
   const n = board.nodes[id];
   if (!n || (n.hidden && !opts.hidden)) return "";
   const style: Style = { ...n.style };
+  if (opts.src) for (const [k, v] of Object.entries(style)) if (v.includes("url(")) style[k] = mapCssUrls(v, opts.src);
   if (n.parent === null && depth === 0 && !opts.placed) {
     delete style.left;
     delete style.top;
@@ -724,6 +732,7 @@ export type Op =
       text?: string | null;
       src?: string | null;
       svg?: string | null;
+      shape?: Record<string, unknown> | null;
       hidden?: boolean | null;
       locked?: boolean | null;
       isComponent?: boolean | null;
@@ -838,7 +847,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           back.name = n.name;
           n.name = op.name.slice(0, 120) || n.name;
         }
-        for (const k of ["text", "src", "svg", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
+        for (const k of ["text", "src", "svg", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
           if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
@@ -957,6 +966,17 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
     }
     inverse.push(undo);
   }
+  // Every layer around a changed one is a new object too, so a view can skip a layer (and all
+  // inside it) whenever the object is the one it drew last time.
+  for (const id of [...copied]) {
+    let p = board.nodes[id]?.parent;
+    let guard = 0;
+    while (p && board.nodes[p] && !copied.has(p) && guard++ < 1000) {
+      board.nodes[p] = { ...board.nodes[p] };
+      copied.add(p);
+      p = board.nodes[p].parent;
+    }
+  }
   return { board, inverse: inverse.reverse().flat() };
 }
 
@@ -1053,7 +1073,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
 const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate"];
 
-const FIELDS = ["text", "src", "svg", "hidden", "name"] as const;
+const FIELDS = ["text", "src", "svg", "shape", "hidden", "name"] as const;
 
 /** The keys a set step changes, as overrides name them ("style.color", "text"). */
 function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {

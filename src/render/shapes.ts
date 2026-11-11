@@ -591,3 +591,26 @@ export function shapeHtml(s: ShapeSpec, W: number, H: number, z: number, id?: st
     .join(";");
   return `<div class="shape"${id ? ` data-ent="${esc(id)}"` : ""} style="${style}">${r.svg}</div>`;
 }
+
+/**
+ * A shape drawn to fill a box of w × h pixels, as one SVG of that size: a board's vector layer.
+ * Box shapes fill it; a line or arrow runs across it (from / to as fractions of the box).
+ */
+export function shapeInBox(input: Loose, w: number, h: number): string {
+  const W = Math.max(1, w);
+  const H = Math.max(1, h);
+  const line = isLine(input.type);
+  const inset = line ? Math.min(0.2, 10 / Math.min(W, H)) : 0;
+  const s = shapeSpec({
+    ...input,
+    x: 0.5,
+    y: 0.5,
+    size: line ? input.size : 1,
+    aspect: W / H,
+    rotate: 0,
+    ...(line ? { from: input.from ?? { x: inset, y: input.type === "line" ? 0.5 : 1 - inset }, to: input.to ?? { x: 1 - inset, y: input.type === "line" ? 0.5 : inset } } : {}),
+  });
+  const r = renderShape(s, W, H);
+  const inner = r.svg.replace(/^<svg /, `<svg x="${f(r.left)}" y="${f(r.top)}" `);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(W)} ${f(H)}" width="${f(W)}" height="${f(H)}" overflow="visible"${r.filter ? ` style="filter:${r.filter}"` : ""}>${inner}</svg>`;
+}

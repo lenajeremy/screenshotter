@@ -1,8 +1,9 @@
 // The board canvas: every artboard drawn as the real HTML and CSS it is, on an endless canvas you
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
+import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { ancestors, fontFamilies, fontLinks, inFlow, isFlex, newId, pxValue, round, sizeWord } from "./board-core.js";
-import { B, bset, commit, currentPage, node, notify, preview, select } from "./board-state.js";
+import { ancestors, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord } from "./board-core.js";
+import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { fileUrl } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
@@ -34,6 +35,8 @@ export function worldBox(id) {
   return { x: (r.left - c.left - x) / z, y: (r.top - c.top - y) / z, width: r.width / z, height: r.height / z };
 }
 
+useMeasure((id) => worldBox(id));
+
 /** A layer's box on screen, relative to the canvas. */
 function screenBox(id) {
   const el = elOf(id);
@@ -43,31 +46,60 @@ function screenBox(id) {
   return { x: r.left - c.left, y: r.top - c.top, width: r.width, height: r.height };
 }
 
-export function zoomTo(z, at) {
+/**
+ * Glide the view to another place and zoom, as a Mac app does for its zoom commands (a quick
+ * ease-out). Scrolling and pinching move it directly.
+ */
+let glide = 0;
+function setView(to, animate) {
+  cancelAnimationFrame(glide);
+  if (!animate) return bset({ view: to });
+  const from = { ...B.view };
+  const t0 = performance.now();
+  const ms = 220;
+  canvasEl.current?.classList.add("moving");
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / ms);
+    const k = 1 - (1 - t) ** 3;
+    const z = from.z * (to.z / from.z) ** k;
+    // The point under the middle of the canvas travels in a straight line while the zoom changes evenly.
+    const c = canvasEl.current?.getBoundingClientRect() ?? { width: 0, height: 0 };
+    const mid = (v) => ({ x: (c.width / 2 - v.x) / v.z, y: (c.height / 2 - v.y) / v.z });
+    const a = mid(from);
+    const b = mid(to);
+    const m = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+    bset({ view: { z, x: c.width / 2 - m.x * z, y: c.height / 2 - m.y * z } });
+    if (t < 1) glide = requestAnimationFrame(step);
+    else canvasEl.current?.classList.remove("moving");
+  };
+  glide = requestAnimationFrame(step);
+}
+
+export function zoomTo(z, at, { animate = false } = {}) {
   const c = canvasEl.current?.getBoundingClientRect();
   if (!c) return;
   const nz = Math.min(64, Math.max(0.02, z));
   const p = at ?? { x: c.width / 2, y: c.height / 2 };
   const { x, y, z: oz } = B.view;
-  bset({ view: { x: p.x - ((p.x - x) / oz) * nz, y: p.y - ((p.y - y) / oz) * nz, z: nz } });
+  setView({ x: p.x - ((p.x - x) / oz) * nz, y: p.y - ((p.y - y) / oz) * nz, z: nz }, animate);
 }
-export const zoomBy = (k, at) => zoomTo(B.view.z * k, at);
+export const zoomBy = (k, at, opts) => zoomTo(B.view.z * k, at, opts);
 
-/** Fit layers (default: everything on the page) in the canvas. */
-export function fit(ids) {
+/** Fit layers (default: everything on the page) in the canvas, gliding there unless `instant`. */
+export function fit(ids, { instant = false } = {}) {
   const c = canvasEl.current?.getBoundingClientRect();
   const page = currentPage();
   if (!c || !page) return;
   const list = ids?.length ? ids : page.children;
   const boxes = list.map(worldBox).filter(Boolean);
-  if (!boxes.length) return bset({ view: { x: c.width / 2 - 200, y: 120, z: 1 } });
+  if (!boxes.length) return setView({ x: c.width / 2 - 200, y: 120, z: 1 }, !instant);
   const minX = Math.min(...boxes.map((b) => b.x));
   const minY = Math.min(...boxes.map((b) => b.y));
   const maxX = Math.max(...boxes.map((b) => b.x + b.width));
   const maxY = Math.max(...boxes.map((b) => b.y + b.height));
   const pad = 72;
   const z = Math.min(ids?.length ? 4 : 1, (c.width - pad * 2) / Math.max(1, maxX - minX), (c.height - pad * 2 - 24) / Math.max(1, maxY - minY));
-  bset({ view: { z, x: (c.width - (maxX - minX) * z) / 2 - minX * z, y: (c.height - (maxY - minY) * z) / 2 - minY * z + 12 } });
+  setView({ z, x: (c.width - (maxX - minX) * z) / 2 - minX * z, y: (c.height - (maxY - minY) * z) / 2 - minY * z + 12 }, !instant);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -93,19 +125,31 @@ function svgMarkup(svg) {
   return (svg ?? "").replace(/^<svg\b/i, '<svg style="display:block;width:100%;height:100%"');
 }
 
-function Layer({ id, root = false }) {
-  const n = B.board.nodes[id];
-  if (!n || n.hidden) return null;
-  const style = { ...n.style };
-  if (root) style.position = "absolute";
-  const attrs = { "data-bid": id, style };
-  if (n.type === "text") {
-    if (B.editing === id) return html`<${EditableText} id=${id} style=${style} />`;
-    return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></div>`;
+/**
+ * One layer, drawn as the HTML it is. A layer redraws only when it (or something inside it) changed:
+ * every change gives the layers around it new objects, so an unchanged object means nothing to do.
+ * Panning, zooming and dragging something else leave it alone.
+ */
+class Layer extends Component {
+  shouldComponentUpdate(next) {
+    return next.n !== this.props.n || next.editing !== this.props.editing || next.root !== this.props.root;
   }
-  if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
-  if (n.type === "svg") return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg) }}></div>`;
-  return html`<div ...${attrs}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} id=${c} />`)}</div>`;
+  render({ n, root, editing }) {
+    if (!n || n.hidden) return null;
+    const style = {};
+    for (const [k, v] of Object.entries(n.style)) style[k] = v.includes("url(") ? mapCssUrls(v, srcUrl) : v;
+    if (root) style.position = "absolute";
+    const id = n.id;
+    const attrs = { "data-bid": id, style };
+    if (n.type === "text") {
+      if (editing === id) return html`<${EditableText} id=${id} style=${style} />`;
+      return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></div>`;
+    }
+    if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
+    if (n.type === "svg") return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg) }}></div>`;
+    const nodes = B.board.nodes;
+    return html`<div ...${attrs}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</div>`;
+  }
 }
 
 /** A text layer being typed in: the browser edits it; the words go back on Escape or a click away. */
@@ -201,13 +245,21 @@ export function BoardCanvas() {
   useLayoutEffect(() => {
     if (B.view.fitPending) {
       B.view = { ...B.view, fitPending: false };
-      requestAnimationFrame(() => fit());
+      requestAnimationFrame(() => fit(undefined, { instant: true }));
     }
   }, [b.id, b.page]);
   useEffect(() => {
     const el = ref.current;
+    // While the view moves, the design is kept on the GPU (and redrawn sharp once it stops).
+    let still = 0;
+    const moving = () => {
+      el.classList.add("moving");
+      clearTimeout(still);
+      still = setTimeout(() => el.classList.remove("moving"), 160);
+    };
     const wheel = (e) => {
       e.preventDefault();
+      moving();
       const r = el.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), { x: e.clientX - r.left, y: e.clientY - r.top });
       else bset({ view: { ...B.view, x: B.view.x - e.deltaX, y: B.view.y - e.deltaY } });
@@ -220,6 +272,7 @@ export function BoardCanvas() {
     };
     const gc = (e) => {
       e.preventDefault();
+      moving();
       const r = el.getBoundingClientRect();
       zoomBy(e.scale / g0, { x: e.clientX - r.left, y: e.clientY - r.top });
       g0 = e.scale;
@@ -244,7 +297,7 @@ export function BoardCanvas() {
       onClickCapture=${(e) => e.target.closest("a") && e.preventDefault()}
       onDragOver=${(e) => e.preventDefault()} onDrop=${dropFiles}>
     <div class="bd-world" style=${{ transform: `translate(${x}px, ${y}px) scale(${z})`, ...tokens }}>
-      ${page.children.map((id) => html`<${Layer} key=${id} id=${id} root />`)}
+      ${page.children.map((id) => html`<${Layer} key=${id} n=${b.board.nodes[id]} root editing=${b.editing} />`)}
     </div>
     <${Overlay} />
     ${!page.children.length && html`<div class="bd-empty"><b>An empty page</b><span>Press F and drag to draw an artboard, paste HTML, or ask an agent to design here.</span></div>`}
@@ -270,7 +323,8 @@ function Overlay() {
   const b = B;
   const page = currentPage();
   if (!canvasEl.current || !page) return null;
-  const roots = page.children.filter((id) => b.board.nodes[id] && !b.board.nodes[id].hidden);
+  // Artboards (frames on the page) carry their names above them; a loose picture or shape doesn't.
+  const roots = page.children.filter((id) => b.board.nodes[id] && !b.board.nodes[id].hidden && b.board.nodes[id].type === "frame");
   const one = b.sel.length === 1 ? b.sel[0] : null;
   // While something is being dragged, only what helps with it shows: the size while resizing.
   const busy = b.dragging;
@@ -889,6 +943,11 @@ function contextMenu(e) {
 
 async function dropFiles(e) {
   e.preventDefault();
+  const asset = e.dataTransfer?.getData("text/x-board-asset");
+  if (asset) {
+    const { addAsset } = await import("./board-assets.js");
+    return addAsset(JSON.parse(asset), { at: toWorld(e.clientX, e.clientY), into: frameAt(e.clientX, e.clientY), ev: e });
+  }
   const files = [...(e.dataTransfer?.files ?? [])].filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name));
   if (!files.length) return;
   const { addImages } = await import("./board.js");

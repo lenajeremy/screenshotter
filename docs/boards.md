@@ -46,6 +46,12 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
     - Reset and detach.
     - Agents get component, copy, detach and reset in `board_edit`.
 
+- **Since (later the same day):**
+  - **Assets tab:** components, the app's shapes, stickers, illustrations, devices (Apple's frame round a screenshot or an artboard, via `board/device.ts`), pictures, screenshots and backdrops. Click to add to the selected frame, or drag onto the canvas.
+  - **The panel, Paper's way:** filters (layer and backdrop), outline, selection colours. Fills, shadows and filters are rows with popover editors.
+  - **Speed:** layers redraw only when they change (every change gives the layers round it new objects); the canvas goes on the GPU while it moves. About 1–2 ms of work a frame on 1,800 layers.
+  - **Agents:** `sticker:`/`art:` image sources, and `shape` and `device` changes.
+
 **Decisions:**
 
 - The design is HTML and CSS, not a vector format. The browser engine does the layout, the text and the drawing, an agent writes it fluently, and code comes out of it nearly as is.

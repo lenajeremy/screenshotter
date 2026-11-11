@@ -5,6 +5,7 @@ import { ancestors, cloneTree, componentOps, copyTree, detachOps, freeSpot, html
 import { B, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, fit, placeNew, placeOf, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
+import { AssetsPanel } from "./board-assets.js";
 import { Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
@@ -32,7 +33,12 @@ export function BoardApp() {
   if (!b.board) return html`<div class="bd-app"><div class="boot"><div class="boot-mark"></div></div></div>`;
   return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}">
     <${BoardTopbar} />
-    ${b.leftOpen && html`<aside class="panel bd-left"><${PagesList} /><${ComponentsList} /><${LayersList} /></aside>`}
+    ${b.leftOpen && html`<aside class="panel bd-left">
+      <div class="bd-left-tabs" role="tablist">
+        ${[["layers", "Layers"], ["assets", "Assets"]].map(([id, label]) => html`<button role="tab" aria-selected=${(b.leftTab ?? "layers") === id} class=${(b.leftTab ?? "layers") === id ? "on" : ""} onClick=${() => bset({ leftTab: id })}>${label}</button>`)}
+      </div>
+      ${(b.leftTab ?? "layers") === "assets" ? html`<${AssetsPanel} />` : html`<${PagesList} /><${LayersList} />`}
+    </aside>`}
     <main class="bd-stage"><${BoardCanvas} /></main>
     ${b.rightOpen && html`<aside class="panel bd-right"><${Inspector} /></aside>`}
   </div>`;
@@ -87,9 +93,9 @@ function BoardTopbar() {
     ${zoomOpen && html`<${Popover} anchor=${zoomBtn.current} onClose=${() => setZoomOpen(false)} width=${210} align="end">
       <div class="bd-menu">
         ${[
-          ["Zoom in", "⌘+", () => zoomBy(1.25)],
-          ["Zoom out", "⌘−", () => zoomBy(0.8)],
-          ["Zoom to 100%", "⇧0", () => zoomTo(1)],
+          ["Zoom in", "⌘+", () => zoomBy(1.25, undefined, { animate: true })],
+          ["Zoom out", "⌘−", () => zoomBy(0.8, undefined, { animate: true })],
+          ["Zoom to 100%", "⇧0", () => zoomTo(1, undefined, { animate: true })],
           ["Fit the page", "⇧1", () => fit()],
           ["Zoom to selection", "⇧2", () => fit(B.sel)],
         ].map(([label, kbd, run]) => html`<button class="ctx-item" onClick=${() => (run(), setZoomOpen(false))}><span class="ctx-label">${label}</span><span class="ctx-kbd">${kbd}</span></button>`)}
@@ -843,28 +849,6 @@ export const detachCopy = (id) => commit(detachOps(B.board, instanceRootOf(B.boa
 export const stopComponent = (id) => commit(uncomponentOps(B.board, id), { label: "No longer a component" });
 export const selectCopies = (main) => select(instancesOf(B.board, main));
 
-/** Every component on the board, for the Components list. */
-export function ComponentsList() {
-  const b = useBoard();
-  const mains = Object.values(b.board.nodes).filter((n) => n.isComponent);
-  if (!mains.length) return null;
-  return html`<section class="bd-comps">
-    <div class="bd-head"><h3>Components</h3><span class="bd-count">${mains.length}</span></div>
-    ${mains.map((m) => html`<div key=${m.id} class="bd-comp ${b.sel.includes(m.id) ? "on" : ""}" title="Click to select it, + to place a copy" onClick=${() => goToComponentMain(m.id)}>
-        <${Icon} n="component" s=${13} />
-        <span class="nm">${m.name}</span>
-        <span class="n">${instancesOf(b.board, m.id).length || ""}</span>
-        <button class="icon-btn sm" title="Place a copy (into the selected frame, or beside it)" onClick=${(e) => (e.stopPropagation(), placeCopy(m.id))}><${Icon} n="plus" s=${12} /></button>
-      </div>`)}
-  </section>`;
-}
-
-function goToComponentMain(id) {
-  const page = B.board.pages.find((p) => p.children.includes(rootOf(B.board, id)));
-  if (page && page.id !== B.page) bset({ page: page.id });
-  select(id);
-}
-
 const hasOverrides = (id) => subtree(B.board, id).some((x) => node(x)?.overrides?.length);
 
 // =============================================================================================
@@ -936,8 +920,8 @@ function onKey(e) {
   if (m && e.altKey && k === "v") return take(), pasteStyles();
   if (m && e.altKey && k === "s") return take(), bset({ leftOpen: !B.leftOpen });
   if (m && e.altKey && k === "i") return take(), bset({ rightOpen: !B.rightOpen });
-  if (m && (k === "=" || k === "+")) return take(), zoomBy(1.25);
-  if (m && k === "-") return take(), zoomBy(0.8);
+  if (m && (k === "=" || k === "+")) return take(), zoomBy(1.25, undefined, { animate: true });
+  if (m && k === "-") return take(), zoomBy(0.8, undefined, { animate: true });
   if (m && (k === "0" || e.code === "Digit0")) return take(), fit();
   if (m && k === "e") return take(), document.querySelector(".bd-topbar .btn.primary")?.click();
   if (m && k === "]") return take(), restack("forward");
@@ -949,7 +933,7 @@ function onKey(e) {
     if (edge) return take(), alignSelection(edge);
   }
   if (e.altKey && e.shiftKey && (e.code === "KeyH" || e.code === "KeyV")) return take(), distributeSelection(e.code === "KeyH" ? "x" : "y");
-  if (e.shiftKey && e.code === "Digit0") return take(), zoomTo(1);
+  if (e.shiftKey && e.code === "Digit0") return take(), zoomTo(1, undefined, { animate: true });
   if (e.shiftKey && e.code === "Digit1") return take(), fit();
   if (e.shiftKey && e.code === "Digit2") return take(), fit(B.sel);
   if (e.shiftKey && k === "a" && !e.altKey) {
@@ -977,10 +961,10 @@ export function boardCommand(name) {
   const run = {
     undo: () => (typingNow() ? document.execCommand("undo") : undo()),
     redo: () => (typingNow() ? document.execCommand("redo") : redo()),
-    zoomIn: () => zoomBy(1.25),
-    zoomOut: () => zoomBy(0.8),
+    zoomIn: () => zoomBy(1.25, undefined, { animate: true }),
+    zoomOut: () => zoomBy(0.8, undefined, { animate: true }),
     fit: () => fit(),
-    actual: () => zoomTo(1),
+    actual: () => zoomTo(1, undefined, { animate: true }),
     duplicate: duplicateSelection,
     delete: deleteSelection,
     exportImage: () => document.querySelector(".bd-topbar .btn.primary")?.click(),

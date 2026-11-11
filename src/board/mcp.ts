@@ -31,6 +31,11 @@ import {
   type Op,
 } from "./core.js";
 import { drawLayers } from "./render.js";
+import { deviceImage } from "./device.js";
+import { builtinSvg, stickerNames, artNames } from "../render/images.js";
+import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
+import { cacheDir } from "../util/files.js";
+import { htmlToNodes, type BoardNode } from "./core.js";
 import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, listBoards, summarizeBoard } from "./store.js";
 
 type Content = CallToolResult["content"];
@@ -50,9 +55,40 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
-- Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.`;
+- Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
+- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).`;
 
 const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name.");
+
+/** <img src="sticker:heart"> and "art:squiggle" become the built-in pictures as vectors (one-ink art takes `color`). */
+function inlineBuiltins(nodes: Record<string, BoardNode>, warnings: string[]) {
+  for (const [id, n] of Object.entries(nodes)) {
+    if (n.type !== "image" || !n.src || !/^(sticker|art):/i.test(n.src)) continue;
+    const got = builtinSvg(n.src);
+    if (!got) {
+      warnings.push(`There's no ${n.src.startsWith("art") ? "illustration" : "sticker"} "${n.src}". Stickers: ${stickerNames().join(", ")}. Illustrations: ${artNames().join(", ")}.`);
+      continue;
+    }
+    const svg = htmlToNodes(got.mono ? got.svg.replace(/#1d1d1f/gi, "currentColor") : got.svg);
+    const v = svg.nodes[svg.roots[0]];
+    const { src: _src, ...rest } = n;
+    nodes[id] = { ...rest, type: "svg", svg: v.svg, style: { width: v.style.width, height: v.style.height, ...(got.mono ? { color: "#1d1d1f" } : {}), ...n.style } };
+  }
+}
+
+/** Where a new layer goes for board_edit: into a frame, before/after a layer, or on the page at x/y. */
+function placeFor(b: Board, c: { into?: string; before?: string; after?: string; index?: number; x?: number; y?: number }, need: (id: string) => BoardNode) {
+  const ref = c.before ?? c.after;
+  if (ref) {
+    const r = need(ref);
+    return { parent: r.parent, index: siblingsOf(b, ref).indexOf(ref) + (c.after ? 1 : 0), page: r.parent ? undefined : pageOf(b, ref)?.id };
+  }
+  if (c.into && c.into !== "page") {
+    if (need(c.into).type !== "frame") throw new Error(`${b.nodes[c.into].name} isn't a frame.`);
+    return { parent: c.into, index: c.index, page: undefined };
+  }
+  return { parent: null, index: undefined, page: b.pages[0].id };
+}
 
 function placeInfo(b: Board, id: string) {
   const n = b.nodes[id];
@@ -110,6 +146,42 @@ const ChangeSchema = z.discriminatedUnion("do", [
     after: z.string().optional(),
     index: z.number().int().min(0).optional(),
     x: z.number().optional().describe("On the page: where its left edge goes."),
+    y: z.number().optional(),
+  }),
+  z.object({
+    do: z.literal("shape"),
+    type: z.enum(SHAPE_TYPES).describe("One of Screenshotter's shapes: an arrow or line, an ellipse or box (outlines), a triangle, star, number badge, laurel, rating, burst, ribbon, bubble or tag."),
+    width: z.number().positive(),
+    height: z.number().positive(),
+    into: z.string().optional().describe('A frame to put it in, or "page".'),
+    before: z.string().optional(),
+    after: z.string().optional(),
+    index: z.number().int().min(0).optional(),
+    x: z.number().optional().describe("Left edge: on the page, or inside a frame laid out by hand."),
+    y: z.number().optional(),
+    fill: z.string().optional(),
+    stroke: z.string().optional(),
+    strokeWidth: z.number().optional().describe("In px."),
+    text: z.string().optional().describe("The words of a laurel, rating, burst, ribbon, bubble or tag."),
+    label: z.string().optional().describe("A badge's number or letter."),
+    labelColor: z.string().optional(),
+    value: z.number().optional().describe("A rating's stars, 0–5."),
+    head: z.enum(["end", "start", "both", "none"]).optional(),
+    bend: z.number().min(-1).max(1).optional(),
+    sketch: z.boolean().optional().describe("Hand-drawn."),
+    name: z.string().optional(),
+  }),
+  z.object({
+    do: z.literal("device"),
+    screenshot: z.string().optional().describe("A screenshot to put in Apple's device frame (the model is detected from its size, or give `device`)."),
+    artboard: z.string().optional().describe("Or an artboard on this board: it's drawn at 3× as the device's screen."),
+    device: z.string().optional().describe('e.g. "iPhone 17 Pro".'),
+    color: z.string().optional(),
+    height: z.number().positive().optional().describe("The picture's height in px. Default 460."),
+    into: z.string().optional(),
+    before: z.string().optional(),
+    after: z.string().optional(),
+    x: z.number().optional(),
     y: z.number().optional(),
   }),
   z.object({ do: z.literal("detach"), id: z.string().describe("A copy of a component, to make ordinary layers.") }),
@@ -231,6 +303,7 @@ export function registerBoardTools(server: McpServer) {
         } else if (page && !b.pages.some((p) => p.id === page)) throw new Error(`There's no page ${page} on this board.`);
         const made = addHtmlOps(a.html, parent, { page, index });
         if (!made.roots.length) throw new Error("The HTML had nothing to draw (no elements or words).");
+        inlineBuiltins(made.nodes, made.warnings);
         adoptImages(made.nodes, made.warnings);
         // New artboards go where asked, else to the right of the others.
         if (!parent) {
@@ -265,7 +338,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -431,6 +504,44 @@ export function registerBoardTools(server: McpServer) {
               ops.push({ op: "add", nodes: t.nodes, ids: [t.id], parent, page, index });
               touched.push(t.id);
               results.push({ copy: t.id, of: c.of });
+              break;
+            }
+            case "shape": {
+              const where = placeFor(b, c, need);
+              const { do: _d, width, height, into: _i, before: _b, after: _a, index: _ix, x, y, name, ...settings } = c;
+              const shape = { ...settings } as Record<string, unknown>;
+              const id = newId();
+              const style: Record<string, string> = { width: `${width}px`, height: `${height}px`, flexShrink: "0" };
+              const parentFlex = where.parent ? b.nodes[where.parent]?.style.display === "flex" : false;
+              if (!where.parent) Object.assign(style, { left: `${Math.round(x ?? freeSpot(b, where.page!, width).left)}px`, top: `${Math.round(y ?? 0)}px` });
+              else if (!parentFlex || x !== undefined) Object.assign(style, { position: "absolute", left: `${Math.round(x ?? 0)}px`, top: `${Math.round(y ?? 0)}px` });
+              const n: BoardNode = { id, type: "svg", name: name ?? c.type, parent: where.parent, shape, svg: shapeInBox(shape as never, width, height), style };
+              ops.push({ op: "add", nodes: { [id]: n }, ids: [id], parent: where.parent, page: where.page, index: where.index });
+              touched.push(id);
+              results.push({ shape: id, type: c.type });
+              break;
+            }
+            case "device": {
+              let shot = c.screenshot;
+              if (!shot && c.artboard) {
+                need(c.artboard);
+                const { images } = await drawLayers(b, [c.artboard], { scale: 3, format: "png", transparent: false });
+                if (!images[c.artboard]) throw new Error("That artboard has no size to draw.");
+                shot = path.join(cacheDir("board-artboards"), `${b.id}-${c.artboard}-${b.rev}.png`);
+                writeFileSync(shot, images[c.artboard]);
+              }
+              if (!shot) throw new Error("A device needs a `screenshot` or an `artboard`.");
+              const img = await deviceImage(path.resolve(shot), { device: c.device, color: c.color });
+              const h = c.height ?? 460;
+              const w = Math.round((img.width / img.height) * h);
+              const where = placeFor(b, c, need);
+              const id = newId();
+              const style: Record<string, string> = { width: `${w}px`, height: `${Math.round(h)}px`, objectFit: "contain", flexShrink: "0" };
+              if (!where.parent) Object.assign(style, { left: `${Math.round(c.x ?? freeSpot(b, where.page!, w).left)}px`, top: `${Math.round(c.y ?? 0)}px` });
+              else if (c.x !== undefined) Object.assign(style, { position: "absolute", left: `${Math.round(c.x)}px`, top: `${Math.round(c.y ?? 0)}px` });
+              ops.push({ op: "add", nodes: { [id]: { id, type: "image", name: c.device ?? "Device", parent: where.parent, src: img.path, style } }, ids: [id], parent: where.parent, page: where.page, index: where.index });
+              touched.push(id);
+              results.push({ device: id, picture: img.path });
               break;
             }
             case "detach":
