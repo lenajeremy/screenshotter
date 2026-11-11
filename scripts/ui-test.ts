@@ -30,6 +30,8 @@ const { startStudio } = await import("../src/studio/server.js");
 const { encodePng } = await import("../src/util/png.js");
 const { renderHtml } = await import("../src/render/mockup.js");
 const { closeBrowser } = await import("../src/render/browser.js");
+const boards = await import("../src/board/store.js");
+const boardCore = await import("../src/board/core.js");
 
 const shot = path.join(LIB, "phone.png");
 const ipad = path.join(LIB, "ipad.png");
@@ -92,7 +94,124 @@ const undoToast = (page: Page) => S(page, () => ([...document.querySelectorAll("
 
 const phone = (extra: Record<string, unknown> = {}) => ({ devices: [{ screenshot: shot }], background: "cream-grain", ...extra });
 
+/** A board with one phone artboard (a column of three rows and a button), open on the page. */
+async function openTestBoard(page: Page) {
+  const row = (t: string) => `<div data-name="Row ${t}" style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:14px;background:#fff"><div style="width:36px;height:36px;border-radius:10px;background:#eee"></div><span style="font-size:16px;font-weight:600">${t}</span></div>`;
+  const b = boards.createBoard("UI test board", "studio");
+  const made = boardCore.addHtmlOps(`<div data-name="Phone" style="width:390px;height:844px;background:#f6f5f2;font-family:Inter,sans-serif;padding:60px 20px;display:flex;flex-direction:column;gap:16px"><h1 style="margin:0;font-size:30px">Today</h1><div data-name="List" style="display:flex;flex-direction:column;gap:10px">${row("One")}${row("Two")}${row("Three")}</div><button style="margin-top:auto;height:52px;border-radius:999px;background:#111;color:#fff">Add</button></div>`, null, { page: b.pages[0].id });
+  boards.changeBoard(b.id, made.ops, "studio");
+  await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+  await page.waitForSelector(".bd-world [data-bid]");
+  await page.waitForTimeout(900);
+  const byName = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
+  return { id: b.id, byName };
+}
+const boardSel = (page: Page) => S(page, async () => {
+  const m = await import("/ui/board-state.js" as string);
+  return m.B.sel.map((id: string) => m.B.board.nodes[id].name).join(",");
+});
+const boxOf = async (page: Page, id: string) => (await page.locator(`.bd-world [data-bid="${id}"]`).boundingBox())!;
+
 const CHECKS: Record<string, Check> = {
+  async "a board draws its HTML, lists its layers and fits its panels"(page) {
+    const t = await openTestBoard(page);
+    const drawn = await S(page, () => document.querySelectorAll(".bd-world [data-bid]").length);
+    const layers = await S(page, () => document.querySelectorAll(".bd-rows .bd-row").length);
+    const list = await boxOf(page, t.byName("List"));
+    await page.mouse.click(list.x + 30, list.y + 20);
+    await page.waitForTimeout(400);
+    const picked = await boardSel(page);
+    // Every control in the right panel stays inside it.
+    const spill = await S(page, () => {
+      const p = document.querySelector(".bd-right")!.getBoundingClientRect();
+      return [...document.querySelectorAll(".bd-right .num, .bd-right .dd-btn, .bd-right .seg, .bd-right .input, .bd-right .color-field")].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width && (r.right > p.right - 4 || r.left < p.left + 4);
+      }).length;
+    });
+    const labels = await S(page, () => [...document.querySelectorAll(".bd-right .num")].filter((n) => {
+      const sc = n.querySelector(".scrub")!.getBoundingClientRect();
+      const inp = n.querySelector("input")!.getBoundingClientRect();
+      return sc.right > inp.left + 1;
+    }).length);
+    if (drawn !== 13) return `${drawn} layers drawn, not 13`;
+    if (layers < 1) return "no layers listed";
+    if (picked !== "List") return `a click picked ${picked}, not the layer on the artboard (List)`;
+    return spill || labels ? `${spill} controls run out of the panel, ${labels} labels overlap their values` : "ok";
+  },
+  async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {
+    const t = await openTestBoard(page);
+    const one = await boxOf(page, t.byName("Row One"));
+    await page.mouse.click(one.x + 60, one.y + 10);
+    await page.mouse.dblclick(one.x + 60, one.y + 10);
+    await page.waitForTimeout(300);
+    const deeper = await boardSel(page);
+    const three = await boxOf(page, t.byName("Row Three"));
+    await page.mouse.move(one.x + 200, one.y + one.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 12; i++) await page.mouse.move(one.x + 200, one.y + one.height / 2 + ((three.y + three.height - 4 - one.y - one.height / 2) * i) / 12);
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+    const order = () => boards.getBoard(t.id).nodes[t.byName("List")].children!.map((c) => boards.getBoard(t.id).nodes[c].name).join(",");
+    const after = order();
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(900);
+    const undone = order();
+    if (deeper !== "Row One") return `double-click selected ${deeper}`;
+    if (after !== "Row Two,Row Three,Row One") return `after the drag: ${after}`;
+    return undone === "Row One,Row Two,Row Three" ? "ok" : `after undo: ${undone}`;
+  },
+  async "on a board, the frame tool draws an artboard and text is typed in place"(page) {
+    const t = await openTestBoard(page);
+    const c = (await page.locator(".bd-canvas").boundingBox())!;
+    const phone = await boxOf(page, t.byName("Phone"));
+    await page.keyboard.press("f");
+    const x0 = phone.x + phone.width + 80;
+    await page.mouse.move(x0, c.y + 120);
+    await page.mouse.down();
+    await page.mouse.move(x0 + 60, c.y + 180, { steps: 5 });
+    await page.mouse.move(x0 + 120, c.y + 240, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const roots = boards.getBoard(t.id).pages[0].children.length;
+    const list = await boxOf(page, t.byName("List"));
+    await page.keyboard.press("t");
+    await page.mouse.click(list.x + 40, list.y + list.height + 30);
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Meta+a");
+    await page.keyboard.type("Hello board");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(900);
+    const texts = Object.values(boards.getBoard(t.id).nodes).filter((n) => n.type === "text" && n.text === "Hello board");
+    if (roots !== 2) return `${roots} artboards after drawing one`;
+    if (texts.length !== 1) return "the typed text wasn't saved";
+    return texts[0].parent === t.byName("Phone") ? "ok" : "the text didn't land in the artboard's flex column";
+  },
+  async "an agent's change to an open board shows up and undoes"(page) {
+    const t = await openTestBoard(page);
+    const made = boardCore.addHtmlOps(`<div data-name="From the agent" style="padding:16px;background:#111;color:#fff;border-radius:14px">Hi</div>`, t.byName("Phone"), {});
+    boards.changeBoard(t.id, made.ops, "agent");
+    await page.waitForTimeout(1800);
+    const shown = await S(page, async (id: string) => Boolean(document.querySelector(`.bd-world [data-bid="${id}"]`)), made.roots[0]);
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(1200);
+    const gone = !boards.getBoard(t.id).nodes[made.roots[0]];
+    return shown && gone ? "ok" : `shown: ${shown}, undone on disk: ${gone}`;
+  },
+  async "pasting HTML onto a board makes layers"(page) {
+    const t = await openTestBoard(page);
+    await page.locator(".bd-row", { hasText: "Phone" }).first().click();
+    await page.waitForTimeout(200);
+    await S(page, () => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", '<div style="display:flex;gap:8px"><span style="padding:6px 10px;background:#eee">A</span><span style="padding:6px 10px">B</span></div>');
+      window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
+    });
+    await page.waitForTimeout(900);
+    const phone = boards.getBoard(t.id).nodes[t.byName("Phone")];
+    const pasted = boards.getBoard(t.id).nodes[phone.children![phone.children!.length - 1]];
+    return pasted.type === "frame" && pasted.children?.length === 2 ? "ok" : `pasted: ${pasted.type} with ${pasted.children?.length ?? 0} layers`;
+  },
   async "the Images panel's grids fit the panel"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone(), leftTab: "images", leftOpen: true });
     await page.waitForTimeout(1200);

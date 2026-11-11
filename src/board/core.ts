@@ -719,7 +719,9 @@ export type Op =
   | { op: "token"; name: string; value: string | null; index?: number }
   | { op: "rename"; name: string }
   /** Mark artboards as being worked on by an agent (null clears them; no ids clears all). */
-  | { op: "working"; ids?: string[]; at: string | null };
+  | { op: "working"; ids?: string[]; at: string | null }
+  /** The whole design at once (how the Studio undoes a change an agent made). */
+  | { op: "replace"; pages: BoardPage[]; nodes: Record<string, BoardNode>; tokens: BoardToken[]; name?: string };
 
 export class OpError extends Error {}
 
@@ -913,6 +915,17 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
         board.working = w;
         break;
       }
+      case "replace":
+        undo.push({ op: "replace", pages: board.pages.map((p) => ({ ...p, children: p.children.slice() })), nodes: { ...board.nodes }, tokens: board.tokens.slice(), name: board.name });
+        if (!op.pages?.length) throw new OpError("A board keeps at least one page.");
+        board.pages = op.pages.map((p) => ({ ...p, children: p.children.slice() }));
+        board.nodes = { ...op.nodes };
+        board.tokens = op.tokens.slice();
+        if (op.name) board.name = op.name;
+        copied.clear();
+        pageCopied.clear();
+        for (const p of board.pages) pageCopied.add(p.id);
+        break;
       default:
         throw new OpError(`Unknown step ${(op as { op: string }).op}.`);
     }

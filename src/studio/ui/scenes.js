@@ -7,6 +7,8 @@ import { S, aiName, fileUrl, persistPrefs, refreshScenes, saveSceneNow, set, thu
 import { addDevice, deleteSavedScene, designForMe, duplicateSavedScene, newScene, openAI, openScene, renameSavedScene } from "./actions.js";
 import { openMenu } from "./menu.js";
 import { ExportsGrid } from "./panels.js";
+import { BoardsGrid } from "./board-library.js";
+import { newBoard } from "./board-state.js";
 
 // ---------------------------------------------------------------------------------------------
 // Dates, the way people say them
@@ -277,7 +279,11 @@ export function ScenesPage() {
   const p = s.scenesPrefs;
   const [q, setQ] = useState("");
   // Two shelves: the designs themselves, and the images and videos exported from them.
-  const [shelf, setShelf] = useState("designs");
+  const [shelf, setShelfState] = useState(() => S.libraryShelf ?? "designs");
+  const setShelf = (v) => {
+    S.libraryShelf = v;
+    setShelfState(v);
+  };
   const exported = s.files.filter((f) => f.kind === "mockups" || f.kind === "videos").length;
   const search = useRef();
 
@@ -380,7 +386,9 @@ export function ScenesPage() {
       </div>
       <span class="spacer"></span>
       <div class="hstack" data-nodrag>
-        <button class="btn primary" onClick=${() => start("blank")}><${Icon} n="plus" s=${14} w=${2.2} />New design</button>
+        ${shelf === "boards"
+          ? html`<button class="btn primary" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${14} w=${2.2} />New board</button>`
+          : html`<button class="btn primary" onClick=${() => start("blank")}><${Icon} n="plus" s=${14} w=${2.2} />New design</button>`}
       </div>
     </header>
     <div class="sp-scroll">
@@ -402,12 +410,19 @@ export function ScenesPage() {
             <span class="ico"><${Icon} n="spark" s=${18} /></span>
             <span class="txt"><b>Design it for me</b><span>${latest ? `${aiName()} makes three designs from your latest screenshot` : "Needs a screenshot to design around"}</span></span>
           </button>
+          <button class="sp-start board" onClick=${() => newBoard("Untitled board")}>
+            <span class="ico"><${Icon} n="frame" s=${18} /></span>
+            <span class="txt"><b>New board</b><span>Design screens in HTML and CSS, or watch an agent do it</span></span>
+          </button>
         </div>
         <div class="sp-shelves" role="tablist">
           <button role="tab" aria-selected=${shelf === "designs"} class=${shelf === "designs" ? "on" : ""} onClick=${() => setShelf("designs")}>Designs<span class="n">${all.length}</span></button>
+          <button role="tab" aria-selected=${shelf === "boards"} class=${shelf === "boards" ? "on" : ""} onClick=${() => setShelf("boards")}>Boards<span class="n">${s.boards?.length ?? ""}</span></button>
           <button role="tab" aria-selected=${shelf === "exported"} class=${shelf === "exported" ? "on" : ""} onClick=${() => setShelf("exported")}>Exported<span class="n">${exported}</span></button>
         </div>
-        ${shelf === "exported"
+        ${shelf === "boards"
+          ? html`<${BoardsGrid} q=${q} />`
+          : shelf === "exported"
           ? html`<${ExportsGrid} />`
           : all.length
           ? html`${all.length >= 8 && html`<div class="sp-toolbar">

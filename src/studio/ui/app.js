@@ -3,6 +3,9 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
+import { BoardApp, boardCommand } from "./board.js";
+import { openBoard } from "./board-state.js";
+import { refreshBoards } from "./board-library.js";
 import { IMAGE_PROVIDERS, S, STORE_GAP, hasDesign, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
@@ -1524,6 +1527,19 @@ function App() {
     return html`<div class="hero"><div class="hero-inner"><h1>Couldn't reach the <em>engine.</em></h1><p>${s.bootError}</p><button class="btn primary" onClick=${() => location.reload()}>Try again</button></div></div>`;
   }
   if (!s.ready) return html`<div class="boot"><div class="boot-mark"></div></div>`;
+  // A board has an editor of its own; the app's sheets, menus and messages work over it the same.
+  if (s.boardId && !s.scenesPage) {
+    return html`<div class="app-board">
+      <${BoardApp} />
+      ${s.modal?.kind === "settings" && html`<${Settings} />`}
+      ${s.modal?.kind === "confirm" && html`<${Confirm} />`}
+      ${s.modal?.kind === "help" && html`<${Help} />`}
+      ${s.modal?.kind === "whatsNew" && html`<${WhatsNew} />`}
+      ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
+      <${Toasts} />
+      <${ContextMenu} />
+    </div>`;
+  }
   // Before there's a design (the start screen, picking how it starts) there's nothing to set: no settings panel.
   const right = s.rightOpen && !blankDesign(s);
   return html`<div class="app ${s.leftOpen ? "" : "left-closed"} ${right ? "" : "right-closed"}" style=${{ "--left-w": s.leftW ? s.leftW + "px" : null, "--right-w": s.rightW ? s.rightW + "px" : null }}>
@@ -1652,7 +1668,7 @@ const commands = {
   flush: () => flushPersist(),
   error: (message) => toast({ kind: "err", title: "Something went wrong", text: message }),
 };
-window.studio = { command: (name, arg) => commands[name]?.(arg), isTyping: () => Boolean(typing()), state: S };
+window.studio = { command: (name, arg) => (S.boardId && !S.scenesPage && boardCommand(name, arg) ? undefined : commands[name]?.(arg)), isTyping: () => Boolean(typing()), state: S };
 
 window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
@@ -1662,8 +1678,8 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     return commands.scenes();
   }
-  // The Scenes page handles its own keys.
-  if (S.scenesPage) return;
+  // The Scenes page handles its own keys, and so does a board.
+  if (S.scenesPage || S.boardId) return;
   if (mod && e.shiftKey && k === "k") {
     e.preventDefault();
     return dockAI(!S.ai.docked);
@@ -1994,6 +2010,12 @@ async function boot() {
       const known = new Set(S.scenes.map((x) => x.id));
       pickUpAgentChanges(await refreshScenes(), known);
     }, 5000);
+    // The board that was open last time opens again.
+    refreshBoards();
+    try {
+      const last = localStorage.getItem("board:last");
+      if (last) openBoard(last);
+    } catch {}
     // After an update, the release notes open once.
     setTimeout(() => !S.modal && openWhatsNew(false), 900);
     setTimeout(reportDragRegions, 300);

@@ -71,8 +71,9 @@ export interface BoardSummary {
   by?: "agent" | "studio";
   pages: Array<{ id: string; name: string; artboards: Array<{ id: string; name: string; width: string; height: string; x: number; y: number }> }>;
   layers: number;
-  /** Its thumbnail, once rendered. */
+  /** Its thumbnail, once rendered, and when it was drawn. */
   thumb?: string;
+  thumbAt?: number;
   /** Artboards an agent wrote to in the last minute. */
   working: string[];
 }
@@ -98,6 +99,7 @@ export function summarizeBoard(b: Board): BoardSummary {
     })),
     layers: Object.keys(b.nodes).length,
     thumb: existsSync(thumb) ? thumb : undefined,
+    thumbAt: existsSync(thumb) ? statSync(thumb).mtimeMs : undefined,
     working: Object.entries(b.working ?? {})
       .filter(([, at]) => now - Date.parse(at) < WORKING_MS)
       .map(([id]) => id),

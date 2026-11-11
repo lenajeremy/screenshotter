@@ -32,6 +32,10 @@ import * as sim from "../simulator/simctl.js";
 import { run } from "../util/exec.js";
 import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { noteStudioFolder } from "../util/studio.js";
+import { changeBoard, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard } from "../board/store.js";
+import { scheduleBoardThumb } from "../board/thumbs.js";
+import { drawLayers } from "../board/render.js";
+import type { Op } from "../board/core.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
@@ -449,6 +453,14 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     res.end(readFileSync(file, "utf8").replace(/\n\/\/# sourceMappingURL=.*$/, ""));
     return;
   }
+  // Boards: the canvas works on boards with the engine's own core (HTML in and out, every change).
+  if (req.method === "GET" && url.pathname === "/ui/board-core.js") {
+    const file = [path.join(here, "..", "board", "core.js"), path.join(here, "..", "..", "dist", "board", "core.js")].find((f) => existsSync(f));
+    if (!file) throw new HttpError(404, "Not found");
+    res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
+    res.end(readFileSync(file, "utf8").replace(/\n\/\/# sourceMappingURL=.*$/, ""));
+    return;
+  }
   if (req.method === "GET" && url.pathname.startsWith("/ui/")) {
     const rel = decodeURIComponent(url.pathname.slice(4));
     const file = rel.startsWith("vendor/") ? vendorFile(rel.slice(7)) : path.join(uiDir(), rel);
@@ -547,6 +559,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   if (req.method === "GET" && url.pathname === "/api/state") return send(200, loadState());
   if (req.method === "GET" && url.pathname === "/api/scenes") return send(200, listScenes());
   if (req.method === "GET" && url.pathname === "/api/scene") return send(200, getScene(url.searchParams.get("id")));
+  if (req.method === "GET" && url.pathname === "/api/boards") {
+    const list = listBoards();
+    // Boards an agent changed since their thumbnail was drawn get a new one.
+    for (const b of list) if (!b.thumb || Date.parse(b.updatedAt) > (b.thumbAt ?? 0)) scheduleBoardThumb(b.id, 400);
+    return send(200, list);
+  }
+  if (req.method === "GET" && url.pathname === "/api/board") return send(200, getBoard(url.searchParams.get("id")));
+  if (req.method === "GET" && url.pathname === "/api/board/rev") {
+    const b = getBoard(url.searchParams.get("id"));
+    return send(200, { rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: summarizeBoard(b).working });
+  }
   if (req.method === "GET" && url.pathname === "/api/progress") {
     // How far along an export is, and about how long it has to go (from how fast it's been).
     const j = jobs.get(url.searchParams.get("job") ?? "");
@@ -794,6 +817,39 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/scenes/delete":
       deleteScene((await json<{ id: string }>(req)).id);
       return send(200, { ok: true });
+    case "/api/board/new": {
+      const b = createBoard((await json<{ name?: string }>(req)).name, "studio");
+      return send(200, b);
+    }
+    case "/api/board/ops": {
+      const b = await json<{ id: string; ops: Op[]; base?: number }>(req);
+      const changed = changeBoard(b.id, b.ops, "studio", b.base);
+      if (!b.ops.every((o) => o.op === "working")) scheduleBoardThumb(b.id);
+      return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale });
+    }
+    case "/api/board/delete":
+      deleteBoard((await json<{ id: string }>(req)).id);
+      return send(200, { ok: true });
+    case "/api/board/duplicate": {
+      const copy = duplicateBoard((await json<{ id: string }>(req)).id);
+      scheduleBoardThumb(copy.id, 200);
+      return send(200, summarizeBoard(copy));
+    }
+    case "/api/board/export": {
+      const a = await json<{ id: string; nodes: string[]; scale?: number; format?: "png" | "jpeg" }>(req);
+      const b = getBoard(a.id);
+      const format = a.format === "jpeg" ? "jpeg" : "png";
+      const { images } = await drawLayers(b, a.nodes, { scale: Math.max(0.5, Math.min(4, a.scale ?? 2)), format, transparent: format === "png" });
+      const folder = ensureDir(path.join(outputRoot(), "boards", slug(b.name) || b.id));
+      const files: string[] = [];
+      for (const id of a.nodes) {
+        if (!images[id]) continue;
+        const f = path.join(folder, `${(b.nodes[id]?.name ?? id).replace(/[/:\\]/g, "-")}${a.scale && a.scale !== 1 ? ` @${a.scale}x` : ""}.${format === "jpeg" ? "jpg" : "png"}`);
+        writeFileSync(f, images[id]);
+        files.push(f);
+      }
+      return send(200, { files });
+    }
     case "/api/scenes/duplicate":
       return send(200, duplicateScene((await json<{ id: string }>(req)).id));
     case "/api/capture/simulator": {

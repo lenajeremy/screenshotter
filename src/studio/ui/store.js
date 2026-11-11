@@ -58,6 +58,10 @@ export const S = {
   appName: null,
   /** The saved scene being edited (null until it has something in it). */
   sceneId: null,
+  /** The board open in the board editor (null in the design editor), the boards in the library, and the library's shelf. */
+  boardId: null,
+  boards: null,
+  libraryShelf: null,
   /**
    * A video of several shots: each { scene, length?, transition? }, and which one is on the canvas
    * (its scene is S.scene; the copy in the list is filled in when you switch). null for one design.
