@@ -11,7 +11,12 @@ import { z } from "zod";
 import { outputRoot, slug } from "../util/files.js";
 import {
   addHtmlOps,
-  cloneTree,
+  componentOps,
+  copyTree,
+  detachOps,
+  instanceTree,
+  resetOps,
+  uncomponentOps,
   cssValue,
   freeSpot,
   newId,
@@ -44,7 +49,8 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox (display:flex, flex-direction, gap, padding, align-items); elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
-- Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.`;
+- Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
+- Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.`;
 
 const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name.");
 
@@ -95,6 +101,19 @@ const ChangeSchema = z.discriminatedUnion("do", [
   }),
   z.object({ do: z.literal("page"), name: z.string().describe("A new page's name, or the new name for `id`."), id: z.string().optional(), delete: z.boolean().optional() }),
   z.object({ do: z.literal("token"), name: z.string().describe('A CSS custom property name ("--brand" or "brand").'), value: z.string().nullable().describe("Its value, or null to remove it.") }),
+  z.object({ do: z.literal("component"), id: z.string().describe("A frame to make a component (or, with remove, to make ordinary again)."), remove: z.boolean().optional() }),
+  z.object({
+    do: z.literal("copy"),
+    of: z.string().describe("The component to make a copy of."),
+    into: z.string().optional().describe('A frame to put the copy in (at the end, or at `index`), or "page". Default: beside the component.'),
+    before: z.string().optional(),
+    after: z.string().optional(),
+    index: z.number().int().min(0).optional(),
+    x: z.number().optional().describe("On the page: where its left edge goes."),
+    y: z.number().optional(),
+  }),
+  z.object({ do: z.literal("detach"), id: z.string().describe("A copy of a component, to make ordinary layers.") }),
+  z.object({ do: z.literal("reset"), id: z.string().describe("A copy (or a layer in one) to make match its component again.") }),
 ]);
 
 function styleOf(map: Record<string, string | number | null>): Record<string, string | null> {
@@ -246,7 +265,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)). Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -291,7 +310,7 @@ export function registerBoardTools(server: McpServer) {
               const sibs = siblingsOf(b, c.id);
               let at = sibs.indexOf(c.id) + 1;
               for (let k = 0; k < (c.count ?? 1); k++) {
-                const clone = cloneTree(b, c.id, n.parent);
+                const clone = copyTree(b, c.id, n.parent);
                 // A copied artboard goes beside the rest instead of on top of the original.
                 if (!n.parent) {
                   const spot = freeSpot(b, pageOf(b, c.id)!.id, 0);
@@ -373,6 +392,57 @@ export function registerBoardTools(server: McpServer) {
             case "token":
               ops.push({ op: "token", name: c.name, value: c.value });
               results.push({ token: c.name.startsWith("--") ? c.name : `--${c.name}`, value: c.value });
+              break;
+            case "component":
+              need(c.id);
+              ops.push(...(c.remove ? uncomponentOps(b, c.id) : componentOps(b, c.id)));
+              // Copies made later in this list need it to be one already.
+              b = { ...b, nodes: { ...b.nodes, [c.id]: { ...b.nodes[c.id], isComponent: c.remove ? undefined : true } } };
+              results.push({ [c.remove ? "noLongerComponent" : "component"]: c.id });
+              break;
+            case "copy": {
+              const m = need(c.of);
+              if (!m.isComponent) throw new Error(`${m.name} isn't a component: make it one first with { do: "component", id }.`);
+              let parent: string | null;
+              let index: number | undefined;
+              let page: string | undefined;
+              const ref = c.before ?? c.after;
+              if (ref) {
+                const r = need(ref);
+                parent = r.parent;
+                index = siblingsOf(b, ref).indexOf(ref) + (c.after ? 1 : 0);
+                page = parent ? undefined : pageOf(b, ref)?.id;
+              } else if (c.into && c.into !== "page") {
+                if (need(c.into).type !== "frame") throw new Error(`${b.nodes[c.into].name} isn't a frame.`);
+                parent = c.into;
+                index = c.index;
+              } else if (c.into === "page" || !m.parent) {
+                parent = null;
+                page = pageOf(b, c.of)?.id;
+              } else {
+                parent = m.parent;
+                index = siblingsOf(b, c.of).indexOf(c.of) + 1;
+              }
+              const t = instanceTree(b, c.of, parent);
+              if (!parent) {
+                const spot = c.x !== undefined || c.y !== undefined ? { left: c.x ?? 0, top: c.y ?? 0 } : freeSpot(b, page ?? b.pages[0].id, 0);
+                Object.assign(t.nodes[t.id].style, { left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` });
+              }
+              ops.push({ op: "add", nodes: t.nodes, ids: [t.id], parent, page, index });
+              touched.push(t.id);
+              results.push({ copy: t.id, of: c.of });
+              break;
+            }
+            case "detach":
+              need(c.id);
+              if (!b.nodes[c.id].instanceOf) throw new Error(`${b.nodes[c.id].name} isn't a copy of a component.`);
+              ops.push(...detachOps(b, c.id));
+              results.push({ detached: c.id });
+              break;
+            case "reset":
+              need(c.id);
+              ops.push(...resetOps(b, c.id));
+              results.push({ reset: c.id });
               break;
           }
         }

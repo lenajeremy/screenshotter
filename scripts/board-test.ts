@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { applyOps, emptyBoard, htmlToNodes, nodeHtml, parseStyle, styleText, treeText, type Board } from "../src/board/core.js";
+import { OpError, applyOps, componentOps, detachOps, emptyBoard, expandOps, htmlToNodes, instanceTree, nodeHtml, parseStyle, resetOps, styleText, treeText, type Board, type Op } from "../src/board/core.js";
 
 let failures = 0;
 const check = (ok: unknown, what: string) => {
@@ -61,6 +61,67 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   const html = nodeHtml(b, id, { ids: true });
   check(html.includes(`data-id="${id}"`) && html.includes("Weekly report") && !html.includes("left:"), "a layer comes back out as HTML");
   check(treeText(b, id).split("\n").length === 6, "the outline lists every layer");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Components
+
+{
+  let b: Board = emptyBoard("compboard", "Components", new Date().toISOString());
+  const page = b.pages[0].id;
+  const run = (ops: Op[]) => {
+    const r = applyOps(b, expandOps(b, ops));
+    b = r.board;
+    return r.inverse;
+  };
+  const got = htmlToNodes(`<div data-name="Screen" style="display:flex;flex-direction:column;gap:8px;width:390px;height:600px">${CARD}</div>`);
+  run([{ op: "add", nodes: got.nodes, ids: got.roots, parent: null, page }]);
+  const screen = got.roots[0];
+  const card = b.nodes[screen].children![0];
+  const [title, , row] = b.nodes[card].children!;
+  run(componentOps(b, card));
+  const copy = (n = 1) =>
+    Array.from({ length: n }, () => {
+      const t = instanceTree(b, card, screen);
+      run([{ op: "add", nodes: t.nodes, ids: [t.id], parent: screen }]);
+      return t.id;
+    });
+  const [c1, c2] = copy(2);
+  const titleIn = (root: string) => b.nodes[root].children!.find((x) => b.nodes[x].master === title)!;
+  check(b.nodes[c1].instanceOf === card && b.nodes[titleIn(c1)].text === "Weekly report", "a copy of a component has its layers, each following the component's");
+  const before = JSON.stringify(b);
+  const undo = run([{ op: "set", id: title, style: { color: "#ff3b30" } }]);
+  check(b.nodes[titleIn(c1)].style.color === "#ff3b30" && b.nodes[titleIn(c2)].style.color === "#ff3b30", "a change to the component is made in every copy");
+  b = applyOps(b, undo).board;
+  check(JSON.stringify(b) === before, "undoing it takes it back in the copies too");
+  run([{ op: "set", id: titleIn(c1), text: "Monthly report" }]);
+  check(b.nodes[titleIn(c1)].overrides?.includes("text") === true, "a change made in a copy is remembered as the copy's own");
+  run([{ op: "set", id: title, text: "Weekly digest", style: { fontSize: "22px" } }]);
+  check(b.nodes[titleIn(c1)].text === "Monthly report" && b.nodes[titleIn(c1)].style.fontSize === "22px" && b.nodes[titleIn(c2)].text === "Weekly digest", "the component's change leaves a copy's own words alone, and changes the rest");
+  const extra = htmlToNodes(`<p style="margin:0">Due Friday</p>`);
+  extra.nodes[extra.roots[0]].parent = card;
+  run([{ op: "add", nodes: extra.nodes, ids: extra.roots, parent: card, index: 1 }]);
+  check([c1, c2].every((c) => b.nodes[b.nodes[c].children![1]].text === "Due Friday"), "a layer added to the component appears in every copy, in the same place");
+  run([{ op: "move", id: row, parent: card, index: 0 }]);
+  check([c1, c2].every((c) => b.nodes[b.nodes[c].children![0]].master === row), "a layer moved in the component moves in every copy");
+  run([{ op: "delete", ids: [extra.roots[0]] }]);
+  check([c1, c2].every((c) => b.nodes[c].children!.length === 3), "a layer deleted from the component goes from every copy");
+  let refused = 0;
+  for (const ops of [[{ op: "delete", ids: [titleIn(c1)] }], [{ op: "add", nodes: htmlToNodes("<p>x</p>").nodes, ids: [], parent: c1 }]] as Op[][]) {
+    try {
+      run(ops);
+    } catch (e) {
+      if (e instanceof OpError) refused++;
+    }
+  }
+  check(refused === 2, "layers can't be deleted from, or added to, a copy");
+  run(resetOps(b, c1));
+  check(b.nodes[titleIn(c1)].text === "Weekly digest" && !b.nodes[titleIn(c1)].overrides, "reset makes a copy match its component again");
+  run(detachOps(b, c2));
+  run([{ op: "set", id: title, text: "Changed again" }]);
+  check(b.nodes[titleIn(c1)].text === "Changed again" && !Object.values(b.nodes).some((n) => n.master && n.id.length && n.parent === c2) && b.nodes[c2].children!.every((x) => b.nodes[x].text !== "Changed again"), "a detached copy stops following");
+  run([{ op: "delete", ids: [card] }]);
+  check(!b.nodes[c1].instanceOf && b.nodes[c1].children!.every((x) => !b.nodes[x].master), "deleting the component leaves its copies as ordinary layers");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -118,6 +179,12 @@ const edit = await call("board_edit", {
 check(edit.json.results[3].copies.length === 1 && edit.json.results[4].artboard, "edits run together and report new ids");
 await call("board_edit", { board, changes: [{ do: "style", ids: ["nope"], style: { color: "red" } }] }, true);
 await call("board_write_html", { board, target: second.json.created[0].id, html: "<p style=\"color:#111\">Hi</p>", position: "after" });
+const comp = await call("board_edit", { board, changes: [{ do: "component", id: card }, { do: "copy", of: card }, { do: "style", ids: [card], style: { borderRadius: 8 } }] });
+const copyId = comp.json.results[1].copy;
+const copyHtml = await call("board_read", { board, what: "html", node: copyId });
+check(copyHtml.text.includes(`data-copy-of="${card}"`) && copyHtml.text.includes("border-radius:8px"), "an agent makes a component and a copy, and the copy follows a change");
+await call("board_write_html", { board, target: copyId, html: "<p>no</p>" }, true);
+await call("board_edit", { board, changes: [{ do: "style", ids: [card], style: { borderRadius: 24 } }] });
 const html = await call("board_read", { board, what: "html", node: card });
 check(html.text.includes("background-color:var(--brand)") && html.text.includes("border-radius:24px") && html.text.includes("opacity:0.9"), "styles go on as CSS (numbers as px, except opacity)");
 const shot = await call("board_screenshot", { board, nodes: [art] });

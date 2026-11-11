@@ -27,6 +27,14 @@ export interface BoardNode {
   svg?: string;
   hidden?: boolean;
   locked?: boolean;
+  /** A component: the main one, which its copies follow. */
+  isComponent?: boolean;
+  /** A copy of a component (its top layer): the component it's a copy of. */
+  instanceOf?: string;
+  /** In a copy: the component's layer this one follows. */
+  master?: string;
+  /** In a copy: what was changed here ("style.color", "text"), which the component's changes leave alone. */
+  overrides?: string[];
 }
 
 export interface BoardPage {
@@ -544,7 +552,7 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
   }
   if (n.hidden) style.display = "none";
   const css = styleText(style);
-  const attrs = `${opts.ids ? ` data-id="${id}" data-name="${escAttr(n.name)}"` : ""}${css ? ` style="${escAttr(css)}"` : ""}`;
+  const attrs = `${opts.ids ? ` data-id="${id}" data-name="${escAttr(n.name)}"${n.isComponent ? " data-component" : ""}${n.instanceOf ? ` data-copy-of="${n.instanceOf}"` : ""}` : ""}${css ? ` style="${escAttr(css)}"` : ""}`;
   switch (n.type) {
     case "text":
       return `<div${attrs}>${n.text ?? ""}</div>`;
@@ -705,12 +713,29 @@ export function freeSpot(board: Board, pageId: string, width: number, gap = 120)
 
 export type Op =
   /** Put new layers (`nodes` holds them and everything inside them) into a frame, or on a page. */
-  | { op: "add"; nodes: Record<string, BoardNode>; ids: string[]; parent: string | null; page?: string; index?: number }
+  | { op: "add"; nodes: Record<string, BoardNode>; ids: string[]; parent: string | null; page?: string; index?: number; sync?: boolean }
   /** Change a layer: style properties (null removes one), its name, words, picture, vector, visibility or lock. */
-  | { op: "set"; id: string; style?: Record<string, string | null>; replaceStyle?: Style; name?: string; text?: string | null; src?: string | null; svg?: string | null; hidden?: boolean | null; locked?: boolean | null }
-  | { op: "delete"; ids: string[] }
+  | {
+      op: "set";
+      id: string;
+      style?: Record<string, string | null>;
+      replaceStyle?: Style;
+      name?: string;
+      text?: string | null;
+      src?: string | null;
+      svg?: string | null;
+      hidden?: boolean | null;
+      locked?: boolean | null;
+      isComponent?: boolean | null;
+      instanceOf?: string | null;
+      master?: string | null;
+      overrides?: string[] | null;
+      /** Made by a component for its copies (so it doesn't count as a change made in a copy). */
+      sync?: boolean;
+    }
+  | { op: "delete"; ids: string[]; sync?: boolean }
   /** Move a layer into another frame (or onto a page), at an index among its new siblings. */
-  | { op: "move"; id: string; parent: string | null; page?: string; index?: number }
+  | { op: "move"; id: string; parent: string | null; page?: string; index?: number; sync?: boolean }
   | { op: "addPage"; page: BoardPage; index?: number }
   | { op: "setPage"; id: string; name: string }
   | { op: "deletePage"; id: string }
@@ -790,7 +815,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           board.nodes[id] = { ...n, parent: op.parent };
           list.splice(at++, 0, id);
         }
-        undo.push({ op: "delete", ids: op.ids.slice() });
+        undo.push({ op: "delete", ids: op.ids.slice(), ...(op.sync ? { sync: true } : {}) });
         break;
       }
       case "set": {
@@ -813,12 +838,13 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           back.name = n.name;
           n.name = op.name.slice(0, 120) || n.name;
         }
-        for (const k of ["text", "src", "svg", "hidden", "locked"] as const) {
+        for (const k of ["text", "src", "svg", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
-          if (op[k] === null || op[k] === false) delete n[k];
-          else (n as unknown as Record<string, unknown>)[k] = op[k];
+          if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
+          else (n as unknown as Record<string, unknown>)[k] = Array.isArray(op[k]) ? (op[k] as string[]).slice() : op[k];
         }
+        if (op.sync) back.sync = true;
         undo.push(back);
         break;
       }
@@ -836,7 +862,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
             delete board.nodes[x];
             copied.delete(x);
           }
-          undo.unshift({ op: "add", nodes, ids: [id], parent: w.parent, page: w.page, index: w.index });
+          undo.unshift({ op: "add", nodes, ids: [id], parent: w.parent, page: w.page, index: w.index, ...(op.sync ? { sync: true } : {}) });
         }
         break;
       }
@@ -850,7 +876,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
         const at = op.index === undefined || op.index < 0 || op.index > list.length ? list.length : op.index;
         list.splice(at, 0, op.id);
         mut(op.id).parent = op.parent;
-        undo.push({ op: "move", id: op.id, parent: w.parent, page: w.page, index: w.index });
+        undo.push({ op: "move", id: op.id, parent: w.parent, page: w.page, index: w.index, ...(op.sync ? { sync: true } : {}) });
         break;
       }
       case "addPage": {
@@ -934,6 +960,301 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
   return { board, inverse: inverse.reverse().flat() };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Components: a main layer and its copies. A copy is real layers (so it draws, exports and reads
+// like any other), each linked to the component's layer it follows. A change to the component is
+// made in every copy too, except where the copy was changed itself.
+
+/** The component a layer is part of (itself or the nearest one around it). */
+export function mainOf(board: Board, id: string): string | undefined {
+  let n: BoardNode | undefined = board.nodes[id];
+  let guard = 0;
+  while (n && guard++ < 1000) {
+    if (n.isComponent) return n.id;
+    n = n.parent ? board.nodes[n.parent] : undefined;
+  }
+  return undefined;
+}
+
+/** The copy of a component a layer is part of (its top layer). */
+export function instanceRootOf(board: Board, id: string): string | undefined {
+  let n: BoardNode | undefined = board.nodes[id];
+  let guard = 0;
+  while (n && guard++ < 1000) {
+    if (n.instanceOf) return n.id;
+    n = n.parent ? board.nodes[n.parent] : undefined;
+  }
+  return undefined;
+}
+
+export const instancesOf = (board: Board, main: string) => Object.values(board.nodes).filter((n) => n.instanceOf === main).map((n) => n.id);
+
+function followersMap(board: Board): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const n of Object.values(board.nodes)) if (n.master) m.set(n.master, [...(m.get(n.master) ?? []), n.id]);
+  return m;
+}
+
+/** Layers following `id` in copies: in a copy's tree, its layer for `id`. */
+function followerIn(board: Board, root: string, master: string): string | undefined {
+  if (board.nodes[root]?.master === master) return root;
+  for (const x of subtree(board, root)) if (board.nodes[x].master === master) return x;
+  return undefined;
+}
+
+/** A copy of a layer and what's inside it, each copy following the layer it was made from. */
+function followingCopy(board: Board, id: string, parent: string | null, rootAsInstance?: string): { id: string; nodes: Record<string, BoardNode> } {
+  const nodes: Record<string, BoardNode> = {};
+  const copy = (x: string, p: string | null, top: boolean): string => {
+    const n = board.nodes[x];
+    const nid = newId();
+    const { isComponent: _c, instanceOf: _i, overrides: _o, ...rest } = n;
+    nodes[nid] = { ...rest, id: nid, parent: p, style: { ...n.style }, master: x, ...(top && rootAsInstance ? { instanceOf: rootAsInstance } : {}), ...(n.children ? { children: [] } : {}) };
+    if (n.children) nodes[nid].children = n.children.filter((c) => board.nodes[c]).map((c) => copy(c, nid, false));
+    return nid;
+  };
+  return { id: copy(id, parent, true), nodes };
+}
+
+/** A new copy of a component. */
+export function instanceTree(board: Board, main: string, parent: string | null): { id: string; nodes: Record<string, BoardNode> } {
+  if (!board.nodes[main]?.isComponent) throw new OpError(`${board.nodes[main]?.name ?? main} isn't a component.`);
+  const t = followingCopy(board, main, parent, main);
+  const root = t.nodes[t.id];
+  // Where the component sits isn't part of it.
+  for (const k of PLACEMENT) delete root.style[k];
+  return t;
+}
+
+/**
+ * A copy for duplicating or pasting: a component's copy is a copy of the component (so it follows
+ * it); anything else is copied as it is (copies of components inside it stay copies).
+ */
+export function copyTree(board: Board, id: string, parent: string | null): { id: string; nodes: Record<string, BoardNode> } {
+  const n = board.nodes[id];
+  if (n?.isComponent) {
+    const t = instanceTree(board, id, parent);
+    for (const k of PLACEMENT) if (n.style[k] !== undefined) t.nodes[t.id].style[k] = n.style[k];
+    return t;
+  }
+  const t = cloneTree(board, id, parent);
+  // A component inside what's copied comes out as a copy of it rather than a second component.
+  for (const [orig, nid] of Object.entries(t.map)) {
+    if (orig === id || !board.nodes[orig].isComponent) continue;
+    const c = t.nodes[nid];
+    delete c.isComponent;
+    c.instanceOf = orig;
+    const under = subtree(board, orig);
+    for (const o of under) if (t.map[o]) t.nodes[t.map[o]].master = o;
+  }
+  return { id: t.id, nodes: t.nodes };
+}
+
+/** How a layer sits in its frame or on the page: never taken from a component by its copies. */
+const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate"];
+
+const FIELDS = ["text", "src", "svg", "hidden", "name"] as const;
+
+/** The keys a set step changes, as overrides name them ("style.color", "text"). */
+function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {
+  const keys: string[] = [];
+  if (op.replaceStyle) {
+    for (const k of new Set([...Object.keys(before.style), ...Object.keys(op.replaceStyle)])) if (before.style[k] !== op.replaceStyle[k]) keys.push(`style.${k}`);
+  }
+  for (const k of Object.keys(op.style ?? {})) keys.push(`style.${k}`);
+  for (const f of FIELDS) if (op[f] !== undefined) keys.push(f);
+  return keys;
+}
+
+const inCopyMessage = (board: Board, root: string) =>
+  `This is a copy of the component “${board.nodes[board.nodes[root].instanceOf ?? ""]?.name ?? "?"}”: layers inside it can be changed or hidden, not added, moved or deleted. Change the component to change every copy, or detach this one.`;
+
+/**
+ * Steps as they are to be applied, components included: a change to a component is made in its
+ * copies too (as steps of their own, so undo takes them back with it), a change made in a copy is
+ * remembered as an override, and what can't be done in a copy (adding, moving or deleting what's
+ * inside it) is refused.
+ */
+export function expandOps(input: Board, ops: Op[]): Op[] {
+  const out: Op[] = [];
+  let w = input;
+  const run = (op: Op, depth: number) => {
+    const pre = w;
+    if (!op || depth > 8) return;
+    const sync = "sync" in op && op.sync;
+    // What can't be done inside a copy.
+    if (!sync) {
+      if (op.op === "add" && op.parent) {
+        const r = instanceRootOf(pre, op.parent);
+        if (r && !Object.values(op.nodes).every((n) => n.master)) throw new OpError(inCopyMessage(pre, r));
+      }
+      if (op.op === "delete")
+        for (const id of op.ids) {
+          const r = pre.nodes[id] && instanceRootOf(pre, id);
+          if (r && r !== id) throw new OpError(inCopyMessage(pre, r));
+        }
+      if (op.op === "move" && pre.nodes[op.id]) {
+        const r = instanceRootOf(pre, op.id);
+        if (r && r !== op.id) throw new OpError(inCopyMessage(pre, r));
+        const into = op.parent ? instanceRootOf(pre, op.parent) : undefined;
+        if (into) throw new OpError(inCopyMessage(pre, into));
+      }
+    }
+    // A change made in a copy is remembered, so the component leaves it alone from now on.
+    if (op.op === "set" && !sync && pre.nodes[op.id]?.master) {
+      const n = pre.nodes[op.id];
+      const isRoot = Boolean(n.instanceOf);
+      const keys = changedKeys(n, op).filter((k) => !(isRoot && k.startsWith("style.") && PLACEMENT.includes(k.slice(6))));
+      if (keys.length) op = { ...op, overrides: [...new Set([...(n.overrides ?? []), ...keys])] };
+    }
+    w = applyOps(w, [op]).board;
+    out.push(op);
+    for (const p of propagate(pre, w, op)) run(p, depth + 1);
+  };
+  for (const op of ops) run(op, 0);
+  return out;
+}
+
+/** The steps that bring a component's copies in line with a change to the component. */
+function propagate(pre: Board, post: Board, op: Op): Op[] {
+  const out: Op[] = [];
+  const fol = followersMap(post);
+  if (op.op === "set") {
+    const main = mainOf(pre, op.id);
+    if (!main) return out;
+    const before = pre.nodes[op.id];
+    const after = post.nodes[op.id];
+    const isRoot = op.id === main;
+    const keys = changedKeys(before, op).filter((k) => !(isRoot && k.startsWith("style.") && PLACEMENT.includes(k.slice(6))));
+    if (!keys.length) return out;
+    for (const y of fol.get(op.id) ?? []) {
+      const yn = post.nodes[y];
+      const skip = new Set(yn.overrides ?? []);
+      const p: Extract<Op, { op: "set" }> = { op: "set", id: y, sync: true };
+      for (const k of keys) {
+        if (skip.has(k)) continue;
+        if (k.startsWith("style.")) {
+          p.style ??= {};
+          p.style[k.slice(6)] = after.style[k.slice(6)] ?? null;
+        } else if (k === "name") p.name = after.name;
+        else (p as Record<string, unknown>)[k] = (after as unknown as Record<string, unknown>)[k] ?? null;
+      }
+      if (Object.keys(p).length > 3) out.push(p);
+    }
+    return out;
+  }
+  if (op.op === "add") {
+    if (!op.parent || !mainOf(pre, op.parent)) return out;
+    for (const q of fol.get(op.parent) ?? []) out.push(...copiesInto(post, op.ids, op.parent, q));
+    return out;
+  }
+  if (op.op === "delete") {
+    for (const id of op.ids) {
+      if (!pre.nodes[id]) continue;
+      const main = mainOf(pre, id);
+      if (!main) continue;
+      if (id === main) {
+        // A component deleted: its copies stay, as ordinary layers.
+        for (const r of instancesOf(pre, id)) for (const x of subtree(post, r)) out.push({ op: "set", id: x, instanceOf: null, master: null, overrides: null, sync: true });
+        continue;
+      }
+      const gone = (followersMap(pre).get(id) ?? []).filter((y) => post.nodes[y]);
+      if (gone.length) out.push({ op: "delete", ids: gone, sync: true });
+    }
+    return out;
+  }
+  if (op.op === "move") {
+    const was = pre.nodes[op.id];
+    if (!was) return out;
+    const m0 = mainOf(pre, op.id);
+    const m1 = mainOf(post, op.id);
+    if (m0 && m0 === m1 && op.id !== m0) {
+      // Within the component: the same move in every copy.
+      for (const r of instancesOf(post, m0)) {
+        const y = followerIn(post, r, op.id);
+        const q = op.parent === m0 ? r : op.parent ? followerIn(post, r, op.parent) : undefined;
+        if (!y || !q) continue;
+        out.push({ op: "move", id: y, parent: q, index: mappedIndex(post, op.id, q, y), sync: true });
+      }
+      return out;
+    }
+    if (m0 && op.id !== m0) {
+      const gone = (followersMap(pre).get(op.id) ?? []).filter((y) => post.nodes[y]);
+      if (gone.length) out.push({ op: "delete", ids: gone, sync: true });
+    }
+    if (m1 && op.id !== m1 && op.parent) for (const q of fol.get(op.parent) ?? []) out.push(...copiesInto(post, [op.id], op.parent, q));
+  }
+  return out;
+}
+
+/** Where, among a copy's layers, the copy of a component's layer goes: after the copy of the one before it. */
+function mappedIndex(board: Board, id: string, into: string, except?: string): number {
+  const p = board.nodes[board.nodes[id].parent!];
+  const at = (p.children ?? []).indexOf(id);
+  const kids = (board.nodes[into].children ?? []).filter((c) => c !== except);
+  for (let i = at - 1; i >= 0; i--) {
+    const k = kids.findIndex((c) => board.nodes[c]?.master === p.children![i]);
+    if (k >= 0) return k + 1;
+  }
+  return 0;
+}
+
+function copiesInto(board: Board, ids: string[], parent: string, into: string): Op[] {
+  const ops: Op[] = [];
+  for (const id of ids) {
+    const t = followingCopy(board, id, into);
+    ops.push({ op: "add", nodes: t.nodes, ids: [t.id], parent: into, index: mappedIndex(board, id, into), sync: true });
+  }
+  void parent;
+  return ops;
+}
+
+/** Steps that make a copy's layer (and what's inside it) match the component again. */
+export function resetOps(board: Board, id: string): Op[] {
+  const ops: Op[] = [];
+  for (const x of subtree(board, id)) {
+    const n = board.nodes[x];
+    if (!n.master || !n.overrides?.length) continue;
+    const m = board.nodes[n.master];
+    if (!m) continue;
+    const p: Extract<Op, { op: "set" }> = { op: "set", id: x, overrides: null, sync: true };
+    for (const k of n.overrides) {
+      if (k.startsWith("style.")) {
+        p.style ??= {};
+        p.style[k.slice(6)] = m.style[k.slice(6)] ?? null;
+      } else if (k === "name") p.name = m.name;
+      else (p as Record<string, unknown>)[k] = (m as unknown as Record<string, unknown>)[k] ?? null;
+    }
+    ops.push(p);
+  }
+  return ops;
+}
+
+/** Steps that make a copy ordinary layers, no longer following its component. */
+export function detachOps(board: Board, id: string): Op[] {
+  return subtree(board, id)
+    .filter((x) => board.nodes[x].master || board.nodes[x].instanceOf || board.nodes[x].overrides)
+    .map((x) => ({ op: "set" as const, id: x, instanceOf: null, master: null, overrides: null, sync: true }));
+}
+
+/** Steps that make a frame a component. */
+export function componentOps(board: Board, id: string): Op[] {
+  const n = board.nodes[id];
+  if (!n) throw new OpError(`There's no layer ${id}.`);
+  if (n.type !== "frame") throw new OpError("Only a frame can be a component.");
+  if (n.isComponent) return [];
+  const r = instanceRootOf(board, id);
+  if (r) throw new OpError("A layer in a copy of a component can't become a component: detach the copy first.");
+  return [{ op: "set", id, isComponent: true }];
+}
+
+/** Steps that make a frame an ordinary frame again: its copies stay, as ordinary layers. */
+export function uncomponentOps(board: Board, id: string): Op[] {
+  const ops: Op[] = [{ op: "set", id, isComponent: null }];
+  for (const r of instancesOf(board, id)) ops.push(...detachOps(board, r));
+  return ops;
+}
+
 /** Steps that make new layers from HTML inside a frame (or on a page), and the new layers' ids. */
 export function addHtmlOps(html: string, parent: string | null, opts: { page?: string; index?: number } = {}): { ops: Op[]; roots: string[]; nodes: Record<string, BoardNode>; warnings: string[] } {
   const got = htmlToNodes(html);
@@ -977,6 +1298,9 @@ function describe(board: Board, id: string): string {
     bits.push(JSON.stringify(words.length > 60 ? words.slice(0, 59) + "…" : words));
   }
   if (n.type === "image") bits.push(`src ${(n.src ?? "").slice(0, 80)}`);
+  if (n.isComponent) bits.push("component");
+  if (n.instanceOf) bits.push(`copy of component #${n.instanceOf}`);
+  if (n.overrides?.length) bits.push(`changed in this copy: ${n.overrides.map((k) => k.replace(/^style\./, "")).join(", ")}`);
   if (n.hidden) bits.push("hidden");
   if (n.locked) bits.push("locked");
   return bits.join(" ");

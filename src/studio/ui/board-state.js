@@ -1,7 +1,7 @@
 // Boards in the Studio: the open board, what's selected, undo, and keeping in step with the board
 // on disk, which agents change too (their changes show up within a second, as steps you can undo).
 import { useEffect, useReducer } from "preact/hooks";
-import { OpError, applyOps, rootOf } from "./board-core.js";
+import { OpError, applyOps, expandOps, rootOf } from "./board-core.js";
 import { S, api, fail, set, toast } from "./store.js";
 
 export const B = {
@@ -72,10 +72,13 @@ export function commit(ops, { key = null, label } = {}) {
   if (!B.board || !ops.length) return;
   let res;
   try {
+    // Components' copies follow in the same step.
+    ops = expandOps(B.board, ops);
     res = applyOps(B.board, ops);
   } catch (e) {
-    fail(e, "Couldn't change the board");
-    return;
+    if (e instanceof OpError) toast({ kind: "info", title: "That can't be done here", text: e.message, timeout: 7000 });
+    else fail(e, "Couldn't change the board");
+    return false;
   }
   const now = Date.now();
   const top = B.past[B.past.length - 1];
@@ -92,12 +95,13 @@ export function commit(ops, { key = null, label } = {}) {
   keepSelection();
   notify();
   send(ops);
+  return true;
 }
 
 /** Show a change without keeping it (a drag in progress): `commit` the final one from `base`. */
 export function preview(base, ops) {
   try {
-    B.board = applyOps(base, ops).board;
+    B.board = applyOps(base, expandOps(base, ops)).board;
     notify();
   } catch {
     // A move that isn't possible yet (into itself): keep showing the last good one.

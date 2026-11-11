@@ -823,7 +823,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     }
     case "/api/board/ops": {
       const b = await json<{ id: string; ops: Op[]; base?: number }>(req);
-      const changed = changeBoard(b.id, b.ops, "studio", b.base);
+      // The Studio sends steps with components' copies already worked out.
+      const changed = changeBoard(b.id, b.ops, "studio", b.base, { expand: false });
       if (!b.ops.every((o) => o.op === "working")) scheduleBoardThumb(b.id);
       return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale });
     }

@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import path from "node:path";
 import { libraryFolder } from "../studio/scenes.js";
 import { ensureDir, resolveUserPath } from "../util/files.js";
-import { applyOps, emptyBoard, newId, pxValue, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
+import { applyOps, emptyBoard, expandOps, newId, pxValue, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
 
 const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));
 export const boardFile = (id: string) => path.join(dir(), `${id}.json`);
@@ -155,13 +155,16 @@ export interface Changed {
   stale: boolean;
 }
 
-/** Apply steps to the board on disk, as one change. */
-export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?: number): Changed {
+/**
+ * Apply steps to the board on disk, as one change. Components' copies follow (`expand`), unless the
+ * steps already include that (the Studio works it out as it shows the change).
+ */
+export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?: number, { expand = true } = {}): Changed {
   if (!validBoardId(id)) throw new Error("Unknown board");
   return withLock(id, () => {
     const current = read(id);
     if (!current) throw new Error("That board doesn't exist (it may have been deleted).");
-    const { board, inverse } = applyOps(current, ops);
+    const { board, inverse } = applyOps(current, expand ? expandOps(current, ops) : ops);
     const onlyWorking = ops.every((o) => o.op === "working");
     const next: Board = onlyWorking ? board : { ...board, rev: current.rev + 1, updatedAt: new Date().toISOString(), by };
     write(next);
