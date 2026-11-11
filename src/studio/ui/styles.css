@@ -1854,3 +1854,5 @@ li.done .work-shot .scan { display: none; }
 .bd-canvas.moving .bd-world { will-change: transform; }
 .bd-app .bd-rows, .bd-app .bd-assets, .bd-app .panel-body, .bd-app .bd-pages { overscroll-behavior: contain; }
 .bd-canvas { overscroll-behavior: none; }
+.row.bd-paint { grid-template-columns: 84px 1fr 26px; gap: 6px; }
+.bd-pad { padding: 14px 16px; }

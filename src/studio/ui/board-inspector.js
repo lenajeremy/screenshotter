@@ -1,10 +1,10 @@
 // The board's right panel: a layer's CSS in plain words (layout, size, flex, fill, border, shadow,
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, parseStyle, pxValue, round, sizeWord, styleText, subtree } from "./board-core.js";
+import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, parseHtml, parseStyle, pxValue, round, serializeSvg, sizeWord, styleText, subtree, vectorName } from "./board-core.js";
 import { B, bset, commit, currentPage, node, select, useBoard } from "./board-state.js";
-import { fit, worldBox } from "./board-canvas.js";
-import { alignSelection, canAlign, detachCopy, distributeSelection, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, stopComponent } from "./board.js";
+import { fit, shiftSteps, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
+import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
 import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -34,6 +34,19 @@ export function Inspector() {
   if (!list.length) return b.tool === "frame" ? html`<${FramePresets} />` : html`<${BoardPanel} />`;
   const n = node(list[0]);
   const many = list.length > 1;
+  const parts = list.filter((id) => node(id).type === "vector").length;
+  if (parts) {
+    return html`<div class="panel-head bd-ihead">
+        <span class="ico"><${Icon} n=${layerIcon(n)} s=${15} /></span>
+        <h2>${many ? `${list.length} layers` : n.name}</h2>
+        ${!many && html`<span class="sub">${vectorName(n.tag)}</span>`}
+      </div>
+      <div class="panel-body bd-insp">
+        ${parts === list.length
+          ? html`<${PartSection} />${!many && n.tag === "text" && html`<${PartTextSection} key=${n.id} />`}<${SelectionColors} />${!many && html`<${AttrsSection} key=${n.id} /><${CssSection} key=${"css" + n.id} />`}`
+          : html`<p class="bd-note bd-pad">Parts of a vector are edited on their own: pick only them, or only the other layers.</p>`}
+      </div>`;
+  }
   const allText = list.every((id) => node(id).type === "text");
   const allFrames = list.every((id) => node(id).type === "frame");
   return html`<div class="panel-head bd-ihead">
@@ -57,9 +70,152 @@ export function Inspector() {
       ${n.type !== "svg" && html`<${ShadowSection} />`}
       <${FiltersSection} />
       <${SelectionColors} />
+      ${!many && n.type === "svg" && !n.svg && html`<${AttrsSection} key=${"a" + n.id} />`}
       ${!many && html`<${CssSection} key=${n.id} />`}
     </div>`;
 }
+
+// ---------------------------------------------------------------------------------------------
+// A vector's parts: where they are, their paint, their words, their SVG attributes
+
+const partIds = () => ids().filter((id) => node(id).type === "vector");
+/** Set SVG attributes on the selected parts (a CSS property of the same name, which would win, goes). */
+function setAttrs(patch, key, list = partIds()) {
+  if (!list.length) return;
+  commit(
+    list.map((id) => {
+      const n = node(id);
+      const style = {};
+      for (const k of Object.keys(patch)) if (n.style[camel(k)] !== undefined) style[camel(k)] = null;
+      return { op: "set", id, attrs: patch, ...(Object.keys(style).length ? { style } : {}) };
+    }),
+    { key: key ? `attrs:${key}:${list.join()}` : null, label: "Style" },
+  );
+}
+const attrOf = (n, k) => n.style[camel(k)] ?? n.attrs?.[k];
+/** The svg layer a part is drawn in. */
+const svgOf = (id) => {
+  let p = node(id)?.parent;
+  while (p && node(p)?.type === "vector") p = node(p).parent;
+  return p;
+};
+
+/** How a part is painted: a colour, none, a gradient or pattern of the svg's, or what it inherits. */
+function Paint({ label, prop }) {
+  const list = partIds();
+  const v = shared((m) => attrOf(m, prop) ?? "");
+  const kind = v === "mixed" ? "mixed" : !v ? "inherit" : v === "none" ? "none" : /^url\(/i.test(v) ? "ref" : "color";
+  return html`<div class="row bd-paint"><label>${label}</label>
+    <${ColorButton} value=${kind === "color" ? v : undefined} auto=${{ none: "None", ref: "Gradient", inherit: "Inherited", mixed: "Mixed" }[kind] ?? "Inherited"}
+      onChange=${(c) => setAttrs({ [prop]: c ?? null }, prop, list)} />
+    <button class="icon-btn sm ${kind === "none" ? "on" : ""}" title=${kind === "none" ? `Give it a ${label.toLowerCase()}` : `No ${label.toLowerCase()}`}
+      onClick=${() => setAttrs({ [prop]: kind === "none" ? (prop === "fill" ? "#000000" : "#000000") : "none" }, null, list)}><${Icon} n=${kind === "none" ? "plus" : "x"} s=${12} /></button>
+  </div>`;
+}
+
+const DASHES = [
+  { value: "", label: "Solid" },
+  { value: "6 4", label: "Dashed" },
+  { value: "1 4", label: "Dotted" },
+];
+
+function PartSection() {
+  const list = partIds();
+  const id = list[0];
+  const n = node(id);
+  const z = B.view.z;
+  const box = worldBox(id);
+  const root = svgOf(id);
+  const rb = root ? worldBox(root) : { x: 0, y: 0 };
+  const at = box && { x: round(box.x - rb.x, 1), y: round(box.y - rb.y, 1), w: round(box.width, 1), h: round(box.height, 1) };
+  const one = list.length === 1;
+  // Moving or sizing goes through the part's own coordinates, as dragging does.
+  const setBox = (k, v) => {
+    if (v === undefined || !at) return;
+    if (k === "x" || k === "y") return commit(shiftSteps(list, k === "x" ? v - at.x : 0, k === "y" ? v - at.y : 0), { key: `vpos:${k}:${list.join()}`, label: "Move" });
+    const sp = vectorSpace(id);
+    if (!sp) return;
+    const to = { ...sp.from, [k === "w" ? "width" : "height"]: Math.max(0.1, v) * z };
+    commit([vectorStep(n, sp, to)], { key: `vsize:${k}:${id}`, label: "Resize" });
+  };
+  const stroke = shared((m) => attrOf(m, "stroke") ?? "");
+  const hasStroke = stroke && stroke !== "none";
+  const width = shared((m) => attrOf(m, "stroke-width") ?? "1");
+  const dash = shared((m) => attrOf(m, "stroke-dasharray") ?? "");
+  const cap = shared((m) => attrOf(m, "stroke-linecap") ?? "butt");
+  const opacity = shared((m) => Number(attrOf(m, "opacity") ?? 1));
+  return html`<${Section} title="Layout">
+      ${canAlign() && html`<${AlignRow} many=${list.length > 2} />`}
+      ${one && at && html`<div class="grid2">
+        <${Num} label="X" value=${at.x} digits=${1} onChange=${(v) => setBox("x", v)} />
+        <${Num} label="Y" value=${at.y} digits=${1} onChange=${(v) => setBox("y", v)} />
+        <${Num} label="W" value=${at.w} digits=${1} min=${0} onChange=${(v) => setBox("w", v)} />
+        <${Num} label="H" value=${at.h} digits=${1} min=${0} onChange=${(v) => setBox("h", v)} />
+      </div>`}
+      ${n.tag === "rect" && one && html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${Number(n.attrs?.rx ?? 0)} min=${0} onChange=${(v) => setAttrs({ rx: v ? String(v) : null, ry: null }, "rx")} />`}
+    <//>
+    <${Section} title="Paint">
+      ${n.tag !== "line" && n.tag !== "polyline" && html`<${Paint} label="Fill" prop="fill" />`}
+      <${Paint} label="Stroke" prop="stroke" />
+      ${hasStroke && html`<div class="grid2">
+        <${Num} label="W" title="Stroke width" value=${width === "mixed" ? undefined : parseFloat(width)} placeholder="—" min=${0} digits=${2} step=${0.5} onChange=${(v) => setAttrs({ "stroke-width": v === undefined ? null : String(v) }, "sw")} />
+        <${Dropdown} value=${dash === "mixed" ? null : DASHES.some((d) => d.value === dash) ? dash : ""} placeholder="Mixed" options=${DASHES} onChange=${(v) => setAttrs({ "stroke-dasharray": v || null })} />
+      </div>
+      <${Seg} value=${cap === "mixed" ? null : cap} options=${[{ value: "butt", label: "Flat ends" }, { value: "round", label: "Round" }, { value: "square", label: "Square" }]} onChange=${(v) => setAttrs({ "stroke-linecap": v === "butt" ? null : v })} />`}
+      <${Num} label=${html`<${Icon} n="eye" s=${12} />`} title="Opacity" unit="%" value=${opacity === "mixed" ? undefined : Math.round(opacity * 100)} placeholder="—" min=${0} max=${100}
+        onChange=${(v) => v !== undefined && setAttrs({ opacity: v >= 100 ? null : String(round(v / 100, 3)) }, "op")} />
+    <//>`;
+}
+
+/** Words drawn in SVG: what they say and how. */
+function PartTextSection() {
+  const id = partIds()[0];
+  const n = node(id);
+  const words = parseHtml(n.text ?? "").children.map((c) => (typeof c === "string" ? c : "")).join("");
+  const styled = /</.test(n.text ?? "");
+  const [draft, setDraft] = useState(null);
+  const size = parseFloat(attrOf(n, "font-size") ?? "") || undefined;
+  return html`<${Section} title="Words">
+    <input class="input" value=${draft ?? (styled ? n.text.replace(/<[^>]+>/g, "") : words)} spellcheck=${false}
+      onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())}
+      onBlur=${() => {
+        if (draft === null) return;
+        const text = draft.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+        setDraft(null);
+        commit([{ op: "set", id, text, ...(n.name === vectorName("text") || n.name === words.slice(0, 40) ? { name: draft.slice(0, 40) || n.name } : {}) }], { label: "Words" });
+      }} />
+    <div class="grid2">
+      <${Num} label="Size" value=${size} placeholder="16" min=${1} onChange=${(v) => v && setAttrs({ "font-size": String(v) }, "fs")} />
+      <${Dropdown} value=${attrOf(n, "font-weight") ?? "400"} options=${WEIGHTS} onChange=${(v) => setAttrs({ "font-weight": v === "400" ? null : v })} />
+    </div>
+    <${Seg} value=${attrOf(n, "text-anchor") ?? "start"} options=${[{ value: "start", icon: "alignL", label: "", title: "From its x" }, { value: "middle", icon: "alignC", label: "", title: "Centred on its x" }, { value: "end", icon: "alignR", label: "", title: "Ending at its x" }]} onChange=${(v) => setAttrs({ "text-anchor": v === "start" ? null : v })} />
+    ${styled && html`<p class="bd-note">Typing here keeps the words but drops their own styling (tspans).</p>`}
+  <//>`;
+}
+
+/** Every SVG attribute of a part (or of a vector's <svg>), to edit what the panel has no control for. */
+function AttrsSection() {
+  const id = ids()[0];
+  const n = node(id);
+  const text = cleanAttrs(n.attrs).map(([k, v]) => `${k}="${v.replace(/"/g, "&quot;")}"`).join("\n");
+  const [draft, setDraft] = useState(null);
+  useEffect(() => setDraft(null), [id]);
+  return html`<${Section} title="SVG attributes" collapsible open=${false} id="board-attrs">
+    <textarea class="textarea bd-mono bd-css" rows=${Math.min(14, Math.max(4, text.split("\n").length + 1))} spellcheck=${false} value=${draft ?? text}
+      onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => e.stopPropagation()}
+      onBlur=${() => {
+        if (draft === null || draft === text) return setDraft(null);
+        const el = parseHtml(`<x ${draft.replace(/\n/g, " ")}></x>`).children.find((c) => typeof c !== "string");
+        const next = Object.fromEntries(cleanAttrs(el?.attrs ?? {}));
+        const patch = Object.fromEntries([...Object.keys(n.attrs ?? {}).map((k) => [k, null]), ...Object.entries(next)]);
+        setDraft(null);
+        commit([{ op: "set", id, attrs: patch }], { label: "Attributes" });
+      }} />
+    <p class="bd-note">As written in SVG: <code>name="value"</code>, one a line.</p>
+  <//>`;
+}
+void attrText;
+void serializeSvg;
 
 // ---------------------------------------------------------------------------------------------
 // Components: what a component or a copy is, and what to do with it
@@ -724,6 +880,8 @@ function SelectionColors() {
       const n = node(x);
       for (const [k, v] of Object.entries(n.style)) for (const m of v.matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k }]);
       for (const m of (n.text ?? "").matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: "text" }]);
+      for (const [k, v] of Object.entries(n.attrs ?? {})) for (const m of v.matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: `attrs.${k}` }]);
+      for (const m of (n.defs ?? "").matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: "defs" }]);
       if (n.shape) for (const k of ["fill", "stroke", "labelColor"]) if (typeof n.shape[k] === "string" && COLOR_RE.test(n.shape[k])) (COLOR_RE.lastIndex = 0), found.set(n.shape[k].toLowerCase(), [...(found.get(n.shape[k].toLowerCase()) ?? []), { id: x, k: `shape.${k}` }]);
       COLOR_RE.lastIndex = 0;
     }
@@ -735,6 +893,8 @@ function SelectionColors() {
       const op = ops.get(id) ?? { op: "set", id };
       const swap = (v) => v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), to);
       if (k === "text") op.text = swap(op.text ?? n.text);
+      else if (k === "defs") op.defs = swap(op.defs ?? n.defs);
+      else if (k.startsWith("attrs.")) (op.attrs ??= {})[k.slice(6)] = swap(op.attrs?.[k.slice(6)] ?? n.attrs[k.slice(6)]);
       else if (k.startsWith("shape.")) op.shape = { ...(op.shape ?? n.shape), [k.slice(6)]: to };
       else (op.style ??= {})[k] = swap(op.style?.[k] ?? n.style[k]);
       ops.set(id, op);
@@ -785,11 +945,17 @@ function ShapeSection() {
 function VectorSection() {
   const list = ids();
   const n = node(list[0]);
-  const tintable = /currentColor/i.test(n.svg ?? "");
+  const inParts = !n.svg;
+  const tintable = /currentColor/i.test(n.svg ?? "") || subtree(B.board, n.id).some((x) => /currentColor/i.test(JSON.stringify(node(x).attrs ?? {}) + (node(x).defs ?? "")));
+  const count = subtree(B.board, n.id).length - 1;
   return html`<${Section} title="Vector">
     ${tintable
       ? html`<div class="row"><label>Colour</label><${ColorButton} value=${n.style.color} auto="Inherited" onChange=${(c) => setStyle({ color: c ?? null }, "vc")} /></div>`
-      : html`<p class="bd-note">Drawn in its own colours. Filters below can still shift them.</p>`}
+      : html`<p class="bd-note">${inParts ? `In ${count} part${count === 1 ? "" : "s"}: pick one on the canvas (double-click, or ⌘-click) to change it.` : "Drawn in its own colours, as one piece. Filters below can still shift them."}</p>`}
+    ${list.length === 1 &&
+    (inParts
+      ? html`<button class="btn sm ghost" title="Make it one layer again (its parts become SVG markup)" onClick=${() => flattenVector(n.id)}>Make one piece</button>`
+      : html`<button class="btn sm ghost" title="A layer for each of its shapes, paths and groups" onClick=${() => splitVector(n.id)}>Split into layers</button>`)}
   <//>`;
 }
 

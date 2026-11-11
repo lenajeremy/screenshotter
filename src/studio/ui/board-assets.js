@@ -55,7 +55,8 @@ async function layersFor(a) {
     // An illustration in one ink takes the layer's colour, so it can be any colour.
     const mono = a.kind === "art" && !(S.opts?.colouredArt ?? []).includes(a.name);
     if (mono) markup = markup.replace(/#1d1d1f/gi, "currentColor");
-    const got = htmlToNodes(markup);
+    // One piece (it can be split into its parts later).
+    const got = htmlToNodes(markup, { wholeSvg: true });
     const n = got.nodes[got.roots[0]];
     const w0 = pxValue(n.style.width) ?? 100;
     const h0 = pxValue(n.style.height) ?? 100;

@@ -2,7 +2,7 @@
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { ancestors, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord } from "./board-core.js";
+import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord, vectorFit, vectorTag, vectorTransform } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { fileUrl } from "./store.js";
@@ -121,9 +121,10 @@ function useFonts(board, page) {
   });
 }
 
-function svgMarkup(svg) {
-  return (svg ?? "").replace(/^<svg\b/i, '<svg style="display:block;width:100%;height:100%"');
+function svgMarkup(svg, overflow) {
+  return (svg ?? "").replace(/^<svg\b/i, `<svg style="display:block;width:100%;height:100%${overflow ? `;overflow:${overflow}` : ""}"`);
 }
+const svgProps = (attrs) => Object.fromEntries(cleanAttrs(attrs));
 
 /**
  * One layer, drawn as the HTML it is. A layer redraws only when it (or something inside it) changed:
@@ -146,8 +147,22 @@ class Layer extends Component {
       return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></div>`;
     }
     if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
-    if (n.type === "svg") return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg) }}></div>`;
     const nodes = B.board.nodes;
+    if (n.type === "svg") {
+      if (n.svg) return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg, n.style.overflow) }}></div>`;
+      // A vector in parts: each part is drawn (and picked) as its own element.
+      const inner = { display: "block", width: "100%", height: "100%", ...(n.style.overflow ? { overflow: n.style.overflow } : {}) };
+      return html`<div ...${attrs}><svg ...${svgProps(n.attrs)} style=${inner}>
+        ${n.defs && html`<defs dangerouslySetInnerHTML=${{ __html: n.defs }}></defs>`}
+        ${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}
+      </svg></div>`;
+    }
+    if (n.type === "vector") {
+      const Tag = vectorTag(n.tag);
+      const props = { ...svgProps(n.attrs), "data-bid": id, style };
+      if (Tag !== "g") return html`<${Tag} ...${props} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></${Tag}>`;
+      return html`<g ...${props}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</g>`;
+    }
     return html`<div ...${attrs}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</div>`;
   }
 }
@@ -311,6 +326,7 @@ const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 function sizeLabel(id, box) {
   const z = B.view.z;
+  if (node(id)?.type === "vector") return `${round(box.width / z, 1)} × ${round(box.height / z, 1)}`;
   const word = (axis, px) => {
     const w = sizeWord(B.board, id, axis);
     const v = Math.round(px / z);
@@ -572,10 +588,96 @@ export function placeOf(id) {
 
 const SNAP = 6;
 
+// ---------------------------------------------------------------------------------------------
+// A vector's parts: moved and resized in their own coordinates (see vectorFit in the core).
+
+const isVector = (id) => node(id)?.type === "vector";
+
+/**
+ * How a vector part's coordinates sit on screen, measured once at the start of a drag: boxes in
+ * client px turned into its own coordinates (`local`) or its parent's (`outer`, where its transform is written).
+ */
+export function vectorSpace(id) {
+  const el = elOf(id);
+  const svg = el?.ownerSVGElement;
+  const ctm = el?.getCTM?.();
+  if (!el || !svg || !ctm) return null;
+  const sr = svg.getBoundingClientRect();
+  const k = sr.width / (svg.clientWidth || sr.width / B.view.z || 1);
+  const M = (m) => new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]);
+  const toLocal = M(ctm).inverse();
+  const own = el.transform?.baseVal?.consolidate?.()?.matrix;
+  const toOuter = own ? M(ctm).multiply(M(own).inverse()).inverse() : toLocal;
+  const map = (m, b) => {
+    const pts = [
+      [b.x, b.y],
+      [b.x + b.width, b.y],
+      [b.x, b.y + b.height],
+      [b.x + b.width, b.y + b.height],
+    ].map(([x, y]) => new DOMPoint((x - sr.left) / k, (y - sr.top) / k).matrixTransform(m));
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+  };
+  const r = el.getBoundingClientRect();
+  return { from: { x: r.left, y: r.top, width: r.width, height: r.height }, local: (b) => map(toLocal, b), outer: (b) => map(toOuter, b) };
+}
+
+/** The step that takes a vector part from its box on screen (client px) to another. */
+export function vectorStep(n, space, to) {
+  const fit = vectorFit(n, space.local(space.from), space.local(to));
+  if (fit) return { op: "set", id: n.id, attrs: fit.attrs, ...(fit.tag ? { tag: fit.tag } : {}) };
+  return { op: "set", id: n.id, attrs: { transform: vectorTransform(n.attrs?.transform, space.outer(space.from), space.outer(to)) } };
+}
+
+/** Steps that move layers by dx, dy board units: vector parts by their coordinates, the rest by left and top. */
+export function shiftSteps(ids, dx, dy) {
+  const z = B.view.z;
+  return ids
+    .map((id) => {
+      const n = node(id);
+      if (!n) return null;
+      if (n.type === "vector") {
+        const sp = vectorSpace(id);
+        return sp && vectorStep(n, sp, { ...sp.from, x: sp.from.x + dx * z, y: sp.from.y + dy * z });
+      }
+      const at = placeOf(id);
+      return { op: "set", id, style: { left: `${Math.round(at.left + dx)}px`, top: `${Math.round(at.top + dy)}px`, ...(n.parent && n.style.position !== "absolute" && n.style.position !== "fixed" ? { position: "absolute" } : {}) } };
+    })
+    .filter(Boolean);
+}
+
+/** Drag vector parts (and anything else picked with them) by the pointer. */
+function moveVectors(e, ids) {
+  const base = B.board;
+  const z = B.view.z;
+  const spaces = Object.fromEntries(ids.filter(isVector).map((id) => [id, vectorSpace(id)]).filter(([, sp]) => sp));
+  const starts = Object.fromEntries(ids.filter((id) => !isVector(id) && !inFlow(base, id)).map((id) => [id, placeOf(id)]));
+  let ops = [];
+  drag(e, {
+    kind: "move",
+    move: (ev) => {
+      const dx = ev.clientX - e.clientX;
+      const dy = ev.clientY - e.clientY;
+      ops = [
+        ...Object.entries(spaces).map(([id, sp]) => vectorStep(base.nodes[id], sp, { ...sp.from, x: sp.from.x + dx, y: sp.from.y + dy })),
+        ...Object.entries(starts).map(([id, at]) => ({ op: "set", id, style: { left: `${Math.round(at.left + dx / z)}px`, top: `${Math.round(at.top + dy / z)}px` } })),
+      ];
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      if (!moved || !ops.length) return notify();
+      B.board = base;
+      commit(ops, { label: "Move" });
+    },
+  });
+}
+
 function moveLayers(e, ids) {
   if (!ids.length) return;
   const base = B.board;
   const z = B.view.z;
+  if (ids.some(isVector)) return moveVectors(e, ids);
   // One layer placed by its frame's flex layout is moved among its siblings instead.
   if (ids.length === 1 && inFlow(base, ids[0])) return reorder(e, ids[0]);
   const free = ids.filter((id) => !inFlow(base, id));
@@ -708,8 +810,43 @@ function reorder(e, id) {
   });
 }
 
+/** A box on screen (client px) after dragging handle `h` by dx, dy, as drag-resizing makes it. */
+function resized(b, h, dx, dy, keep) {
+  let w = b.width + (h.includes("e") ? dx : h.includes("w") ? -dx : 0);
+  let hh = b.height + (h.includes("s") ? dy : h.includes("n") ? -dy : 0);
+  if (keep) {
+    const k = Math.abs(w / Math.max(1e-6, b.width) - 1) > Math.abs(hh / Math.max(1e-6, b.height) - 1) ? w / Math.max(1e-6, b.width) : hh / Math.max(1e-6, b.height);
+    w = b.width * k;
+    hh = b.height * k;
+  }
+  w = Math.max(1, w);
+  hh = Math.max(1, hh);
+  return { x: h.includes("w") ? b.x + b.width - w : b.x, y: h.includes("n") ? b.y + b.height - hh : b.y, width: w, height: hh };
+}
+
+function resizeVector(e, id, h) {
+  const base = B.board;
+  const sp = vectorSpace(id);
+  if (!sp) return;
+  let ops = [];
+  drag(e, {
+    threshold: 0,
+    kind: "resize",
+    move: (ev) => {
+      ops = [vectorStep(base.nodes[id], sp, resized(sp.from, h, ev.clientX - e.clientX, ev.clientY - e.clientY, ev.shiftKey && h.length === 2))];
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      if (!moved || !ops.length) return;
+      B.board = base;
+      commit(ops, { label: "Resize" });
+    },
+  });
+}
+
 function resize(e, id, h) {
   e.stopPropagation();
+  if (isVector(id)) return resizeVector(e, id, h);
   const base = B.board;
   const n = node(id);
   const box0 = worldBox(id);
@@ -769,7 +906,8 @@ function resizeMany(e, ids, h) {
   const list = Object.keys(boxes);
   if (!list.length) return;
   const g = unionOf(Object.values(boxes));
-  const starts = Object.fromEntries(list.filter((id) => !inFlow(base, id)).map((id) => [id, placeOf(id)]));
+  const starts = Object.fromEntries(list.filter((id) => !inFlow(base, id) && !isVector(id)).map((id) => [id, placeOf(id)]));
+  const spaces = Object.fromEntries(list.filter(isVector).map((id) => [id, vectorSpace(id)]).filter(([, sp]) => sp));
   const z = B.view.z;
   let ops = [];
   drag(e, {
@@ -792,6 +930,15 @@ function resizeMany(e, ids, h) {
       ops = list.map((id) => {
         const b = boxes[id];
         const n = node(id);
+        if (n.type === "vector") {
+          const sp = spaces[id];
+          if (!sp) return null;
+          // Its box in the group's new box, on screen.
+          const nb = { x: gx + (b.x - g.x) * sx, y: gy + (b.y - g.y) * sy, width: b.width * sx, height: b.height * sy };
+          const c = canvasEl.current.getBoundingClientRect();
+          const { x: vx, y: vy } = B.view;
+          return vectorStep(base.nodes[id], sp, { x: c.left + vx + nb.x * z, y: c.top + vy + nb.y * z, width: nb.width * z, height: nb.height * z });
+        }
         const style = {};
         if (sx !== 1) style.width = `${Math.max(1, Math.round(b.width * sx))}px`;
         if (sy !== 1 && n.type !== "text") style.height = `${Math.max(1, Math.round(b.height * sy))}px`;
@@ -800,7 +947,7 @@ function resizeMany(e, ids, h) {
           style.top = `${Math.round(starts[id].top + gy + (b.y - g.y) * sy - b.y)}px`;
         }
         return { op: "set", id, style };
-      });
+      }).filter(Boolean);
       preview(base, ops);
     },
     up: (ev, moved) => {

@@ -7,7 +7,7 @@
  * through `applyOps`, which also returns the steps that undo it.
  */
 
-export type NodeType = "frame" | "text" | "image" | "svg";
+export type NodeType = "frame" | "text" | "image" | "svg" | "vector";
 /** CSS properties in camelCase ("backgroundColor", "--brand" for custom properties), values as CSS. */
 export type Style = Record<string, string>;
 
@@ -23,8 +23,17 @@ export interface BoardNode {
   text?: string;
   /** An image layer's picture: a file path, a URL or a data: URI. */
   src?: string;
-  /** A vector layer's <svg> markup. */
+  /**
+   * A vector drawn as one piece: its <svg> markup. Without it, an svg layer's parts (its shapes,
+   * paths, groups and words) are vector layers of their own, inside it.
+   */
   svg?: string;
+  /** A part of a vector (inside an svg layer): its SVG element (rect, circle, path, g, text…). */
+  tag?: string;
+  /** SVG attributes: on an svg layer, its <svg>'s (viewBox, fill…); on a part, its element's (x, d, fill…). */
+  attrs?: Record<string, string>;
+  /** An svg layer's gradients, patterns, clip paths, masks, filters and symbols, as SVG markup. */
+  defs?: string;
   /** A vector layer drawn from one of Screenshotter's shapes (arrow, star, badge…): its settings, which `svg` is drawn from. */
   shape?: Record<string, unknown>;
   hidden?: boolean;
@@ -332,6 +341,341 @@ function inlineOf(n: HNode): string {
   return `<${tag}${href}${style ? ` style="${escAttr(style)}"` : ""}>${inner}</${tag}>`;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Vectors: an <svg> read into layers of its own (groups, shapes, paths, words), as Paper does, so
+// each part can be picked, moved, resized and restyled. Gradients, clip paths, masks, filters and
+// symbols stay with the svg layer as its defs.
+
+/** The SVG elements a vector's parts can be. */
+export const VECTOR_TAGS = new Set(["g", "rect", "circle", "ellipse", "line", "polyline", "polygon", "path", "text", "use", "image", "svg"]);
+const SVG_DRAWN = new Set([...VECTOR_TAGS, "a", "switch"]);
+const SVG_DEFS = new Set(["defs", "lineargradient", "radialgradient", "pattern", "clippath", "mask", "filter", "marker", "symbol", "style"]);
+const SVG_SKIP = new Set(["title", "desc", "metadata"]);
+/** Attributes SVG spells in camelCase (setAttribute is case-sensitive), and the old xlink:href. */
+const SVG_CASE: Record<string, string> = { viewbox: "viewBox", preserveaspectratio: "preserveAspectRatio", pathlength: "pathLength", textlength: "textLength", lengthadjust: "lengthAdjust", "xlink:href": "href" };
+const VECTOR_NAMES: Record<string, string> = { g: "Group", a: "Group", switch: "Group", rect: "Rectangle", circle: "Circle", ellipse: "Ellipse", line: "Line", polyline: "Polyline", polygon: "Polygon", path: "Path", use: "Symbol", image: "Image", text: "Text", svg: "Vector" };
+/** An SVG with more parts than this stays one layer (a detailed illustration, say). */
+export const MAX_VECTOR_PARTS = 800;
+
+export const vectorTag = (t: string | undefined) => (t && VECTOR_TAGS.has(t) ? t : "g");
+export const vectorName = (tag: string | undefined) => VECTOR_NAMES[tag ?? ""] ?? "Vector";
+
+const ATTR_NAME = /^[a-zA-Z_][-a-zA-Z0-9_:.]*$/;
+/** An element's attributes that are safe to draw (no handlers, no script URLs, no style: that's CSS). */
+export function cleanAttrs(attrs: Record<string, string> | undefined): [string, string][] {
+  return Object.entries(attrs ?? {}).filter(([k, v]) => ATTR_NAME.test(k) && k.toLowerCase() !== "style" && typeof v === "string" && safeAttr(k, v));
+}
+export const attrText = (attrs: Record<string, string> | undefined) => cleanAttrs(attrs).map(([k, v]) => ` ${k}="${escAttr(v)}"`).join("");
+
+function svgAttrs(attrs: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(attrs)) {
+    const lk = k.toLowerCase();
+    if (lk === "style" || lk === "class" || lk.startsWith("data-") || lk === "xmlns" || lk.startsWith("xmlns:") || !safeAttr(k, v)) continue;
+    out[SVG_CASE[lk] ?? k] = v;
+  }
+  return out;
+}
+
+/** How many parts an <svg> would make. */
+export function svgPartCount(el: HEl): number {
+  let n = 0;
+  for (const c of el.children) {
+    if (typeof c === "string" || SVG_DEFS.has(c.tag) || UNSAFE_SVG.has(c.tag)) continue;
+    if (SVG_DRAWN.has(c.tag)) n++;
+    if (c.tag !== "text" && c.tag !== "svg") n += svgPartCount(c);
+  }
+  return n;
+}
+
+/** An <svg> as an svg layer (with `style`, its CSS) and a vector layer for each of its parts. */
+export function svgNodes(el: HEl, parent: string | null, style: Style, name: string): { id: string; nodes: Record<string, BoardNode> } {
+  const nodes: Record<string, BoardNode> = {};
+  const defs: string[] = [];
+  const id = newId();
+  const attrs = svgAttrs(el.attrs);
+  delete attrs.width;
+  delete attrs.height;
+  delete attrs.id;
+  // Without a viewBox the drawing wouldn't scale with the layer: its size as written is its box.
+  if (!attrs.viewBox) {
+    const w = pxValue(el.attrs.width);
+    const h = pxValue(el.attrs.height);
+    if (w && h) attrs.viewBox = `0 0 ${w} ${h}`;
+  }
+  nodes[id] = { id, type: "svg", name, parent, style, attrs, children: [] };
+  const walk = (e: HEl, p: string): string[] => {
+    const kids: string[] = [];
+    for (const c of e.children) {
+      if (typeof c === "string" || UNSAFE_SVG.has(c.tag) || SVG_SKIP.has(c.tag)) continue;
+      if (SVG_DEFS.has(c.tag)) {
+        defs.push(c.tag === "defs" ? c.children.map(serializeSvg).join("") : serializeSvg(c));
+        continue;
+      }
+      if (!SVG_DRAWN.has(c.tag)) continue;
+      const tag = c.tag === "a" || c.tag === "switch" ? "g" : c.tag;
+      const a = svgAttrs(c.attrs);
+      if (c.tag === "a") delete a.href;
+      const vid = newId();
+      const leafInside = tag === "text" || tag === "svg";
+      const inner = leafInside ? c.children.map(serializeSvg).join("") : "";
+      const label = c.attrs["data-name"] || (tag === "text" ? plainText(inner).slice(0, 40) : "") || c.attrs.id || vectorName(tag);
+      nodes[vid] = { id: vid, type: "vector", tag, name: label.slice(0, 60), parent: p, style: parseStyle(c.attrs.style), attrs: a, ...(leafInside ? { text: inner } : {}), ...(tag === "g" ? { children: [] } : {}) };
+      if (tag === "g") nodes[vid].children = walk(c, vid);
+      kids.push(vid);
+    }
+    return kids;
+  };
+  nodes[id].children = walk(el, id);
+  if (defs.length) nodes[id].defs = defs.join("");
+  return { id, nodes };
+}
+
+/** An svg layer's <svg> as one piece of markup (what flattening it keeps). */
+export function svgMarkup(board: Board, id: string): string {
+  const n = board.nodes[id];
+  if (!n) return "";
+  if (n.svg) return n.svg;
+  return `<svg xmlns="http://www.w3.org/2000/svg"${attrText(n.attrs)}>${n.defs ? `<defs>${n.defs}</defs>` : ""}${(n.children ?? []).map((c) => nodeHtml(board, c)).join("")}</svg>`;
+}
+
+/** Steps that turn a vector drawn as one piece into a layer for each of its parts. */
+export function splitSvgOps(board: Board, id: string): Op[] {
+  const n = board.nodes[id];
+  if (!n || n.type !== "svg" || !n.svg) throw new OpError("Only a vector drawn as one piece can be split into its parts.");
+  const el = parseHtml(n.svg).children.find((c): c is HEl => typeof c !== "string" && c.tag === "svg");
+  if (!el) throw new OpError("There's no <svg> in that vector.");
+  const t = svgNodes(el, id, {}, n.name);
+  const root = t.nodes[t.id];
+  const parts = { ...t.nodes };
+  delete parts[t.id];
+  const kids = root.children ?? [];
+  return [
+    { op: "set", id, svg: null, shape: null, attrs: root.attrs ?? {}, defs: root.defs ?? null },
+    ...(kids.length ? [{ op: "add" as const, nodes: parts, ids: kids, parent: id }] : []),
+  ];
+}
+
+/** Steps that make a vector's parts one piece again (one layer, its SVG markup). */
+export function flattenSvgOps(board: Board, id: string): Op[] {
+  const n = board.nodes[id];
+  if (!n || n.type !== "svg" || n.svg) throw new OpError("Only a vector in parts can be made one piece.");
+  const markup = svgMarkup(board, id);
+  return [
+    ...(n.children?.length ? [{ op: "delete" as const, ids: n.children.slice() }] : []),
+    { op: "set", id, svg: markup, attrs: Object.fromEntries(Object.keys(n.attrs ?? {}).map((k) => [k, null])), defs: null },
+  ];
+}
+
+/** Whether a layer can sit in `parent` (null: on the page): a vector's parts only in a vector (or a group in one), everything else only in frames. */
+export function canHold(parent: BoardNode | null | undefined, child: BoardNode): boolean {
+  if (child.type === "vector") return Boolean(parent && ((parent.type === "svg" && !parent.svg) || (parent.type === "vector" && parent.tag === "g")));
+  return !parent || parent.type === "frame";
+}
+
+// Moving and resizing a vector's parts: their own coordinates change (x and y, a path's points…),
+// so the drawing stays crisp and strokes keep their width. What can't be (a group, words, units
+// like %) gets a transform instead.
+
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const fmt = (n: number) => String(round(n, 3) + 0);
+
+interface PathSeg {
+  c: string;
+  a: number[];
+}
+const PATH_ARGS: Record<string, number> = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 };
+
+/** Path data as commands and their numbers (arc flags may be written run together: "a1 1 0 011 1"). */
+export function parsePath(d: string): PathSeg[] {
+  const out: PathSeg[] = [];
+  let i = 0;
+  const n = d.length;
+  let cmd = "";
+  const ws = () => {
+    while (i < n && /[\s,]/.test(d[i])) i++;
+  };
+  const num = (): number | null => {
+    ws();
+    const m = /^[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?/.exec(d.slice(i, i + 40));
+    if (!m) return null;
+    i += m[0].length;
+    return Number(m[0]);
+  };
+  const flag = (): number | null => {
+    ws();
+    if (d[i] === "0" || d[i] === "1") return Number(d[i++]);
+    return null;
+  };
+  while (i < n) {
+    ws();
+    if (i >= n) break;
+    if (/[a-zA-Z]/.test(d[i])) {
+      cmd = d[i++];
+      if (cmd.toLowerCase() === "z") {
+        out.push({ c: cmd, a: [] });
+        continue;
+      }
+    } else if (!cmd || cmd.toLowerCase() === "z") break;
+    const lc = cmd.toLowerCase();
+    const k = PATH_ARGS[lc];
+    if (k === undefined) break;
+    const args: number[] = [];
+    for (let j = 0; j < k; j++) {
+      const v = lc === "a" && (j === 3 || j === 4) ? flag() : num();
+      if (v === null) return out;
+      args.push(v);
+    }
+    out.push({ c: cmd, a: args });
+    // More numbers after a move are lines.
+    if (lc === "m") cmd = cmd === "m" ? "l" : "L";
+  }
+  return out;
+}
+
+/** Path data with every point moved by `map` (absolute points) and scaled by sx, sy (relative ones). */
+export function mapPath(d: string, map: (x: number, y: number) => [number, number], sx: number, sy: number): string {
+  return parsePath(d)
+    .map((s, idx) => {
+      const lc = s.c.toLowerCase();
+      // A path's first move is absolute even when written in lower case.
+      const rel = s.c === lc && !(idx === 0 && lc === "m");
+      const P = (x: number, y: number): [number, number] => (rel ? [x * sx, y * sy] : map(x, y));
+      const a = s.a;
+      if (lc === "z") return s.c;
+      if (lc === "h") return s.c + fmt(rel ? a[0] * sx : map(a[0], 0)[0]);
+      if (lc === "v") return s.c + fmt(rel ? a[0] * sy : map(0, a[0])[1]);
+      if (lc === "a") {
+        const [x, y] = P(a[5], a[6]);
+        return `${s.c}${fmt(Math.abs(a[0] * sx))} ${fmt(Math.abs(a[1] * sy))} ${fmt(a[2])} ${a[3]} ${sx * sy < 0 ? 1 - a[4] : a[4]} ${fmt(x)} ${fmt(y)}`;
+      }
+      const pts: number[] = [];
+      for (let j = 0; j + 1 < a.length; j += 2) pts.push(...P(a[j], a[j + 1]));
+      return s.c + pts.map(fmt).join(" ");
+    })
+    .join("");
+}
+
+const near1 = (k: number) => (Math.abs(k - 1) < 1e-6 ? 1 : k);
+
+/**
+ * A vector part's attributes after its box goes from `from` to `to` (both in its own coordinates):
+ * moved, or stretched to the new size. Null when its own coordinates can't say it (a group, words
+ * being resized, sizes in % or em): give it a transform with `vectorTransform` instead.
+ */
+export function vectorFit(n: BoardNode, from: Box, to: Box): { attrs: Record<string, string | null>; tag?: string } | null {
+  const sx = near1(from.width > 1e-9 ? to.width / from.width : 1);
+  const sy = near1(from.height > 1e-9 ? to.height / from.height : 1);
+  const X = (x: number) => to.x + (x - from.x) * sx;
+  const Y = (y: number) => to.y + (y - from.y) * sy;
+  const a = n.attrs ?? {};
+  // A number as written (px or bare), the default when it isn't written, undefined if it has units.
+  const v = (k: string, d?: number): number | undefined => {
+    const raw = a[k];
+    if (raw === undefined) return d;
+    const m = /^\s*(-?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?)(px)?\s*$/i.exec(raw);
+    return m ? Number(m[1]) : undefined;
+  };
+  // Several numbers, or null if any has units.
+  const many = (...ks: [string, number | undefined][]): number[] | null => {
+    const out: number[] = [];
+    for (const [k, d] of ks) {
+      const x = v(k, d);
+      if (x === undefined) return null;
+      out.push(x);
+    }
+    return out;
+  };
+  const scaled = sx !== 1 || sy !== 1;
+  switch (n.tag) {
+    case "rect":
+    case "image":
+    case "use":
+    case "svg": {
+      const xy = many(["x", 0], ["y", 0]);
+      const w = v("width");
+      const h = v("height");
+      if (!xy) return null;
+      const [x, y] = xy;
+      if (scaled && (w === undefined || h === undefined)) return null;
+      return { attrs: { x: fmt(X(x)), y: fmt(Y(y)), ...(w !== undefined ? { width: fmt(Math.max(0, w * sx)) } : {}), ...(h !== undefined ? { height: fmt(Math.max(0, h * sy)) } : {}) } };
+    }
+    case "circle": {
+      const c = many(["cx", 0], ["cy", 0], ["r", undefined]);
+      if (!c) return null;
+      const [cx, cy, r] = c;
+      if (Math.abs(sx - sy) < 0.01) return { attrs: { cx: fmt(X(cx)), cy: fmt(Y(cy)), r: fmt(r * (sx + sy) / 2) } };
+      return { tag: "ellipse", attrs: { cx: fmt(X(cx)), cy: fmt(Y(cy)), rx: fmt(r * sx), ry: fmt(r * sy), r: null } };
+    }
+    case "ellipse": {
+      const c = many(["cx", 0], ["cy", 0], ["rx", undefined], ["ry", undefined]);
+      if (!c) return null;
+      const [cx, cy, rx, ry] = c;
+      return { attrs: { cx: fmt(X(cx)), cy: fmt(Y(cy)), rx: fmt(rx * sx), ry: fmt(ry * sy) } };
+    }
+    case "line": {
+      const p = many(["x1", 0], ["y1", 0], ["x2", 0], ["y2", 0]);
+      if (!p) return null;
+      return { attrs: { x1: fmt(X(p[0])), y1: fmt(Y(p[1])), x2: fmt(X(p[2])), y2: fmt(Y(p[3])) } };
+    }
+    case "polyline":
+    case "polygon": {
+      const nums = (a.points ?? "").match(/[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?/gi)?.map(Number) ?? [];
+      if (nums.length < 2) return null;
+      const out: string[] = [];
+      for (let i = 0; i + 1 < nums.length; i += 2) out.push(`${fmt(X(nums[i]))},${fmt(Y(nums[i + 1]))}`);
+      return { attrs: { points: out.join(" ") } };
+    }
+    case "path":
+      return a.d ? { attrs: { d: mapPath(a.d, (x, y) => [X(x), Y(y)], sx, sy) } } : null;
+    case "text": {
+      // Words move by their x and y; resizing them (or words placed letter by letter) takes a transform.
+      if (scaled || /\b(x|y|dx|dy)=/.test(n.text ?? "")) return null;
+      const xy = many(["x", 0], ["y", 0]);
+      if (!xy) return null;
+      return { attrs: { x: fmt(X(xy[0])), y: fmt(Y(xy[1])) } };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * A transform that takes a part's box from `from` to `to` (in the coordinates its transform is
+ * written in, its parent's), put before the one it has. A move or resize just before is folded in.
+ */
+export function vectorTransform(old: string | undefined, from: Box, to: Box): string {
+  let sx = near1(from.width > 1e-9 ? to.width / from.width : 1);
+  let sy = near1(from.height > 1e-9 ? to.height / from.height : 1);
+  let tx = to.x - from.x * sx;
+  let ty = to.y - from.y * sy;
+  let rest = (old ?? "").trim();
+  const N = "(-?(?:\\d*\\.\\d+|\\d+\\.?\\d*)(?:e[-+]?\\d+)?)";
+  const lead = new RegExp(`^translate\\(\\s*${N}(?:[\\s,]+${N})?\\s*\\)(?:\\s*scale\\(\\s*${N}(?:[\\s,]+${N})?\\s*\\))?`, "i").exec(rest);
+  if (lead) {
+    // T(t)·S(s) after T(a)·S(c) is T(t + s·a)·S(s·c).
+    const ax = Number(lead[1]);
+    const ay = Number(lead[2] ?? 0);
+    const cx = lead[3] !== undefined ? Number(lead[3]) : 1;
+    const cy = lead[3] !== undefined ? Number(lead[4] ?? lead[3]) : 1;
+    tx += sx * ax;
+    ty += sy * ay;
+    sx *= cx;
+    sy *= cy;
+    rest = rest.slice(lead[0].length).trim();
+  }
+  sx = near1(sx);
+  sy = near1(sy);
+  const t = `translate(${fmt(tx)} ${fmt(ty)})${sx !== 1 || sy !== 1 ? ` scale(${fmt(sx)} ${fmt(sy)})` : ""}`;
+  return rest ? `${t} ${rest}` : t;
+}
+
 /** Plain words of some HTML, for names and searches. */
 export function plainText(html: string | undefined): string {
   return decodeEntities((html ?? "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
@@ -398,7 +742,7 @@ function nameFor(el: HEl, fallback: string, words?: string): string {
  * image, <svg> a vector; everything else a frame. A frame that flowed as a block becomes a flex
  * column, so it can be edited like the rest (and looks the same).
  */
-export function htmlToNodes(html: string): Imported {
+export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Imported {
   const doc = parseHtml(html);
   const nodes: Record<string, BoardNode> = {};
   const warnings: string[] = [];
@@ -446,10 +790,18 @@ export function htmlToNodes(html: string): Imported {
       const h = pxValue(el.attrs.height) ?? (view.length === 4 && view[3] > 0 ? view[3] : 24);
       if (!style.width) style.width = `${w}px`;
       if (!style.height) style.height = `${h}px`;
+      const name = nameFor(el, w <= 48 && h <= 48 ? "Icon" : "Vector");
+      // Its parts become layers of their own, unless it has none to speak of (or far too many).
+      const parts = svgPartCount(el);
+      if (!opts.wholeSvg && parts > 0 && parts <= MAX_VECTOR_PARTS) {
+        const t = svgNodes(el, parent, style, name);
+        Object.assign(nodes, t.nodes);
+        return t.id;
+      }
       const attrs = { ...el.attrs };
       delete attrs.style;
       delete attrs.class;
-      return add({ type: "svg", name: nameFor(el, w <= 48 && h <= 48 ? "Icon" : "Vector"), parent, style, svg: serializeSvg({ ...el, attrs }) });
+      return add({ type: "svg", name, parent, style, svg: serializeSvg({ ...el, attrs }) });
     }
     if (el.tag === "input" || el.tag === "textarea" || el.tag === "select") {
       const words = el.attrs.value || (el.tag === "textarea" ? el.children.join("") : "") || el.attrs.placeholder || "";
@@ -568,8 +920,17 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
       const src = n.src ? (opts.src ? opts.src(n.src) : n.src) : "";
       return `<img${attrs} src="${escAttr(src)}" alt="${escAttr(n.name)}">`;
     }
-    case "svg":
-      return `<div${attrs}>${(n.svg ?? "").replace(/^<svg\b/i, '<svg style="display:block;width:100%;height:100%"')}</div>`;
+    case "svg": {
+      const inner = `display:block;width:100%;height:100%${n.style.overflow ? `;overflow:${n.style.overflow}` : ""}`;
+      if (n.svg) return `<div${attrs}>${n.svg.replace(/^<svg\b/i, `<svg style="${inner}"`)}</div>`;
+      const kids = (n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("");
+      return `<div${attrs}><svg xmlns="http://www.w3.org/2000/svg"${attrText(n.attrs)} style="${inner}">${n.defs ? `<defs>${n.defs}</defs>` : ""}${kids}</svg></div>`;
+    }
+    case "vector": {
+      const tag = vectorTag(n.tag);
+      const inner = tag === "g" ? (n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("") : (n.text ?? "");
+      return `<${tag}${attrs}${attrText(n.attrs)}>${inner}</${tag}>`;
+    }
     default:
       return `<div${attrs}>${(n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("")}</div>`;
   }
@@ -691,7 +1052,7 @@ export function cloneTree(board: Board, id: string, parent: string | null = null
     const n = board.nodes[x];
     const nid = newId();
     map[x] = nid;
-    nodes[nid] = { ...n, id: nid, parent: p, style: { ...n.style }, ...(n.children ? { children: [] } : {}) };
+    nodes[nid] = { ...n, id: nid, parent: p, style: { ...n.style }, ...(n.children ? { children: [] } : {}), ...(n.attrs ? { attrs: { ...n.attrs } } : {}) };
     if (n.children) nodes[nid].children = n.children.filter((c) => board.nodes[c]).map((c) => copy(c, nid));
     return nid;
   };
@@ -732,6 +1093,10 @@ export type Op =
       text?: string | null;
       src?: string | null;
       svg?: string | null;
+      /** A vector part's SVG attributes (null removes one). */
+      attrs?: Record<string, string | null>;
+      defs?: string | null;
+      tag?: string | null;
       shape?: Record<string, unknown> | null;
       hidden?: boolean | null;
       locked?: boolean | null;
@@ -759,6 +1124,9 @@ export type Op =
 
 export class OpError extends Error {}
 
+const misplaced = (n: BoardNode) =>
+  n.type === "vector" ? `${n.name} is part of a vector: it can only go inside a vector layer (or a group in one).` : `Only a vector's parts (shapes, paths, groups) go inside a vector layer; ${n.name} can go in a frame.`;
+
 export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[] } {
   const board: Board = { ...input, nodes: { ...input.nodes }, pages: input.pages.slice(), tokens: input.tokens.slice() };
   const copied = new Set<string>();
@@ -766,7 +1134,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
     const n = board.nodes[id];
     if (!n) throw new OpError(`There's no layer ${id}.`);
     if (!copied.has(id)) {
-      board.nodes[id] = { ...n, style: { ...n.style }, ...(n.children ? { children: n.children.slice() } : {}) };
+      board.nodes[id] = { ...n, style: { ...n.style }, ...(n.children ? { children: n.children.slice() } : {}), ...(n.attrs ? { attrs: { ...n.attrs } } : {}) };
       copied.add(id);
     }
     return board.nodes[id];
@@ -791,7 +1159,8 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
   const listOf = (parent: string | null, page: string | undefined): string[] => {
     if (parent) {
       const p = mut(parent);
-      if (p.type !== "frame") throw new OpError(`Only frames hold layers; ${p.name} is ${p.type === "text" ? "text" : `a${p.type === "image" ? "n image" : " vector"}`}.`);
+      const holds = p.type === "frame" || (p.type === "svg" && !p.svg) || (p.type === "vector" && p.tag === "g");
+      if (!holds) throw new OpError(`Only frames hold layers; ${p.name} is ${p.type === "text" ? "text" : p.type === "image" ? "an image" : p.type === "svg" ? "a vector drawn as one piece (split it into its parts first)" : "a part of a vector"}.`);
       p.children ??= [];
       return p.children;
     }
@@ -817,10 +1186,12 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           if (board.nodes[id]) throw new OpError(`A layer ${id} is already on the board.`);
           board.nodes[id] = n;
         }
+        const holder = op.parent ? board.nodes[op.parent] : null;
         for (const id of op.ids) {
           const n = board.nodes[id];
           if (!n) throw new OpError(`The layers to add don't include ${id}.`);
           if (board.nodes[id] !== op.nodes[id]) throw new OpError(`Layer ${id} isn't one of the new layers.`);
+          if (!canHold(holder, n)) throw new OpError(misplaced(n));
           board.nodes[id] = { ...n, parent: op.parent };
           list.splice(at++, 0, id);
         }
@@ -843,11 +1214,25 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
             else n.style[k] = String(v);
           }
         }
+        if (op.attrs) {
+          back.attrs = {};
+          const a = { ...(n.attrs ?? {}) };
+          for (const [k, v] of Object.entries(op.attrs)) {
+            back.attrs[k] = a[k] ?? null;
+            if (v === null || v === undefined) delete a[k];
+            else a[k] = String(v);
+          }
+          n.attrs = a;
+        }
         if (op.name !== undefined) {
           back.name = n.name;
           n.name = op.name.slice(0, 120) || n.name;
         }
-        for (const k of ["text", "src", "svg", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
+        if (op.tag !== undefined && op.tag !== null && n.type === "vector") {
+          back.tag = n.tag ?? null;
+          n.tag = vectorTag(op.tag);
+        }
+        for (const k of ["text", "src", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
           if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
@@ -879,6 +1264,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
         const n = board.nodes[op.id];
         if (!n) throw new OpError(`There's no layer ${op.id}.`);
         if (op.parent && (op.parent === op.id || ancestors(board, op.parent).includes(op.id))) throw new OpError("A layer can't go inside itself.");
+        if (!canHold(op.parent ? board.nodes[op.parent] : null, n)) throw new OpError(misplaced(n));
         const w = where(op.id);
         listOf(w.parent, w.page).splice(w.index, 1);
         const list = listOf(op.parent, op.parent ? undefined : op.page ?? w.page);
@@ -1029,7 +1415,7 @@ function followingCopy(board: Board, id: string, parent: string | null, rootAsIn
     const n = board.nodes[x];
     const nid = newId();
     const { isComponent: _c, instanceOf: _i, overrides: _o, ...rest } = n;
-    nodes[nid] = { ...rest, id: nid, parent: p, style: { ...n.style }, master: x, ...(top && rootAsInstance ? { instanceOf: rootAsInstance } : {}), ...(n.children ? { children: [] } : {}) };
+    nodes[nid] = { ...rest, id: nid, parent: p, style: { ...n.style }, master: x, ...(top && rootAsInstance ? { instanceOf: rootAsInstance } : {}), ...(n.children ? { children: [] } : {}), ...(n.attrs ? { attrs: { ...n.attrs } } : {}) };
     if (n.children) nodes[nid].children = n.children.filter((c) => board.nodes[c]).map((c) => copy(c, nid, false));
     return nid;
   };
@@ -1073,7 +1459,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
 const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate"];
 
-const FIELDS = ["text", "src", "svg", "shape", "hidden", "name"] as const;
+const FIELDS = ["text", "src", "svg", "defs", "tag", "shape", "hidden", "name"] as const;
 
 /** The keys a set step changes, as overrides name them ("style.color", "text"). */
 function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {
@@ -1082,6 +1468,7 @@ function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[
     for (const k of new Set([...Object.keys(before.style), ...Object.keys(op.replaceStyle)])) if (before.style[k] !== op.replaceStyle[k]) keys.push(`style.${k}`);
   }
   for (const k of Object.keys(op.style ?? {})) keys.push(`style.${k}`);
+  for (const k of Object.keys(op.attrs ?? {})) keys.push(`attrs.${k}`);
   for (const f of FIELDS) if (op[f] !== undefined) keys.push(f);
   return keys;
 }
@@ -1156,6 +1543,9 @@ function propagate(pre: Board, post: Board, op: Op): Op[] {
         if (k.startsWith("style.")) {
           p.style ??= {};
           p.style[k.slice(6)] = after.style[k.slice(6)] ?? null;
+        } else if (k.startsWith("attrs.")) {
+          p.attrs ??= {};
+          p.attrs[k.slice(6)] = after.attrs?.[k.slice(6)] ?? null;
         } else if (k === "name") p.name = after.name;
         else (p as Record<string, unknown>)[k] = (after as unknown as Record<string, unknown>)[k] ?? null;
       }
@@ -1242,6 +1632,9 @@ export function resetOps(board: Board, id: string): Op[] {
       if (k.startsWith("style.")) {
         p.style ??= {};
         p.style[k.slice(6)] = m.style[k.slice(6)] ?? null;
+      } else if (k.startsWith("attrs.")) {
+        p.attrs ??= {};
+        p.attrs[k.slice(6)] = m.attrs?.[k.slice(6)] ?? null;
       } else if (k === "name") p.name = m.name;
       else (p as Record<string, unknown>)[k] = (m as unknown as Record<string, unknown>)[k] ?? null;
     }
@@ -1304,9 +1697,22 @@ export function sizeWord(board: Board, id: string, axis: "width" | "height"): st
   return px !== undefined ? String(round(px, 1)) : v;
 }
 
+/** What a vector part's geometry says, for an outline: "x 10 y 20 120×40", "d (412 chars)"… */
+function vectorSummary(n: BoardNode): string {
+  const a = n.attrs ?? {};
+  const keys: Record<string, string[]> = { rect: ["x", "y", "width", "height", "rx"], image: ["x", "y", "width", "height"], use: ["href", "x", "y", "width", "height"], circle: ["cx", "cy", "r"], ellipse: ["cx", "cy", "rx", "ry"], line: ["x1", "y1", "x2", "y2"], text: ["x", "y"], svg: ["x", "y", "width", "height"] };
+  const bits = (keys[n.tag ?? ""] ?? []).filter((k) => a[k] !== undefined).map((k) => `${k}=${a[k]}`);
+  if (a.d) bits.push(a.d.length > 60 ? `d=${a.d.slice(0, 57)}…` : `d=${a.d}`);
+  if (a.points) bits.push(a.points.length > 50 ? `points=${a.points.slice(0, 47)}…` : `points=${a.points}`);
+  for (const k of ["fill", "stroke", "stroke-width", "opacity", "transform"]) if (a[k] !== undefined) bits.push(`${k}=${a[k]}`);
+  if (n.tag === "text") bits.push(JSON.stringify(plainText(n.text).slice(0, 60)));
+  return bits.join(" ");
+}
+
 function describe(board: Board, id: string): string {
   const n = board.nodes[id];
   const s = n.style;
+  if (n.type === "vector") return [`vector <${vectorTag(n.tag)}>`, JSON.stringify(n.name), `#${id}`, vectorSummary(n), n.hidden ? "hidden" : "", n.locked ? "locked" : ""].filter(Boolean).join(" ");
   const size = `${sizeWord(board, id, "width")}×${sizeWord(board, id, "height")}`;
   const bits: string[] = [n.type, JSON.stringify(n.name), `#${id}`, size];
   if (n.parent === null) bits.push(`at ${pxValue(s.left) ?? 0},${pxValue(s.top) ?? 0}`);
@@ -1318,6 +1724,7 @@ function describe(board: Board, id: string): string {
     bits.push(JSON.stringify(words.length > 60 ? words.slice(0, 59) + "…" : words));
   }
   if (n.type === "image") bits.push(`src ${(n.src ?? "").slice(0, 80)}`);
+  if (n.type === "svg") bits.push(n.svg ? (n.shape ? `shape ${String(n.shape.type ?? "")}` : "one piece") : `in parts${n.attrs?.viewBox ? `, viewBox ${n.attrs.viewBox}` : ""}`);
   if (n.isComponent) bits.push("component");
   if (n.instanceOf) bits.push(`copy of component #${n.instanceOf}`);
   if (n.overrides?.length) bits.push(`changed in this copy: ${n.overrides.map((k) => k.replace(/^style\./, "")).join(", ")}`);

@@ -1,9 +1,9 @@
 // The board editor: a design tool where agents and people work on the same HTML and CSS. Pages and
 // layers on the left, the canvas in the middle, the layer's CSS (in words) on the right.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cloneTree, componentOps, copyTree, detachOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, subtree, uncomponentOps } from "./board-core.js";
+import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { B, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
-import { BoardCanvas, canvasEl, elOf, fit, placeNew, placeOf, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
+import { BoardCanvas, canvasEl, elOf, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AssetsPanel } from "./board-assets.js";
 import { Popover, Seg, html } from "./controls.js";
@@ -195,6 +195,7 @@ export function layerIcon(n, b = B.board) {
   if (n.type === "text") return "text";
   if (n.type === "image") return "image";
   if (n.type === "svg") return "vector";
+  if (n.type === "vector") return { g: "layers", rect: "square", circle: "ellipse", ellipse: "ellipse", line: "line", polyline: "line", polygon: "triangle", path: "pen", text: "text", image: "image" }[n.tag] ?? "vector";
   if (!n.parent) return "frame";
   if (isFlex(n)) return (n.style.flexDirection ?? "row").startsWith("column") ? "flexCol" : "flexRow";
   void b;
@@ -284,7 +285,8 @@ function layerDown(e) {
     const oid = over.dataset.lid;
     const on = node(oid);
     const f = (ev.clientY - r.top) / r.height;
-    const inside = on.type === "frame" && f > 0.28 && f < 0.72;
+    const holds = on.type === "frame" || (on.type === "svg" && !on.svg) || (on.type === "vector" && on.tag === "g");
+    const inside = holds && f > 0.28 && f < 0.72;
     const before = !inside && f <= 0.5;
     target = inside ? { parent: oid, index: (on.children ?? []).length } : { ref: oid, after: !before };
     bset({ drop: { layer: { y: (inside ? r.top + r.height / 2 : before ? r.top : r.bottom) - lr.top + list.scrollTop, x: (parseFloat(over.style.paddingLeft) || 6) + (inside ? 18 : 0), inside } } });
@@ -308,6 +310,8 @@ function layerDown(e) {
       index = (node(parent).children ?? []).filter((x) => !ids.includes(x)).length;
     }
     if (parent && ids.some((x) => x === parent || ancestors(B.board, parent).includes(x))) return;
+    const wrong = ids.find((x) => !canHold(parent ? node(parent) : null, node(x)));
+    if (wrong) return toast({ kind: "info", title: node(wrong).type === "vector" ? "Parts of a vector stay in a vector" : "That goes in a frame", text: node(wrong).type === "vector" ? "Move them within their vector, or into a group in it." : "Only a vector's parts go inside a vector layer.", timeout: 3200 });
     const pageId = parent ? undefined : currentPage().id;
     for (const [k, x] of ids.entries()) {
       ops.push({ op: "move", id: x, parent, page: pageId, index: index + k });
@@ -360,7 +364,7 @@ export function duplicateSelection() {
       // A copied artboard goes beside the original.
       const w = worldBox(id)?.width ?? pxValue(n.style.width) ?? 400;
       c.style.left = `${Math.round((pxValue(n.style.left) ?? 0) + w + 80)}px`;
-    } else if (!inFlow(B.board, id)) {
+    } else if (!inFlow(B.board, id) && n.type !== "vector") {
       c.style.left = `${Math.round((pxValue(n.style.left) ?? 0) + 16)}px`;
       c.style.top = `${Math.round((pxValue(n.style.top) ?? 0) + 16)}px`;
     }
@@ -377,6 +381,7 @@ export function duplicateSelection() {
 export function wrapSelection({ free = false } = {}) {
   const ids = outermost();
   if (!ids.length) return;
+  if (ids.some((id) => node(id).type === "vector")) return groupVectors(ids);
   const parent = node(ids[0]).parent;
   if (ids.some((id) => node(id).parent !== parent)) return toast({ kind: "err", title: "Pick layers in the same frame", text: "Only layers side by side can go into one frame." });
   const sibs = siblingsOf(B.board, ids[0]);
@@ -409,13 +414,51 @@ export function wrapSelection({ free = false } = {}) {
   select(id);
 }
 
-/** Take a frame's layers out of it (keeping where they are) and remove the frame. */
+/** Put a vector's parts (side by side in it) into a group of their own. */
+function groupVectors(ids) {
+  const parent = node(ids[0]).parent;
+  if (ids.some((id) => node(id).type !== "vector" || node(id).parent !== parent)) return toast({ kind: "err", title: "Pick parts of one vector", text: "Only parts side by side in a vector can be grouped." });
+  const sibs = siblingsOf(B.board, ids[0]);
+  const ordered = sibs.filter((x) => ids.includes(x));
+  const id = newId();
+  const ops = [{ op: "add", nodes: { [id]: { id, type: "vector", tag: "g", name: "Group", parent, style: {}, attrs: {}, children: [] } }, ids: [id], parent, index: sibs.indexOf(ordered[0]) }];
+  ordered.forEach((x, k) => ops.push({ op: "move", id: x, parent: id, index: k }));
+  commit(ops, { label: "Group" });
+  select(id);
+}
+
+/** What a group gives its parts that they'd lose leaving it. */
+const PASSED_DOWN = ["fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-opacity", "fill-opacity", "fill-rule", "font-family", "font-size", "font-weight", "text-anchor", "color"];
+
+/** A group's parts out of it, where they are (its transform and colours go onto each), and the group gone. */
+function ungroupVector(id, ops, freed) {
+  const g = node(id);
+  const a = g.attrs ?? {};
+  if (a["clip-path"] || a.mask || a.filter) return toast({ kind: "info", title: "This group clips, masks or filters its parts", text: "Taking them out would change how they look. Make the vector one piece instead, or change them inside the group.", timeout: 5000 });
+  let at = siblingsOf(B.board, id).indexOf(id);
+  for (const c of g.children ?? []) {
+    const cn = node(c);
+    const ca = cn.attrs ?? {};
+    const attrs = {};
+    if (a.transform) attrs.transform = `${a.transform}${ca.transform ? ` ${ca.transform}` : ""}`;
+    for (const k of PASSED_DOWN) if (a[k] !== undefined && ca[k] === undefined) attrs[k] = a[k];
+    if (a.opacity !== undefined) attrs.opacity = String(round3(Number(a.opacity) * Number(ca.opacity ?? 1)));
+    ops.push({ op: "move", id: c, parent: g.parent, index: at++ });
+    if (Object.keys(attrs).length) ops.push({ op: "set", id: c, attrs });
+    freed.push(c);
+  }
+  ops.push({ op: "delete", ids: [id] });
+}
+const round3 = (n) => Math.round(n * 1000) / 1000;
+
+/** Take a frame's layers out of it (keeping where they are) and remove the frame; a vector group's too. */
 export function ungroupSelection() {
-  const ids = outermost().filter((id) => node(id).type === "frame" && node(id).children?.length);
+  const ids = outermost().filter((id) => (node(id).type === "frame" || (node(id).type === "vector" && node(id).tag === "g")) && node(id).children?.length);
   if (!ids.length) return;
   const ops = [];
   const freed = [];
-  for (const id of ids) {
+  for (const id of ids.filter((x) => node(x).type === "vector")) ungroupVector(id, ops, freed);
+  for (const id of ids.filter((x) => node(x).type === "frame")) {
     const n = node(id);
     const sibs = siblingsOf(B.board, id);
     let at = sibs.indexOf(id);
@@ -429,8 +472,27 @@ export function ungroupSelection() {
     }
     ops.push({ op: "delete", ids: [id] });
   }
+  if (!ops.length) return;
   commit(ops, { label: "Ungroup" });
   select(freed);
+}
+
+/** A vector drawn as one piece, split into a layer for each part (or the other way). */
+export function splitVector(id) {
+  try {
+    commit(splitSvgOps(B.board, id), { label: "Split into layers" });
+    bset({ open: new Set([...B.open, id]) });
+  } catch (e) {
+    toast({ kind: "info", title: "Couldn't split it", text: e.message, timeout: 4000 });
+  }
+}
+export function flattenVector(id) {
+  try {
+    commit(flattenSvgOps(B.board, id), { label: "Make one piece" });
+    select(id);
+  } catch (e) {
+    toast({ kind: "info", title: "Couldn't make it one piece", text: e.message, timeout: 4000 });
+  }
 }
 
 /** Lay a frame's layers out by hand (each where it is now) or with flex. */
@@ -479,11 +541,10 @@ export function alignSelection(edge) {
   const ops = [];
   for (const id of Object.keys(boxes)) {
     const b = boxes[id];
-    const at = placeOf(id);
     const dx = edge === "left" ? ref.x - b.x : edge === "right" ? ref.x + ref.width - b.x - b.width : edge === "hcenter" ? ref.x + ref.width / 2 - b.x - b.width / 2 : 0;
     const dy = edge === "top" ? ref.y - b.y : edge === "bottom" ? ref.y + ref.height - b.y - b.height : edge === "vcenter" ? ref.y + ref.height / 2 - b.y - b.height / 2 : 0;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-    ops.push({ op: "set", id, style: { left: `${Math.round(at.left + dx)}px`, top: `${Math.round(at.top + dy)}px`, ...(node(id).parent && node(id).style.position !== "absolute" ? { position: "absolute" } : {}) } });
+    ops.push(...shiftSteps([id], dx, dy));
   }
   commit(ops, { label: "Align" });
 }
@@ -493,7 +554,7 @@ export function distributeSelection(axis) {
   const ids = outermost().filter((id) => !inFlow(B.board, id) && !node(id).locked);
   if (ids.length < 3) return toast({ kind: "info", title: "Pick three or more layers", text: "Their gaps are made even, between the first and the last.", timeout: 3000 });
   const x = axis === "x";
-  const list = ids.map((id) => ({ id, b: worldBox(id), at: placeOf(id) })).filter((o) => o.b).sort((a, b) => (x ? a.b.x - b.b.x : a.b.y - b.b.y));
+  const list = ids.map((id) => ({ id, b: worldBox(id) })).filter((o) => o.b).sort((a, b) => (x ? a.b.x - b.b.x : a.b.y - b.b.y));
   const first = list[0].b;
   const last = list[list.length - 1].b;
   const span = x ? last.x + last.width - first.x : last.y + last.height - first.y;
@@ -503,7 +564,7 @@ export function distributeSelection(axis) {
   const ops = [];
   for (const o of list) {
     const d = pos - (x ? o.b.x : o.b.y);
-    if (Math.abs(d) >= 0.5) ops.push({ op: "set", id: o.id, style: x ? { left: `${Math.round(o.at.left + d)}px` } : { top: `${Math.round(o.at.top + d)}px` } });
+    if (Math.abs(d) >= 0.5) ops.push(...shiftSteps([o.id], x ? d : 0, x ? 0 : d));
     pos += (x ? o.b.width : o.b.height) + gap;
   }
   commit(ops, { label: "Distribute" });
@@ -539,17 +600,7 @@ const toggleAll = (key) => {
 function nudge(dx, dy) {
   const ids = sel().filter((id) => !inFlow(B.board, id) && !node(id).locked);
   if (!ids.length) return;
-  commit(
-    ids.map((id) => {
-      const n = node(id);
-      const wb = worldBox(id);
-      const pb = n.parent ? worldBox(n.parent) : { x: 0, y: 0 };
-      const l = pxValue(n.style.left) ?? Math.round(wb.x - pb.x);
-      const t = pxValue(n.style.top) ?? Math.round(wb.y - pb.y);
-      return { op: "set", id, style: { left: `${l + dx}px`, top: `${t + dy}px` } };
-    }),
-    { key: `nudge:${ids.join()}`, label: "Move" },
-  );
+  commit(shiftSteps(ids, dx, dy), { key: `nudge:${ids.join()}`, label: "Move" });
 }
 
 function selectAll() {
@@ -626,15 +677,22 @@ function onCut(e) {
   if (clip) deleteSelection();
 }
 
-/** Where pasted layers go: into the selected frame, beside the selected layer, or on the page. */
-function pasteTarget() {
+/**
+ * Where pasted layers go: into the selected frame, beside the selected layer, or on the page. A
+ * vector's parts go into the selected vector (or beside the selected part); other layers into the
+ * nearest frame. Null when there's nowhere they can go.
+ */
+function pasteTarget(kind = "frame") {
   const s = sel();
+  const fits = (x) => canHold(x, { type: kind });
   if (s.length === 1) {
     const n = node(s[0]);
-    if (n.type === "frame" && !(clip?.ids ?? []).includes(n.id)) return { into: n.id };
-    return { into: n.parent, after: n.id };
+    if (fits(n) && !(clip?.ids ?? []).includes(n.id)) return { into: n.id };
+    if (fits(n.parent ? node(n.parent) : null)) return { into: n.parent, after: n.id };
+    const up = ancestors(B.board, n.id).find((a) => fits(node(a)));
+    if (up) return { into: up };
   }
-  return { into: null };
+  return kind === "vector" ? null : { into: null };
 }
 
 function onPaste(e) {
@@ -663,7 +721,9 @@ function onPaste(e) {
 }
 
 function pasteLayers(from) {
-  const t = pasteTarget();
+  const vec = from.ids.every((id) => from.nodes[id]?.type === "vector");
+  const t = pasteTarget(vec ? "vector" : "frame");
+  if (!t) return toast({ kind: "info", title: "Pick a vector to paste into", text: "Parts of a vector paste into a vector layer, or beside a part of one.", timeout: 3600 });
   const fake = { nodes: from.nodes };
   const made = [];
   const nodes = {};
@@ -699,6 +759,7 @@ function pasteLayers(from) {
     for (const id of made) {
       const s = nodes[id].style;
       nodes[id].parent = t.into;
+      if (vec) continue;
       if (isFlex(f)) {
         delete s.left;
         delete s.top;
@@ -859,6 +920,7 @@ export function openLayerMenu(x, y) {
   const one = s.length === 1 ? node(s[0]) : null;
   const frame = one?.type === "frame";
   const any = s.length > 0;
+  const vectors = any && s.every((id) => node(id).type === "vector");
   openMenu(x, y, [
     any && { label: "Copy", icon: "copy", kbd: "⌘C", run: () => document.execCommand("copy") },
     { label: "Paste", icon: "paste", kbd: "⌘V", run: () => navigator.clipboard?.readText?.().then((t) => t && onPaste({ preventDefault() {}, clipboardData: { files: [], getData: (k) => (k === "text/plain" ? t : "") } })).catch(() => toast({ kind: "info", title: "Press ⌘V to paste", timeout: 2400 })) },
@@ -866,9 +928,12 @@ export function openLayerMenu(x, y) {
     any && { label: "Copy as HTML", icon: "code", run: () => copyHtml(outermost()) },
     any && "-",
     one && { label: "Rename", icon: "text", kbd: "⌘R", run: () => bset({ renaming: one.id }) },
-    any && { label: "Wrap in flex frame", icon: "flexCol", kbd: "⇧A", run: () => wrapSelection() },
-    any && { label: "Wrap in frame", icon: "frame", kbd: "⌥⌘G", run: () => wrapSelection({ free: true }) },
-    frame && one.children?.length && { label: "Ungroup", icon: "layers", kbd: "⇧⌘G", run: ungroupSelection },
+    any && !vectors && { label: "Wrap in flex frame", icon: "flexCol", kbd: "⇧A", run: () => wrapSelection() },
+    any && !vectors && { label: "Wrap in frame", icon: "frame", kbd: "⌥⌘G", run: () => wrapSelection({ free: true }) },
+    vectors && { label: "Group", icon: "layers", kbd: "⌥⌘G", run: () => wrapSelection() },
+    (frame || one?.tag === "g") && one.children?.length && { label: "Ungroup", icon: "layers", kbd: "⇧⌘G", run: ungroupSelection },
+    one?.type === "svg" && one.svg && { label: "Split into layers", icon: "layers", run: () => splitVector(one.id) },
+    one?.type === "svg" && !one.svg && { label: "Make one piece", icon: "vector", run: () => flattenVector(one.id) },
     frame && (isFlex(one) ? { label: "Remove flex", icon: "freeLayout", kbd: "⌥⇧A", run: () => setFlex(one.id, false) } : { label: "Add flex", icon: "flexCol", kbd: "⇧A", run: () => setFlex(one.id, true) }),
     any && "-",
     frame && !one.isComponent && !instanceRootOf(B.board, one.id) && { label: "Make a component", icon: "component", kbd: "⌥⌘K", run: makeComponent },
@@ -885,7 +950,7 @@ export function openLayerMenu(x, y) {
     any && { label: s.every((id) => node(id).locked) ? "Unlock" : "Lock", icon: "lock", kbd: "⇧⌘L", run: () => toggleAll("locked") },
     any && "-",
     any && { label: "Export…", icon: "export", run: () => document.querySelector(".bd-topbar .btn.primary")?.click() },
-    any && { label: "Put in a device frame", icon: "phone", run: () => artboardToDesign() },
+    any && !vectors && { label: "Put in a device frame", icon: "phone", run: () => artboardToDesign() },
     any && { label: "Delete", icon: "trash", kbd: "⌫", danger: true, run: deleteSelection },
   ]);
 }

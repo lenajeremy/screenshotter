@@ -11,6 +11,13 @@ import { z } from "zod";
 import { outputRoot, slug } from "../util/files.js";
 import {
   addHtmlOps,
+  canHold,
+  flattenSvgOps,
+  inlineHtml,
+  parseHtml,
+  serializeSvg,
+  splitSvgOps,
+  svgNodes,
   componentOps,
   copyTree,
   detachOps,
@@ -54,6 +61,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox (display:flex, flex-direction, gap, padding, align-items); elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
+- Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
 - Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).`;
@@ -69,11 +77,18 @@ function inlineBuiltins(nodes: Record<string, BoardNode>, warnings: string[]) {
       warnings.push(`There's no ${n.src.startsWith("art") ? "illustration" : "sticker"} "${n.src}". Stickers: ${stickerNames().join(", ")}. Illustrations: ${artNames().join(", ")}.`);
       continue;
     }
-    const svg = htmlToNodes(got.mono ? got.svg.replace(/#1d1d1f/gi, "currentColor") : got.svg);
+    const svg = htmlToNodes(got.mono ? got.svg.replace(/#1d1d1f/gi, "currentColor") : got.svg, { wholeSvg: true });
     const v = svg.nodes[svg.roots[0]];
     const { src: _src, ...rest } = n;
     nodes[id] = { ...rest, type: "svg", svg: v.svg, style: { width: v.style.width, height: v.style.height, ...(got.mono ? { color: "#1d1d1f" } : {}), ...n.style } };
   }
+}
+
+/** The svg layer a vector's part is drawn in. */
+function rootSvg(b: Board, id: string): string {
+  let x = id;
+  while (b.nodes[x]?.type === "vector" && b.nodes[x].parent) x = b.nodes[x].parent!;
+  return x;
 }
 
 /** Where a new layer goes for board_edit: into a frame, before/after a layer, or on the page at x/y. */
@@ -106,7 +121,14 @@ const StyleMap = z.record(z.string(), StyleValue).describe('CSS properties in ca
 
 const ChangeSchema = z.discriminatedUnion("do", [
   z.object({ do: z.literal("style"), ids: z.array(z.string()).min(1).describe("Layers to restyle."), style: StyleMap }),
-  z.object({ do: z.literal("text"), id: z.string(), text: z.string().describe("The words, as inline HTML: <b>, <i>, <span style=\"…\">, <br>.") }),
+  z.object({ do: z.literal("text"), id: z.string(), text: z.string().describe("The words, as inline HTML: <b>, <i>, <span style=\"…\">, <br>. For an SVG <text> part: its words (and <tspan>s).") }),
+  z.object({
+    do: z.literal("vector"),
+    ids: z.array(z.string()).min(1).describe("Parts of a vector (or a vector layer, for its <svg>'s own attributes)."),
+    attrs: z.record(z.string(), z.union([z.string(), z.number(), z.null()])).describe('SVG attributes as written in SVG: { "fill": "#ff3b30", "stroke-width": 2, "d": "M0 0L10 10", "cx": 40 }. null removes one.'),
+  }),
+  z.object({ do: z.literal("split"), id: z.string().describe("A vector drawn as one piece (a sticker, a shape, an older vector): a layer for each of its parts.") }),
+  z.object({ do: z.literal("flatten"), id: z.string().describe("A vector in parts: one layer again, its parts as SVG markup.") }),
   z.object({ do: z.literal("rename"), id: z.string(), name: z.string() }),
   z.object({ do: z.literal("delete"), ids: z.array(z.string()).min(1) }),
   z.object({
@@ -289,8 +311,28 @@ export function registerBoardTools(server: McpServer) {
         if (a.target) {
           const t = b.nodes[a.target];
           if (!t) throw new Error(`There's no layer ${a.target} on this board.`);
+          const vectorish = (x: BoardNode | null | undefined) => Boolean(x && ((x.type === "svg" && !x.svg) || (x.type === "vector" && x.tag === "g")));
+          if (vectorish(mode === "inside" ? t : t.parent ? b.nodes[t.parent] : null)) {
+            // SVG into a vector: its elements become parts of it.
+            const into = mode === "inside" ? t.id : t.parent!;
+            const el = parseHtml(`<svg>${a.html}</svg>`).children.find((c): c is Exclude<typeof c, string> => typeof c !== "string" && c.tag === "svg");
+            const got = el ? svgNodes(el, into, {}, "") : null;
+            const kids = got ? got.nodes[got.id].children ?? [] : [];
+            if (!got || !kids.length) throw new Error("Write SVG elements (rect, circle, path, g, text…) into a vector.");
+            const nodes = { ...got.nodes };
+            delete nodes[got.id];
+            for (const k of kids) nodes[k] = { ...nodes[k], parent: into };
+            const sibs = b.nodes[into].children ?? [];
+            const at = mode === "inside" ? a.index : sibs.indexOf(t.id) + (mode === "after" ? 1 : 0);
+            const ops: Op[] = [{ op: "add", nodes, ids: kids, parent: into, index: at }];
+            if (got.nodes[got.id].defs) ops.push({ op: "set", id: rootSvg(b, into), defs: `${b.nodes[rootSvg(b, into)].defs ?? ""}${got.nodes[got.id].defs}` });
+            if (mode === "replace") ops.push({ op: "delete", ids: [t.id] });
+            const after = changeBoard(b.id, ops, "agent").board;
+            changeBoard(b.id, workingOps(after, kids), "agent");
+            return [text({ created: kids.map((id) => ({ id, name: after.nodes[id]?.name })), outline: kids.map((id) => treeText(after, id, 3)).join("\n") })];
+          }
           if (mode === "inside") {
-            if (t.type !== "frame") throw new Error(`${t.name} is ${t.type === "text" ? "a text layer" : `an ${t.type} layer`}, which can't hold layers: target its frame, or use position "after".`);
+            if (t.type !== "frame") throw new Error(`${t.name} is ${t.type === "text" ? "a text layer" : t.type === "vector" ? "part of a vector" : `an ${t.type} layer`}, which can't hold layers: target its frame, or use position "after".`);
             parent = t.id;
             index = a.index;
           } else {
@@ -338,7 +380,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -361,12 +403,36 @@ export function registerBoardTools(server: McpServer) {
               break;
             case "text": {
               const n = need(c.id);
-              if (n.type !== "text") throw new Error(`${n.name} isn't a text layer.`);
-              ops.push({ op: "set", id: c.id, text: c.text });
+              const svgText = n.type === "vector" && n.tag === "text";
+              if (n.type !== "text" && !svgText) throw new Error(`${n.name} isn't a text layer.`);
+              // Only words and inline tags (or, in SVG, tspans) are kept: nothing that runs.
+              const words = svgText ? parseHtml(c.text).children.map(serializeSvg).join("") : inlineHtml(parseHtml(c.text).children);
+              ops.push({ op: "set", id: c.id, text: words });
               touched.push(c.id);
               results.push({ text: c.id });
               break;
             }
+            case "vector": {
+              for (const id of c.ids) {
+                const n = need(id);
+                if (n.type !== "vector" && !(n.type === "svg" && !n.svg)) throw new Error(`${n.name} isn't part of a vector${n.type === "svg" ? " (it's drawn as one piece: split it first)" : ""}.`);
+              }
+              const attrs = Object.fromEntries(Object.entries(c.attrs).map(([k, v]) => [k, v === null ? null : String(v)]));
+              for (const id of c.ids) ops.push({ op: "set", id, attrs });
+              touched.push(...c.ids);
+              results.push({ vector: c.ids.length });
+              break;
+            }
+            case "split":
+              ops.push(...splitSvgOps(b, need(c.id).id));
+              touched.push(c.id);
+              results.push({ split: c.id });
+              break;
+            case "flatten":
+              ops.push(...flattenSvgOps(b, need(c.id).id));
+              touched.push(c.id);
+              results.push({ flattened: c.id });
+              break;
             case "rename":
               need(c.id);
               ops.push({ op: "set", id: c.id, name: c.name });
@@ -409,7 +475,7 @@ export function registerBoardTools(server: McpServer) {
               } else if (c.into === "page") ops.push({ op: "move", id: c.id, parent: null, page: pageOf(b, c.id)?.id, index: c.index });
               else if (c.into) {
                 const t = need(c.into);
-                if (t.type !== "frame") throw new Error(`${t.name} isn't a frame.`);
+                if (!canHold(t, need(c.id))) throw new Error(`${t.name} can't hold ${b.nodes[c.id].name}: frames hold layers, and a vector (or a group in one) holds a vector's parts.`);
                 ops.push({ op: "move", id: c.id, parent: c.into, index: c.index });
               } else throw new Error("A move needs `into`, `before` or `after`.");
               touched.push(c.id);
