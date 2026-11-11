@@ -45,7 +45,7 @@ import { cacheDir } from "../util/files.js";
 import { htmlToNodes, type BoardNode } from "./core.js";
 import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, summarizeBoard } from "./store.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
-import { describeAnchor, getComments, keysOf, reply, setResolved, startThread, threadForAgent } from "./comments.js";
+import { describeAnchor, getComments, keysOf, reply, startThread, threadForAgent } from "./comments.js";
 
 type Content = CallToolResult["content"];
 const text = (value: unknown): Content[number] => ({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) });
@@ -67,7 +67,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
-- Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment (reply, and resolve: true once it's dealt with); the person sees your reply by the comment. board_comments lists the open ones for you.`;
+- Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment; the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
 const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name.");
 
@@ -757,12 +757,11 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Answer a comment on a board",
       description:
-        "Reply in a comment's thread (the user sees it on the board in the Studio, by the comment), resolve it or open it again, or start a thread of your own on a layer to point something out or ask about it. This only talks about the design: change it with board_edit or board_write_html first, then say what you did.",
+        "Reply in a comment's thread (the user sees it on the board in the Studio, by the comment), or start a thread of your own on a layer to point something out or ask about it. Only the user resolves comments. This only talks about the design: change it with board_edit or board_write_html first, then say what you did.",
       inputSchema: {
         board: BoardRef,
         comment: z.string().optional().describe("The comment's id (from the message you got, or board_comments)."),
         reply: z.string().max(8000).optional().describe("What to say in the thread."),
-        resolve: z.boolean().optional().describe("true: the comment is dealt with; false: open it again."),
         on: z.string().optional().describe("Instead of `comment`: a layer's id, to start a new thread on it (its words in `reply`)."),
       },
     },
@@ -776,14 +775,12 @@ export function registerBoardTools(server: McpServer) {
         if (a.on) {
           if (!a.reply?.trim()) throw new Error("Say what the new comment is about in `reply`.");
           const made = startThread(b.id, { layer: a.on }, { ...by, text: a.reply });
-          if (a.resolve) setResolved(b.id, made.thread.id, true, me.key);
           return [text({ comment: made.thread.id, on: describeAnchor(getBoard(b.id), made.thread.anchor), note: "It's on the board in the Studio, by the layer." })];
         }
         if (!a.comment) throw new Error("Give the comment's id (`comment`), or a layer to start a thread on (`on`).");
-        if (!a.reply?.trim() && a.resolve === undefined) throw new Error("Give a `reply`, `resolve`, or both.");
-        let thread = a.reply?.trim() ? reply(b.id, a.comment, { ...by, text: a.reply }).thread : undefined;
-        if (a.resolve !== undefined) thread = setResolved(b.id, a.comment, a.resolve, me.key).thread;
-        return [text({ comment: a.comment, resolved: Boolean(thread?.resolved), messages: thread?.messages.length, note: "The user sees it on the board in the Studio, in the comment's thread." })];
+        if (!a.reply?.trim()) throw new Error("Say something in `reply`. (Only the user resolves comments.)");
+        const thread = reply(b.id, a.comment, { ...by, text: a.reply }).thread;
+        return [text({ comment: a.comment, messages: thread.messages.length, note: "The user sees it on the board in the Studio, in the comment's thread, and resolves it when they're happy." })];
       }),
   );
 }

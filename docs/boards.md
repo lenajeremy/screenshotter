@@ -70,6 +70,8 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - **Tests:** a stand-in Agentman (`scripts/fake-agentman.ts`) for `test:board` (finding the session from the process, delivery, refusals, Agentman not running, the tools) and two checks in `test:ui` (pin, send, reply, resolve; a region).
   - **Limits:** an agent started outside Agentman that isn't Claude Code, and shares its folder with another agent of its kind, can't be told apart (its comments say so). A Claude session Agentman didn't start gets messages only when its turn ends (Agentman's hook delivery, shown as "gets it when its turn ends"). Agentman refuses messages while the agent waits on a question; the comment says to answer it, then Try again.
 
+- **Comments, round two** (12 November, from the user's first use): an agent at work on a thread shows as "… is working on it" with moving dots, and a ring on the pin (the Studio asks Agentman for its agents' states every 2.5 s while a thread waits: `GET /api/board/agents`). @name stays in the words, marked, and can tag any agent Agentman runs (it joins the board's agents). Only the person resolves; agents reply. A resolved thread offers **Reopen**, not a second check mark. There's no To row and no default recipient: a comment reaches only the agents @-tagged in it (the user: "i just want to add a comment... if i tag an agent, i want it to respond").
+
 **Decisions:**
 
 - The design is HTML and CSS, not a vector format. The browser engine does the layout, the text and the drawing, an agent writes it fluently, and code comes out of it nearly as is.
@@ -77,6 +79,7 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
 - The Studio and agents both write the file on disk under a lock. An agent's change reaches the open board by polling (every 700 ms), and undoing it replaces the whole board.
 - Components: the Studio expands its own changes (so a change to a component shows in its copies straight away) and sends the result. The server expands only agents' changes, so nothing is expanded twice.
 - An SVG's parts are layers, not one piece of markup, so they can be picked and changed one at a time (as in Paper). Parts can only sit in a vector and nothing else can go in one; one with more than 800 parts stays one piece.
+- Only the person resolves a comment: they asked, so they say when it's done (the user's call, 12 November).
 - Blue is for selection only, as in the rest of the Studio; everything else on boards is neutral. On 11 November the user compared lime for selection and chose blue (lime is hard to see on light designs and already marks agent work).
 
 ## Next, in rough order

@@ -338,6 +338,7 @@ check((await call("board_list", {})).json[0].working.length === 0, "board_done c
   const sent = fake.sent[fake.sent.length - 1];
   check(sent?.sessionId === AGENT && sent.text.startsWith("(From Screenshotter)") && sent.text.includes(`"${b0.name}" (id ${board})`) && sent.text.includes(`comment ${cid}`), "it reaches the agent through Agentman, from Screenshotter, with the board and the comment");
   check(sent.text.includes(`#${titleId}`) && sent.text.includes(`#${art}`) && sent.text.includes("> Make the title bigger\n> and bolder.") && /board_comment \{ board: "[a-z0-9]+", comment: "[a-z0-9]+", reply/.test(sent.text), "with the layer it's on (names and ids), the words, and how to answer");
+  check(!/resolve: true/.test(sent.text) && /The user resolves the comment/.test(sent.text), "and that the user, not the agent, resolves it");
   check(fake.badFrames.length === 0 && fake.requests.some((r) => r.type === "list_sessions"), "every request is one v2 envelope a line, addressed to the daemon (the stand-in's other events are skipped)");
   check(talk.getComments(board).threads[0].messages[0].delivery?.[AGENT].status === "delivered", "the comment says it was delivered");
 
@@ -347,11 +348,21 @@ check((await call("board_list", {})).json[0].working.length === 0, "board_done c
   check(listed?.comment === cid && listed.waitingOnYou === true && listed.anchor.layer === titleId && listed.messages[0].from === "user", "board_comments lists it for the agent, waiting on it");
   await call("board_comment", { board, comment: cid, reply: "Done: 40px, weight 700.", resolve: true });
   const t1 = talk.getComments(board).threads.find((t) => t.id === cid)!;
-  check(t1.messages[1]?.by === AGENT && t1.messages[1].name === "Design agent" && t1.messages[1].text === "Done: 40px, weight 700." && t1.resolved?.by === AGENT, "board_comment replies in the thread and resolves it");
+  check(t1.messages[1]?.by === AGENT && t1.messages[1].name === "Design agent" && t1.messages[1].text === "Done: 40px, weight 700." && !t1.resolved, "board_comment replies in the thread; an agent can't resolve it");
+  await call("board_comment", { board, comment: cid }, true);
+  talk.setResolved(board, cid, true, "person");
   check((await call("board_comments", {})).text.includes("No open comments"), "a resolved comment no longer waits on anyone");
   await call("board_comment", { board, comment: "nope" + cid, reply: "?" }, true);
   const own = await call("board_comment", { board, on: art, reply: "Should the list scroll under the header?" });
   check(Boolean(own.json?.comment) && talk.getComments(board).threads.some((t) => t.id === own.json.comment && t.anchor.layer === art && t.messages[0].by === AGENT), "an agent can start a thread on a layer");
+
+  // The person tags an agent that hasn't worked here, from Agentman's list: it joins the board.
+  const now0 = await talk.agentsNow(board);
+  check(now0.agentman && now0.states[AGENT] === "idle" && now0.others.some((o) => o.key === "claude:someone-else" && o.name === "Another agent" && o.folder === "elsewhere"), "the Studio sees what the board's agents are doing, and Agentman's other agents to tag");
+  await talk.bringIn(board, ["claude:someone-else", "claude:not-running"]);
+  const joined = store.getBoard(board).agents ?? {};
+  check(joined["claude:someone-else"]?.session === "claude:someone-else" && joined["claude:someone-else"].name === "Another agent" && !joined["claude:not-running"], "a tagged agent from Agentman joins the board (one Agentman doesn't run doesn't)");
+  check(!(await talk.agentsNow(board)).others.some((o) => o.key === "claude:someone-else"), "and is no longer listed as another agent");
 
   // The person replies; the agent is waiting on a question in Agentman, so it can't take it yet.
   fake.sessions[0].question = { id: "q1" };

@@ -30,7 +30,10 @@ const AM_SOCKET = path.join(tmp, "am.sock");
 process.env.SCREENSHOTTER_AGENTMAN_SOCKET = AM_SOCKET;
 const AGENT = "claude:ui-test-agent";
 const { fakeAgentman } = await import("./fake-agentman.js");
-const agentman = await fakeAgentman(AM_SOCKET, [{ id: AGENT, kind: "claude", name: "Design agent", cwd: tmp, state: "idle", inject: "tmux" }]);
+const agentman = await fakeAgentman(AM_SOCKET, [
+  { id: AGENT, kind: "claude", name: "Design agent", cwd: tmp, state: "idle", inject: "tmux" },
+  { id: "codex:helper", kind: "codex", name: "Helper", cwd: "/tmp/helper-app", state: "idle", inject: "tmux" },
+]);
 
 const { startStudio } = await import("../src/studio/server.js");
 const { encodePng } = await import("../src/util/png.js");
@@ -205,21 +208,30 @@ const CHECKS: Record<string, Check> = {
     const r = await boxOf(page, row);
     await page.mouse.click(r.x + r.width - 18, r.y + 8);
     await page.waitForSelector(".bd-thread textarea");
-    const to = await S(page, () => [...document.querySelectorAll(".bd-thread .bd-chip")].map((c) => c.textContent).join());
-    if (to !== "Design agent") return `the new comment goes to "${to}", not the agent that worked on the artboard`;
-    await page.keyboard.type("Make this row taller");
+    if (await S(page, () => Boolean(document.querySelector(".bd-thread .bd-to")))) return "the comment box has a To row";
+    // Only a tagged agent gets it: @ and its name.
+    await page.keyboard.type("@Des");
+    await page.waitForSelector(".bd-picker button", { timeout: 6000 });
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("make this row taller");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Design agent"), null, { timeout: 8000 }).catch(() => undefined);
     const thread = talk.getComments(t.id).threads[0];
     if (!thread || thread.anchor.layer !== row) return `the comment is on ${thread?.anchor.layer ? boards.getBoard(t.id).nodes[thread.anchor.layer]?.name : "nothing"}, not Row Two`;
     const sent = agentman.sent.find((s) => s.text.includes(thread.id));
-    if (!sent || sent.sessionId !== AGENT || !sent.text.includes(`#${row}`) || !sent.text.includes("> Make this row taller")) return "Agentman wasn't handed the comment, with its layer, for the agent";
+    if (!sent || sent.sessionId !== AGENT || !sent.text.includes(`#${row}`) || !sent.text.includes("> @Design agent make this row taller")) return "Agentman wasn't handed the comment, with its layer, for the agent";
     const shown = await S(page, () => document.querySelector(".bd-thread .bd-sent")?.textContent ?? "");
     if (!shown.startsWith("Sent to Design agent")) return `the thread says "${shown}", not that it was sent`;
+    // While Agentman says the agent is busy, the thread shows it at work.
+    agentman.sessions[0].state = "busy";
+    const working = await page.waitForFunction(() => document.querySelector(".bd-thread .bd-working-on")?.textContent?.includes("Design agent is working on it") && document.querySelector(".bd-thread .bd-dots"), null, { timeout: 9000 }).then(() => true, () => false);
+    if (!working) return "the thread didn't show the agent at work";
     // The agent answers (as board_comment does); the open thread shows it within a poll or two.
     talk.reply(t.id, thread.id, { text: "Done: 72px tall now.", by: AGENT, name: "Design agent" });
     const replied = await page.waitForFunction(() => [...document.querySelectorAll(".bd-thread .bd-msg .txt")].some((x) => x.textContent === "Done: 72px tall now."), null, { timeout: 5000 }).then(() => true, () => false);
     if (!replied) return "the agent's reply didn't show in the thread";
+    agentman.sessions[0].state = "idle";
+    if (await S(page, () => Boolean(document.querySelector(".bd-thread .bd-working-on")))) return "the agent still shows at work after it answered";
     // Comments aren't the design: undo leaves them alone.
     await page.keyboard.press("Escape");
     await page.keyboard.press("Meta+z");
@@ -229,10 +241,40 @@ const CHECKS: Record<string, Check> = {
     await page.click(".bd-thread header button[title='Resolve']");
     await page.waitForTimeout(400);
     const resolved = Boolean(talk.getComments(t.id).threads[0].resolved);
+    // A resolved thread opens again with a word, not another check mark.
+    await page.click('.bd-left-tabs [data-tab="comments"]');
+    await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), thread.id);
+    await page.waitForTimeout(300);
+    const reopen = await S(page, () => document.querySelector(".bd-thread header .bd-reopen")?.textContent ?? "");
+    if (reopen !== "Reopen") return `a resolved thread offers "${reopen}" to open it again`;
+    await page.keyboard.press("Escape");
+    await page.click('.bd-left-tabs [data-tab="layers"]').catch(() => undefined);
     const pinGone = await S(page, (id: string) => !document.querySelector(`.bd-pin[data-thread="${id}"]`), thread.id);
     await page.click('.bd-left-tabs [data-tab="comments"]');
     const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
     return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
+  },
+  async "on a board, @ tags an agent in the words, even one from Agentman that hasn't worked here"(page) {
+    const t = await openTestBoard(page);
+    await page.keyboard.press("c");
+    const r = await boxOf(page, t.byName("Row One"));
+    await page.mouse.click(r.x + r.width - 18, r.y + 8);
+    await page.waitForSelector(".bd-thread textarea");
+    await page.keyboard.type("Hey @Hel");
+    await page.waitForSelector(".bd-picker button", { timeout: 6000 });
+    const listed = await S(page, () => [...document.querySelectorAll(".bd-picker button .nm")].map((x) => x.textContent).join());
+    if (listed !== "Helper") return `typing @Hel lists "${listed}", not Agentman's Helper`;
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("can you tidy this row?");
+    const typed = await S(page, () => (document.querySelector(".bd-thread textarea") as HTMLTextAreaElement).value);
+    const button = await S(page, () => document.querySelector(".bd-compose .btn")?.textContent ?? "");
+    if (typed !== "Hey @Helper can you tidy this row?" || button !== "Send") return `the words are "${typed}", the button says "${button}"`;
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Helper"), null, { timeout: 8000 }).catch(() => undefined);
+    const sent = agentman.sent.find((x) => x.sessionId === "codex:helper");
+    const onBoard = boards.getBoard(t.id).agents?.["codex:helper"]?.name;
+    const mark = await S(page, () => document.querySelector(".bd-thread .bd-msg .bd-mention")?.textContent ?? "");
+    return sent?.text.includes("Hey @Helper can you tidy this row?") && onBoard === "Helper" && mark === "@Helper" ? "ok" : `sent: ${Boolean(sent)}, on the board as: ${onBoard}, marked: "${mark}"`;
   },
   async "on a board, dragging with the comment tool comments on that part of the artboard"(page) {
     const t = await openTestBoard(page);
@@ -251,7 +293,7 @@ const CHECKS: Record<string, Check> = {
     const layers = (th?.anchor.layers ?? []).map((id) => boards.getBoard(t.id).nodes[id]?.name).join();
     if (!th?.anchor.rect || th.anchor.artboard !== t.byName("Phone")) return "the region wasn't saved on the artboard";
     if (layers !== "List") return `the region covers ${layers || "nothing"}, not List`;
-    if (!/note/.test(note) || th.messages[0].to) return "with no agent on the board, it should be a note";
+    if (note || th.messages[0].to?.length) return "with no agent tagged, it should be just a comment";
     const area = await S(page, () => Boolean(document.querySelector(".bd-carea")));
     return area ? "ok" : "the region isn't outlined while its thread is open";
   },

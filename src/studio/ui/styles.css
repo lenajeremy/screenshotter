@@ -1945,3 +1945,18 @@ li.done .work-shot .scan { display: none; }
 .bd-cagent { display: flex; align-items: center; gap: 8px; height: 30px; margin: 0 6px; padding: 0 8px; border-radius: 7px; font-size: 12px; color: var(--text-2); }
 .bd-cagent .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .bd-cagent .k { flex: none; color: var(--text-4); font-size: 11px; }
+/* Comments: an agent at work on a thread, @names, reopening */
+.bd-working-on { display: flex; align-items: center; gap: 7px; padding: 6px 12px 8px; color: var(--text-3); font-size: 12px; }
+.bd-working-on .av { flex: none; }
+.bd-working-on .t { min-width: 0; }
+.bd-dots { display: inline-flex; gap: 3px; margin-left: 2px; }
+.bd-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0.25; animation: bd-dot 1.2s ease-in-out infinite; }
+.bd-dots i:nth-child(2) { animation-delay: 0.18s; }
+.bd-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes bd-dot { 0%, 70%, 100% { opacity: 0.25; transform: translateY(0); } 35% { opacity: 0.9; transform: translateY(-2px); } }
+.bd-pin.busy::after { content: ""; position: absolute; inset: -4px; border-radius: inherit; border: 1.5px solid rgba(255, 255, 255, 0.55); animation: bd-pin-busy 1.6s ease-out infinite; pointer-events: none; }
+@keyframes bd-pin-busy { from { opacity: 0.9; transform: scale(0.92); } to { opacity: 0; transform: scale(1.35); } }
+@media (prefers-reduced-motion: reduce) { .bd-dots i, .bd-pin.busy::after { animation: none; opacity: 0.6; } }
+.bd-mention { color: var(--text); font-weight: 600; }
+.bd-picker-head { margin: 6px 8px 2px; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.bd-reopen { height: 26px; padding: 0 10px; }

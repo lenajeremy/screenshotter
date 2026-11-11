@@ -1,8 +1,8 @@
 // Comments on a board: pins on the canvas, a thread by its pin, and the Comments tab. What the
 // person writes goes to the agents it names, through Agentman (the Studio server sends it); their
 // answers come back with the board's polling, as their changes to the design do.
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import { defaultRecipients, plainText, rootOf, subtree } from "./board-core.js";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { plainText, rootOf, subtree } from "./board-core.js";
 import { B, bset, commentListeners, currentPage, loadComments, node } from "./board-state.js";
 import { canvasEl, centerOn, screenBox, worldBox } from "./board-canvas.js";
 import { Switch, html } from "./controls.js";
@@ -14,7 +14,7 @@ import { api, fail, toast } from "./store.js";
 // Who's who
 
 const agents = () => Object.values(B.comments.agents ?? {}).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
-const agentName = (key, fallback) => B.comments.agents?.[key]?.name ?? fallback ?? "An agent";
+const agentName = (key, fallback) => B.comments.agents?.[key]?.name ?? live.others.find((o) => o.key === key)?.name ?? fallback ?? "An agent";
 const KINDS = { claude: "Claude", codex: "Codex", "cursor-cli": "Cursor", opencode: "OpenCode", kiro: "Kiro", antigravity: "Antigravity", muse: "Muse", agent: "Agent" };
 const kindName = (k) => KINDS[k] ?? k;
 const authorOf = (m) => (m.by === "person" ? "You" : agentName(m.by, m.name));
@@ -117,6 +117,70 @@ commentListeners.add((before, after) => {
     if (m) toast({ kind: "ok", icon: "comment", title: `${authorOf(m)} ${t.messages[0] === m ? "commented" : "replied"}`, text: m.text.slice(0, 120), timeout: 8000, actions: [{ label: "Show", run: () => openThread(t.id) }] });
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// What the agents are doing now (from Agentman), so a thread can show one at work on it
+
+/** The board's agents' states (busy, idle, waiting_input), and Agentman's other agents, to tag. */
+const live = { states: {}, others: [], agentman: false, at: 0, board: null };
+async function loadLive() {
+  if (!B.id) return;
+  try {
+    const r = await api(`/api/board/agents?id=${encodeURIComponent(B.id)}`);
+    const changed = JSON.stringify([r.states, r.others]) !== JSON.stringify([live.states, live.others]);
+    Object.assign(live, r, { at: Date.now(), board: B.id });
+    if (changed) bset({});
+  } catch {
+    // The Studio server is gone or busy: try again next time.
+  }
+}
+
+/**
+ * The agents a thread waits on: the person wrote last, and it reached them. Each with what it's
+ * doing: at work on it, about to start, waiting for the person in Agentman, or nothing to show.
+ */
+function waitingOn(t) {
+  const last = t.messages[t.messages.length - 1];
+  if (!last || last.by !== "person" || t.resolved) return [];
+  return (last.to ?? [])
+    .map((key) => {
+      const d = last.delivery?.[key];
+      if (!d || (d.status !== "delivered" && d.status !== "queued")) return null;
+      const age = Date.now() - Date.parse(d.at);
+      const state = live.board === B.id ? live.states[key] : undefined;
+      const doing =
+        state === "waiting_input" ? "asking"
+        : state === "busy" ? (d.status === "queued" ? "finishing" : "working")
+        : state === "idle" ? (age < 20_000 ? "working" : null)
+        : state === "ended" ? null
+        : age < 180_000 ? "working" : null;
+      return doing ? { key, doing } : null;
+    })
+    .filter(Boolean);
+}
+const busyOn = (t) => waitingOn(t).some((w) => w.doing === "working" || w.doing === "finishing");
+
+/** Words with each @name of an agent marked, as the person typed it. */
+function withMentions(text) {
+  const names = [...new Set([...agents().map((a) => a.name), ...live.others.map((o) => o.name)])].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!names.length || !text.includes("@")) return text;
+  const re = new RegExp(`@(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?![\\w-])`, "gi");
+  const out = [];
+  let at = 0;
+  for (const m of text.matchAll(re)) {
+    out.push(text.slice(at, m.index), html`<span class="bd-mention">@${m[1]}</span>`);
+    at = m.index + m[0].length;
+  }
+  out.push(text.slice(at));
+  return out;
+}
+
+/** The agents named with @ in some words (board agents first, then Agentman's others). */
+function mentioned(text) {
+  const all = [...agents().map((a) => ({ key: a.key, name: a.name })), ...live.others];
+  const lower = text.toLowerCase();
+  return all.filter((a) => a.name && new RegExp(`(^|\\s)@${a.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(lower)).map((a) => a.key);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Opening and closing
@@ -235,6 +299,15 @@ const stop = (e) => e.stopPropagation();
 export function CommentLayer() {
   const b = B;
   const page = currentPage();
+  // While a thread waits on an agent (or the person is picking one), ask Agentman what it's doing.
+  useEffect(() => {
+    loadLive();
+    const t = setInterval(() => {
+      if (B.comments.threads.some((x) => waitingOn(x).length) || document.querySelector(".bd-picker")) loadLive();
+      else if (B.comments.threads.some((x) => x.messages[x.messages.length - 1]?.by === "person")) bset({});
+    }, 2500);
+    return () => clearInterval(t);
+  }, [b.id]);
   if (!page || !canvasEl.current) return null;
   const busy = b.dragging && b.dragging !== "pan";
   const threads = b.comments.threads.filter((t) => t.anchor.page === page.id && (!t.resolved || b.showResolved || b.thread === t.id));
@@ -249,7 +322,7 @@ export function CommentLayer() {
     threads.map((t) => {
       const p = pinPoint(t.anchor);
       if (!p) return null;
-      return html`<button key=${t.id} class="bd-pin ${t.id === b.thread ? "on" : ""} ${t.resolved ? "done" : ""}" data-thread=${t.id} style=${{ left: p.x + "px", top: p.y + "px" }}
+      return html`<button key=${t.id} class="bd-pin ${t.id === b.thread ? "on" : ""} ${t.resolved ? "done" : ""} ${busyOn(t) ? "busy" : ""}" data-thread=${t.id} style=${{ left: p.x + "px", top: p.y + "px" }}
           title=${`${anchorLabel(t.anchor)}: ${t.messages[0]?.text.slice(0, 80) ?? ""}`}
           onPointerDown=${stop} onClick=${() => (b.thread === t.id ? closeThread() : openThread(t.id))}>
         ${t.resolved ? html`<${Icon} n="check" s=${11} w=${2.4} />` : t.messages.length}
@@ -285,20 +358,34 @@ function ThreadCard({ t, at }) {
   return html`<div class="bd-thread" ref=${ref} onPointerDown=${stop} onWheel=${stop} onDblClick=${stop} onContextMenu=${stop} role="dialog" aria-label="Comment">
     <header>
       <span class="t" title=${anchorLabel(anchor)}>${anchorLabel(anchor)}</span>
-      ${t && html`<button class="icon-btn sm ${t.resolved ? "on" : ""}" title=${t.resolved ? "Open it again" : "Resolve"} aria-pressed=${Boolean(t.resolved)} onClick=${() => resolve(t)}><${Icon} n="check" s=${14} /></button>
+      ${t &&
+      html`${t.resolved
+          ? html`<button class="btn sm ghost bd-reopen" onClick=${() => resolve(t)}>Reopen</button>`
+          : html`<button class="icon-btn sm" title="Resolve" onClick=${() => resolve(t)}><${Icon} n="check" s=${14} /></button>`}
         <button class="icon-btn sm" title="Delete" onClick=${(e) => askDelete(t, e)}><${Icon} n="trash" s=${14} /></button>`}
       <button class="icon-btn sm" title="Close (Esc)" onClick=${closeThread}><${Icon} n="x" s=${14} /></button>
     </header>
-    ${t && html`<div class="bd-msgs">${t.messages.map((m) => html`<${Message} key=${m.id} t=${t} m=${m} />`)}</div>`}
+    ${t && html`<div class="bd-msgs">${t.messages.map((m) => html`<${Message} key=${m.id} t=${t} m=${m} />`)}${waitingOn(t).map((w) => html`<${Working} key=${w.key} w=${w} />`)}</div>`}
     ${t?.resolved && html`<p class="bd-resolved">Resolved by ${t.resolved.by === "person" ? "you" : agentName(t.resolved.by)}, ${ago(t.resolved.at)}${ago(t.resolved.at) === "now" ? "" : " ago"}</p>`}
     <${Composer} t=${t} anchor=${anchor} />
+  </div>`;
+}
+
+/** An agent at work on the thread: its name, and three dots that keep time. */
+function Working({ w }) {
+  const name = agentName(w.key);
+  const say = { working: `${name} is working on it`, finishing: `${name} is finishing something else, then it's yours`, asking: `${name} is waiting for an answer in Agentman` }[w.doing];
+  return html`<div class="bd-working-on ${w.doing}" aria-live="polite">
+    <span class="av agent">${(name.trim()[0] ?? "A").toUpperCase()}</span>
+    <span class="t">${say}</span>
+    ${w.doing !== "asking" && html`<span class="bd-dots" aria-hidden="true"><i></i><i></i><i></i></span>`}
   </div>`;
 }
 
 function Message({ t, m }) {
   return html`<div class="bd-msg">
     <div class="who"><span class="av ${m.by === "person" ? "" : "agent"}">${initial(m)}</span><b>${authorOf(m)}</b><span class="when">${ago(m.createdAt)}</span></div>
-    <p class="txt">${m.text}</p>
+    <p class="txt">${withMentions(m.text)}</p>
     ${(m.to ?? []).map((key) => html`<${DeliveryLine} key=${key} t=${t} m=${m} k=${key} />`)}
   </div>`;
 }
@@ -315,44 +402,71 @@ function DeliveryLine({ t, m, k }) {
   return html`<p class="bd-sent failed"><i></i>Couldn't reach ${who}: ${why}${again}</p>`;
 }
 
-/** The box to write in, with who it goes to: the agents who worked here unless changed (@ picks). */
+/**
+ * The box to write in. A comment is just a comment; an agent tagged with @ gets it (through
+ * Agentman) and answers. Nothing goes to anyone who isn't tagged.
+ */
 function Composer({ t, anchor }) {
   const [text, setText] = useState("");
-  const [to, setTo] = useState(() => defaultRecipients({ agents: B.comments.agents ?? {} }, anchor.artboard, t?.messages ?? []));
+  // Agents picked from the @ list, by name (so one Agentman lists but the board doesn't know yet still counts).
+  const picked = useRef({});
   const [picking, setPicking] = useState(null);
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState(false);
   const area = useRef();
+  const caretAt = useRef(null);
   useLayoutEffect(() => {
     area.current?.focus();
   }, [t?.id]);
-  const all = agents();
+  useLayoutEffect(() => {
+    if (caretAt.current === null || !area.current) return;
+    area.current.setSelectionRange(caretAt.current, caretAt.current);
+    caretAt.current = null;
+  });
+  const all = [...agents().map((a) => ({ ...a, here: true })), ...live.others.map((o) => ({ ...o, artboards: [], here: false }))];
   const q = (picking?.q ?? "").toLowerCase();
-  const options = all.filter((a) => !q || a.name.toLowerCase().includes(q) || kindName(a.kind).toLowerCase().includes(q));
+  const options = all.filter((a) => !q || a.name.toLowerCase().includes(q) || kindName(a.kind).toLowerCase().includes(q) || (a.folder ?? "").toLowerCase().includes(q));
+  // Agentman's other agents, for the picker (they can be tagged though they haven't worked here).
+  useEffect(() => {
+    if (picking) loadLive();
+  }, [Boolean(picking)]);
   const pick = (a) => {
-    setTo(to.includes(a.key) ? to.filter((k) => k !== a.key) : [...to, a.key]);
-    // The @word was only for picking: it doesn't stay in the words.
-    if (picking?.typed) setText(text.slice(0, picking.at) + text.slice(picking.at + 1 + picking.q.length));
+    // The @name stays in the words, as it does in a chat.
+    const before = text.slice(0, picking.at);
+    const after = text.slice(picking.at + 1 + picking.q.length).replace(/^\s*/, "");
+    setText(`${before}@${a.name} ${after}`);
+    picked.current[a.name.toLowerCase()] = a.key;
+    // The caret goes after the name once the box has the new words (not a frame later: typing is quicker).
+    caretAt.current = before.length + a.name.length + 2;
     setPicking(null);
     area.current?.focus();
+  };
+  /** Who's tagged in the words: the board's agents and Agentman's by name, and any picked from the list. */
+  const tagged = (words) => {
+    const lower = words.toLowerCase();
+    const fromList = Object.entries(picked.current).filter(([name]) => lower.includes(`@${name}`)).map(([, key]) => key);
+    return [...new Set([...mentioned(words), ...fromList])];
   };
   const go = async () => {
     const words = text.trim();
     if (!words || busy) return;
     setBusy(true);
-    const ok = await send(t, words, to);
+    const ok = await send(t, words, tagged(words));
     setBusy(false);
-    if (ok) setText("");
+    if (ok) {
+      setText("");
+      picked.current = {};
+    }
   };
   const onInput = (e) => {
     const v = e.target.value;
     setText(v);
     const caret = e.target.selectionStart ?? v.length;
     const m = /(^|\s)@([^\s@]*)$/.exec(v.slice(0, caret));
-    if (m && all.length) {
-      setPicking({ typed: true, at: caret - m[2].length - 1, q: m[2] });
+    if (m && (all.length || live.agentman)) {
+      setPicking({ at: caret - m[2].length - 1, q: m[2] });
       setActive(0);
-    } else if (picking?.typed) setPicking(null);
+    } else if (picking) setPicking(null);
   };
   const onKey = (e) => {
     e.stopPropagation();
@@ -375,30 +489,23 @@ function Composer({ t, anchor }) {
       go();
     }
   };
+  const asking = tagged(text).length > 0;
   return html`<div class="bd-compose">
-    ${all.length > 0
-      ? html`<div class="bd-to">
-          <span class="lbl">To</span>
-          ${to.map((k) => html`<span key=${k} class="bd-chip">${agentName(k)}<button title=${`Don't send to ${agentName(k)}`} onClick=${() => setTo(to.filter((x) => x !== k))}><${Icon} n="x" s=${10} w=${2} /></button></span>`)}
-          ${!to.length && html`<span class="none">no one: a note</span>`}
-          <button class="icon-btn sm bd-add-to" title="Send to an agent (or type @)" onClick=${() => setPicking(picking ? null : { typed: false, at: 0, q: "" })}><${Icon} n="plus" s=${13} /></button>
-        </div>`
-      : html`<p class="bd-sent">No agent has worked on this board, so this is a note for now.</p>`}
     ${picking &&
     html`<div class="bd-picker" role="listbox">
       ${options.length
-        ? options.map((a, i) => html`<button key=${a.key} role="option" aria-selected=${i === active} class=${`${i === active ? "act" : ""} ${to.includes(a.key) ? "in" : ""}`} onPointerDown=${(e) => e.preventDefault()} onClick=${() => pick(a)}>
+        ? options.map((a, i) => html`${!a.here && (i === 0 || options[i - 1].here) && html`<p class="bd-picker-head">Other agents in Agentman</p>`}
+          <button key=${a.key} role="option" aria-selected=${i === active} class=${i === active ? "act" : ""} onPointerDown=${(e) => e.preventDefault()} onClick=${() => pick(a)}>
             <span class="av agent">${(a.name.trim()[0] ?? "A").toUpperCase()}</span>
             <span class="nm">${a.name}</span>
-            <span class="k">${anchor.artboard && a.artboards.includes(anchor.artboard) ? "worked here" : kindName(a.kind)}</span>
-            ${to.includes(a.key) && html`<${Icon} n="check" s=${12} />`}
+            <span class="k">${a.here ? (anchor.artboard && a.artboards.includes(anchor.artboard) ? "worked here" : "on this board") : [kindName(a.kind), a.folder].filter(Boolean).join(" · ")}</span>
           </button>`)
-        : html`<p class="bd-sent">No agent called that.</p>`}
+        : html`<p class="bd-sent">${live.agentman ? "No agent called that." : "Agentman isn't running, so only this board's agents can be tagged."}</p>`}
     </div>`}
-    <textarea ref=${area} class="textarea" rows="2" placeholder=${t ? "Reply" : "Add a comment"} value=${text} onInput=${onInput} onKeyDown=${onKey}></textarea>
+    <textarea ref=${area} class="textarea" rows="2" placeholder=${t ? "Reply, or @ an agent" : "Add a comment, or @ an agent"} value=${text} onInput=${onInput} onKeyDown=${onKey}></textarea>
     <div class="bd-compose-foot">
-      <span class="hint">⏎ to send, ⇧⏎ for a new line</span>
-      <button class="btn sm" disabled=${!text.trim() || busy} onClick=${go}>${busy ? "Sending…" : to.length ? "Send" : "Save"}</button>
+      <span class="hint">${asking ? "The agents you tagged get it, and answer here" : "⏎ to post, ⇧⏎ for a new line"}</span>
+      <button class="btn sm" disabled=${!text.trim() || busy} onClick=${go}>${busy ? "Sending…" : asking ? "Send" : t ? "Reply" : "Comment"}</button>
     </div>
   </div>`;
 }
@@ -421,7 +528,8 @@ export function CommentsPanel() {
             const first = t.messages[0];
             const last = t.messages[t.messages.length - 1];
             const replies = t.messages.length - 1;
-            const state = t.resolved ? "Resolved" : notSent(t) ? "Not sent to everyone" : unseen(t) ? `New from ${authorOf(last)}` : replies ? `${replies} repl${replies === 1 ? "y" : "ies"}` : "";
+            const busy = waitingOn(t).find((w) => w.doing === "working");
+            const state = t.resolved ? "Resolved" : notSent(t) ? "Not sent to everyone" : busy ? `${agentName(busy.key)} is working on it…` : unseen(t) ? `New from ${authorOf(last)}` : replies ? `${replies} repl${replies === 1 ? "y" : "ies"}` : "";
             return html`<button key=${t.id} class="bd-crow ${b.thread === t.id ? "on" : ""} ${t.resolved ? "done" : ""}" data-thread=${t.id} onClick=${() => openThread(t.id)}>
               <span class="av ${first.by === "person" ? "" : "agent"}">${initial(first)}</span>
               <span class="body">

@@ -37,7 +37,7 @@ import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers } from "../board/render.js";
 import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
-import { deliver, getComments, markSending, remove, reply, setResolved, startThread, type AnchorInput } from "../board/comments.js";
+import { agentsNow, bringIn, deliver, getComments, markSending, remove, reply, setResolved, startThread, type AnchorInput } from "../board/comments.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
@@ -440,9 +440,11 @@ const CommentSchema = z.discriminatedUnion("do", [
  * told through Agentman once the answer has gone back, and how that went is kept with the comment
  * (the Studio's polling shows it).
  */
-function commentRoute(body: unknown) {
+async function commentRoute(body: unknown) {
   const a = CommentSchema.parse(body);
   const tell = (thread: string, message: string, only?: string[]) => void deliver(a.id, thread, message, only);
+  // An agent tagged who hasn't worked here joins the board first, so the comment can reach it.
+  if ((a.do === "new" || a.do === "reply") && a.to?.length) await bringIn(a.id, a.to);
   switch (a.do) {
     case "new": {
       const r = startThread(a.id, a.anchor, { text: a.text, by: "person", to: a.to });
@@ -613,6 +615,9 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const agents = Object.values(b.agents ?? {});
     const talk = `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}`;
     return send(200, { rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: summarizeBoard(b).working, talk });
+  }
+  if (req.method === "GET" && url.pathname === "/api/board/agents") {
+    return send(200, await agentsNow(url.searchParams.get("id") ?? ""));
   }
   if (req.method === "GET" && url.pathname === "/api/board/comments") {
     const b = getBoard(url.searchParams.get("id"));
@@ -877,7 +882,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale });
     }
     case "/api/board/comment":
-      return send(200, commentRoute(await json(req)));
+      return send(200, await commentRoute(await json(req)));
     case "/api/board/delete":
       deleteBoard((await json<{ id: string }>(req)).id);
       return send(200, { ok: true });

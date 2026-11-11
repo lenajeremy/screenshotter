@@ -9,9 +9,9 @@
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { listSessions, sendToAgent, sessionInFolder, type AgentmanSession } from "./agentman.js";
+import { listSessions, liveSessions, sendToAgent, sessionInFolder, type AgentmanSession } from "./agentman.js";
 import { defaultRecipients, newId, pageOf, plainText, rootOf, round, subtree, type Board, type BoardAgent } from "./core.js";
-import { commentsFile, getBoard, validBoardId, withFileLock } from "./store.js";
+import { changeBoard, commentsFile, getBoard, validBoardId, withFileLock } from "./store.js";
 
 export interface CommentAnchor {
   page: string;
@@ -218,6 +218,52 @@ export function reply(boardId: string, threadId: string, p: Post) {
   return { thread: result, message: m, rev: comments.rev };
 }
 
+/**
+ * Agents the person tagged who haven't worked on the board: Agentman's sessions by their ids. They
+ * join the board's agents, so the comment can go to them and they show by name.
+ */
+export async function bringIn(boardId: string, keys: string[] | undefined): Promise<void> {
+  const board = getBoard(boardId);
+  const missing = [...new Set(keys ?? [])].filter((k) => !board.agents?.[k]);
+  if (!missing.length) return;
+  let sessions: AgentmanSession[] = [];
+  try {
+    sessions = await liveSessions();
+  } catch {
+    return;
+  }
+  const at = now();
+  const ops = sessions
+    .filter((s) => missing.includes(s.id) && s.state !== "ended")
+    .map((s) => ({ op: "agent" as const, agent: { key: s.id, session: s.id, kind: s.kind || "agent", name: s.name || s.id, cwd: s.cwd }, at }));
+  if (ops.length) changeBoard(boardId, ops, "studio", undefined, { expand: false });
+}
+
+/**
+ * What the board's agents are doing now, by Agentman (busy, idle, waiting_input, ended), and the
+ * other agents it runs, to tag. Empty when Agentman isn't running.
+ */
+export async function agentsNow(boardId: string): Promise<{ states: Record<string, string>; others: { key: string; name: string; kind: string; folder: string; state?: string }[]; agentman: boolean }> {
+  const board = getBoard(boardId);
+  let sessions: AgentmanSession[];
+  try {
+    sessions = await liveSessions();
+  } catch {
+    return { states: {}, others: [], agentman: false };
+  }
+  const states: Record<string, string> = {};
+  for (const a of Object.values(board.agents ?? {})) {
+    const s = a.session ? sessions.find((x) => x.id === a.session) : undefined;
+    if (s?.state) states[a.key] = s.state;
+  }
+  const taken = new Set(Object.values(board.agents ?? {}).flatMap((a) => [a.key, a.session]));
+  const others = sessions
+    .filter((s) => s.state !== "ended" && !taken.has(s.id))
+    .map((s) => ({ key: s.id, name: s.name || s.id, kind: s.kind, folder: s.cwd ? path.basename(s.cwd) : "", state: s.state }));
+  return { states, others, agentman: true };
+}
+
+/** Resolving is the person's call: they asked, they say when it's done. */
 export function setResolved(boardId: string, threadId: string, resolved: boolean, by: string) {
   const { comments, result } = changeComments(boardId, (c) => {
     const t = threadIn(c, threadId);
@@ -279,7 +325,7 @@ export function messageFor(board: Board, thread: CommentThread, m: CommentMessag
   lines.push(
     `It's on ${describeAnchor(board, thread.anchor)}.`,
     "",
-    `Answer in the thread with Screenshotter's MCP tool board_comment { board: "${board.id}", comment: "${thread.id}", reply: "…" }; the user sees your reply on the board in the Studio. If the comment asks for a change, make it on the board (board_read, board_edit, board_write_html), look at it with board_screenshot, then reply saying what you changed, with resolve: true once it's dealt with.`,
+    `Answer in the thread with Screenshotter's MCP tool board_comment { board: "${board.id}", comment: "${thread.id}", reply: "…" }; the user sees your reply on the board in the Studio. If the comment asks for a change, make it on the board (board_read, board_edit, board_write_html), look at it with board_screenshot, then reply saying what you changed. The user resolves the comment when they're happy with it.`,
   );
   return lines.join("\n");
 }

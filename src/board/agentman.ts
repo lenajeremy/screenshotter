@@ -82,6 +82,17 @@ export async function listSessions(timeoutMs = 3000): Promise<AgentmanSession[]>
   return Array.isArray(e.sessions) ? e.sessions : [];
 }
 
+/** The sessions, asked again only when the last answer is older than `maxAgeMs` (the Studio polls this). */
+let recent: { at: number; sessions: Promise<AgentmanSession[]> } | null = null;
+export function liveSessions(maxAgeMs = 1500): Promise<AgentmanSession[]> {
+  if (!recent || Date.now() - recent.at > maxAgeMs) {
+    const sessions = listSessions(2500);
+    recent = { at: Date.now(), sessions };
+    sessions.catch(() => (recent = null));
+  }
+  return recent.sessions;
+}
+
 /**
  * Agentman takes no terminal control characters (it types the message into the agent's prompt)
  * and nothing over 64 KB.
