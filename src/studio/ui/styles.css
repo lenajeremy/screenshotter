@@ -334,6 +334,23 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .color-btn:hover { background: var(--panel-3); }
 .color-btn .chip-color { width: 22px; height: 22px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15); }
 .color-btn.auto { color: var(--text-3); font-family: var(--sans); }
+/* On a board: its colour tokens under the picker, as chips, and "Make a token". Neutral, like the
+   rest of the board panel: only selection is blue. */
+.cp-tokens { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+/* A popover with a board's tokens in it gets more room, so the tokens show without scrolling. */
+.pop:has(.cp-tokens) { max-height: min(580px, calc(100vh - 40px)); }
+.cp-tokens-head { display: flex; align-items: center; justify-content: space-between; min-height: 24px; font-size: 11.5px; color: var(--text-3); }
+.cp-make { height: 24px; margin-right: -4px; padding: 0 8px; }
+.cp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.cp-token { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 8px 0 4px; border: 0; border-radius: 7px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font: 11.5px var(--mono); }
+.cp-token:hover { background: var(--panel-3); color: var(--text); }
+.cp-token.on { background: var(--panel-4); box-shadow: inset 0 0 0 1px var(--line-3); color: var(--text); }
+.cp-token i { flex: none; width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15); }
+.cp-token span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-hint { margin: 0; color: var(--text-3); font-size: 11.5px; line-height: 1.45; }
+/* A token's name in a colour field or a row: a quiet tag, so it doesn't read as a CSS colour name. */
+.cb-token { display: inline-block; max-width: 100%; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); color: var(--text); font: 11.5px var(--mono); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-token.missing { color: var(--text-3); text-decoration: line-through; }
 
 /* ---------------------------------------------------------------- stage */
 
@@ -1720,9 +1737,13 @@ li.done .work-shot .scan { display: none; }
 .bd-font .input { font-size: 12.5px; }
 .bd-src { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
 .bd-src span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bd-token { display: grid; grid-template-columns: 84px 1fr 26px; gap: 6px; align-items: center; }
+.bd-token { display: grid; grid-template-columns: minmax(0, 1fr) 118px 26px 26px; gap: 4px; align-items: center; }
 .bd-token.new { grid-template-columns: 1fr 1fr auto; }
 .bd-token code { font: 11.5px var(--mono); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* How many layers use a token; a click selects them. */
+.bd-uses { height: 26px; min-width: 0; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text-2); font: 11px var(--mono); font-variant-numeric: tabular-nums; }
+.bd-uses:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.bd-uses:disabled { color: var(--text-off); }
 .bd-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 11.5px; }
 .bd-keys dt { font: 500 11px var(--mono); color: var(--text-2); white-space: nowrap; }
 .bd-keys dd { margin: 0; color: var(--text-3); }
@@ -1791,9 +1812,9 @@ li.done .work-shot .scan { display: none; }
 .bd-word:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
 .bd-word.on { background: var(--panel-4); color: var(--text); }
 .bd-word:disabled { opacity: 0.4; }
-.bd-word.color input { position: absolute; inset: 0; opacity: 0; cursor: default; }
 .bd-word.color i { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(#ff5d5d, #ffb547, #d2ff4d, #4ade80, #4c8dff, #ff5fa2, #ff5d5d); }
 .bd-word.color.off { opacity: 0.4; }
+.bd-word-pop { outline: none; }
 
 /* Popover rows: a fill, a shadow or a filter in one line; its editor opens in a popover. */
 .bd-prow { display: flex; align-items: center; gap: 4px; }
@@ -1802,6 +1823,7 @@ li.done .work-shot .scan { display: none; }
 .bd-prow.open .bd-prow-main { box-shadow: inset 0 0 0 1px rgba(76, 141, 255, 0.75); }
 .bd-prow-main .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bd-prow-main .sub { color: var(--text-3); font: 11px var(--mono); white-space: nowrap; }
+.bd-prow-main .sub .cb-token { max-width: 104px; }
 .bd-prow-main .bd-swatch { flex: none; width: 20px; height: 20px; border-radius: 5px; }
 .bd-pop-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
 .bd-pop-edit .seg button { flex: 1; }

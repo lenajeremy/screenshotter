@@ -342,6 +342,66 @@ const CHECKS: Record<string, Check> = {
     const pasted = boards.getBoard(t.id).nodes[phone.children![phone.children!.length - 1]];
     return pasted.type === "frame" && pasted.children?.length === 2 ? "ok" : `pasted: ${pasted.type} with ${pasted.children?.length ?? 0} layers`;
   },
+  async "on a board, a fill takes a token from the picker, shows its name and draws its colour"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    // A token that is another token, so the panel and the canvas both resolve it through two.
+    await S(page, async () => (await import("/ui/board-state.js" as string)).commit([{ op: "token", name: "--brand", value: "#ff3366" }, { op: "token", name: "--accent", value: "var(--brand)" }]));
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), phone);
+    await page.waitForTimeout(300);
+    const fill = page.locator(".bd-right section", { has: page.locator("h3", { hasText: /^Fill$/ }) });
+    await fill.locator(".bd-prow-main").first().click();
+    await page.waitForTimeout(300);
+    await page.locator(".pop .cp-token", { hasText: "accent" }).click();
+    await page.waitForTimeout(900);
+    const saved = boards.getBoard(t.id).nodes[phone].style.backgroundColor;
+    const label = (await fill.locator(".bd-prow-main .lbl").first().textContent())?.trim();
+    const swatch = await fill.locator(".bd-prow-main .bd-swatch").first().evaluate((el) => getComputedStyle(el).backgroundImage);
+    const on = (await page.locator(".pop .cp-token.on").textContent())?.trim();
+    const drawn = await S(page, (id: string) => getComputedStyle(document.querySelector(`.bd-world [data-bid="${id}"]`)!).backgroundColor, phone);
+    if (saved !== "var(--accent)") return `the fill was saved as ${saved}`;
+    if (label !== "accent") return `the fill's row says "${label}", not the token's name`;
+    if (!swatch.includes("rgb(255, 51, 102)")) return `the row's swatch is ${swatch.slice(0, 80)}`;
+    if (on !== "accent") return `the picker marks ${on ?? "no token"} as the one in use`;
+    return drawn === "rgb(255, 51, 102)" ? "ok" : `the canvas draws ${drawn}`;
+  },
+  async "on a board, a colour becomes a token in one step, and the token list counts and selects its layers"(page) {
+    const t = await openTestBoard(page);
+    const one = t.byName("Row One");
+    const two = t.byName("Row Two");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), one);
+    await page.waitForTimeout(300);
+    const fill = page.locator(".bd-right section", { has: page.locator("h3", { hasText: /^Fill$/ }) });
+    await fill.locator(".bd-prow-main").first().click();
+    await page.waitForTimeout(300);
+    await page.locator(".pop .cp-make").click();
+    await page.locator(".pop .cp-tokens input").fill("card");
+    await page.locator(".pop .cp-tokens input").press("Enter");
+    await page.waitForTimeout(900);
+    const made = boards.getBoard(t.id);
+    const token = made.tokens.find((x) => x.name === "--card");
+    if (token?.value !== "#ffffff") return `the token is ${JSON.stringify(token)}`;
+    if (made.nodes[one].style.backgroundColor !== "var(--card)") return `the row's fill is ${made.nodes[one].style.backgroundColor}`;
+    await page.keyboard.press("Escape");
+    await S(page, async () => (await import("/ui/board-state.js" as string)).undo());
+    await page.waitForTimeout(900);
+    const undone = boards.getBoard(t.id);
+    if (undone.tokens.length || undone.nodes[one].style.backgroundColor) return `one undo left ${undone.tokens.length} token(s) and the fill ${undone.nodes[one].style.backgroundColor}`;
+    await S(page, async (id: string) => {
+      const s = await import("/ui/board-state.js" as string);
+      s.redo();
+      s.commit([{ op: "set", id, style: { background: null, backgroundColor: "var(--card)" } }]);
+      s.select([]);
+    }, two);
+    await page.waitForTimeout(600);
+    const row = page.locator(".bd-right .bd-token", { has: page.locator("code", { hasText: /^card$/ }) });
+    const count = (await row.locator(".bd-uses").textContent())?.trim();
+    await row.locator(".bd-uses").click();
+    await page.waitForTimeout(300);
+    const picked = (await boardSel(page)).split(",").sort().join(",");
+    if (count !== "2×") return `the token list says ${count} layers use it`;
+    return picked === "Row One,Row Two" ? "ok" : `a click on the count selected ${picked || "nothing"}`;
+  },
   async "the Images panel's grids fit the panel"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone(), leftTab: "images", leftOpen: true });
     await page.waitForTimeout(1200);

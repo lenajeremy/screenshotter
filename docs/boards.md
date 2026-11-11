@@ -33,7 +33,7 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - **Agents:** their changes show up within a second as undoable steps, with the artboards they're working on marked.
 - **Tests:**
   - `npm run test:board`: the core and every tool through MCP.
-  - Seven board checks in `npm run test:ui`, in Chromium and WebKit (drawing, picking, reordering, tools, agent changes, components, align and resize, paste).
+  - Ten board checks in `npm run test:ui`, in Chromium and WebKit (drawing, picking, reordering, tools, agent changes, components, align and resize, assets and filters, paste, and two for tokens in the panel).
 
 - **Since (same day):**
   - align and distribute, resizing several layers together, ⌥ distances
@@ -53,6 +53,12 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - **Agents:** `sticker:`/`art:` image sources, and `shape` and `device` changes.
 
 - **Vectors in parts** (12 November): an `<svg>` is an svg layer holding a `vector` layer per part (`tag` and `attrs`; gradients and the like in the svg layer's `defs`). Parts move and resize by their own coordinates (`vectorFit`), else by a transform (`vectorTransform`). Agents get `vector`, `split` and `flatten` in `board_edit`, and write SVG into a vector with `board_write_html`. Stickers, illustrations and shapes stay one piece until split.
+- **Since (that evening): tokens in the panel.** They always worked in drawing (on `.bd-world` in the Studio, on `:root` in exports); now the panel uses them too.
+  - Every colour field and picker on a board (fills and gradient stops, border, outline, shadow, text, the selected words, a part's paint, a shape's fill and stroke, selection colours) lists the board's colour tokens as chips: a token whose value is a colour, or a `var()` that comes to one. Picking one writes `var(--name)`; picking a plain colour replaces it.
+  - A field, a fill or shadow row and the selection colours show a token by its name, with its swatch resolved through the board's tokens (nested ones and fallbacks too), gradients included.
+  - **Make a token** in the picker names the colour, adds the token and uses it, as one step of undo.
+  - The token list counts the layers using each token; a click on the count selects them.
+  - Only boards get this: `ColorButton` and `ColorPicker` (`controls.js`) take `tokens` and `onMakeToken` props, which the design editor doesn't pass.
 
 **Decisions:**
 
@@ -73,5 +79,6 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
    - smart guides inside frames
    - component variants and properties
    - per-fill visibility
+   - renaming a token, rewriting its `var()` references (copies of components need care: their own changes are overrides)
 6. **Pen tool**: drawing paths, and editing a path's points.
 7. **Speed:** memoised layers for boards with thousands of layers.
