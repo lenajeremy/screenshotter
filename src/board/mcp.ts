@@ -43,7 +43,9 @@ import { builtinSvg, stickerNames, artNames } from "../render/images.js";
 import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
 import { htmlToNodes, type BoardNode } from "./core.js";
-import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, listBoards, summarizeBoard } from "./store.js";
+import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, summarizeBoard } from "./store.js";
+import { whoAmI, type AgentIdentity } from "./agentman.js";
+import { describeAnchor, getComments, keysOf, reply, setResolved, startThread, threadForAgent } from "./comments.js";
 
 type Content = CallToolResult["content"];
 const text = (value: unknown): Content[number] => ({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) });
@@ -64,7 +66,8 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
 - Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
-- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).`;
+- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
+- Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment (reply, and resolve: true once it's dealt with); the person sees your reply by the comment. board_comments lists the open ones for you.`;
 
 const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name.");
 
@@ -110,10 +113,14 @@ function placeInfo(b: Board, id: string) {
   return `${n.name} (#${id}, ${sizeWord(b, id, "width")}×${sizeWord(b, id, "height")})`;
 }
 
-/** The artboards a set of layers is on, marked as being worked on. */
-function workingOps(b: Board, ids: string[]): Op[] {
+/**
+ * The artboards a set of layers is on, marked as being worked on, and the agent remembered as
+ * having worked on them (so a comment on them can reach it).
+ */
+function workingOps(b: Board, ids: string[], me: AgentIdentity): Op[] {
   const roots = [...new Set(ids.filter((id) => b.nodes[id]).map((id) => rootOf(b, id)))];
-  return roots.length ? [{ op: "working", ids: roots, at: new Date().toISOString() }] : [];
+  const at = new Date().toISOString();
+  return [...(roots.length ? [{ op: "working" as const, ids: roots, at }] : []), { op: "agent", agent: me, artboards: roots, at }];
 }
 
 const StyleValue = z.union([z.string(), z.number(), z.null()]);
@@ -240,6 +247,7 @@ export function registerBoardTools(server: McpServer) {
     (a) =>
       guard(async () => {
         const b = createBoard(a.name, "agent");
+        changeBoard(b.id, workingOps(b, [], await whoAmI()), "agent");
         return [text({ id: b.id, name: b.name, page: b.pages[0], note: "Empty. Add an artboard with board_write_html (no target) or board_edit { do: \"artboard\" }." })];
       }),
   );
@@ -328,7 +336,7 @@ export function registerBoardTools(server: McpServer) {
             if (got.nodes[got.id].defs) ops.push({ op: "set", id: rootSvg(b, into), defs: `${b.nodes[rootSvg(b, into)].defs ?? ""}${got.nodes[got.id].defs}` });
             if (mode === "replace") ops.push({ op: "delete", ids: [t.id] });
             const after = changeBoard(b.id, ops, "agent").board;
-            changeBoard(b.id, workingOps(after, kids), "agent");
+            changeBoard(b.id, workingOps(after, kids, await whoAmI()), "agent");
             return [text({ created: kids.map((id) => ({ id, name: after.nodes[id]?.name })), outline: kids.map((id) => treeText(after, id, 3)).join("\n") })];
           }
           if (mode === "inside") {
@@ -364,7 +372,7 @@ export function registerBoardTools(server: McpServer) {
         // Replacing: the new layers go where the old one was, before it's removed.
         const changed = changeBoard(b.id, ops, "agent");
         const after = changed.board;
-        changeBoard(b.id, workingOps(after, made.roots), "agent");
+        changeBoard(b.id, workingOps(after, made.roots, await whoAmI()), "agent");
         const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), warnings: made.warnings.length ? made.warnings : undefined })];
         if (a.preview) {
           const root = rootOf(after, made.roots[0]);
@@ -624,7 +632,7 @@ export function registerBoardTools(server: McpServer) {
           }
         }
         const changed = changeBoard(b.id, ops, "agent");
-        if (touched.length) changeBoard(b.id, workingOps(changed.board, touched), "agent");
+        changeBoard(b.id, workingOps(changed.board, touched, await whoAmI()), "agent");
         return [text({ results, rev: changed.board.rev })];
       }),
   );
@@ -715,6 +723,67 @@ export function registerBoardTools(server: McpServer) {
         const b = findBoard(a.board);
         changeBoard(b.id, [{ op: "working", ids: a.artboards, at: null }], "agent");
         return [text("Done.")];
+      }),
+  );
+
+  server.registerTool(
+    "board_comments",
+    {
+      title: "Read comments on boards",
+      description:
+        "The user's comments on boards: threads pinned to a layer or to a region of an artboard, each with what it's on (layer names and ids), its messages (from the user, you or another agent) and whether it's waiting on you. Default: the open threads addressed to you (or that you answered), on every board. A comment for you also arrives as a message from Screenshotter; answer it with board_comment.",
+      inputSchema: {
+        board: BoardRef.optional().describe("Only this board. Default: every board."),
+        all: z.boolean().optional().describe("Every thread, not only those addressed to you."),
+        resolved: z.boolean().optional().describe("Include resolved threads. Default false."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const me = await whoAmI();
+        const boards = a.board ? [findBoard(a.board)] : listBoards().map((s) => getBoard(s.id));
+        const out = [];
+        for (const b of boards) {
+          const mine = keysOf(b, me);
+          const threads = getComments(b.id).threads.filter((t) => (a.resolved || !t.resolved) && (a.all || t.messages.some((m) => mine.has(m.by) || m.to?.some((k) => mine.has(k)))));
+          if (threads.length) out.push({ board: b.id, name: b.name, threads: threads.map((t) => threadForAgent(b, t, mine)) });
+        }
+        return [text(out.length ? out : a.all ? "No comments." : "No open comments for you (all: true lists everyone's).")];
+      }),
+  );
+
+  server.registerTool(
+    "board_comment",
+    {
+      title: "Answer a comment on a board",
+      description:
+        "Reply in a comment's thread (the user sees it on the board in the Studio, by the comment), resolve it or open it again, or start a thread of your own on a layer to point something out or ask about it. This only talks about the design: change it with board_edit or board_write_html first, then say what you did.",
+      inputSchema: {
+        board: BoardRef,
+        comment: z.string().optional().describe("The comment's id (from the message you got, or board_comments)."),
+        reply: z.string().max(8000).optional().describe("What to say in the thread."),
+        resolve: z.boolean().optional().describe("true: the comment is dealt with; false: open it again."),
+        on: z.string().optional().describe("Instead of `comment`: a layer's id, to start a new thread on it (its words in `reply`)."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = findBoard(a.board);
+        const me = await whoAmI();
+        // Whoever answers is one of the board's agents, so the person can write back to it.
+        changeBoard(b.id, workingOps(b, [], me), "agent");
+        const by = { by: me.key, name: me.name };
+        if (a.on) {
+          if (!a.reply?.trim()) throw new Error("Say what the new comment is about in `reply`.");
+          const made = startThread(b.id, { layer: a.on }, { ...by, text: a.reply });
+          if (a.resolve) setResolved(b.id, made.thread.id, true, me.key);
+          return [text({ comment: made.thread.id, on: describeAnchor(getBoard(b.id), made.thread.anchor), note: "It's on the board in the Studio, by the layer." })];
+        }
+        if (!a.comment) throw new Error("Give the comment's id (`comment`), or a layer to start a thread on (`on`).");
+        if (!a.reply?.trim() && a.resolve === undefined) throw new Error("Give a `reply`, `resolve`, or both.");
+        let thread = a.reply?.trim() ? reply(b.id, a.comment, { ...by, text: a.reply }).thread : undefined;
+        if (a.resolve !== undefined) thread = setResolved(b.id, a.comment, a.resolve, me.key).thread;
+        return [text({ comment: a.comment, resolved: Boolean(thread?.resolved), messages: thread?.messages.length, note: "The user sees it on the board in the Studio, in the comment's thread." })];
       }),
   );
 }

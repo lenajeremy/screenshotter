@@ -4,12 +4,14 @@
  *
  *   npm run build && npm run test:board
  */
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { OpError, applyOps, componentOps, detachOps, emptyBoard, expandOps, flattenSvgOps, htmlToNodes, instanceTree, mapPath, nodeHtml, parseHtml, parsePath, parseStyle, resetOps, splitSvgOps, styleText, treeText, vectorFit, vectorTransform, type Board, type Op } from "../src/board/core.js";
+import { fakeAgentman } from "./fake-agentman.js";
+import { sendableText, sessionInFolder } from "../src/board/agentman.js";
+import { OpError, applyOps, componentOps, defaultRecipients, detachOps, emptyBoard, expandOps, flattenSvgOps, htmlToNodes, instanceTree, mapPath, nodeHtml, parseHtml, parsePath, parseStyle, resetOps, splitSvgOps, styleText, treeText, vectorFit, vectorTransform, type Board, type Op } from "../src/board/core.js";
 
 let failures = 0;
 const check = (ok: unknown, what: string) => {
@@ -179,16 +181,54 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   check(!b.nodes[c1].instanceOf && b.nodes[c1].children!.every((x) => !b.nodes[x].master), "deleting the component leaves its copies as ordinary layers");
 }
 
+// Who worked on a board is kept on it, but it isn't the design: undo leaves it be.
+{
+  const at = "2026-11-11T10:00:00.000Z";
+  let b = applyOps(emptyBoard("w", "W", "now"), [{ op: "add", nodes: { a: { id: "a", type: "frame", name: "A", parent: null, style: {}, children: [] } }, ids: ["a"], parent: null }]).board;
+  const step = applyOps(b, [{ op: "agent", agent: { key: "claude:1", session: "claude:1", how: "process", kind: "claude", name: "Design" }, artboards: ["a"], at }]);
+  b = step.board;
+  check(step.inverse.length === 0 && b.agents?.["claude:1"]?.artboards.join() === "a" && b.agents["claude:1"].firstAt === at, "an agent is remembered with the artboards it worked on, and there's nothing to undo");
+  b = applyOps(b, [{ op: "agent", agent: { key: "claude:1", session: "claude:1", how: "process", kind: "claude", name: "Design" }, artboards: ["b"], at: "2026-11-11T11:00:00.000Z" }]).board;
+  check(b.agents!["claude:1"].artboards.join() === "a,b" && b.agents!["claude:1"].firstAt === at, "working again adds artboards and keeps when it first came");
+  const undone = applyOps(b, [{ op: "replace", pages: b.pages, nodes: {}, tokens: [] }]).board;
+  check(undone.agents === b.agents, "undoing the design (as the Studio undoes an agent's change) keeps the agents");
+  const two = applyOps(b, [{ op: "agent", agent: { key: "codex:2", kind: "codex", name: "Other" }, artboards: ["c"], at: "2026-11-11T12:00:00.000Z" }]).board;
+  check(defaultRecipients(two, "a").join() === "claude:1" && defaultRecipients(two, "z").length === 0 && defaultRecipients(b, "z").join() === "claude:1", "a comment goes to who worked on its artboard, else the board's only agent");
+  check(defaultRecipients(two, "a", [{ by: "codex:2" }]).join() === "codex:2", "a reply goes to who's already in the thread");
+}
+{
+  const sessions = [
+    { id: "claude:x", kind: "claude", name: "X", cwd: "/work/app" },
+    { id: "claude:y", kind: "claude", name: "Y", cwd: "/work/app" },
+    { id: "codex:z", kind: "codex", name: "Z", cwd: "/work/app" },
+  ];
+  check(sessionInFolder(sessions, "codex", "/work/app").session?.id === "codex:z" && sessionInFolder(sessions, "claude", "/work/app").count === 2 && !sessionInFolder(sessions, "claude", "/work/app").session, "an agent found by its folder: only when it's the one agent of its kind there");
+  check(sendableText("a\r\nb\u0007c‮") === "a\nbc", "a message to Agentman carries no terminal control characters");
+}
+
 // ---------------------------------------------------------------------------------------------
 // The tools, through MCP
 
 const out = mkdtempSync(path.join(tmpdir(), "board-test-"));
+// A stand-in for Agentman, so nothing here reaches the person's real agents. The MCP server finds
+// its agent as it would under Claude Code: a record of the session kept under this process's id.
+const socket = path.join(out, "am.sock");
+process.env.SCREENSHOTTER_AGENTMAN_SOCKET = socket;
+process.env.SCREENSHOTTER_OUTPUT_DIR = out;
+const AGENT = "claude:test-session-1";
+const fake = await fakeAgentman(socket, [
+  { id: AGENT, kind: "claude", name: "Design agent", cwd: process.cwd(), state: "idle", inject: "tmux" },
+  { id: "claude:someone-else", kind: "claude", name: "Another agent", cwd: "/elsewhere", state: "idle", inject: "hook" },
+]);
+const claudeDir = path.join(out, "claude");
+mkdirSync(path.join(claudeDir, "sessions"), { recursive: true });
+writeFileSync(path.join(claudeDir, "sessions", `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: "test-session-1", cwd: process.cwd(), name: "design-agent", kind: "interactive" }));
 const client = new Client({ name: "board-test", version: "0.0.0" });
 await client.connect(
   new StdioClientTransport({
     command: "node",
     args: ["dist/index.js"],
-    env: { ...(process.env as Record<string, string>), SCREENSHOTTER_OUTPUT_DIR: out, SCREENSHOTTER_STUDIO_FILE: path.join(out, "studio.json") },
+    env: { ...(process.env as Record<string, string>), SCREENSHOTTER_OUTPUT_DIR: out, SCREENSHOTTER_STUDIO_FILE: path.join(out, "studio.json"), SCREENSHOTTER_AGENTMAN_SOCKET: socket, CLAUDE_CONFIG_DIR: claudeDir },
   }),
 );
 
@@ -277,6 +317,81 @@ const list = await call("board_list", {});
 check(list.json[0].working.length >= 1, "the artboards being worked on are listed");
 await call("board_done", { board });
 check((await call("board_list", {})).json[0].working.length === 0, "board_done clears them");
+
+// ---------------------------------------------------------------------------------------------
+// Comments: who worked on a board, and comments that reach them through (a stand-in for) Agentman
+
+{
+  const store = await import("../src/board/store.js");
+  const talk = await import("../src/board/comments.js");
+  const b0 = store.getBoard(board);
+  const agent = b0.agents?.[AGENT];
+  check(agent?.session === AGENT && agent.how === "process" && agent.name === "Design agent" && agent.artboards.includes(art), "an agent's changes record it on the board: its Agentman session (from its own process), the name Agentman shows and its artboards");
+  check(b0.rev === store.getBoard(board).rev, "recording it doesn't count as a change to the design");
+  const titleId = b0.nodes[art].children![0];
+
+  // The person comments on a layer, as the Studio does: it's saved, then sent.
+  const first = talk.startThread(board, { layer: titleId, at: { x: 0.9, y: 0.1 } }, { text: "Make the title bigger\nand bolder.", by: "person" });
+  const cid = first.thread.id;
+  check(first.message.to?.join() === AGENT && first.message.delivery?.[AGENT].status === "sending", "a comment goes to the agent that worked on its artboard, marked as being sent");
+  await talk.deliver(board, cid, first.message.id);
+  const sent = fake.sent[fake.sent.length - 1];
+  check(sent?.sessionId === AGENT && sent.text.startsWith("(From Screenshotter)") && sent.text.includes(`"${b0.name}" (id ${board})`) && sent.text.includes(`comment ${cid}`), "it reaches the agent through Agentman, from Screenshotter, with the board and the comment");
+  check(sent.text.includes(`#${titleId}`) && sent.text.includes(`#${art}`) && sent.text.includes("> Make the title bigger\n> and bolder.") && /board_comment \{ board: "[a-z0-9]+", comment: "[a-z0-9]+", reply/.test(sent.text), "with the layer it's on (names and ids), the words, and how to answer");
+  check(fake.badFrames.length === 0 && fake.requests.some((r) => r.type === "list_sessions"), "every request is one v2 envelope a line, addressed to the daemon (the stand-in's other events are skipped)");
+  check(talk.getComments(board).threads[0].messages[0].delivery?.[AGENT].status === "delivered", "the comment says it was delivered");
+
+  // The agent answers through the MCP.
+  const mine = await call("board_comments", {});
+  const listed = mine.json?.[0]?.threads?.[0];
+  check(listed?.comment === cid && listed.waitingOnYou === true && listed.anchor.layer === titleId && listed.messages[0].from === "user", "board_comments lists it for the agent, waiting on it");
+  await call("board_comment", { board, comment: cid, reply: "Done: 40px, weight 700.", resolve: true });
+  const t1 = talk.getComments(board).threads.find((t) => t.id === cid)!;
+  check(t1.messages[1]?.by === AGENT && t1.messages[1].name === "Design agent" && t1.messages[1].text === "Done: 40px, weight 700." && t1.resolved?.by === AGENT, "board_comment replies in the thread and resolves it");
+  check((await call("board_comments", {})).text.includes("No open comments"), "a resolved comment no longer waits on anyone");
+  await call("board_comment", { board, comment: "nope" + cid, reply: "?" }, true);
+  const own = await call("board_comment", { board, on: art, reply: "Should the list scroll under the header?" });
+  check(Boolean(own.json?.comment) && talk.getComments(board).threads.some((t) => t.id === own.json.comment && t.anchor.layer === art && t.messages[0].by === AGENT), "an agent can start a thread on a layer");
+
+  // The person replies; the agent is waiting on a question in Agentman, so it can't take it yet.
+  fake.sessions[0].question = { id: "q1" };
+  const second = talk.reply(board, cid, { text: "Bigger still", by: "person" });
+  check(!second.thread.resolved && second.message.to?.join() === AGENT, "a reply opens a resolved comment again and goes to who was in the thread");
+  await talk.deliver(board, cid, second.message.id);
+  const refused = talk.getComments(board).threads.find((t) => t.id === cid)!.messages[2].delivery?.[AGENT];
+  check(refused?.status === "failed" && /question/.test(refused.error ?? ""), "when Agentman can't hand it over, the comment says why");
+  fake.sessions[0].question = undefined;
+  talk.markSending(board, cid, second.message.id, [AGENT]);
+  await talk.deliver(board, cid, second.message.id, [AGENT]);
+  check(talk.getComments(board).threads.find((t) => t.id === cid)!.messages[2].delivery?.[AGENT].status === "delivered" && fake.sent[fake.sent.length - 1].text.includes("The thread before this:\n- The user: Make the title bigger and bolder.\n- You: Done: 40px"), "trying again delivers it, with the thread so far");
+
+  // A region, and an agent Agentman doesn't know.
+  const region = talk.startThread(board, { artboard: art, rect: { x: 10, y: 20, width: 300, height: 120 }, layers: [titleId, "not-a-layer"] }, { text: "Too much space here", by: "person", to: [] });
+  check(!region.message.to && region.thread.anchor.layers?.join() === titleId && talk.describeAnchor(store.getBoard(board), region.thread.anchor).includes("x 10, y 20, 300×120"), "a region keeps its rect in the artboard's terms and the layers inside it; with no one to tell, it's a note");
+  store.changeBoard(board, [{ op: "agent", agent: { key: "local:codex:/nowhere", kind: "codex", name: "Codex in nowhere", cwd: "/nowhere" }, artboards: [art], at: new Date().toISOString() }], "agent");
+  const lost = talk.reply(board, region.thread.id, { text: "Codex, take this one", by: "person", to: ["local:codex:/nowhere"] });
+  await talk.deliver(board, region.thread.id, lost.message.id);
+  const why = talk.getComments(board).threads.find((t) => t.id === region.thread.id)!.messages[1].delivery?.["local:codex:/nowhere"];
+  check(why?.status === "failed" && /doesn't list an agent in nowhere/.test(why.error ?? ""), "an agent with no session Agentman knows: the comment is kept and says so");
+
+  // Agentman isn't running.
+  process.env.SCREENSHOTTER_AGENTMAN_SOCKET = path.join(out, "no-agentman.sock");
+  const offline = talk.reply(board, cid, { text: "Hello?", by: "person" });
+  await talk.deliver(board, cid, offline.message.id);
+  const down = talk.getComments(board).threads.find((t) => t.id === cid)!.messages.find((m) => m.id === offline.message.id)!;
+  check(down.text === "Hello?" && down.delivery?.[AGENT].status === "failed" && down.delivery[AGENT].error === "Agentman isn't running", "with Agentman not running, the comment is still saved, and says so");
+  process.env.SCREENSHOTTER_AGENTMAN_SOCKET = socket;
+
+  // Comments aren't the design: changing (and undoing) the board leaves them be.
+  const before = talk.getComments(board).rev;
+  const ch = store.changeBoard(board, [{ op: "set", id: titleId, name: "Headline" }], "studio");
+  store.changeBoard(board, ch.inverse, "studio");
+  check(talk.getComments(board).rev === before && talk.getComments(board).threads.length === 3, "changing and undoing the design leaves the comments as they were");
+  talk.remove(board, region.thread.id);
+  check(talk.getComments(board).threads.length === 2, "deleting a comment deletes its thread");
+  check(fake.sent.every((s) => s.sessionId === AGENT), "nothing went to an agent no one named");
+}
+await fake.close();
 console.log(`\nFiles in ${out}`);
 
 await client.close();

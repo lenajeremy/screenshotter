@@ -5,8 +5,9 @@ import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord, vectorFit, vectorTag, vectorTransform } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
-import { fileUrl } from "./store.js";
+import { fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
+import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
 
 export const canvasEl = { current: null };
 
@@ -38,7 +39,7 @@ export function worldBox(id) {
 useMeasure((id) => worldBox(id));
 
 /** A layer's box on screen, relative to the canvas. */
-function screenBox(id) {
+export function screenBox(id) {
   const el = elOf(id);
   if (!el) return null;
   const r = el.getBoundingClientRect();
@@ -84,6 +85,14 @@ export function zoomTo(z, at, { animate = false } = {}) {
   setView({ x: p.x - ((p.x - x) / oz) * nz, y: p.y - ((p.y - y) / oz) * nz, z: nz }, animate);
 }
 export const zoomBy = (k, at, opts) => zoomTo(B.view.z * k, at, opts);
+
+/** Glide a point on the board (board units) to the middle of the canvas, `dx` px to one side, at the same zoom. */
+export function centerOn(p, { dx = 0 } = {}) {
+  const c = canvasEl.current?.getBoundingClientRect();
+  if (!c) return;
+  const z = B.view.z;
+  setView({ z, x: c.width / 2 + dx - p.x * z, y: c.height / 2 - p.y * z }, true);
+}
 
 /** Fit layers (default: everything on the page) in the canvas, gliding there unless `instant`. */
 export function fit(ids, { instant = false } = {}) {
@@ -373,8 +382,9 @@ function Overlay() {
       const r = screenBox(b.drop.into);
       return r && html`<div class="bd-drop-into" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`;
     })()}
-    ${b.drop?.rect && html`<div class=${b.drop.kind === "marquee" ? "bd-marquee" : "bd-draw"} style=${{ left: b.drop.rect.x + "px", top: b.drop.rect.y + "px", width: b.drop.rect.width + "px", height: b.drop.rect.height + "px" }}></div>`}
+    ${b.drop?.rect && html`<div class=${b.drop.kind === "marquee" ? "bd-marquee" : b.drop.kind === "comment" ? "bd-carea" : "bd-draw"} style=${{ left: b.drop.rect.x + "px", top: b.drop.rect.y + "px", width: b.drop.rect.width + "px", height: b.drop.rect.height + "px" }}></div>`}
     ${b.guides.map((g, i) => html`<div key=${i} class="bd-guide ${g.axis}" style=${g.axis === "x" ? { left: g.at + "px", top: g.from + "px", height: g.to - g.from + "px" } : { top: g.at + "px", left: g.from + "px", width: g.to - g.from + "px" }}></div>`)}
+    <${CommentLayer} />
   </div>`;
 }
 
@@ -473,11 +483,60 @@ export function pickFor(e, id) {
 }
 
 function hoverMove(e) {
-  if (e.buttons || B.tool !== "move" || spaceDown) return;
+  if (e.buttons || (B.tool !== "move" && B.tool !== "comment") || spaceDown) return;
   const hit = e.target.closest?.("[data-bid]");
   const label = e.target.closest?.("[data-label]");
-  const id = label ? label.dataset.label : hit ? pickFor(e, hit.dataset.bid) : null;
+  // With the comment tool, the layer a click would pin a comment to (until one is being written).
+  const id = B.tool === "comment" ? (hit && !B.draft && !B.thread ? commentTarget(hit.dataset.bid) : null) : label ? label.dataset.label : hit ? pickFor(e, hit.dataset.bid) : null;
   if (id !== B.hover) bset({ hover: id });
+}
+
+/** The layer a comment is pinned to: the one right under the pointer (a vector part's whole vector). */
+function commentTarget(id) {
+  while (node(id)?.type === "vector" && node(id).parent) id = node(id).parent;
+  return id;
+}
+
+/** The comment tool: a click pins a comment to the layer under it, a drag to the part of the artboard drawn over. */
+function comment(e) {
+  // A click away from an open thread only closes it.
+  if (B.thread || B.draft) return closeThread();
+  const c = canvasEl.current.getBoundingClientRect();
+  const hit = e.target.closest?.("[data-bid]");
+  const p0 = toWorld(e.clientX, e.clientY);
+  let rect = null;
+  drag(e, {
+    threshold: 4,
+    kind: "draw",
+    move: (ev) => {
+      rect = { x: Math.min(e.clientX, ev.clientX) - c.left, y: Math.min(e.clientY, ev.clientY) - c.top, width: Math.abs(ev.clientX - e.clientX), height: Math.abs(ev.clientY - e.clientY) };
+      bset({ drop: { kind: "comment", rect }, hover: null });
+    },
+    up: (ev, moved) => {
+      bset({ drop: null });
+      if (moved && rect && rect.width > 6 && rect.height > 6) {
+        const p1 = toWorld(ev.clientX, ev.clientY);
+        const world = { x: Math.min(p0.x, p1.x), y: Math.min(p0.y, p1.y), width: Math.abs(p1.x - p0.x), height: Math.abs(p1.y - p0.y) };
+        // The artboard it starts on (or covers most of), and the part of it inside the drag.
+        const overlap = (id) => {
+          const b = worldBox(id);
+          if (!b) return 0;
+          return Math.max(0, Math.min(b.x + b.width, world.x + world.width) - Math.max(b.x, world.x)) * Math.max(0, Math.min(b.y + b.height, world.y + world.height) - Math.max(b.y, world.y));
+        };
+        const art = currentPage().children.filter((id) => node(id)?.type === "frame" && !node(id).hidden && overlap(id) > 0).sort((a, b) => overlap(b) - overlap(a))[0];
+        if (!art) return toast({ kind: "info", icon: "comment", title: "Comments go on an artboard", text: "Drag over part of an artboard, or click a layer.", timeout: 4000 });
+        const ab = worldBox(art);
+        const x = Math.max(world.x, ab.x);
+        const y = Math.max(world.y, ab.y);
+        const r = { x: x - ab.x, y: y - ab.y, width: Math.min(world.x + world.width, ab.x + ab.width) - x, height: Math.min(world.y + world.height, ab.y + ab.height) - y };
+        return startDraft({ artboard: art, rect: r, layers: layersIn(art, { ...r, x, y }) });
+      }
+      if (!hit) return toast({ kind: "info", icon: "comment", title: "Comments go on a layer", text: "Click a layer, or drag over part of an artboard.", timeout: 4000 });
+      const id = commentTarget(hit.dataset.bid);
+      const box = worldBox(id);
+      startDraft({ layer: id, at: box && box.width && box.height ? { x: (p0.x - box.x) / box.width, y: (p0.y - box.y) / box.height } : undefined });
+    },
+  });
 }
 
 /** Follow a press until it lets go. `kind` says what the drag is, so the overlay can step aside. */
@@ -521,6 +580,9 @@ function down(e) {
       up: () => c.classList.remove("grabbing"),
     });
   }
+  if (B.tool === "comment") return comment(e);
+  // Working on the design closes a comment's thread.
+  if (B.thread || B.draft) closeThread();
   const handle = e.target.closest?.("[data-handle]");
   if (handle && handle.dataset.group) return resizeMany(e, B.sel.filter((id) => !node(id)?.locked), handle.dataset.handle);
   if (handle && B.sel.length === 1) return resize(e, B.sel[0], handle.dataset.handle);

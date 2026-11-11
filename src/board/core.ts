@@ -75,6 +75,33 @@ export interface Board {
   by?: "agent" | "studio";
   /** Artboards an agent is working on, with when it last wrote to each. */
   working?: Record<string, string>;
+  /** The agents that have worked on the board, by `BoardAgent.key`: who to tell about a comment. */
+  agents?: Record<string, BoardAgent>;
+}
+
+/**
+ * An agent that changed the board through the MCP. Agentman (the person's agent manager) knows it
+ * by `session`, which is how a comment reaches it.
+ */
+export interface BoardAgent {
+  /** Its Agentman session id when known ("claude:<uuid>"), else one made from its kind and folder. */
+  key: string;
+  /** Agentman's id for its session. */
+  session?: string;
+  /**
+   * How `session` was worked out: from its own process (Claude Code's record of it), from the name
+   * of the tmux pane Agentman runs it in, or as the only agent Agentman lists in its folder (a guess).
+   */
+  how?: "process" | "tmux" | "folder";
+  /** claude, codex, cursor-cli, opencode…; "agent" when it can't be told. */
+  kind: string;
+  /** What the person calls it: Agentman's name for the session, else its kind and folder. */
+  name: string;
+  cwd?: string;
+  firstAt: string;
+  lastAt: string;
+  /** The artboards it wrote to. */
+  artboards: string[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1119,6 +1146,8 @@ export type Op =
   | { op: "rename"; name: string }
   /** Mark artboards as being worked on by an agent (null clears them; no ids clears all). */
   | { op: "working"; ids?: string[]; at: string | null }
+  /** Remember an agent that worked on the board (and on which artboards). */
+  | { op: "agent"; agent: Omit<BoardAgent, "firstAt" | "lastAt" | "artboards">; artboards?: string[]; at: string }
   /** The whole design at once (how the Studio undoes a change an agent made). */
   | { op: "replace"; pages: BoardPage[]; nodes: Record<string, BoardNode>; tokens: BoardToken[]; name?: string };
 
@@ -1334,6 +1363,15 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           else for (const k of Object.keys(w)) delete w[k];
         } else for (const id of op.ids ?? []) w[id] = op.at;
         board.working = w;
+        break;
+      }
+      case "agent": {
+        // Who worked here isn't part of the design either: undo leaves it alone.
+        const all = { ...(board.agents ?? {}) };
+        const was = all[op.agent.key];
+        const artboards = [...new Set([...(was?.artboards ?? []), ...(op.artboards ?? [])])];
+        all[op.agent.key] = { ...was, ...op.agent, firstAt: was?.firstAt ?? op.at, lastAt: op.at, artboards };
+        board.agents = all;
         break;
       }
       case "replace":
@@ -1749,6 +1787,20 @@ export function treeText(board: Board, id: string, depth = 3): string {
   };
   walk(id, 0);
   return lines.join("\n");
+}
+
+/**
+ * Who a comment goes to when the person doesn't say: in a thread, whoever was told or answered
+ * before; else the agents that worked on its artboard; else the board's only agent. Keys, newest first.
+ */
+export function defaultRecipients(board: Board, artboard: string | undefined, messages: Array<{ by: string; to?: string[] }> = []): string[] {
+  const agents = Object.values(board.agents ?? {}).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  const known = new Set(agents.map((a) => a.key));
+  const before = [...new Set(messages.flatMap((m) => [...(m.to ?? []), ...(m.by !== "person" ? [m.by] : [])]))].filter((k) => known.has(k));
+  if (before.length) return before;
+  const here = agents.filter((a) => artboard && a.artboards.includes(artboard)).map((a) => a.key);
+  if (here.length) return here;
+  return agents.length === 1 ? [agents[0].key] : [];
 }
 
 export function emptyBoard(id: string, name: string, now: string): Board {

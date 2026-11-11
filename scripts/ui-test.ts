@@ -25,6 +25,12 @@ process.env.SCREENSHOTTER_STUDIO_FILE = path.join(tmp, "studio.json");
 process.env.SCREENSHOTTER_SEEN_FILE = path.join(tmp, "seen.json");
 process.env.SCREENSHOTTER_STYLE_FILE = path.join(tmp, "style.json");
 process.env.SCREENSHOTTER_OUTPUT_DIR = LIB;
+// Comments go to agents through Agentman: here, a stand-in, never the person's real one.
+const AM_SOCKET = path.join(tmp, "am.sock");
+process.env.SCREENSHOTTER_AGENTMAN_SOCKET = AM_SOCKET;
+const AGENT = "claude:ui-test-agent";
+const { fakeAgentman } = await import("./fake-agentman.js");
+const agentman = await fakeAgentman(AM_SOCKET, [{ id: AGENT, kind: "claude", name: "Design agent", cwd: tmp, state: "idle", inject: "tmux" }]);
 
 const { startStudio } = await import("../src/studio/server.js");
 const { encodePng } = await import("../src/util/png.js");
@@ -32,6 +38,7 @@ const { renderHtml } = await import("../src/render/mockup.js");
 const { closeBrowser } = await import("../src/render/browser.js");
 const boards = await import("../src/board/store.js");
 const boardCore = await import("../src/board/core.js");
+const talk = await import("../src/board/comments.js");
 
 const shot = path.join(LIB, "phone.png");
 const ipad = path.join(LIB, "ipad.png");
@@ -186,6 +193,67 @@ const CHECKS: Record<string, Check> = {
     if (roots !== 2) return `${roots} artboards after drawing one`;
     if (texts.length !== 1) return "the typed text wasn't saved";
     return texts[0].parent === t.byName("Phone") ? "ok" : "the text didn't land in the artboard's flex column";
+  },
+  async "on a board, a comment pins to a layer, reaches its agent, shows the reply and resolves"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    const row = t.byName("Row Two");
+    // An agent worked on the artboard: the Studio learns it with its next poll.
+    boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [phone], at: new Date().toISOString() }], "agent");
+    await page.waitForTimeout(1200);
+    await page.keyboard.press("c");
+    const r = await boxOf(page, row);
+    await page.mouse.click(r.x + r.width - 18, r.y + 8);
+    await page.waitForSelector(".bd-thread textarea");
+    const to = await S(page, () => [...document.querySelectorAll(".bd-thread .bd-chip")].map((c) => c.textContent).join());
+    if (to !== "Design agent") return `the new comment goes to "${to}", not the agent that worked on the artboard`;
+    await page.keyboard.type("Make this row taller");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Design agent"), null, { timeout: 8000 }).catch(() => undefined);
+    const thread = talk.getComments(t.id).threads[0];
+    if (!thread || thread.anchor.layer !== row) return `the comment is on ${thread?.anchor.layer ? boards.getBoard(t.id).nodes[thread.anchor.layer]?.name : "nothing"}, not Row Two`;
+    const sent = agentman.sent.find((s) => s.text.includes(thread.id));
+    if (!sent || sent.sessionId !== AGENT || !sent.text.includes(`#${row}`) || !sent.text.includes("> Make this row taller")) return "Agentman wasn't handed the comment, with its layer, for the agent";
+    const shown = await S(page, () => document.querySelector(".bd-thread .bd-sent")?.textContent ?? "");
+    if (!shown.startsWith("Sent to Design agent")) return `the thread says "${shown}", not that it was sent`;
+    // The agent answers (as board_comment does); the open thread shows it within a poll or two.
+    talk.reply(t.id, thread.id, { text: "Done: 72px tall now.", by: AGENT, name: "Design agent" });
+    const replied = await page.waitForFunction(() => [...document.querySelectorAll(".bd-thread .bd-msg .txt")].some((x) => x.textContent === "Done: 72px tall now."), null, { timeout: 5000 }).then(() => true, () => false);
+    if (!replied) return "the agent's reply didn't show in the thread";
+    // Comments aren't the design: undo leaves them alone.
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(300);
+    if (talk.getComments(t.id).threads[0]?.messages.length !== 2) return "undo touched the comment";
+    await page.click(`.bd-pin[data-thread="${thread.id}"]`);
+    await page.click(".bd-thread header button[title='Resolve']");
+    await page.waitForTimeout(400);
+    const resolved = Boolean(talk.getComments(t.id).threads[0].resolved);
+    const pinGone = await S(page, (id: string) => !document.querySelector(`.bd-pin[data-thread="${id}"]`), thread.id);
+    await page.click('.bd-left-tabs [data-tab="comments"]');
+    const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
+    return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
+  },
+  async "on a board, dragging with the comment tool comments on that part of the artboard"(page) {
+    const t = await openTestBoard(page);
+    await page.keyboard.press("c");
+    const list = await boxOf(page, t.byName("List"));
+    await page.mouse.move(list.x - 6, list.y - 6);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(list.x - 6 + ((list.width + 12) * i) / 8, list.y - 6 + ((list.height + 12) * i) / 8);
+    await page.mouse.up();
+    await page.waitForSelector(".bd-thread textarea");
+    const note = await S(page, () => document.querySelector(".bd-compose .bd-sent")?.textContent ?? "");
+    await page.keyboard.type("Too much space between the rows");
+    await page.click(".bd-compose .btn");
+    await page.waitForTimeout(500);
+    const th = talk.getComments(t.id).threads[0];
+    const layers = (th?.anchor.layers ?? []).map((id) => boards.getBoard(t.id).nodes[id]?.name).join();
+    if (!th?.anchor.rect || th.anchor.artboard !== t.byName("Phone")) return "the region wasn't saved on the artboard";
+    if (layers !== "List") return `the region covers ${layers || "nothing"}, not List`;
+    if (!/note/.test(note) || th.messages[0].to) return "with no agent on the board, it should be a note";
+    const area = await S(page, () => Boolean(document.querySelector(".bd-carea")));
+    return area ? "ok" : "the region isn't outlined while its thread is open";
   },
   async "an agent's change to an open board shows up and undoes"(page) {
     const t = await openTestBoard(page);
@@ -749,6 +817,7 @@ try {
   }
 } finally {
   server.close();
+  await agentman.close();
   await closeBrowser();
   rmSync(tmp, { recursive: true, force: true });
 }
