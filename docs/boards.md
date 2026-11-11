@@ -52,12 +52,15 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - **Speed:** layers redraw only when they change (every change gives the layers round it new objects); the canvas goes on the GPU while it moves. About 1–2 ms of work a frame on 1,800 layers.
   - **Agents:** `sticker:`/`art:` image sources, and `shape` and `device` changes.
 
+- **Vectors in parts** (12 November): an `<svg>` is an svg layer holding a `vector` layer per part (`tag` and `attrs`; gradients and the like in the svg layer's `defs`). Parts move and resize by their own coordinates (`vectorFit`), else by a transform (`vectorTransform`). Agents get `vector`, `split` and `flatten` in `board_edit`, and write SVG into a vector with `board_write_html`. Stickers, illustrations and shapes stay one piece until split.
+
 **Decisions:**
 
 - The design is HTML and CSS, not a vector format. The browser engine does the layout, the text and the drawing, an agent writes it fluently, and code comes out of it nearly as is.
 - Tool names start with `board_` because they share the server with 30 other tools. Edits are batched in `board_edit` to keep the tool count down.
 - The Studio and agents both write the file on disk under a lock. An agent's change reaches the open board by polling (every 700 ms), and undoing it replaces the whole board.
 - Components: the Studio expands its own changes (so a change to a component shows in its copies straight away) and sends the result. The server expands only agents' changes, so nothing is expanded twice.
+- An SVG's parts are layers, not one piece of markup, so they can be picked and changed one at a time (as in Paper). Parts can only sit in a vector and nothing else can go in one; one with more than 800 parts stays one piece.
 - Blue is for selection only, as in the rest of the Studio; everything else on boards is neutral. On 11 November the user compared lime for selection and chose blue (lime is hard to see on light designs and already marks agent work).
 
 ## Next, in rough order
@@ -70,5 +73,5 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
    - smart guides inside frames
    - component variants and properties
    - per-fill visibility
-6. **Pen tool** and vector editing.
+6. **Pen tool**: drawing paths, and editing a path's points.
 7. **Speed:** memoised layers for boards with thousands of layers.

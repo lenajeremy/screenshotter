@@ -278,6 +278,56 @@ const CHECKS: Record<string, Check> = {
     const drawn = await S(page, async (id: string) => getComputedStyle(document.querySelector(`.bd-world [data-bid="${id}"]`)!).filter, star.id);
     return f === "blur(4px)" && /blur/.test(drawn) ? "ok" : `filter ${f}, drawn ${drawn}`;
   },
+  async "on a board, an svg's parts are layers: picked, dragged, resized and painted in their own coordinates"(page) {
+    const b = boards.createBoard("Vector test", "studio");
+    const made = boardCore.addHtmlOps(`<div data-name="Card" style="width:360px;height:240px;background:#fff;position:relative"><svg data-name="Art" style="position:absolute;left:20px;top:20px;width:320px;height:200px" viewBox="0 0 160 100"><rect data-name="Box" x="10" y="10" width="40" height="30" fill="#0a84ff"/><g data-name="Pair" transform="translate(80 20)"><circle data-name="Dot" cx="10" cy="10" r="10" fill="#ff3b30"/></g></svg></div>`, null, { page: b.pages[0].id });
+    boards.changeBoard(b.id, made.ops, "studio");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+    await page.waitForSelector(".bd-world [data-bid]");
+    await page.waitForTimeout(900);
+    const id = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
+    const box = await boxOf(page, id("Box"));
+    // ⌘-click goes straight to the part; dragging moves it by its own x and y (the svg is drawn at 2×).
+    await page.keyboard.down("Meta");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.keyboard.up("Meta");
+    await page.waitForTimeout(300);
+    if ((await boardSel(page)) !== "Box") return `⌘-click picked ${await boardSel(page)}`;
+    const z = await S(page, async () => (await import("/ui/board-state.js" as string)).B.view.z);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 20 * z, box.y + box.height / 2 + 10 * z, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    const moved = boards.getBoard(b.id).nodes[id("Box")].attrs!;
+    if (Math.abs(Number(moved.x) - 20) > 0.6 || Math.abs(Number(moved.y) - 15) > 0.6) return `the rect went to ${moved.x},${moved.y}, not 20,15`;
+    // Its east handle stretches its width.
+    const h = await page.locator('.bd-handle[data-handle="e"]').boundingBox();
+    await page.mouse.move(h!.x + h!.width / 2, h!.y + h!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(h!.x + h!.width / 2 + 20 * z, h!.y + h!.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    const wide = boards.getBoard(b.id).nodes[id("Box")].attrs!;
+    if (Math.abs(Number(wide.width) - 50) > 0.6) return `the rect is ${wide.width} wide after resizing, not 50`;
+    // A group moves by a transform, folded into the one it had.
+    await S(page, async (g: string) => (await import("/ui/board-state.js" as string)).select(g), id("Pair"));
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.waitForTimeout(500);
+    const t = boards.getBoard(b.id).nodes[id("Pair")].attrs!.transform;
+    if (t !== "translate(85 20)") return `the group's transform is ${t}`;
+    // The panel paints a part.
+    await S(page, async (g: string) => (await import("/ui/board-state.js" as string)).select(g), id("Dot"));
+    await page.waitForTimeout(300);
+    const panel = await S(page, () => [...document.querySelectorAll(".bd-right h3")].map((e) => e.textContent).join(","));
+    if (!/Layout/.test(panel) || !/Paint/.test(panel)) return `the panel for a part shows ${panel}`;
+    await page.locator(".bd-paint").first().locator(":scope > .icon-btn").click();
+    await page.waitForTimeout(500);
+    const fill = boards.getBoard(b.id).nodes[id("Dot")].attrs!.fill;
+    const drawn = await S(page, (d: string) => document.querySelector(`.bd-world [data-bid="${d}"]`)!.getAttribute("fill"), id("Dot"));
+    return fill === "none" && drawn === "none" ? "ok" : `fill ${fill}, drawn ${drawn}`;
+  },
   async "pasting HTML onto a board makes layers"(page) {
     const t = await openTestBoard(page);
     await page.locator(".bd-row", { hasText: "Phone" }).first().click();
@@ -615,6 +665,8 @@ try {
       continue;
     }
     for (const [title, check] of Object.entries(CHECKS)) {
+      // UI_ONLY="some words" runs just the checks whose titles match.
+      if (process.env.UI_ONLY && !new RegExp(process.env.UI_ONLY, "i").test(title)) continue;
       const problems: string[] = [];
       const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
       page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
