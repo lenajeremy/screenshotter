@@ -1,10 +1,11 @@
 // The board's right panel: a layer's CSS in plain words (layout, size, flex, fill, border, shadow,
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
 import { useEffect, useState } from "preact/hooks";
-import { freeSpot, inFlow, isFlex, newId, parseStyle, pxValue, round, sizeWord, styleText } from "./board-core.js";
+import { freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, parseStyle, pxValue, round, sizeWord, styleText, subtree } from "./board-core.js";
 import { B, bset, commit, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, worldBox } from "./board-canvas.js";
-import { layerIcon, setFlex } from "./board.js";
+import { alignSelection, canAlign, detachCopy, distributeSelection, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, stopComponent } from "./board.js";
+import { styleWords, wordState, words } from "./board-canvas.js";
 import { ColorButton, Dropdown, Num, Section, Seg, Switch, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { api, fail, toast } from "./store.js";
@@ -38,9 +39,10 @@ export function Inspector() {
   return html`<div class="panel-head bd-ihead">
       <span class="ico"><${Icon} n=${layerIcon(n)} s=${15} /></span>
       <h2>${many ? `${list.length} layers` : n.name}</h2>
-      ${!many && html`<span class="sub">${n.parent ? { frame: "Frame", text: "Text", image: "Image", svg: "Vector" }[n.type] : "Artboard"}</span>`}
+      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : n.parent ? { frame: "Frame", text: "Text", image: "Image", svg: "Vector" }[n.type] : "Artboard"}</span>`}
     </div>
     <div class="panel-body bd-insp">
+      ${!many && html`<${ComponentSection} />`}
       <${LayoutSection} />
       ${allFrames && html`<${FlexSection} />`}
       ${!many && n.parent && isFlex(node(n.parent)) && html`<${ChildSection} />`}
@@ -52,6 +54,37 @@ export function Inspector() {
       <${ShadowSection} />
       ${!many && html`<${CssSection} key=${n.id} />`}
     </div>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Components: what a component or a copy is, and what to do with it
+
+function ComponentSection() {
+  const id = ids()[0];
+  const n = node(id);
+  const root = instanceRootOf(B.board, id);
+  if (n.isComponent) {
+    const copies = instancesOf(B.board, id).length;
+    return html`<div class="bd-compbox">
+      <div class="t"><${Icon} n="component" s=${14} /><b>Component</b><span>${copies ? `${copies} cop${copies === 1 ? "y follows" : "ies follow"} it` : "No copies yet"}</span></div>
+      <div class="hstack"><button class="btn sm" onClick=${() => placeCopy(id)}><${Icon} n="plus" s=${12} />Place a copy</button>
+        ${copies > 0 && html`<button class="btn sm ghost" onClick=${() => selectCopies(id)}>Select copies</button>`}
+        <span class="spacer"></span><button class="icon-btn sm" title="Stop being a component (its copies become ordinary layers)" onClick=${() => stopComponent(id)}><${Icon} n="x" s=${12} /></button></div>
+    </div>`;
+  }
+  if (root) {
+    const main = node(node(root).instanceOf);
+    const changed = subtree(B.board, id).flatMap((x) => node(x).overrides ?? []);
+    const words = [...new Set(changed.map((k) => (k === "text" ? "words" : k === "src" ? "picture" : k.replace(/^style\./, "").replace(/[A-Z]/g, (c) => " " + c.toLowerCase()))))];
+    return html`<div class="bd-compbox">
+      <div class="t"><${Icon} n="instance" s=${14} /><b>${root === id ? "Copy of" : "In a copy of"} ${main?.name ?? "a component"}</b></div>
+      <p class="bd-note">${words.length ? `Changed here: ${words.slice(0, 5).join(", ")}${words.length > 5 ? "…" : ""}. The rest follows the component.` : "Follows the component: change the component to change every copy, or change this copy alone here."}</p>
+      <div class="hstack"><button class="btn sm" onClick=${() => goToComponent(id)}>Go to the component</button>
+        ${words.length > 0 && html`<button class="btn sm ghost" onClick=${() => resetCopy(id)}>Reset</button>`}
+        <span class="spacer"></span><button class="btn sm ghost" title="Make it ordinary layers (⌥⌘B)" onClick=${() => detachCopy(id)}>Detach</button></div>
+    </div>`;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -104,9 +137,9 @@ function SizeField({ axis, label }) {
   const shown = mode === "relative" ? parseFloat(n.style[axis]) : box ? Math.round(box[axis]) : undefined;
   const modes = n.parent ? SIZE_MODES : SIZE_MODES.filter((m) => m.value === "fixed" || m.value === "fit");
   return html`<div class="bd-size-field">
-    <${Num} label=${label} value=${mode === "mixed" ? undefined : shown} placeholder=${mode === "mixed" ? "Mixed" : "auto"} unit=${mode === "relative" ? "%" : ""}
+    <${Num} label=${label} value=${mode === "mixed" || (list.length > 1 && mode !== "fixed") ? undefined : shown} placeholder=${mode === "mixed" || list.length > 1 ? "—" : "auto"} unit=${mode === "relative" ? "%" : ""}
       onChange=${(v, live) => v !== undefined && commit(list.map((x) => ({ op: "set", id: x, style: sizeStyle(x, axis, mode === "relative" ? "relative" : "fixed", v) })), { key: `size:${axis}:${list.join()}`, label: "Resize" })} />
-    <${Dropdown} value=${mode} options=${modes} btnClass="dd-btn bd-mode" title="Fixed: a size in px. Fit: as big as what's inside. Fill: as big as the space it's in. Relative: a share of its frame." onChange=${(m) => commit(list.map((x) => ({ op: "set", id: x, style: sizeStyle(x, axis, m) })), { label: "Resize" })} />
+    <${Dropdown} value=${mode} placeholder="Mixed" options=${modes} btnClass="dd-btn bd-mode" title="Fixed: a size in px. Fit: as big as what's inside. Fill: as big as the space it's in. Relative: a share of its frame." onChange=${(m) => commit(list.map((x) => ({ op: "set", id: x, style: sizeStyle(x, axis, m) })), { label: "Resize" })} />
   </div>`;
 }
 
@@ -138,22 +171,40 @@ function LayoutSection() {
   const y = pos("y");
   const rot = shared(rotationOf);
   return html`<${Section} title="Layout">
+    ${canAlign() && html`<${AlignRow} many=${list.length > 2} />`}
     ${free &&
     html`<div class="grid2">
-      <${Num} label="X" value=${x === "mixed" ? undefined : x} placeholder=${x === "mixed" ? "Mixed" : "0"} onChange=${(v) => v !== undefined && setPos("left", v)} />
-      <${Num} label="Y" value=${y === "mixed" ? undefined : y} placeholder=${y === "mixed" ? "Mixed" : "0"} onChange=${(v) => v !== undefined && setPos("top", v)} />
+      <${Num} label="X" value=${x === "mixed" ? undefined : x} placeholder=${x === "mixed" ? "—" : "0"} onChange=${(v) => v !== undefined && setPos("left", v)} />
+      <${Num} label="Y" value=${y === "mixed" ? undefined : y} placeholder=${y === "mixed" ? "—" : "0"} onChange=${(v) => v !== undefined && setPos("top", v)} />
     </div>`}
     <div class="grid2">
       <${SizeField} axis="width" label="W" />
       <${SizeField} axis="height" label="H" />
     </div>
     <div class="grid2">
-      <${Num} label=${html`<${Icon} n="rotate" s=${12} />`} title="Rotation" value=${rot === "mixed" ? undefined : rot} unit="°" placeholder="Mixed"
+      <${Num} label=${html`<${Icon} n="rotate" s=${12} />`} title="Rotation" value=${rot === "mixed" ? undefined : rot} unit="°" placeholder="—"
         onChange=${(v) => commit(list.map((id) => ({ op: "set", id, style: { transform: v ? `rotate(${round(v, 1)}deg)` : null } })), { key: `rot:${list.join()}`, label: "Rotate" })} />
       ${n.type === "frame" && html`<label class="bd-check"><input type="checkbox" checked=${shared((m) => m.style.overflow === "hidden" || m.style.overflow === "clip") === true}
           onChange=${(e) => setStyle({ overflow: e.target.checked ? "hidden" : null })} />Clip content</label>`}
     </div>
   <//>`;
+}
+
+const ALIGNS = [
+  ["left", "alignLeftE", "Align left (⌥A)"],
+  ["hcenter", "alignHCenter", "Align centres (⌥H)"],
+  ["right", "alignRightE", "Align right (⌥D)"],
+  ["top", "alignTopE", "Align tops (⌥W)"],
+  ["vcenter", "alignVCenter", "Align middles (⌥V)"],
+  ["bottom", "alignBottomE", "Align bottoms (⌥S)"],
+];
+function AlignRow({ many }) {
+  return html`<div class="bd-align" role="group" aria-label="Align">
+    ${ALIGNS.map(([edge, icon, title]) => html`<button class="icon-btn sm" title=${title} onClick=${() => alignSelection(edge)}><${Icon} n=${icon} s=${15} /></button>`)}
+    <span class="sep"></span>
+    <button class="icon-btn sm" title="Even gaps across (⌥⇧H)" disabled=${!many} onClick=${() => distributeSelection("x")}><${Icon} n="distH" s=${15} /></button>
+    <button class="icon-btn sm" title="Even gaps down (⌥⇧V)" disabled=${!many} onClick=${() => distributeSelection("y")}><${Icon} n="distV" s=${15} /></button>
+  </div>`;
 }
 
 /** For a layer in a flex frame: whether it's placed by the frame or sits on its own. */
@@ -169,8 +220,7 @@ function ChildSection() {
     }
     commit([{ op: "set", id, style: { position: null, left: null, top: null, right: null, bottom: null } }], { label: "In the flow" });
   };
-  return html`<div class="bd-child"><label class="bd-check"><input type="checkbox" checked=${abs} onChange=${(e) => toggle(e.target.checked)} />Absolute position</label>
-    <span class="bd-note">${abs ? "Placed by X and Y, over its frame's layout" : "Placed by its frame's flex layout"}</span></div>`;
+  return html`<label class="bd-check" title=${abs ? "Placed by X and Y, over its frame's layout" : "Placed by its frame's flex layout; tick to place it by hand"}><input type="checkbox" checked=${abs} onChange=${(e) => toggle(e.target.checked)} />Absolute position</label>`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -240,8 +290,8 @@ function FlexSection() {
     <div class="bd-pads ${four ? "four" : ""}">
       ${four
         ? ["Top", "Right", "Bottom", "Left"].map((s, i) => html`<${Num} label=${s[0]} title=${`${s} padding`} value=${pad[i]} min=${0} onChange=${(v) => set(padStyle(pad.map((x, j) => (j === i ? v ?? 0 : x))), `pad${i}`)} />`)
-        : html`<${Num} label=${html`<${Icon} n="flexRow" s=${12} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="Mixed" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
-          <${Num} label=${html`<${Icon} n="flexCol" s=${12} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="Mixed" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
+        : html`<${Num} label=${html`<${Icon} n="flexRow" s=${12} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
+          <${Num} label=${html`<${Icon} n="flexCol" s=${12} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
       <button class="icon-btn sm ${four ? "on" : ""}" title="Each side" onClick=${() => setFour(!four)}><${Icon} n="sides" s=${14} /></button>
     </div>
   <//>`;
@@ -266,7 +316,7 @@ function LookSection() {
   };
   return html`<${Section} title="Look">
     <div class="grid2">
-      <${Num} label=${html`<${Icon} n="eye" s=${12} />`} title="Opacity" unit="%" value=${opacity === "mixed" ? undefined : Math.round(opacity * 100)} placeholder="Mixed" min=${0} max=${100}
+      <${Num} label=${html`<${Icon} n="eye" s=${12} />`} title="Opacity" unit="%" value=${opacity === "mixed" ? undefined : Math.round(opacity * 100)} placeholder="—" min=${0} max=${100}
         onChange=${(v) => v !== undefined && setStyle({ opacity: v >= 100 ? null : String(round(v / 100, 3)) }, "opacity")} />
       <${Dropdown} value=${blend === "mixed" ? null : blend} placeholder="Mixed" options=${BLENDS} onChange=${(v) => setStyle({ mixBlendMode: v === "normal" ? null : v })} />
     </div>
@@ -274,7 +324,7 @@ function LookSection() {
     html`<div class="bd-radius ${four ? "four" : ""}">
       ${four
         ? r.map((x, i) => html`<${Num} label=${["↖", "↗", "↘", "↙"][i]} title="Corner radius" value=${x} min=${0} onChange=${(v) => setStyle(radiusStyle(r.map((y, j) => (j === i ? v ?? 0 : y))), `r${i}`)} />`)
-        : html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${r.every((x) => x === r[0]) ? r[0] : undefined} placeholder="Mixed" min=${0} onChange=${(v) => setStyle(radiusStyle([v ?? 0, v ?? 0, v ?? 0, v ?? 0]), "radius")} />`}
+        : html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${r.every((x) => x === r[0]) ? r[0] : undefined} placeholder="—" min=${0} onChange=${(v) => setStyle(radiusStyle([v ?? 0, v ?? 0, v ?? 0, v ?? 0]), "radius")} />`}
       <button class="icon-btn sm ${four ? "on" : ""}" title="Each corner" onClick=${() => setFour(!four)}><${Icon} n="corners" s=${14} /></button>
     </div>`}
   <//>`;
@@ -283,23 +333,198 @@ function LookSection() {
 // ---------------------------------------------------------------------------------------------
 // Fill, border, shadow
 
+// Fills are the CSS background's layers, top first: a solid colour (the bottom one is the
+// background-color; any above it are a one-colour gradient), a linear, radial or conic gradient, or
+// a picture. Anything the panel can't take apart stays as CSS.
+
+const COLOR = /^(#|rgb|hsl|oklch|oklab|lab\(|lch\(|color\(|var\(|transparent$|currentcolor$|[a-z]+$)/i;
+
+/** A list split at its top-level commas (not the ones inside brackets). */
+function splitTop(v) {
+  const out = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of v ?? "") {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+const SIDES = { top: 0, right: 90, bottom: 180, left: 270, "top right": 45, "right top": 45, "bottom right": 135, "right bottom": 135, "bottom left": 225, "left bottom": 225, "top left": 315, "left top": 315 };
+
+function parseStops(parts) {
+  return parts.map((p) => {
+    const m = /^(.*?)(?:\s+(-?[\d.]+)%)?(?:\s+(-?[\d.]+)%)?$/.exec(p.trim());
+    return { color: (m?.[1] ?? p).trim(), pos: m?.[2] !== undefined ? Number(m[2]) : undefined };
+  });
+}
+
+function parseFill(css) {
+  const t = css.trim();
+  const url = /^url\((.*)\)$/i.exec(t);
+  if (url) return { kind: "image", url: url[1].replace(/^["']|["']$/g, "") };
+  const g = /^(linear|radial|conic)-gradient\((.*)\)$/is.exec(t);
+  if (!g) return COLOR.test(t) ? { kind: "solid", color: t } : { kind: "css", css: t };
+  const args = splitTop(g[2]);
+  const kind = g[1].toLowerCase();
+  let cfg = args[0].replace(/\bin\s+[a-z-]+(\s+(shorter|longer|increasing|decreasing)\s+hue)?/i, "").trim();
+  const isCfg = (a) => /^(to\s|from\s|at\s|circle|ellipse|closest|farthest|-?[\d.]+(deg|turn|rad|grad)\b)/i.test(a) || a === "";
+  const out = { kind, angle: 180, x: 50, y: 50, shape: "circle" };
+  let rest = args;
+  if (isCfg(cfg)) {
+    rest = args.slice(1);
+    const deg = /(-?[\d.]+)(deg|turn|rad|grad)/i.exec(cfg);
+    if (deg) out.angle = round(Number(deg[1]) * { deg: 1, turn: 360, rad: 57.2958, grad: 0.9 }[deg[2].toLowerCase()], 1);
+    const to = /\bto\s+([a-z ]+)/i.exec(cfg);
+    if (to && SIDES[to[1].trim()] !== undefined) out.angle = SIDES[to[1].trim()];
+    const at = /\bat\s+(-?[\d.]+)%\s+(-?[\d.]+)%/i.exec(cfg);
+    if (at) Object.assign(out, { x: Number(at[1]), y: Number(at[2]) });
+    if (/\bellipse\b/i.test(cfg)) out.shape = "ellipse";
+    if (kind === "conic" && !deg) out.angle = 0;
+    // A gradient the panel can't show (a size, a named position) stays as CSS.
+    if (/closest|farthest|\d+px/i.test(cfg) || (/\bat\b/i.test(cfg) && !at)) return { kind: "css", css: t };
+  } else if (kind === "conic") out.angle = 0;
+  out.stops = parseStops(rest);
+  // A one-colour gradient is a solid fill drawn above others.
+  if (kind === "linear" && out.stops.length === 2 && out.stops[0].color === out.stops[1].color && out.stops.every((x) => x.pos === undefined)) return { kind: "solid", color: out.stops[0].color };
+  return out;
+}
+
+function fillCss(f, under) {
+  const stops = () => f.stops.map((x) => (x.pos === undefined ? x.color : `${x.color} ${round(x.pos, 1)}%`)).join(", ");
+  if (f.kind === "solid") return under ? `linear-gradient(${f.color}, ${f.color})` : f.color;
+  if (f.kind === "linear") return `linear-gradient(${round(f.angle, 1)}deg, ${stops()})`;
+  if (f.kind === "radial") return `radial-gradient(${f.shape} at ${round(f.x, 1)}% ${round(f.y, 1)}%, ${stops()})`;
+  if (f.kind === "conic") return `conic-gradient(from ${round(f.angle, 1)}deg at ${round(f.x, 1)}% ${round(f.y, 1)}%, ${stops()})`;
+  if (f.kind === "image") return `url("${f.url}")`;
+  return f.css;
+}
+
+/** A layer's fills, top first. */
+function fillsOf(style) {
+  const fills = [];
+  let layers = splitTop(style.backgroundImage ?? "");
+  let color = style.backgroundColor;
+  if (style.background && !style.backgroundImage && !style.backgroundColor) {
+    const parts = splitTop(style.background);
+    const last = parts[parts.length - 1];
+    if (last && COLOR.test(last.trim()) && !/gradient|url\(/i.test(last)) {
+      color = last.trim();
+      parts.pop();
+    }
+    layers = parts;
+  }
+  for (const l of layers) if (l && l !== "none") fills.push(parseFill(l));
+  if (color && color !== "transparent") fills.push({ kind: "solid", color });
+  const sizes = splitTop(style.backgroundSize ?? "");
+  fills.forEach((f, i) => f.kind === "image" && (f.size = sizes[i] || "cover"));
+  return fills;
+}
+
+function fillsStyle(fills) {
+  const bottom = fills[fills.length - 1];
+  const solidBottom = bottom?.kind === "solid";
+  const layers = solidBottom ? fills.slice(0, -1) : fills;
+  const images = layers.some((f) => f.kind === "image");
+  return {
+    background: null,
+    backgroundColor: solidBottom ? bottom.color : null,
+    backgroundImage: layers.length ? layers.map((f) => fillCss(f, true)).join(", ") : null,
+    backgroundSize: images ? layers.map((f) => (f.kind === "image" ? f.size || "cover" : "auto")).join(", ") : null,
+    backgroundPosition: images ? layers.map(() => "center").join(", ") : null,
+    backgroundRepeat: images ? layers.map((f) => (f.kind === "image" && f.size === "auto" ? "repeat" : "no-repeat")).join(", ") : null,
+  };
+}
+
+const FILL_KINDS = [
+  { value: "solid", label: "Solid" },
+  { value: "linear", label: "Linear" },
+  { value: "radial", label: "Radial" },
+  { value: "conic", label: "Conic" },
+  { value: "image", label: "Image" },
+];
+
+/** A fill turned into another kind, keeping its colours. */
+function asKind(f, kind) {
+  const colors = f.kind === "solid" ? [f.color, "transparent"] : f.stops ? f.stops.map((x) => x.color) : ["#ffffff", "#000000"];
+  if (kind === "solid") return { kind, color: f.kind === "solid" ? f.color : colors[0] };
+  if (kind === "image") return { kind, url: f.url ?? "", size: "cover" };
+  const stops = f.stops ?? [{ color: colors[0], pos: 0 }, { color: colors[1] === "transparent" && f.kind === "solid" ? colors[0].replace(/^#([0-9a-f]{6})$/i, "#$100") : colors[1], pos: 100 }];
+  return { kind, angle: kind === "conic" ? 0 : f.angle ?? 180, x: f.x ?? 50, y: f.y ?? 50, shape: f.shape ?? "circle", stops };
+}
+
 function FillSection() {
   const list = ids();
   const n = node(list[0]);
-  const color = shared((m) => m.style.backgroundColor ?? (/^#|^rgb|^hsl|^oklch|^var\(/.test(m.style.background ?? "") ? m.style.background : undefined));
-  const image = n.style.backgroundImage ?? (n.style.background && !/^#|^rgb|^hsl|^oklch|^var\(/.test(n.style.background) ? n.style.background : "");
-  const [draft, setDraft] = useState(null);
-  return html`<${Section} title="Fill">
-    <${ColorButton} value=${color === "mixed" ? undefined : color} auto=${color === "mixed" ? "Mixed" : "None"} onChange=${(c) => setStyle({ backgroundColor: c ?? null, ...(n.style.background && /^#|^rgb|^hsl|^oklch|^var\(/.test(n.style.background) ? { background: null } : {}) }, "fill")} />
-    <input class="input bd-mono" placeholder="Gradient or image: linear-gradient(…), url(…)" value=${draft ?? image} spellcheck=${false}
-      onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())}
-      onBlur=${() => {
-        if (draft === null) return;
-        const v = draft.trim();
-        setDraft(null);
-        setStyle({ backgroundImage: v || null, background: n.style.background && !/^#|^rgb|^hsl|^oklch|^var\(/.test(n.style.background) ? null : n.style.background ?? null });
-      }} />
+  const fills = fillsOf(n.style);
+  const put = (next, key) => setStyle(fillsStyle(next), key);
+  const add = () => put([fills.length ? { kind: "linear", angle: 180, stops: [{ color: "rgba(0,0,0,0)", pos: 0 }, { color: "rgba(0,0,0,0.4)", pos: 100 }] } : { kind: "solid", color: "#ffffff" }, ...fills]);
+  return html`<${Section} title="Fill" right=${html`<button class="icon-btn sm" title=${fills.length ? "Add a fill on top" : "Add a fill"} onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
+    ${fills.map((f, i) => html`<${FillRow} key=${i} f=${f} k=${`fill${i}`} onChange=${(nf, key) => put(fills.map((x, j) => (j === i ? nf : x)), key)} onRemove=${() => put(fills.filter((_, j) => j !== i))} />`)}
   <//>`;
+}
+
+function FillRow({ f, k, onChange, onRemove }) {
+  const set = (patch, key) => onChange({ ...f, ...patch }, key && `${k}:${key}`);
+  const check = "repeating-conic-gradient(#2a2a2f 0 25%, #1c1c20 0 50%) 0 0 / 10px 10px";
+  const swatch = f.kind === "image" ? (f.url ? `url("${f.url.startsWith("/") ? `/file?path=${encodeURIComponent(f.url)}` : f.url}") center / cover` : "var(--panel-3)") : `${fillCss(f, true)}, ${check}`;
+  const kinds = f.kind === "css" ? html`<span class="bd-kind-css">CSS</span>` : html`<${Dropdown} value=${f.kind} options=${FILL_KINDS} btnClass="dd-btn bd-kind" onChange=${(kind) => onChange(asKind(f, kind))} />`;
+  return html`<div class="bd-fill">
+    <div class="bd-fill-head">
+      ${f.kind === "solid" ? html`<${ColorButton} value=${f.color} allowAuto=${false} onChange=${(c) => c && set({ color: c }, "c")} />` : html`<span class="bd-swatch" style=${{ background: swatch }}></span>`}
+      ${kinds}
+      <button class="icon-btn sm" title="Remove this fill" onClick=${onRemove}><${Icon} n="minus" s=${14} /></button>
+    </div>
+    ${f.kind === "css" && html`<input class="input bd-mono" value=${f.css} spellcheck=${false} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} onChange=${(e) => set({ css: e.target.value.trim() })} />`}
+    ${f.kind === "image" && html`<${ImageFill} f=${f} set=${set} />`}
+    ${f.stops && html`<${Gradient} f=${f} set=${set} />`}
+  </div>`;
+}
+
+function Gradient({ f, set }) {
+  const stops = f.stops;
+  const setStop = (i, patch, key) => set({ stops: stops.map((x, j) => (j === i ? { ...x, ...patch } : x)) }, key && `s${i}${key}`);
+  const at = (i) => stops[i].pos ?? Math.round((i / Math.max(1, stops.length - 1)) * 100);
+  return html`<div class="bd-grad">
+    <div class="grid2">
+      ${f.kind !== "radial" && html`<${Num} label=${html`<${Icon} n="rotate" s=${12} />`} title=${f.kind === "conic" ? "Starts at" : "Angle"} unit="°" value=${f.angle} onChange=${(v) => set({ angle: v ?? 0 }, "a")} />`}
+      ${f.kind === "radial" && html`<${Dropdown} value=${f.shape} options=${[{ value: "circle", label: "Circle" }, { value: "ellipse", label: "Ellipse" }]} onChange=${(v) => set({ shape: v })} />`}
+      ${f.kind !== "linear" && html`<div class="bd-xy"><${Num} label="X" unit="%" value=${f.x} onChange=${(v) => set({ x: v ?? 50 }, "x")} /><${Num} label="Y" unit="%" value=${f.y} onChange=${(v) => set({ y: v ?? 50 }, "y")} /></div>`}
+    </div>
+    ${stops.map((x, i) => html`<div class="bd-stop" key=${i}>
+        <${ColorButton} value=${x.color} allowAuto=${false} onChange=${(c) => c && setStop(i, { color: c }, "c")} />
+        <${Num} label="" unit="%" title="Where it sits along the gradient" value=${at(i)} min=${0} max=${100} onChange=${(v) => setStop(i, { pos: v ?? 0 }, "p")} />
+        <button class="icon-btn sm" title="Remove this colour" disabled=${stops.length <= 2} onClick=${() => set({ stops: stops.filter((_, j) => j !== i) })}><${Icon} n="x" s=${12} /></button>
+      </div>`)}
+    <button class="btn ghost sm bd-addstop" onClick=${() => set({ stops: [...stops.map((x, i) => ({ ...x, pos: at(i) })), { color: stops[stops.length - 1].color, pos: 100 }] })}><${Icon} n="plus" s=${12} />Add a colour</button>
+  </div>`;
+}
+
+function ImageFill({ f, set }) {
+  const pick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml";
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      try {
+        const r = await api(`/api/upload?kind=image&name=${encodeURIComponent(file.name)}`, file, true);
+        set({ url: r.path });
+      } catch (e) {
+        fail(e, "Couldn't add the picture");
+      }
+    };
+    input.click();
+  };
+  return html`<div class="bd-src"><span title=${f.url}>${(f.url ?? "").split("/").pop() || "No picture"}</span><button class="btn sm" onClick=${pick}>Choose…</button></div>
+    <${Seg} value=${f.size ?? "cover"} options=${[{ value: "cover", label: "Fill" }, { value: "contain", label: "Fit" }, { value: "auto", label: "Tile" }]} onChange=${(v) => set({ size: v })} />`;
 }
 
 function parseBorder(v) {
@@ -325,40 +550,44 @@ function BorderSection() {
   <//>`;
 }
 
-function parseShadow(v) {
-  if (!v || v === "none") return null;
-  // The first shadow of a list.
-  let depth = 0;
-  let first = "";
-  for (const ch of v) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    if (ch === "," && depth === 0) break;
-    first += ch;
-  }
-  const inset = /\binset\b/.test(first);
-  const colorMatch = /(rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|#[0-9a-f]{3,8}\b|var\([^)]*\)|\b[a-z]+\b(?!\())/i.exec(first.replace(/\binset\b/, ""));
+function parseShadow(one) {
+  const t = one.trim();
+  const inset = /\binset\b/.test(t);
+  const bare = t.replace(/\binset\b/, "").trim();
+  const colorMatch = /(rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|#[0-9a-f]{3,8}\b|var\([^)]*\)|\b[a-z]+\b(?![(\d]))/i.exec(bare);
   const color = colorMatch?.[1] ?? "rgba(0,0,0,0.2)";
-  const nums = first.replace(color, "").replace(/\binset\b/, "").trim().split(/\s+/).map((x) => px(x) ?? 0);
-  return { x: nums[0] ?? 0, y: nums[1] ?? 0, blur: nums[2] ?? 0, spread: nums[3] ?? 0, color, inset, more: v.length > first.length };
+  const nums = bare.replace(color, "").trim().split(/\s+/).filter(Boolean).map((x) => px(x) ?? 0);
+  return { x: nums[0] ?? 0, y: nums[1] ?? 0, blur: nums[2] ?? 0, spread: nums[3] ?? 0, color, inset };
 }
+const shadowsOf = (v) => (!v || v === "none" ? [] : splitTop(v).map(parseShadow));
 
+/** Shadows: a list, each outside the layer or inside it (inset). Text gets text shadows. */
 function ShadowSection() {
   const list = ids();
   const n = node(list[0]);
-  const s = parseShadow(n.style.boxShadow);
-  const put = (next, key) => setStyle({ boxShadow: next ? `${next.inset ? "inset " : ""}${next.x}px ${next.y}px ${next.blur}px ${next.spread}px ${next.color}` : null }, key);
-  return html`<${Section} title="Shadow" right=${s ? html`<button class="icon-btn sm" title="Remove the shadow" onClick=${() => put(null)}><${Icon} n="minus" s=${14} /></button>` : html`<button class="icon-btn sm" title="Add a shadow" onClick=${() => put({ x: 0, y: 8, blur: 24, spread: 0, color: "rgba(0,0,0,0.12)", inset: false })}><${Icon} n="plus" s=${14} /></button>`}>
-    ${s &&
-    html`<div class="grid2">
-        <${Num} label="X" value=${s.x} onChange=${(v) => put({ ...s, x: v ?? 0 }, "sx")} />
-        <${Num} label="Y" value=${s.y} onChange=${(v) => put({ ...s, y: v ?? 0 }, "sy")} />
-        <${Num} label="Blur" value=${s.blur} min=${0} onChange=${(v) => put({ ...s, blur: v ?? 0 }, "sb")} />
-        <${Num} label="Spread" value=${s.spread} onChange=${(v) => put({ ...s, spread: v ?? 0 }, "ss")} />
-      </div>
-      <${ColorButton} value=${s.color} allowAuto=${false} onChange=${(c) => put({ ...s, color: c ?? s.color }, "sc")} />
-      <label class="bd-check"><input type="checkbox" checked=${s.inset} onChange=${(e) => put({ ...s, inset: e.target.checked })} />Inside the layer (inset)</label>
-      ${s.more && html`<p class="bd-note">More shadows follow this one: see them under CSS.</p>`}`}
+  const text = n.type === "text";
+  const prop = text ? "textShadow" : "boxShadow";
+  const all = shadowsOf(n.style[prop]);
+  const css = (s) => (text ? `${s.x}px ${s.y}px ${s.blur}px ${s.color}` : `${s.inset ? "inset " : ""}${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`);
+  const put = (next, key) => setStyle({ [prop]: next.length ? next.map(css).join(", ") : null }, key);
+  const add = () => put([...all, all.length ? { x: 0, y: 1, blur: 2, spread: 0, color: "rgba(0,0,0,0.08)", inset: false } : { x: 0, y: 8, blur: 24, spread: 0, color: "rgba(0,0,0,0.12)", inset: false }]);
+  return html`<${Section} title="Shadow" right=${html`<button class="icon-btn sm" title="Add a shadow" onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
+    ${all.map((s, i) => {
+      const set = (patch, key) => put(all.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `sh${i}${key}`);
+      return html`<div class="bd-shadow" key=${i}>
+        <div class="bd-shadow-nums ${text ? "three" : ""}">
+          <${Num} label="X" value=${s.x} onChange=${(v) => set({ x: v ?? 0 }, "x")} />
+          <${Num} label="Y" value=${s.y} onChange=${(v) => set({ y: v ?? 0 }, "y")} />
+          <${Num} label="B" title="Blur" value=${s.blur} min=${0} onChange=${(v) => set({ blur: v ?? 0 }, "b")} />
+          ${!text && html`<${Num} label="S" title="Spread" value=${s.spread} onChange=${(v) => set({ spread: v ?? 0 }, "s")} />`}
+        </div>
+        <div class="bd-shadow-foot">
+          <${ColorButton} value=${s.color} allowAuto=${false} onChange=${(c) => c && set({ color: c }, "c")} />
+          ${!text && html`<button class="btn sm ${s.inset ? "" : "ghost"}" title=${s.inset ? "Inside the layer: click for outside" : "Outside the layer: click for inside"} onClick=${() => set({ inset: !s.inset })}>${s.inset ? "Inside" : "Outside"}</button>`}
+          <button class="icon-btn sm" title="Remove this shadow" onClick=${() => put(all.filter((_, j) => j !== i))}><${Icon} n="minus" s=${14} /></button>
+        </div>
+      </div>`;
+    })}
   <//>`;
 }
 
@@ -382,7 +611,9 @@ function TypeSection() {
   const align = shared((m) => m.style.textAlign ?? "left");
   const color = shared((m) => m.style.color);
   const fontValue = (name) => (!name ? null : name === "SF Pro" ? "-apple-system, 'SF Pro Text', system-ui, sans-serif" : `${/\s/.test(name) ? `'${name}'` : name}, system-ui, sans-serif`);
+  const typing = B.editing && list.includes(B.editing);
   return html`<${Section} title="Text">
+    ${typing && html`<${WordBar} />`}
     <div class="bd-font">
       <input class="input" list="bd-fonts" placeholder=${family === "mixed" ? "Mixed" : "Inherited"} value=${draft ?? (family === "mixed" ? "" : family)} spellcheck=${false}
         onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())}
@@ -395,7 +626,7 @@ function TypeSection() {
     </div>
     <div class="grid2">
       <${Dropdown} value=${weight === "mixed" ? null : weight || "400"} placeholder="Mixed" options=${WEIGHTS} onChange=${(v) => setStyle({ fontWeight: v === "400" ? null : v })} />
-      <${Num} label="Size" value=${size === "mixed" ? undefined : size} placeholder=${size === "mixed" ? "Mixed" : "16"} min=${1} onChange=${(v) => v && setStyle({ fontSize: `${v}px` }, "fs")} />
+      <${Num} label="Size" value=${size === "mixed" ? undefined : size} placeholder=${size === "mixed" ? "—" : "16"} min=${1} onChange=${(v) => v && setStyle({ fontSize: `${v}px` }, "fs")} />
       <${Num} label="Line" title="Line height in px" value=${px(lh) ?? (lh && !isNaN(Number(lh)) ? Math.round(Number(lh) * (px(n.style.fontSize) ?? 16)) : undefined)} placeholder="auto" min=${0} onChange=${(v) => setStyle({ lineHeight: v ? `${v}px` : null }, "lh")} />
       <${Num} label="Letter" title="Letter spacing, in em" digits=${3} step=${0.005} value=${ls ? (/em$/.test(ls) ? parseFloat(ls) : (px(ls) ?? 0) / (px(n.style.fontSize) ?? 16)) : 0} onChange=${(v) => setStyle({ letterSpacing: v ? `${round(v, 3)}em` : null }, "ls")} />
     </div>
@@ -406,6 +637,21 @@ function TypeSection() {
       <${Dropdown} value=${n.style.textDecoration ?? "none"} options=${[{ value: "none", label: "No line" }, { value: "underline", label: "Underline" }, { value: "line-through", label: "Strikethrough" }]} onChange=${(v) => setStyle({ textDecoration: v === "none" ? null : v })} />
     </div>
   <//>`;
+}
+
+/** While typing: bold, italic, underline, strikethrough and a colour for the selected words. */
+function WordBar() {
+  const picked = Boolean(words.range && !words.range.collapsed);
+  const keep = (e) => e.preventDefault();
+  const btn = (cmd, label, title, style) => html`<button class="bd-word ${wordState(cmd) ? "on" : ""}" title=${title} disabled=${!picked} onPointerDown=${keep} onClick=${() => styleWords(cmd)} style=${style}>${label}</button>`;
+  return html`<div class="bd-words" title=${picked ? "" : "Select some words in the text to style them"}>
+    <span class="lbl">${picked ? "Selected words" : "Select words to style"}</span>
+    ${btn("bold", "B", "Bold (⌘B)", { fontWeight: 700 })}
+    ${btn("italic", "I", "Italic (⌘I)", { fontStyle: "italic" })}
+    ${btn("underline", "U", "Underline (⌘U)", { textDecoration: "underline" })}
+    ${btn("strikeThrough", "S", "Strikethrough", { textDecoration: "line-through" })}
+    <label class="bd-word color ${picked ? "" : "off"}" title="Colour"><input type="color" disabled=${!picked} onInput=${(e) => styleWords("foreColor", e.target.value)} /><i></i></label>
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------------------------

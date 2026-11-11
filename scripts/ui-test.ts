@@ -198,6 +198,60 @@ const CHECKS: Record<string, Check> = {
     const gone = !boards.getBoard(t.id).nodes[made.roots[0]];
     return shown && gone ? "ok" : `shown: ${shown}, undone on disk: ${gone}`;
   },
+  async "on a board, a component's copies follow it, and what's inside a copy stays put"(page) {
+    const t = await openTestBoard(page);
+    const one = t.byName("Row One");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), one);
+    await page.keyboard.press("Meta+Alt+k");
+    await page.waitForTimeout(200);
+    await S(page, async (id: string) => {
+      const b = await import("/ui/board.js" as string);
+      b.placeCopy(id);
+    }, one);
+    await page.waitForTimeout(700);
+    const nodes = () => Object.values(boards.getBoard(t.id).nodes);
+    const copy = nodes().find((n) => n.instanceOf === one);
+    if (!boards.getBoard(t.id).nodes[one].isComponent || !copy) return "no component or no copy";
+    const words = nodes().find((n) => n.parent === one && n.type === "text")!;
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).commit([{ op: "set", id, text: "Uno" }]), words.id);
+    await page.waitForTimeout(800);
+    const copyWords = nodes().find((n) => n.parent === copy.id && n.type === "text")!;
+    await S(page, async (id: string) => {
+      const s = await import("/ui/board-state.js" as string);
+      s.select(id);
+      (await import("/ui/board.js" as string)).deleteSelection();
+    }, copyWords.id);
+    await page.waitForTimeout(600);
+    const kept = Boolean(boards.getBoard(t.id).nodes[copyWords.id]);
+    const icons = await S(page, () => [...document.querySelectorAll(".bd-comps .bd-comp")].length);
+    if (copyWords.text !== "Uno") return `the copy says ${copyWords.text}`;
+    if (!kept) return "a layer inside the copy was deleted";
+    return icons === 1 ? "ok" : `${icons} components listed`;
+  },
+  async "on a board, artboards line up and resize together"(page) {
+    const t = await openTestBoard(page);
+    const made = boardCore.addHtmlOps(`<div data-name="Second" style="width:200px;height:300px;background:#fff"></div>`, null, { page: boards.getBoard(t.id).pages[0].id });
+    boards.changeBoard(t.id, [...made.ops, { op: "set", id: made.roots[0], style: { left: "500px", top: "120px" } }], "studio");
+    await page.waitForTimeout(1500);
+    await S(page, async () => {
+      const s = await import("/ui/board-state.js" as string);
+      s.select(s.currentPage().children.slice());
+    });
+    await page.waitForTimeout(300);
+    await page.locator('.bd-align button[title^="Align tops"]').click();
+    await page.waitForTimeout(800);
+    const tops = boards.getBoard(t.id).pages[0].children.map((id) => parseFloat(boards.getBoard(t.id).nodes[id].style.top ?? "0"));
+    const se = (await page.locator('.bd-handle.h-se[data-group]').boundingBox())!;
+    const widths0 = boards.getBoard(t.id).pages[0].children.map((id) => parseFloat(boards.getBoard(t.id).nodes[id].style.width!));
+    await page.mouse.move(se.x + 4, se.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(se.x + 60, se.y + 4, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    const widths = boards.getBoard(t.id).pages[0].children.map((id) => parseFloat(boards.getBoard(t.id).nodes[id].style.width!));
+    if (new Set(tops).size !== 1) return `tops after aligning: ${tops}`;
+    return widths.every((w, i) => w > widths0[i]) ? "ok" : `widths ${widths0} → ${widths}`;
+  },
   async "pasting HTML onto a board makes layers"(page) {
     const t = await openTestBoard(page);
     await page.locator(".bd-row", { hasText: "Phone" }).first().click();

@@ -121,8 +121,23 @@ function EditableText({ id, style }) {
     s.removeAllRanges();
     s.addRange(r);
   }, [id]);
+  useEffect(() => {
+    const onSel = () => {
+      const s = getSelection();
+      const r = s.rangeCount ? s.getRangeAt(0) : null;
+      const inside = r && ref.current?.contains(r.commonAncestorContainer);
+      const was = Boolean(words.range && !words.range.collapsed);
+      if (inside) words.range = r.cloneRange();
+      if (Boolean(words.range && !words.range.collapsed) !== was || inside) notify();
+    };
+    document.addEventListener("selectionchange", onSel);
+    return () => {
+      document.removeEventListener("selectionchange", onSel);
+      words.range = null;
+    };
+  }, [id]);
   return html`<div data-bid=${id} ref=${ref} style=${{ ...style, outline: "none", cursor: "text" }} contenteditable="true" spellcheck=${false}
-    onBlur=${() => finishText(id, ref.current)}
+    onBlur=${(e) => !e.relatedTarget?.closest?.(".bd-words") && finishText(id, ref.current)}
     onPointerDown=${(e) => e.stopPropagation()}
     onKeyDown=${(e) => {
       e.stopPropagation();
@@ -135,6 +150,30 @@ function EditableText({ id, style }) {
       }
     }}></div>`;
 }
+
+/** The words selected in the text being typed in, for the panel's bold, italic and colour. */
+export const words = { range: null };
+
+/** Style the selected words: bold, italic, underline, strikeThrough, or foreColor with a colour. */
+export function styleWords(cmd, value) {
+  const el = B.editing && elOf(B.editing);
+  if (!el || !words.range) return;
+  el.focus();
+  const s = getSelection();
+  s.removeAllRanges();
+  s.addRange(words.range);
+  document.execCommand("styleWithCSS", false, cmd === "foreColor");
+  document.execCommand(cmd, false, value);
+  if (s.rangeCount) words.range = s.getRangeAt(0).cloneRange();
+  notify();
+}
+export const wordState = (cmd) => {
+  try {
+    return Boolean(words.range && !words.range.collapsed && document.queryCommandState(cmd));
+  } catch {
+    return false;
+  }
+};
 
 export async function finishText(id, el) {
   if (B.editing !== id || !el) return;
@@ -233,10 +272,14 @@ function Overlay() {
   if (!canvasEl.current || !page) return null;
   const roots = page.children.filter((id) => b.board.nodes[id] && !b.board.nodes[id].hidden);
   const one = b.sel.length === 1 ? b.sel[0] : null;
-  const hover = b.hover && !b.sel.includes(b.hover) ? screenBox(b.hover) : null;
+  // While something is being dragged, only what helps with it shows: the size while resizing.
+  const busy = b.dragging;
+  const hover = !busy && b.hover && !b.sel.includes(b.hover) ? screenBox(b.hover) : null;
   const sel = b.sel.map((id) => [id, screenBox(id)]).filter(([, r]) => r);
   const box = one ? screenBox(one) : null;
   const locked = one && node(one)?.locked;
+  const movable = b.sel.length > 1 && !b.editing ? b.sel.filter((id) => !node(id)?.locked) : [];
+  const group = movable.length > 1 ? unionOf(movable.map(screenBox).filter(Boolean)) : null;
   return html`<div class="bd-overlay">
     ${roots.map((id) => {
       const r = screenBox(id);
@@ -248,9 +291,13 @@ function Overlay() {
     })}
     ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
-    ${box && !locked && !b.editing &&
+    ${box && !locked && !b.editing && !busy &&
     HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} style=${{ left: box.x + (h.includes("w") ? 0 : h.includes("e") ? box.width : box.width / 2) + "px", top: box.y + (h.includes("n") ? 0 : h.includes("s") ? box.height : box.height / 2) + "px" }}></div>`)}
-    ${box && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}</div>`}
+    ${box && !b.editing && (!busy || busy === "resize") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}</div>`}
+    ${group && html`<div class="bd-group" style=${{ left: group.x + "px", top: group.y + "px", width: group.width + "px", height: group.height + "px" }}></div>
+      ${!busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} data-group="1" style=${{ left: group.x + (h.includes("w") ? 0 : h.includes("e") ? group.width : group.width / 2) + "px", top: group.y + (h.includes("n") ? 0 : h.includes("s") ? group.height : group.height / 2) + "px" }}></div>`)}
+      ${(!busy || busy === "resize") && html`<div class="bd-size" style=${{ left: group.x + group.width / 2 + "px", top: group.y + group.height + 8 + "px" }}>${Math.round(group.width / b.view.z)} × ${Math.round(group.height / b.view.z)}</div>`}`}
+    ${altDown && one && !busy && html`<${Distances} from=${one} to=${b.hover && b.hover !== one ? b.hover : node(one)?.parent} />`}
     ${b.drop?.line && html`<div class="bd-drop-line" style=${{ left: b.drop.line.x + "px", top: b.drop.line.y + "px", width: b.drop.line.width + "px", height: b.drop.line.height + "px" }}></div>`}
     ${b.drop?.into && (() => {
       const r = screenBox(b.drop.into);
@@ -261,10 +308,67 @@ function Overlay() {
   </div>`;
 }
 
+const unionOf = (boxes) => {
+  if (!boxes.length) return null;
+  const x = Math.min(...boxes.map((r) => r.x));
+  const y = Math.min(...boxes.map((r) => r.y));
+  return { x, y, width: Math.max(...boxes.map((r) => r.x + r.width)) - x, height: Math.max(...boxes.map((r) => r.y + r.height)) - y };
+};
+
+/** ⌥ held: how far the selected layer is from another (or, inside it, from its edges). */
+function Distances({ from, to }) {
+  const a = from && screenBox(from);
+  const b = to && screenBox(to);
+  if (!a || !b) return null;
+  const z = B.view.z;
+  const lines = [];
+  const inside = a.x >= b.x - 0.5 && a.y >= b.y - 0.5 && a.x + a.width <= b.x + b.width + 0.5 && a.y + a.height <= b.y + b.height + 0.5;
+  const midY = a.y + a.height / 2;
+  const midX = a.x + a.width / 2;
+  const h = (x1, x2, y) => x2 - x1 > 0.5 && lines.push({ x: x1, y, w: x2 - x1, h: 0, v: (x2 - x1) / z });
+  const v = (y1, y2, x) => y2 - y1 > 0.5 && lines.push({ x, y: y1, w: 0, h: y2 - y1, v: (y2 - y1) / z });
+  if (inside) {
+    h(b.x, a.x, midY);
+    h(a.x + a.width, b.x + b.width, midY);
+    v(b.y, a.y, midX);
+    v(a.y + a.height, b.y + b.height, midX);
+  } else {
+    const oy = Math.max(a.y, b.y) < Math.min(a.y + a.height, b.y + b.height) ? (Math.max(a.y, b.y) + Math.min(a.y + a.height, b.y + b.height)) / 2 : midY;
+    const ox = Math.max(a.x, b.x) < Math.min(a.x + a.width, b.x + b.width) ? (Math.max(a.x, b.x) + Math.min(a.x + a.width, b.x + b.width)) / 2 : midX;
+    if (a.x + a.width <= b.x) h(a.x + a.width, b.x, oy);
+    else if (b.x + b.width <= a.x) h(b.x + b.width, a.x, oy);
+    if (a.y + a.height <= b.y) v(a.y + a.height, b.y, ox);
+    else if (b.y + b.height <= a.y) v(b.y + b.height, a.y, ox);
+  }
+  return html`${!inside && html`<div class="bd-measure-box" style=${{ left: b.x + "px", top: b.y + "px", width: b.width + "px", height: b.height + "px" }}></div>`}
+    ${lines.map((l, i) => html`<div key=${i} class="bd-measure ${l.h ? "v" : "h"}" style=${{ left: l.x + "px", top: l.y + "px", width: Math.max(1, l.w) + "px", height: Math.max(1, l.h) + "px" }}>
+      <span style=${l.h ? { top: "50%", left: "6px" } : { left: "50%", top: "6px" }}>${Math.round(l.v)}</span></div>`)}`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Pointer work
 
 let spaceDown = false;
+/** ⌥ held: distances from the selection to the layer under the pointer. */
+let altDown = false;
+addEventListener("keydown", (e) => {
+  if (e.key === "Alt" && !altDown && B.id) {
+    altDown = true;
+    notify();
+  }
+});
+addEventListener("keyup", (e) => {
+  if (e.key === "Alt" && altDown) {
+    altDown = false;
+    notify();
+  }
+});
+addEventListener("blur", () => {
+  if (altDown) {
+    altDown = false;
+    notify();
+  }
+});
 addEventListener("keydown", (e) => {
   if (e.code === "Space" && !e.repeat && B.id && !B.editing && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
     spaceDown = true;
@@ -306,19 +410,24 @@ function hoverMove(e) {
   if (id !== B.hover) bset({ hover: id });
 }
 
-function drag(e, { move, up, threshold = 3 }) {
+/** Follow a press until it lets go. `kind` says what the drag is, so the overlay can step aside. */
+function drag(e, { move, up, threshold = 3, kind = null }) {
   const x0 = e.clientX;
   const y0 = e.clientY;
   let live = threshold === 0;
+  if (live && kind) B.dragging = kind;
   const onMove = (ev) => {
     if (!live && Math.hypot(ev.clientX - x0, ev.clientY - y0) < threshold) return;
+    if (!live && kind) B.dragging = kind;
     live = true;
     move(ev);
   };
   const onUp = (ev) => {
     removeEventListener("pointermove", onMove);
     removeEventListener("pointerup", onUp);
+    B.dragging = null;
     up(ev, live);
+    notify();
   };
   addEventListener("pointermove", onMove);
   addEventListener("pointerup", onUp);
@@ -328,10 +437,7 @@ function down(e) {
   if (e.button === 2) return;
   const c = canvasEl.current;
   if (B.editing && e.target.closest?.(`[data-bid="${B.editing}"]`)) return;
-  if (B.editing) {
-    const el = elOf(B.editing);
-    el?.blur();
-  }
+  if (B.editing) finishText(B.editing, elOf(B.editing));
   document.activeElement?.blur?.();
   // Pan: the hand tool, space held, or the middle button.
   if (e.button === 1 || B.tool === "hand" || spaceDown) {
@@ -340,11 +446,13 @@ function down(e) {
     c.classList.add("grabbing");
     return drag(e, {
       threshold: 0,
+      kind: "pan",
       move: (ev) => bset({ view: { ...v0, x: v0.x + ev.clientX - e.clientX, y: v0.y + ev.clientY - e.clientY } }),
       up: () => c.classList.remove("grabbing"),
     });
   }
   const handle = e.target.closest?.("[data-handle]");
+  if (handle && handle.dataset.group) return resizeMany(e, B.sel.filter((id) => !node(id)?.locked), handle.dataset.handle);
   if (handle && B.sel.length === 1) return resize(e, B.sel[0], handle.dataset.handle);
   if (B.tool === "frame" || B.tool === "rect" || B.tool === "text") return create(e);
   const label = e.target.closest?.("[data-label]");
@@ -375,6 +483,7 @@ function marquee(e, root) {
   const keep = e.shiftKey ? B.sel.slice() : [];
   if (!e.shiftKey && !root) select([]);
   drag(e, {
+    kind: "marquee",
     move: (ev) => {
       const r = { x: Math.min(e.clientX, ev.clientX) - c.left, y: Math.min(e.clientY, ev.clientY) - c.top, width: Math.abs(ev.clientX - e.clientX), height: Math.abs(ev.clientY - e.clientY) };
       const candidates = root ? node(root).children ?? [] : currentPage().children;
@@ -395,7 +504,7 @@ function marquee(e, root) {
 }
 
 /** Where a free layer's left and top are now, in its parent's terms (measured if not written). */
-function placeOf(id) {
+export function placeOf(id) {
   const n = node(id);
   const l = pxValue(n.style.left);
   const t = pxValue(n.style.top);
@@ -439,6 +548,7 @@ function moveLayers(e, ids) {
   }
   let ops = [];
   drag(e, {
+    kind: "move",
     move: (ev) => {
       let dx = (ev.clientX - e.clientX) / z;
       let dy = (ev.clientY - e.clientY) / z;
@@ -487,8 +597,10 @@ function reorder(e, id) {
   el?.classList.add("bd-dragging");
   const c = canvasEl.current.getBoundingClientRect();
   let target = null;
+  const kind = "move";
   const inside = (box, ev) => box && ev.clientX - c.left >= box.x && ev.clientX - c.left <= box.x + box.width && ev.clientY - c.top >= box.y && ev.clientY - c.top <= box.y + box.height;
   drag(e, {
+    kind,
     move: (ev) => {
       let frameId = n.parent;
       if (!inside(screenBox(n.parent), ev)) {
@@ -556,6 +668,7 @@ function resize(e, id, h) {
   let ops = [];
   drag(e, {
     threshold: 0,
+    kind: "resize",
     move: (ev) => {
       const dx = (ev.clientX - e.clientX) / z;
       const dy = (ev.clientY - e.clientY) / z;
@@ -593,6 +706,57 @@ function resize(e, id, h) {
   });
 }
 
+/** Resize several layers as one: each keeps its place and share of the box they make together. */
+function resizeMany(e, ids, h) {
+  e.stopPropagation();
+  const base = B.board;
+  const top = ids.filter((id) => !ancestors(base, id).some((a) => ids.includes(a)));
+  const boxes = Object.fromEntries(top.map((id) => [id, worldBox(id)]).filter(([, b]) => b));
+  const list = Object.keys(boxes);
+  if (!list.length) return;
+  const g = unionOf(Object.values(boxes));
+  const starts = Object.fromEntries(list.filter((id) => !inFlow(base, id)).map((id) => [id, placeOf(id)]));
+  const z = B.view.z;
+  let ops = [];
+  drag(e, {
+    threshold: 0,
+    kind: "resize",
+    move: (ev) => {
+      const dx = (ev.clientX - e.clientX) / z;
+      const dy = (ev.clientY - e.clientY) / z;
+      let w = Math.max(4, g.width + (h.includes("e") ? dx : h.includes("w") ? -dx : 0));
+      let hh = Math.max(4, g.height + (h.includes("s") ? dy : h.includes("n") ? -dy : 0));
+      if (ev.shiftKey) {
+        const k = Math.abs(w / g.width - 1) > Math.abs(hh / g.height - 1) ? w / g.width : hh / g.height;
+        w = g.width * k;
+        hh = g.height * k;
+      }
+      const sx = w / g.width;
+      const sy = hh / g.height;
+      const gx = h.includes("w") ? g.x + g.width - w : g.x;
+      const gy = h.includes("n") ? g.y + g.height - hh : g.y;
+      ops = list.map((id) => {
+        const b = boxes[id];
+        const n = node(id);
+        const style = {};
+        if (sx !== 1) style.width = `${Math.max(1, Math.round(b.width * sx))}px`;
+        if (sy !== 1 && n.type !== "text") style.height = `${Math.max(1, Math.round(b.height * sy))}px`;
+        if (starts[id]) {
+          style.left = `${Math.round(starts[id].left + gx + (b.x - g.x) * sx - b.x)}px`;
+          style.top = `${Math.round(starts[id].top + gy + (b.y - g.y) * sy - b.y)}px`;
+        }
+        return { op: "set", id, style };
+      });
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      if (!moved || !ops.length) return;
+      B.board = base;
+      commit(ops, { label: "Resize" });
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Drawing new layers
 
@@ -619,6 +783,7 @@ function create(e) {
   let rect = null;
   drag(e, {
     threshold: 2,
+    kind: "draw",
     move: (ev) => {
       rect = { x: Math.min(e.clientX, ev.clientX) - c.left, y: Math.min(e.clientY, ev.clientY) - c.top, width: Math.abs(ev.clientX - e.clientX), height: Math.abs(ev.clientY - e.clientY) };
       bset({ drop: { kind: "draw", rect, into } });

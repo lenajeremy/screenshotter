@@ -1,9 +1,9 @@
 // The board editor: a design tool where agents and people work on the same HTML and CSS. Pages and
 // layers on the left, the canvas in the middle, the layer's CSS (in words) on the right.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cloneTree, htmlToNodes, inFlow, isFlex, newId, nodeHtml, parseHtml, plainText, pxValue, rootOf, siblingsOf, subtree } from "./board-core.js";
+import { ancestors, cloneTree, componentOps, copyTree, detachOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, subtree, uncomponentOps } from "./board-core.js";
 import { B, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
-import { BoardCanvas, canvasEl, elOf, fit, placeNew, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
+import { BoardCanvas, canvasEl, elOf, fit, placeNew, placeOf, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -32,7 +32,7 @@ export function BoardApp() {
   if (!b.board) return html`<div class="bd-app"><div class="boot"><div class="boot-mark"></div></div></div>`;
   return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}">
     <${BoardTopbar} />
-    ${b.leftOpen && html`<aside class="panel bd-left"><${PagesList} /><${LayersList} /></aside>`}
+    ${b.leftOpen && html`<aside class="panel bd-left"><${PagesList} /><${ComponentsList} /><${LayersList} /></aside>`}
     <main class="bd-stage"><${BoardCanvas} /></main>
     ${b.rightOpen && html`<aside class="panel bd-right"><${Inspector} /></aside>`}
   </div>`;
@@ -184,6 +184,8 @@ function NameInput({ value, onDone }) {
 // Layers
 
 export function layerIcon(n, b = B.board) {
+  if (n.isComponent) return "component";
+  if (n.instanceOf) return "instance";
   if (n.type === "text") return "text";
   if (n.type === "image") return "image";
   if (n.type === "svg") return "vector";
@@ -345,7 +347,8 @@ export function duplicateSelection() {
   const made = [];
   for (const id of ids) {
     const n = node(id);
-    const clone = cloneTree(B.board, id, n.parent);
+    // A component's duplicate is a copy of it, which follows it.
+    const clone = copyTree(B.board, id, n.parent);
     const c = clone.nodes[clone.id];
     if (!n.parent) {
       // A copied artboard goes beside the original.
@@ -355,7 +358,7 @@ export function duplicateSelection() {
       c.style.left = `${Math.round((pxValue(n.style.left) ?? 0) + 16)}px`;
       c.style.top = `${Math.round((pxValue(n.style.top) ?? 0) + 16)}px`;
     }
-    c.name = n.name;
+    if (!n.isComponent) c.name = n.name;
     const sibs = siblingsOf(B.board, id);
     ops.push({ op: "add", nodes: clone.nodes, ids: [clone.id], parent: n.parent, page: n.parent ? undefined : currentPage().id, index: sibs.indexOf(id) + 1 + made.filter((m) => node(m)?.parent === n.parent).length });
     made.push(clone.id);
@@ -443,6 +446,68 @@ export function setFlex(id, on) {
   }
   commit(ops, { label: "Remove flex" });
 }
+
+/**
+ * Line layers up: several by the box they make together, one by its frame. Only layers placed by
+ * hand move; a frame's flex layout places the rest.
+ */
+export function alignSelection(edge) {
+  const ids = outermost().filter((id) => !inFlow(B.board, id) && !node(id).locked);
+  if (!ids.length) return;
+  const boxes = Object.fromEntries(ids.map((id) => [id, worldBox(id)]).filter(([, b]) => b));
+  let ref;
+  if (ids.length === 1) {
+    const p = node(ids[0]).parent;
+    if (!p) return;
+    const pb = worldBox(p);
+    const cs = getComputedStyle(elOf(p));
+    const bl = parseFloat(cs.borderLeftWidth) || 0;
+    const bt = parseFloat(cs.borderTopWidth) || 0;
+    ref = { x: pb.x + bl, y: pb.y + bt, width: pb.width - bl - (parseFloat(cs.borderRightWidth) || 0), height: pb.height - bt - (parseFloat(cs.borderBottomWidth) || 0) };
+  } else {
+    const all = Object.values(boxes);
+    const x = Math.min(...all.map((b) => b.x));
+    const y = Math.min(...all.map((b) => b.y));
+    ref = { x, y, width: Math.max(...all.map((b) => b.x + b.width)) - x, height: Math.max(...all.map((b) => b.y + b.height)) - y };
+  }
+  const ops = [];
+  for (const id of Object.keys(boxes)) {
+    const b = boxes[id];
+    const at = placeOf(id);
+    const dx = edge === "left" ? ref.x - b.x : edge === "right" ? ref.x + ref.width - b.x - b.width : edge === "hcenter" ? ref.x + ref.width / 2 - b.x - b.width / 2 : 0;
+    const dy = edge === "top" ? ref.y - b.y : edge === "bottom" ? ref.y + ref.height - b.y - b.height : edge === "vcenter" ? ref.y + ref.height / 2 - b.y - b.height / 2 : 0;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+    ops.push({ op: "set", id, style: { left: `${Math.round(at.left + dx)}px`, top: `${Math.round(at.top + dy)}px`, ...(node(id).parent && node(id).style.position !== "absolute" ? { position: "absolute" } : {}) } });
+  }
+  commit(ops, { label: "Align" });
+}
+
+/** Even gaps between three or more layers, across or down. */
+export function distributeSelection(axis) {
+  const ids = outermost().filter((id) => !inFlow(B.board, id) && !node(id).locked);
+  if (ids.length < 3) return toast({ kind: "info", title: "Pick three or more layers", text: "Their gaps are made even, between the first and the last.", timeout: 3000 });
+  const x = axis === "x";
+  const list = ids.map((id) => ({ id, b: worldBox(id), at: placeOf(id) })).filter((o) => o.b).sort((a, b) => (x ? a.b.x - b.b.x : a.b.y - b.b.y));
+  const first = list[0].b;
+  const last = list[list.length - 1].b;
+  const span = x ? last.x + last.width - first.x : last.y + last.height - first.y;
+  const sizes = list.reduce((t, o) => t + (x ? o.b.width : o.b.height), 0);
+  const gap = (span - sizes) / (list.length - 1);
+  let pos = x ? first.x : first.y;
+  const ops = [];
+  for (const o of list) {
+    const d = pos - (x ? o.b.x : o.b.y);
+    if (Math.abs(d) >= 0.5) ops.push({ op: "set", id: o.id, style: x ? { left: `${Math.round(o.at.left + d)}px` } : { top: `${Math.round(o.at.top + d)}px` } });
+    pos += (x ? o.b.width : o.b.height) + gap;
+  }
+  commit(ops, { label: "Distribute" });
+}
+
+/** Whether the selection can be lined up (layers placed by hand, not by a flex layout). */
+export const canAlign = () => {
+  const ids = outermost().filter((id) => !inFlow(B.board, id));
+  return ids.length > 1 || (ids.length === 1 && Boolean(node(ids[0]).parent));
+};
 
 function restack(where) {
   const ids = outermost();
@@ -597,7 +662,17 @@ function pasteLayers(from) {
   const made = [];
   const nodes = {};
   for (const id of from.ids) {
-    const c = cloneTree(fake, id, null);
+    // A component pasted on its own board is a copy of it; links to another board's components are let go.
+    const live = B.board.nodes[id];
+    const c = live?.isComponent ? copyTree(B.board, id, null) : cloneTree(fake, id, null);
+    for (const n of Object.values(c.nodes)) {
+      if ((n.master && !B.board.nodes[n.master]) || (n.instanceOf && !B.board.nodes[n.instanceOf]?.isComponent)) {
+        delete n.master;
+        delete n.instanceOf;
+        delete n.overrides;
+      }
+      if (n.isComponent) delete n.isComponent;
+    }
     Object.assign(nodes, c.nodes);
     made.push(c.id);
   }
@@ -710,6 +785,89 @@ export async function artboardToDesign(ids = selectedArtboards()) {
 }
 
 // =============================================================================================
+// Components
+
+export function makeComponent() {
+  const s = outermost();
+  if (s.length !== 1) return toast({ kind: "info", title: "Pick one frame", text: "A component is made from one frame: wrap the layers in a frame first (⌥⌘G).", timeout: 4000 });
+  const n = node(s[0]);
+  if (n.type !== "frame") return toast({ kind: "info", title: "Only a frame can be a component", text: "Wrap it in a frame first (⌥⌘G).", timeout: 4000 });
+  try {
+    commit(componentOps(B.board, n.id), { label: "Make a component" });
+  } catch (e) {
+    toast({ kind: "info", title: "That can't be a component", text: e.message, timeout: 6000 });
+  }
+}
+
+/** A copy of a component: into the selected frame, else beside the component (or in the view). */
+export function placeCopy(main, { into } = {}) {
+  const m = node(main);
+  if (!m?.isComponent) return;
+  const target = into !== undefined ? into : (() => {
+    const s = sel();
+    const one = s.length === 1 ? node(s[0]) : null;
+    if (one && one.type === "frame" && one.id !== main && !ancestors(B.board, one.id).includes(main) && !instanceRootOf(B.board, one.id)) return one.id;
+    return undefined;
+  })();
+  let parent;
+  let index;
+  if (target) parent = target;
+  else if (m.parent && rootOf(B.board, main) && currentPage().children.includes(rootOf(B.board, main))) {
+    parent = m.parent;
+    index = siblingsOf(B.board, main).indexOf(main) + 1;
+  } else parent = null;
+  const t = instanceTree(B.board, main, parent);
+  if (!parent) {
+    const spot = m.parent ? (() => {
+      const c = canvasEl.current.getBoundingClientRect();
+      const p = toWorld(c.left + c.width / 2, c.top + c.height / 2);
+      return { left: p.x, top: p.y };
+    })() : freeSpot(B.board, currentPage().id, 0);
+    Object.assign(t.nodes[t.id].style, { left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` });
+  } else if (!isFlex(node(parent))) Object.assign(t.nodes[t.id].style, { position: "absolute", left: "16px", top: "16px" });
+  if (commit([{ op: "add", nodes: t.nodes, ids: [t.id], parent, page: parent ? undefined : currentPage().id, index }], { label: "Copy of a component" }) !== false) select(t.id);
+}
+
+export function goToComponent(id) {
+  const r = instanceRootOf(B.board, id);
+  const main = r && node(node(r).instanceOf);
+  if (!main) return;
+  const page = B.board.pages.find((p) => p.children.includes(rootOf(B.board, main.id)));
+  if (page && page.id !== B.page) bset({ page: page.id });
+  select(main.id);
+  requestAnimationFrame(() => fit([main.id]));
+}
+
+export const resetCopy = (id) => commit(resetOps(B.board, id), { label: "Reset" });
+export const detachCopy = (id) => commit(detachOps(B.board, instanceRootOf(B.board, id) ?? id), { label: "Detach" });
+export const stopComponent = (id) => commit(uncomponentOps(B.board, id), { label: "No longer a component" });
+export const selectCopies = (main) => select(instancesOf(B.board, main));
+
+/** Every component on the board, for the Components list. */
+export function ComponentsList() {
+  const b = useBoard();
+  const mains = Object.values(b.board.nodes).filter((n) => n.isComponent);
+  if (!mains.length) return null;
+  return html`<section class="bd-comps">
+    <div class="bd-head"><h3>Components</h3><span class="bd-count">${mains.length}</span></div>
+    ${mains.map((m) => html`<div key=${m.id} class="bd-comp ${b.sel.includes(m.id) ? "on" : ""}" title="Click to select it, + to place a copy" onClick=${() => goToComponentMain(m.id)}>
+        <${Icon} n="component" s=${13} />
+        <span class="nm">${m.name}</span>
+        <span class="n">${instancesOf(b.board, m.id).length || ""}</span>
+        <button class="icon-btn sm" title="Place a copy (into the selected frame, or beside it)" onClick=${(e) => (e.stopPropagation(), placeCopy(m.id))}><${Icon} n="plus" s=${12} /></button>
+      </div>`)}
+  </section>`;
+}
+
+function goToComponentMain(id) {
+  const page = B.board.pages.find((p) => p.children.includes(rootOf(B.board, id)));
+  if (page && page.id !== B.page) bset({ page: page.id });
+  select(id);
+}
+
+const hasOverrides = (id) => subtree(B.board, id).some((x) => node(x)?.overrides?.length);
+
+// =============================================================================================
 // The layer menu
 
 export function openLayerMenu(x, y) {
@@ -728,6 +886,14 @@ export function openLayerMenu(x, y) {
     any && { label: "Wrap in frame", icon: "frame", kbd: "⌥⌘G", run: () => wrapSelection({ free: true }) },
     frame && one.children?.length && { label: "Ungroup", icon: "layers", kbd: "⇧⌘G", run: ungroupSelection },
     frame && (isFlex(one) ? { label: "Remove flex", icon: "freeLayout", kbd: "⌥⇧A", run: () => setFlex(one.id, false) } : { label: "Add flex", icon: "flexCol", kbd: "⇧A", run: () => setFlex(one.id, true) }),
+    any && "-",
+    frame && !one.isComponent && !instanceRootOf(B.board, one.id) && { label: "Make a component", icon: "component", kbd: "⌥⌘K", run: makeComponent },
+    one?.isComponent && { label: "Place a copy", icon: "instance", run: () => placeCopy(one.id) },
+    one?.isComponent && instancesOf(B.board, one.id).length > 0 && { label: `Select its ${instancesOf(B.board, one.id).length} cop${instancesOf(B.board, one.id).length === 1 ? "y" : "ies"}`, icon: "instance", run: () => selectCopies(one.id) },
+    one && instanceRootOf(B.board, one.id) && { label: "Go to the component", icon: "component", run: () => goToComponent(one.id) },
+    one && hasOverrides(one.id) && { label: "Reset to the component", icon: "refresh", run: () => resetCopy(one.id) },
+    one && instanceRootOf(B.board, one.id) && { label: "Detach the copy", icon: "x", kbd: "⌥⌘B", run: () => detachCopy(one.id) },
+    one?.isComponent && { label: "Stop being a component", icon: "x", run: () => stopComponent(one.id) },
     any && "-",
     any && { label: "Bring to front", icon: "front", kbd: "]", run: () => restack("front") },
     any && { label: "Send to back", icon: "back", kbd: "[", run: () => restack("back") },
@@ -759,6 +925,8 @@ function onKey(e) {
   if (m && k === "d") return take(), duplicateSelection();
   if (m && k === "a") return take(), selectAll();
   if (m && !e.shiftKey && k === "r") return take(), B.sel.length === 1 && bset({ renaming: B.sel[0] });
+  if (m && e.altKey && (k === "k" || e.code === "KeyK")) return take(), makeComponent();
+  if (m && e.altKey && (k === "b" || e.code === "KeyB")) return take(), B.sel.length === 1 && detachCopy(B.sel[0]);
   if (m && e.altKey && k === "g") return take(), wrapSelection({ free: true });
   if (m && e.shiftKey && k === "g") return take(), ungroupSelection();
   if (m && e.shiftKey && k === "h") return take(), toggleAll("hidden");
@@ -775,6 +943,12 @@ function onKey(e) {
   if (m && k === "]") return take(), restack("forward");
   if (m && k === "[") return take(), restack("backward");
   if (m) return;
+  // ⌥ and a letter lines layers up (as in Figma); ⌥⇧H and ⌥⇧V space them evenly.
+  if (e.altKey && !e.shiftKey) {
+    const edge = { KeyA: "left", KeyD: "right", KeyH: "hcenter", KeyW: "top", KeyS: "bottom", KeyV: "vcenter" }[e.code];
+    if (edge) return take(), alignSelection(edge);
+  }
+  if (e.altKey && e.shiftKey && (e.code === "KeyH" || e.code === "KeyV")) return take(), distributeSelection(e.code === "KeyH" ? "x" : "y");
   if (e.shiftKey && e.code === "Digit0") return take(), zoomTo(1);
   if (e.shiftKey && e.code === "Digit1") return take(), fit();
   if (e.shiftKey && e.code === "Digit2") return take(), fit(B.sel);

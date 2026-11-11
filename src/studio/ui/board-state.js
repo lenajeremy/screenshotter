@@ -30,6 +30,8 @@ export const B = {
   /** An insertion line or a drop target while dragging. */
   drop: null,
   guides: [],
+  /** What's being dragged on the canvas: move, resize, marquee, draw, pan. */
+  dragging: null,
 };
 
 const listeners = new Set();

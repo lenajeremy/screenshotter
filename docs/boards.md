@@ -33,28 +33,36 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
   - **Agents:** their changes show up within a second as undoable steps, with the artboards they're working on marked.
 - **Tests:**
   - `npm run test:board`: the core and every tool through MCP.
-  - Five board checks in `npm run test:ui`, in Chromium and WebKit.
+  - Seven board checks in `npm run test:ui`, in Chromium and WebKit (drawing, picking, reordering, tools, agent changes, components, align and resize, paste).
+
+- **Since (same day):**
+  - align and distribute, resizing several layers together, ⌥ distances
+  - bold, italic, underline, strikethrough and a colour for selected words
+  - stacked fills (solid, linear, radial, conic, picture) with a gradient editor, and lists of shadows
+  - **Components** (`expandOps` in the core):
+    - Copies are real layers that follow the component's layers through `master`.
+    - A copy's own changes are kept as `overrides`.
+    - Nothing can be added to, moved inside or deleted from a copy.
+    - Reset and detach.
+    - Agents get component, copy, detach and reset in `board_edit`.
 
 **Decisions:**
 
 - The design is HTML and CSS, not a vector format. The browser engine does the layout, the text and the drawing, an agent writes it fluently, and code comes out of it nearly as is.
 - Tool names start with `board_` because they share the server with 30 other tools. Edits are batched in `board_edit` to keep the tool count down.
 - The Studio and agents both write the file on disk under a lock. An agent's change reaches the open board by polling (every 700 ms), and undoing it replaces the whole board.
+- Components: the Studio expands its own changes (so a change to a component shows in its copies straight away) and sends the result. The server expands only agents' changes, so nothing is expanded twice.
+- Blue is for selection only, as in the rest of the Studio; everything else on boards is neutral. On 11 November the user compared lime for selection and chose blue (lime is hard to see on light designs and already marks agent work).
 
 ## Next, in rough order
 
 1. **Released app.** The board tools reach agents once a release ships them: the installed app's MCP is the released one.
-2. **Editing depth:**
-   - align and distribute
-   - resizing several layers at once
-   - ⌥-hover distances
-   - smart guides inside frames
-   - styling a run of words (bold, italic, colour) from the panel
-   - stacked fills and shadows with their own controls
-   - a gradient editor
+2. **Comments** pinned to layers, which agents can read and resolve.
 3. **Code out:** copy as JSX or Tailwind (Paper has Tailwind and React CSS). `board_read` gets a `jsx` view.
-4. **Components:** a frame made reusable, with instances and overrides. Paper has none yet.
-5. **Prototype mode:** click through artboards linked by layers, full screen.
-6. **Comments** pinned to layers, which agents can read and resolve.
-7. **Pen tool** and vector editing.
-8. **Speed:** memoised layers for boards with thousands of layers.
+4. **Prototype mode:** click through artboards linked by layers, full screen.
+5. **More editing:**
+   - smart guides inside frames
+   - component variants and properties
+   - per-fill visibility
+6. **Pen tool** and vector editing.
+7. **Speed:** memoised layers for boards with thousands of layers.
