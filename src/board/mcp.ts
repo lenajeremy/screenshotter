@@ -1,0 +1,474 @@
+/**
+ * The board tools agents use: make a board, write HTML onto it, change layers, look at the result.
+ * Every write lands in the person's Studio as they watch (the open board picks it up within a
+ * second), marked as an agent's change so they can undo it.
+ */
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { outputRoot, slug } from "../util/files.js";
+import {
+  addHtmlOps,
+  cloneTree,
+  cssValue,
+  freeSpot,
+  newId,
+  nodeHtml,
+  pageOf,
+  pxValue,
+  rootOf,
+  siblingsOf,
+  sizeWord,
+  treeText,
+  type Board,
+  type Op,
+} from "./core.js";
+import { drawLayers } from "./render.js";
+import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, listBoards, summarizeBoard } from "./store.js";
+
+type Content = CallToolResult["content"];
+const text = (value: unknown): Content[number] => ({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) });
+
+async function guard(fn: () => Promise<Content>): Promise<CallToolResult> {
+  try {
+    return { content: await fn() };
+  } catch (e) {
+    return { isError: true, content: [text(e instanceof Error ? e.message : String(e))] };
+  }
+}
+
+export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's built): a board is a design made of real HTML and CSS, on pages of artboards, that the person watches you build live in the Studio and can edit after you. Use it to show a screen, a flow or a component before writing the code.
+- board_create (or board_list to find one), then board_write_html to add an artboard: one top-level element with an explicit width and height (e.g. 390×844 for a phone screen, 1440×900 for desktop; height "fit-content" to grow with its content), styled inline. Then add to it piece by piece: target the artboard (or a frame in it) and write one visual group per call (a header, a card, a row), so the person sees it come together.
+- Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox (display:flex, flex-direction, gap, padding, align-items); elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
+- board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
+- Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
+- Tokens (board_edit token) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.`;
+
+const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name.");
+
+function placeInfo(b: Board, id: string) {
+  const n = b.nodes[id];
+  return `${n.name} (#${id}, ${sizeWord(b, id, "width")}×${sizeWord(b, id, "height")})`;
+}
+
+/** The artboards a set of layers is on, marked as being worked on. */
+function workingOps(b: Board, ids: string[]): Op[] {
+  const roots = [...new Set(ids.filter((id) => b.nodes[id]).map((id) => rootOf(b, id)))];
+  return roots.length ? [{ op: "working", ids: roots, at: new Date().toISOString() }] : [];
+}
+
+const StyleValue = z.union([z.string(), z.number(), z.null()]);
+const StyleMap = z.record(z.string(), StyleValue).describe('CSS properties in camelCase or kebab-case (backgroundColor or "background-color"), values as CSS ("12px", "#0a0a0b", "var(--brand)"). A bare number is px (except opacity, fontWeight, lineHeight, flexGrow, zIndex). null removes the property.');
+
+const ChangeSchema = z.discriminatedUnion("do", [
+  z.object({ do: z.literal("style"), ids: z.array(z.string()).min(1).describe("Layers to restyle."), style: StyleMap }),
+  z.object({ do: z.literal("text"), id: z.string(), text: z.string().describe("The words, as inline HTML: <b>, <i>, <span style=\"…\">, <br>.") }),
+  z.object({ do: z.literal("rename"), id: z.string(), name: z.string() }),
+  z.object({ do: z.literal("delete"), ids: z.array(z.string()).min(1) }),
+  z.object({
+    do: z.literal("duplicate"),
+    id: z.string(),
+    count: z.number().int().min(1).max(50).optional().describe("How many copies. Default 1."),
+  }),
+  z.object({
+    do: z.literal("move"),
+    id: z.string(),
+    into: z.string().optional().describe('A frame to move it into (at the end, or at `index`), or "page" for the page itself.'),
+    before: z.string().optional().describe("Put it just before this layer (in that layer's frame)."),
+    after: z.string().optional().describe("Put it just after this layer."),
+    index: z.number().int().min(0).optional(),
+  }),
+  z.object({ do: z.literal("visibility"), ids: z.array(z.string()).min(1), hidden: z.boolean() }),
+  z.object({ do: z.literal("lock"), ids: z.array(z.string()).min(1), locked: z.boolean() }),
+  z.object({ do: z.literal("image"), id: z.string(), src: z.string().describe("A file path or URL for the image layer.") }),
+  z.object({
+    do: z.literal("artboard"),
+    name: z.string(),
+    width: z.number().positive(),
+    height: z.union([z.number().positive(), z.literal("fit-content")]),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    style: StyleMap.optional(),
+    page: z.string().optional().describe("The page's id. Default: the first page."),
+  }),
+  z.object({ do: z.literal("page"), name: z.string().describe("A new page's name, or the new name for `id`."), id: z.string().optional(), delete: z.boolean().optional() }),
+  z.object({ do: z.literal("token"), name: z.string().describe('A CSS custom property name ("--brand" or "brand").'), value: z.string().nullable().describe("Its value, or null to remove it.") }),
+]);
+
+function styleOf(map: Record<string, string | number | null>): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [k0, v] of Object.entries(map)) {
+    const k = k0.includes("-") && !k0.startsWith("--") ? k0.replace(/^-(webkit|moz|ms)-/, "$1-").replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) : k0;
+    out[k] = v === null ? null : cssValue(k, v);
+  }
+  return out;
+}
+
+export function registerBoardTools(server: McpServer) {
+  server.registerTool(
+    "board_list",
+    {
+      title: "List boards",
+      description: "The boards in the person's Studio (designs made of HTML and CSS), newest first, each with its pages and artboards (ids, names, sizes, positions).",
+      inputSchema: {},
+    },
+    () => guard(async () => [text(listBoards().map(({ thumb: _t, ...b }) => b))]),
+  );
+
+  server.registerTool(
+    "board_create",
+    {
+      title: "Make a board",
+      description: "Make a new, empty board in the Studio (it appears under Boards, where the person can watch you work). Returns its id and its first page. Then add artboards with board_write_html.",
+      inputSchema: { name: z.string().max(120).describe("What it's for, e.g. \"Onboarding flow\".") },
+    },
+    (a) =>
+      guard(async () => {
+        const b = createBoard(a.name, "agent");
+        return [text({ id: b.id, name: b.name, page: b.pages[0], note: "Empty. Add an artboard with board_write_html (no target) or board_edit { do: \"artboard\" }." })];
+      }),
+  );
+
+  server.registerTool(
+    "board_read",
+    {
+      title: "Read a board",
+      description:
+        "Look inside a board. `what`: \"overview\" (default: pages, artboards with sizes, tokens), \"tree\" (an outline of a layer or every artboard on a page, with ids, sizes as written (320, fit, fill) and layout; `measure` adds the sizes they really came out at), \"html\" (a layer and what's in it as HTML with inline styles and data-id on every element) or \"tokens\".",
+      inputSchema: {
+        board: BoardRef,
+        what: z.enum(["overview", "tree", "html", "tokens"]).optional(),
+        node: z.string().optional().describe("A layer's id, for tree and html. Default: every artboard on the page."),
+        page: z.string().optional().describe("A page's id. Default: the first page."),
+        depth: z.number().int().min(1).max(20).optional().describe("How many levels the tree goes down. Default 4."),
+        measure: z.boolean().optional().describe("With tree: draw the board and add each layer's real box (x,y relative to its artboard, width×height). Slower."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = findBoard(a.board);
+        const what = a.what ?? (a.node ? "tree" : "overview");
+        const page = a.page ? b.pages.find((p) => p.id === a.page) : a.node ? pageOf(b, a.node) : b.pages[0];
+        if (!page) throw new Error(`There's no page ${a.page} on this board.`);
+        if (a.node && !b.nodes[a.node]) throw new Error(`There's no layer ${a.node} on this board.`);
+        const ids = a.node ? [a.node] : page.children;
+        if (what === "overview") {
+          const s = summarizeBoard(b);
+          return [text({ id: b.id, name: b.name, rev: b.rev, pages: s.pages, tokens: b.tokens, layers: s.layers, editedAt: b.updatedAt, lastEditBy: b.by })];
+        }
+        if (what === "tokens") return [text(b.tokens.length ? b.tokens : "No tokens yet. Add one with board_edit { do: \"token\", name, value }.")];
+        if (what === "html") return [text(ids.map((id) => nodeHtml(b, id, { ids: true })).join("\n\n") || "The page is empty.")];
+        let out = ids.map((id) => treeText(b, id, a.depth ?? 4)).join("\n\n") || "The page is empty.";
+        if (a.measure && ids.length) {
+          const { boxes } = await drawLayers(b, ids, { scale: 0.25 });
+          out = out.replace(/#([a-z0-9]+) /g, (m, id: string) => (boxes[id] ? `${m}[${boxes[id].x},${boxes[id].y} ${boxes[id].width}×${boxes[id].height}] ` : m));
+        }
+        return [text(out)];
+      }),
+  );
+
+  server.registerTool(
+    "board_write_html",
+    {
+      title: "Write HTML onto a board",
+      description:
+        "Add layers to a board from HTML with inline styles. Without `target`, each top-level element becomes a new artboard on the page (give it a width and height; it's placed to the right of the others unless you pass x/y). With `target` (a frame's id), the HTML goes inside it (at the end, or at `index`); `position` \"before\"/\"after\" puts it beside the target instead, and \"replace\" swaps the target for it. Write one visual group per call (a header, a row, a card) so the person sees the design come together. Returns the new layers' ids and outline.",
+      inputSchema: {
+        board: BoardRef,
+        html: z.string().min(1).max(400_000),
+        target: z.string().optional().describe("The frame to write into (or beside, with position)."),
+        position: z.enum(["inside", "before", "after", "replace"]).optional().describe("Where the HTML goes relative to target. Default inside."),
+        index: z.number().int().min(0).optional().describe("With position inside: where among the frame's layers (0 = first). Default: last."),
+        page: z.string().optional().describe("For new artboards: the page's id. Default: the first page."),
+        x: z.number().optional().describe("For a new artboard: where its left edge goes on the page."),
+        y: z.number().optional(),
+        preview: z.boolean().optional().describe("Also return a picture of the artboard after the change. Default false."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = findBoard(a.board);
+        const mode = a.position ?? "inside";
+        let parent: string | null = null;
+        let index: number | undefined;
+        let page = a.page;
+        const extra: Op[] = [];
+        if (a.target) {
+          const t = b.nodes[a.target];
+          if (!t) throw new Error(`There's no layer ${a.target} on this board.`);
+          if (mode === "inside") {
+            if (t.type !== "frame") throw new Error(`${t.name} is ${t.type === "text" ? "a text layer" : `an ${t.type} layer`}, which can't hold layers: target its frame, or use position "after".`);
+            parent = t.id;
+            index = a.index;
+          } else {
+            parent = t.parent;
+            const sibs = siblingsOf(b, t.id);
+            index = sibs.indexOf(t.id) + (mode === "after" ? 1 : 0);
+            if (!parent) page = pageOf(b, t.id)?.id;
+            if (mode === "replace") extra.push({ op: "delete", ids: [t.id] });
+          }
+        } else if (page && !b.pages.some((p) => p.id === page)) throw new Error(`There's no page ${page} on this board.`);
+        const made = addHtmlOps(a.html, parent, { page, index });
+        if (!made.roots.length) throw new Error("The HTML had nothing to draw (no elements or words).");
+        adoptImages(made.nodes, made.warnings);
+        // New artboards go where asked, else to the right of the others.
+        if (!parent) {
+          const pid = page ?? b.pages[0].id;
+          let { left, top } = a.x !== undefined || a.y !== undefined ? { left: a.x ?? 0, top: a.y ?? 0 } : freeSpot(b, pid, 0);
+          for (const id of made.roots) {
+            const s = made.nodes[id].style;
+            s.left = `${Math.round(left)}px`;
+            s.top = `${Math.round(top)}px`;
+            delete s.position;
+            if (!s.width) made.warnings.push(`The artboard "${made.nodes[id].name}" has no width, so it's as wide as its content: give it one (e.g. width:390px).`);
+            left += (pxValue(s.width) ?? 400) + 120;
+          }
+        }
+        const ops: Op[] = [...made.ops, ...extra];
+        // Replacing: the new layers go where the old one was, before it's removed.
+        const changed = changeBoard(b.id, ops, "agent");
+        const after = changed.board;
+        changeBoard(b.id, workingOps(after, made.roots), "agent");
+        const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), warnings: made.warnings.length ? made.warnings : undefined })];
+        if (a.preview) {
+          const root = rootOf(after, made.roots[0]);
+          const { images } = await drawLayers(after, [root], { scale: 1, maxEdge: 1400 });
+          if (images[root]) out.push({ type: "image", data: images[root].toString("base64"), mimeType: "image/png" });
+        }
+        return out;
+      }),
+  );
+
+  server.registerTool(
+    "board_edit",
+    {
+      title: "Change layers on a board",
+      description:
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)). Returns what each change did.",
+      inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
+    },
+    (a) =>
+      guard(async () => {
+        let b = findBoard(a.board);
+        const ops: Op[] = [];
+        const results: unknown[] = [];
+        const touched: string[] = [];
+        const need = (id: string) => {
+          if (!b.nodes[id]) throw new Error(`There's no layer ${id} on this board.`);
+          return b.nodes[id];
+        };
+        for (const c of a.changes) {
+          switch (c.do) {
+            case "style":
+              for (const id of c.ids) need(id);
+              for (const id of c.ids) ops.push({ op: "set", id, style: styleOf(c.style) });
+              touched.push(...c.ids);
+              results.push({ styled: c.ids.length });
+              break;
+            case "text": {
+              const n = need(c.id);
+              if (n.type !== "text") throw new Error(`${n.name} isn't a text layer.`);
+              ops.push({ op: "set", id: c.id, text: c.text });
+              touched.push(c.id);
+              results.push({ text: c.id });
+              break;
+            }
+            case "rename":
+              need(c.id);
+              ops.push({ op: "set", id: c.id, name: c.name });
+              results.push({ renamed: c.id });
+              break;
+            case "delete":
+              for (const id of c.ids) need(id);
+              ops.push({ op: "delete", ids: c.ids });
+              results.push({ deleted: c.ids.length });
+              break;
+            case "duplicate": {
+              const n = need(c.id);
+              const copies: string[] = [];
+              const sibs = siblingsOf(b, c.id);
+              let at = sibs.indexOf(c.id) + 1;
+              for (let k = 0; k < (c.count ?? 1); k++) {
+                const clone = cloneTree(b, c.id, n.parent);
+                // A copied artboard goes beside the rest instead of on top of the original.
+                if (!n.parent) {
+                  const spot = freeSpot(b, pageOf(b, c.id)!.id, 0);
+                  const shift = (pxValue(n.style.width) ?? 400) + 120;
+                  clone.nodes[clone.id].style.left = `${spot.left + k * shift}px`;
+                  clone.nodes[clone.id].style.top = n.style.top ?? "0px";
+                }
+                ops.push({ op: "add", nodes: clone.nodes, ids: [clone.id], parent: n.parent, page: n.parent ? undefined : pageOf(b, c.id)?.id, index: at++ });
+                copies.push(clone.id);
+              }
+              touched.push(...copies);
+              results.push({ duplicated: c.id, copies });
+              break;
+            }
+            case "move": {
+              need(c.id);
+              const ref = c.before ?? c.after;
+              if (ref) {
+                const r = need(ref);
+                const sibs = siblingsOf(b, ref).filter((x) => x !== c.id);
+                const i = sibs.indexOf(ref) + (c.after ? 1 : 0);
+                ops.push({ op: "move", id: c.id, parent: r.parent, page: r.parent ? undefined : pageOf(b, ref)?.id, index: i });
+              } else if (c.into === "page") ops.push({ op: "move", id: c.id, parent: null, page: pageOf(b, c.id)?.id, index: c.index });
+              else if (c.into) {
+                const t = need(c.into);
+                if (t.type !== "frame") throw new Error(`${t.name} isn't a frame.`);
+                ops.push({ op: "move", id: c.id, parent: c.into, index: c.index });
+              } else throw new Error("A move needs `into`, `before` or `after`.");
+              touched.push(c.id);
+              results.push({ moved: c.id });
+              break;
+            }
+            case "visibility":
+              for (const id of c.ids) need(id);
+              for (const id of c.ids) ops.push({ op: "set", id, hidden: c.hidden ? true : null });
+              results.push({ [c.hidden ? "hidden" : "shown"]: c.ids.length });
+              break;
+            case "lock":
+              for (const id of c.ids) need(id);
+              for (const id of c.ids) ops.push({ op: "set", id, locked: c.locked ? true : null });
+              results.push({ [c.locked ? "locked" : "unlocked"]: c.ids.length });
+              break;
+            case "image": {
+              const n = need(c.id);
+              if (n.type !== "image") throw new Error(`${n.name} isn't an image layer.`);
+              const got = adoptImage(c.src);
+              if (got.warning) throw new Error(got.warning);
+              ops.push({ op: "set", id: c.id, src: got.src });
+              touched.push(c.id);
+              results.push({ image: c.id });
+              break;
+            }
+            case "artboard": {
+              const pid = c.page ?? b.pages[0].id;
+              if (!b.pages.some((p) => p.id === pid)) throw new Error(`There's no page ${pid} on this board.`);
+              const spot = c.x !== undefined || c.y !== undefined ? { left: c.x ?? 0, top: c.y ?? 0 } : freeSpot(b, pid, c.width);
+              const id = newId();
+              const style = { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", overflow: "hidden", ...Object.fromEntries(Object.entries(styleOf(c.style ?? {})).filter(([, v]) => v !== null)), width: `${c.width}px`, height: c.height === "fit-content" ? "fit-content" : `${c.height}px`, left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` } as Record<string, string>;
+              ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, ids: [id], parent: null, page: pid });
+              // Later changes in this list can find it.
+              b = { ...b, nodes: { ...b.nodes, [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, pages: b.pages.map((p) => (p.id === pid ? { ...p, children: [...p.children, id] } : p)) };
+              touched.push(id);
+              results.push({ artboard: id, name: c.name, at: [spot.left, spot.top] });
+              break;
+            }
+            case "page":
+              if (c.id && c.delete) {
+                ops.push({ op: "deletePage", id: c.id });
+                results.push({ deletedPage: c.id });
+              } else if (c.id) {
+                ops.push({ op: "setPage", id: c.id, name: c.name });
+                results.push({ renamedPage: c.id });
+              } else {
+                const id = newId();
+                ops.push({ op: "addPage", page: { id, name: c.name, children: [] } });
+                results.push({ page: id, name: c.name });
+              }
+              break;
+            case "token":
+              ops.push({ op: "token", name: c.name, value: c.value });
+              results.push({ token: c.name.startsWith("--") ? c.name : `--${c.name}`, value: c.value });
+              break;
+          }
+        }
+        const changed = changeBoard(b.id, ops, "agent");
+        if (touched.length) changeBoard(b.id, workingOps(changed.board, touched), "agent");
+        return [text({ results, rev: changed.board.rev })];
+      }),
+  );
+
+  server.registerTool(
+    "board_screenshot",
+    {
+      title: "Look at a board",
+      description:
+        "A picture of a layer (usually an artboard), drawn exactly as the Studio shows it, to check your work: alignment, spacing, overflow, contrast. Default: every artboard on the first page. Pictures longer than `maxEdge` px are scaled down; use a layer inside an artboard to see small details up close.",
+      inputSchema: {
+        board: BoardRef,
+        nodes: z.array(z.string()).max(8).optional().describe("Layers to picture. Default: the first page's artboards (up to 8)."),
+        page: z.string().optional(),
+        scale: z.number().min(0.25).max(3).optional().describe("Pixels per CSS pixel. Default 1 (2 for small layers)."),
+        maxEdge: z.number().int().min(200).max(2400).optional().describe("Default 1400."),
+        boxes: z.boolean().optional().describe("Also list where every layer inside came out (x,y relative to its artboard, width×height)."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = findBoard(a.board);
+        const page = a.page ? b.pages.find((p) => p.id === a.page) : b.pages[0];
+        const ids = a.nodes?.length ? a.nodes : (page?.children ?? []).slice(0, 8);
+        if (!ids.length) throw new Error("The page is empty: there's nothing to picture yet.");
+        const { images, boxes } = await drawLayers(b, ids, { scale: a.scale ?? 1, maxEdge: a.maxEdge ?? 1400 });
+        const out: Content = [];
+        for (const id of ids) {
+          if (!images[id]) {
+            out.push(text(`${b.nodes[id]?.name ?? id} (#${id}) has no size, so there's nothing to see: give it a width and height or some content.`));
+            continue;
+          }
+          out.push(text(placeInfo(b, id) + (boxes[id] ? ` came out ${boxes[id].width}×${boxes[id].height}` : "")));
+          out.push({ type: "image", data: images[id].toString("base64"), mimeType: "image/png" });
+        }
+        if (a.boxes) {
+          const lines = ids.flatMap((id) => treeText(b, id, 20).split("\n")).map((l) => l.replace(/#([a-z0-9]+) /, (m, x: string) => (boxes[x] ? `${m}[${boxes[x].x},${boxes[x].y} ${boxes[x].width}×${boxes[x].height}] ` : m)));
+          out.push(text(lines.join("\n")));
+        }
+        return out;
+      }),
+  );
+
+  server.registerTool(
+    "board_export",
+    {
+      title: "Export layers as images",
+      description: "Save layers (usually artboards) as PNG or JPEG files, at 1×, 2× or 3×. Returns the files. Default: every artboard on the first page, in a folder named after the board.",
+      inputSchema: {
+        board: BoardRef,
+        nodes: z.array(z.string()).optional(),
+        page: z.string().optional(),
+        scale: z.number().min(0.5).max(4).optional().describe("Default 2."),
+        format: z.enum(["png", "jpeg"]).optional(),
+        output: z.string().optional().describe("A folder. Default: <output>/boards/<board name>/."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = findBoard(a.board);
+        const page = a.page ? b.pages.find((p) => p.id === a.page) : b.pages[0];
+        const ids = a.nodes?.length ? a.nodes : page?.children ?? [];
+        if (!ids.length) throw new Error("Nothing to export: the page is empty.");
+        const format = a.format ?? "png";
+        const { images } = await drawLayers(b, ids, { scale: a.scale ?? 2, format, transparent: format === "png" });
+        const folder = a.output ? path.resolve(a.output) : path.join(outputRoot(), "boards", slug(b.name) || b.id);
+        mkdirSync(folder, { recursive: true });
+        const files: string[] = [];
+        ids.forEach((id, i) => {
+          if (!images[id]) return;
+          const f = path.join(folder, `${String(i + 1).padStart(2, "0")} ${b.nodes[id].name.replace(/[/:\\]/g, "-")}.${format === "jpeg" ? "jpg" : "png"}`);
+          writeFileSync(f, images[id]);
+          files.push(f);
+        });
+        return [text({ files })];
+      }),
+  );
+
+  server.registerTool(
+    "board_done",
+    {
+      title: "Finish working on a board",
+      description: "Call when you've finished with a board, so the person's canvas stops showing you at work on its artboards.",
+      inputSchema: { board: BoardRef, artboards: z.array(z.string()).optional().describe("Only these artboards. Default: all.") },
+    },
+    (a) =>
+      guard(async () => {
+        const b = findBoard(a.board);
+        changeBoard(b.id, [{ op: "working", ids: a.artboards, at: null }], "agent");
+        return [text("Done.")];
+      }),
+  );
+}
+

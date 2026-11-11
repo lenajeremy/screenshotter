@@ -32,6 +32,7 @@ import { recordSimulator } from "./simulator/record.js";
 import { createVideo, storyboard, VideoInputShape } from "./render/video.js";
 import { createSequence, sequenceStoryboard, SequenceInputShape, TRANSITIONS } from "./render/sequence.js";
 import { previewBase64 } from "./util/image.js";
+import { BOARD_INSTRUCTIONS, registerBoardTools } from "./board/mcp.js";
 
 const VERSION = "0.13.0";
 
@@ -65,7 +66,9 @@ Compose with create_mockup (or create_mockup_set for a whole series):
 Design: read design_guide once before you design (composition, copy, type, colour, backdrops, callouts and a checklist). House style: call get_house_style before designing and follow it. When the person says they like or dislike something, or asks for something every time ("always use Space Black", "less text"), save it with remember_style.
 
 Always look at the returned preview and iterate (positions, sizes, rotation, copy). The scene is a set of entities (devices, caption, texts, images, shapes); every result lists them with their resolved positions, and layout_mockup returns them without rendering. Move an entity by setting its properties: devices[i].x/y (centre)/height/rotate, textStyle.x/y for the caption, texts[i].x/y. Positions and sizes are fractions of the canvas (x 0 = left, 1 = right). Each output has a .mockup.json with the exact request for re-rendering.
-Call list_mockup_options for devices, colours, looks, canvases, layouts and grades.`;
+Call list_mockup_options for devices, colours, looks, canvases, layouts and grades.
+
+${BOARD_INSTRUCTIONS}`;
 
 type Content = CallToolResult["content"];
 
@@ -510,6 +513,7 @@ export function createServer(): McpServer {
 
   // Scenes live in the Studio's library: the folder of the Studio last opened on this Mac.
   useLibrary(studioFolder);
+  registerBoardTools(server);
 
   server.registerTool(
     "apply_set_template",

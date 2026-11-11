@@ -31,6 +31,7 @@
     "app:start": "open build/Screenshotter.app",
     "app:test": "swift test --package-path app",
     "test:studio": "tsx scripts/studio-test.ts",
+    "test:board": "tsx scripts/board-test.ts",
     "test:ui": "tsx scripts/ui-test.ts",
     "test:recording": "tsx scripts/recording-test.ts",
     "test:sound": "tsx scripts/sound-test.ts",
