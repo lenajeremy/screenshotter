@@ -382,8 +382,92 @@ export async function copyColor(value) {
   }
 }
 
-/** The colour on the clipboard, or null (with a hint) if it isn't one. */
-export async function readClipboardColor() {
+// ---------------------------------------------------------------------------------------------
+// Tokens: a board's named values (CSS custom properties), which its colour fields use as
+// var(--name). Only boards pass `tokens` to the colour controls; without them nothing changes.
+
+/** The token a value is, when it's just `var(--name)` (a fallback allowed): "--name", or null. */
+export function tokenRef(v) {
+  const s = String(v ?? "").trim();
+  const m = /^var\(\s*(--[A-Za-z0-9_-]+)\s*[,)]/.exec(s);
+  if (!m) return null;
+  // The var() has to be the whole value: its closing bracket is the last thing in it.
+  for (let i = 3, d = 0; i < s.length; i++) {
+    if (s[i] === "(") d++;
+    else if (s[i] === ")" && --d === 0) return i === s.length - 1 ? m[1] : null;
+  }
+  return null;
+}
+
+const tokenMap = (tokens) => (tokens instanceof Map ? tokens : new Map((tokens ?? []).map((t) => [t.name, t.value])));
+
+/** Where a list's first comma outside brackets is, or -1. */
+function topComma(s) {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")") depth--;
+    else if (s[i] === "," && depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * A CSS value with every var() swapped for what it stands for, so the panel can draw it as the
+ * canvas does (the panel's own CSS has tokens of the same names, like --lime, which would answer
+ * instead). A token can use other tokens; a missing one takes its fallback; one that can't be
+ * resolved (missing, or going round in a circle) becomes nothing, as it does in CSS.
+ */
+export function resolveVars(value, tokens, depth = 0) {
+  const s = String(value ?? "");
+  if (!s.includes("var(")) return s;
+  const map = tokenMap(tokens);
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const at = s.indexOf("var(", i);
+    if (at < 0) return out + s.slice(i);
+    out += s.slice(i, at);
+    let end = at + 3;
+    for (let d = 0; end < s.length; end++) {
+      if (s[end] === "(") d++;
+      else if (s[end] === ")" && --d === 0) break;
+    }
+    const inner = s.slice(at + 4, end);
+    const comma = topComma(inner);
+    const name = (comma < 0 ? inner : inner.slice(0, comma)).trim();
+    let got = depth < 12 && map.has(name) ? resolveVars(map.get(name), map, depth + 1).trim() : "";
+    if (!got && comma >= 0 && depth < 12) got = resolveVars(inner.slice(comma + 1), map, depth + 1).trim();
+    out += got;
+    i = end + 1;
+  }
+}
+
+/** The colour a value comes to through the tokens (#rrggbb or rgba()), or null if it isn't one. */
+export function tokenColor(value, tokens) {
+  const r = resolveVars(value, tokens).trim();
+  return r ? normalizeColor(r) : null;
+}
+
+/** The tokens whose value is a colour (or a var() that comes to one), each with that colour. */
+export function colorTokens(tokens) {
+  const map = tokenMap(tokens);
+  return (tokens ?? []).map((t) => ({ ...t, color: tokenColor(t.value, map) })).filter((t) => t.color);
+}
+
+/** A colour from text: any CSS colour, or with `tokens` one of them (`var(--name)` or `--name`). */
+export function readColor(text, tokens) {
+  const c = normalizeColor(text);
+  if (c || !tokens) return c;
+  const s = String(text ?? "").trim();
+  const ref = tokenRef(s);
+  const name = ref ?? (/^--[A-Za-z0-9_-]+$/.test(s) ? s : null);
+  if (!name || !tokenColor(`var(${name})`, tokens)) return null;
+  return ref ? s : `var(${name})`;
+}
+
+/** The colour on the clipboard, or null (with a hint) if it isn't one. With `tokens`, a token's var() counts. */
+export async function readClipboardColor(tokens) {
   let text = "";
   try {
     text = native ? (await native.call("readText"))?.text ?? "" : await navigator.clipboard.readText();
@@ -391,12 +475,19 @@ export async function readClipboardColor() {
     toast({ kind: "warn", title: "Couldn't read the clipboard", text: "Paste into the colour's text box instead (⌘V)." });
     return null;
   }
-  const c = normalizeColor(text);
+  const c = readColor(text, tokens);
   if (!c) toast({ kind: "warn", title: "No colour on the clipboard", text: text ? `“${text.slice(0, 40)}” isn't a colour. Copy a hex like #ff5fa2.` : "Copy a hex like #ff5fa2 first." });
   return c;
 }
 
-export function ColorPicker({ value, onChange }) {
+/**
+ * A colour picker. With `tokens` (a board's) it also lists the colour tokens to pick, which it
+ * writes as `var(--name)`, and with `onMakeToken(name, colour)` it can make one from the colour.
+ */
+export function ColorPicker({ value: given, onChange, tokens, onMakeToken }) {
+  // A token shows as the colour it stands for; changing that colour makes it a plain one again.
+  const ref = tokens ? tokenRef(given) : null;
+  const value = ref ? tokenColor(given, tokens) ?? undefined : given;
   const rgb = hexToRgb(value) ?? [255, 255, 255];
   const [hsv, setHsv] = useState(() => rgbToHsv(rgb));
   const [text, setText] = useState(value ?? "#ffffff");
@@ -408,7 +499,7 @@ export function ColorPicker({ value, onChange }) {
       if (next) setHsv(rgbToHsv(next));
     }
     setText(value ?? "");
-  }, [value]);
+  }, [value, given]);
   const emit = (next, live) => {
     setHsv(next);
     const hex = toHex(...hsvToRgb(...next));
@@ -446,7 +537,8 @@ export function ColorPicker({ value, onChange }) {
   const sv = useRef();
   const hue = useRef();
   const [H, Sa, V] = hsv;
-  const current = hexToRgb(value) ? value.toLowerCase() : value;
+  // A token copies as its var(), so pasting it into another of the board's fields keeps the token.
+  const current = ref ? `var(${ref})` : hexToRgb(value) ? value.toLowerCase() : value;
   return html`<div class="cp">
     <div class="cp-sv" ref=${sv} style=${{ background: `hsl(${H}, 100%, 50%)` }} onPointerDown=${drag(sv, (x, y) => emit([H, x, 1 - y], true))}>
       <div class="cp-dot" style=${{ left: Sa * 100 + "%", top: (1 - V) * 100 + "%", background: toHex(...hsvToRgb(H, Sa, V)) }}></div>
@@ -463,7 +555,7 @@ export function ColorPicker({ value, onChange }) {
           if (e.key === "Enter") e.target.blur();
         }}
         onPaste=${(e) => {
-          const c = normalizeColor(e.clipboardData?.getData("text"));
+          const c = readColor(e.clipboardData?.getData("text"), tokens);
           if (!c) return;
           e.preventDefault();
           apply(c);
@@ -471,34 +563,87 @@ export function ColorPicker({ value, onChange }) {
         onChange=${(e) => {
           const v = e.target.value.trim();
           if (!v) return;
-          const c = normalizeColor(v);
+          const c = readColor(v, tokens);
           if (c) apply(c);
           else {
             setText(value ?? "");
-            toast({ kind: "warn", title: `“${v.slice(0, 30)}” isn't a colour`, text: "Try a hex like #ff5fa2, or rgb(255 95 162)." });
+            toast({ kind: "warn", title: `“${v.slice(0, 30)}” isn't a colour`, text: tokens ? "Try a hex like #ff5fa2, rgb(255 95 162), or a token's name." : "Try a hex like #ff5fa2, or rgb(255 95 162)." });
           }
         }} />
       <button class="icon-btn sm cp-tool" title="Copy colour" disabled=${!current} onClick=${() => copyColor(current)}><${Icon} n="copy" s=${14} /></button>
       <button class="icon-btn sm cp-tool" title="Paste a colour (hex, rgb or name)" onClick=${async () => {
-        const c = await readClipboardColor();
+        const c = await readClipboardColor(tokens);
         if (c) apply(c);
       }}><${Icon} n="paste" s=${14} /></button>
     </div>
+    ${tokens &&
+    html`<${TokenChips} tokens=${tokens} current=${ref} onPick=${(name) => onChange(`var(${name})`)}
+      onMake=${onMakeToken &&
+      ((name) => {
+        // The colour as the picker has it: a token's own colour, or what's been picked.
+        onMakeToken(name, normalizeColor(value ?? "") ?? toHex(...hsvToRgb(...hsv)));
+        onChange(`var(${name})`);
+      })} />`}
     <div class="cp-presets">${PRESETS.map((c) => html`<button style=${{ background: c }} title=${c} onClick=${() => emit(rgbToHsv(hexToRgb(c)))}></button>`)}</div>
+  </div>`;
+}
+
+/** The board's colour tokens in the picker, as chips (before the presets: they're the board's own palette), and "Make a token". */
+function TokenChips({ tokens, current, onPick, onMake }) {
+  const list = colorTokens(tokens);
+  // null while not making one; otherwise the name being typed.
+  const [name, setName] = useState(null);
+  const field = useRef();
+  useEffect(() => {
+    if (name !== null) requestAnimationFrame(() => field.current?.focus());
+  }, [name === null]);
+  const clean = (name ?? "").replace(/^-+|-+$/g, "");
+  const full = `--${clean}`;
+  const taken = Boolean(clean) && tokens.some((t) => t.name === full);
+  const make = () => {
+    if (!clean || taken) return;
+    onMake(full);
+    setName(null);
+  };
+  return html`<div class="cp-tokens">
+    ${name === null
+      ? html`<div class="cp-tokens-head"><span>Tokens</span>
+          ${onMake && html`<button class="btn sm ghost cp-make" title="Give this colour a name any layer can use: change the token, and every layer using it changes" onClick=${() => setName("")}><${Icon} n="plus" s=${12} />Make a token</button>`}
+        </div>`
+      : html`<div class="cp-row">
+          <input class="input sm mono grow" ref=${field} placeholder="Name it, e.g. brand" value=${name} spellcheck=${false}
+            onInput=${(e) => setName(e.target.value.replace(/[^A-Za-z0-9_-]/g, "-"))}
+            onKeyDown=${(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") make();
+            }} />
+          <button class="btn sm" disabled=${!clean || taken} onClick=${make}>Add</button>
+          <button class="icon-btn sm cp-tool" title="Don't make one" onClick=${() => setName(null)}><${Icon} n="x" s=${12} /></button>
+        </div>
+        ${taken && html`<p class="cp-hint">There's a token called ${clean} already. Pick it below, or choose another name.</p>`}`}
+    ${list.length > 0 &&
+    html`<div class="cp-chips">${list.map(
+      (t) => html`<button class="cp-token ${t.name === current ? "on" : ""}" title=${`var(${t.name}): ${t.value}`} onClick=${() => onPick(t.name)}>
+        <i style=${{ background: t.color }}></i><span>${t.name.slice(2)}</span>
+      </button>`,
+    )}</div>`}
   </div>`;
 }
 
 /**
  * A colour field: click to open the picker; hover for copy and paste. With no `value` it shows
  * the `auto` label, and `autoColor` (an inherited colour) in the swatch when there is one.
- * ⌘C / ⌘V work while it has focus.
+ * ⌘C / ⌘V work while it has focus. With `tokens` (a board's), a `var(--name)` value shows as the
+ * token's name and colour, and the picker offers the tokens (and `onMakeToken`, making one).
  */
-export function ColorButton({ value, onChange, auto = "Auto", allowAuto = true, autoColor }) {
+export function ColorButton({ value, onChange, auto = "Auto", allowAuto = true, autoColor, tokens, onMakeToken }) {
   const ref = useRef();
   const [open, setOpen] = useState(false);
   const shown = value || autoColor;
+  const token = tokens ? tokenRef(value) : null;
+  const swatch = tokens && shown ? resolveVars(shown, tokens).trim() : shown;
   const paste = async () => {
-    const c = await readClipboardColor();
+    const c = await readClipboardColor(tokens);
     if (c) onChange(c);
   };
   const keys = (e) => {
@@ -522,15 +667,17 @@ export function ColorButton({ value, onChange, auto = "Auto", allowAuto = true, 
     toast({ kind: "ok", icon: "copy", title: `Copied ${shown}`, timeout: 1600 });
   };
   const onPaste = (e) => {
-    const c = normalizeColor(e.clipboardData?.getData("text"));
+    const c = readColor(e.clipboardData?.getData("text"), tokens);
     if (!c) return;
     e.preventDefault();
     onChange(c);
   };
+  const missing = token && !swatch;
   return html`<div class="color-field" onKeyDown=${keys} onCopy=${onCopy} onPaste=${onPaste}>
-    <button class="color-btn ${value ? "" : "auto"}" ref=${ref} onClick=${() => setOpen(!open)}>
-      <span class="chip-color" style=${{ background: shown || "repeating-conic-gradient(#333 0 25%, #222 0 50%) 0 0 / 8px 8px" }}></span>
-      <span class="grow">${value || auto}</span>
+    <button class="color-btn ${value ? "" : "auto"}" ref=${ref} onClick=${() => setOpen(!open)}
+      title=${token ? (missing ? `There's no token called ${token} on this board` : `var(${token}): ${tokens.find((t) => t.name === token)?.value ?? ""}`) : undefined}>
+      <span class="chip-color" style=${{ background: swatch || "repeating-conic-gradient(#333 0 25%, #222 0 50%) 0 0 / 8px 8px" }}></span>
+      <span class="grow">${token ? html`<span class="cb-token ${missing ? "missing" : ""}">${token.slice(2)}</span>` : value || auto}</span>
     </button>
     <span class="cf-tools">
       ${shown && html`<button class="icon-btn sm" title=${`Copy ${shown}`} onClick=${() => copyColor(shown)}><${Icon} n="copy" s=${12} /></button>`}
@@ -539,7 +686,7 @@ export function ColorButton({ value, onChange, auto = "Auto", allowAuto = true, 
   </div>
     ${open &&
     html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${252}>
-      <${ColorPicker} value=${value ?? autoColor} onChange=${onChange} />
+      <${ColorPicker} value=${value ?? autoColor} onChange=${onChange} tokens=${tokens} onMakeToken=${onMakeToken} />
       ${allowAuto &&
       value &&
       html`<div style=${{ padding: "0 6px 6px" }}><button class="btn sm ghost block" onClick=${() => {

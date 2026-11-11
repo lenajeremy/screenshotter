@@ -1,14 +1,37 @@
 // The board's right panel: a layer's CSS in plain words (layout, size, flex, fill, border, shadow,
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, parseHtml, parseStyle, pxValue, round, serializeSvg, sizeWord, styleText, subtree, vectorName } from "./board-core.js";
-import { B, bset, commit, currentPage, node, select, useBoard } from "./board-state.js";
+import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, round, serializeSvg, sizeWord, styleText, subtree, vectorName } from "./board-core.js";
+import { B, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, shiftSteps, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
-import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html } from "./controls.js";
+import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html, normalizeColor, resolveVars, tokenColor, tokenRef } from "./controls.js";
 import { Icon } from "./icons.js";
 import { api, fail, fileUrl, toast } from "./store.js";
+
+// "Make a token" in a colour picker adds the token and puts it in the field as one step of undo:
+// the token waits here for the field's own change, which comes straight after it.
+const pendingTokens = [];
+function commit(ops, opts) {
+  return commitOps(pendingTokens.length ? [...pendingTokens.splice(0), ...ops] : ops, opts);
+}
+function makeToken(name, value) {
+  pendingTokens.push({ op: "token", name, value });
+  // A field that doesn't change the board at once (words being typed) still gets its token.
+  queueMicrotask(() => pendingTokens.length && commitOps(pendingTokens.splice(0), { label: "Token" }));
+}
+
+/** A colour field on a board: its colour tokens to pick from, and "Make a token". */
+const BoardColor = (props) => html`<${ColorButton} tokens=${B.board.tokens} onMakeToken=${makeToken} ...${props} />`;
+const BoardPicker = (props) => html`<${ColorPicker} tokens=${B.board.tokens} onMakeToken=${makeToken} ...${props} />`;
+/** A colour as the canvas draws it, through the board's tokens (one that's missing draws nothing). */
+const paint = (c) => resolveVars(c, B.board.tokens).trim() || "transparent";
+/** A token's name in a row or a field, marked so it doesn't read as a CSS colour name. */
+const tokenTag = (c) => {
+  const t = tokenRef(c);
+  return t && html`<span class="cb-token">${t.slice(2)}</span>`;
+};
 
 const ids = () => B.sel.filter((id) => node(id));
 /** Set CSS on every selected layer; `key` makes a run of changes one step of undo. */
@@ -106,7 +129,7 @@ function Paint({ label, prop }) {
   const v = shared((m) => attrOf(m, prop) ?? "");
   const kind = v === "mixed" ? "mixed" : !v ? "inherit" : v === "none" ? "none" : /^url\(/i.test(v) ? "ref" : "color";
   return html`<div class="row bd-paint"><label>${label}</label>
-    <${ColorButton} value=${kind === "color" ? v : undefined} auto=${{ none: "None", ref: "Gradient", inherit: "Inherited", mixed: "Mixed" }[kind] ?? "Inherited"}
+    <${BoardColor} value=${kind === "color" ? v : undefined} auto=${{ none: "None", ref: "Gradient", inherit: "Inherited", mixed: "Mixed" }[kind] ?? "Inherited"}
       onChange=${(c) => setAttrs({ [prop]: c ?? null }, prop, list)} />
     <button class="icon-btn sm ${kind === "none" ? "on" : ""}" title=${kind === "none" ? `Give it a ${label.toLowerCase()}` : `No ${label.toLowerCase()}`}
       onClick=${() => setAttrs({ [prop]: kind === "none" ? (prop === "fill" ? "#000000" : "#000000") : "none" }, null, list)}><${Icon} n=${kind === "none" ? "plus" : "x"} s=${12} /></button>
@@ -616,7 +639,9 @@ function asKind(f, kind) {
   const colors = f.kind === "solid" ? [f.color, "transparent"] : f.stops ? f.stops.map((x) => x.color) : ["#ffffff", "#000000"];
   if (kind === "solid") return { kind, color: f.kind === "solid" ? f.color : colors[0] };
   if (kind === "image") return { kind, url: f.url ?? "", size: "cover" };
-  const stops = f.stops ?? [{ color: colors[0], pos: 0 }, { color: colors[1] === "transparent" && f.kind === "solid" ? colors[0].replace(/^#([0-9a-f]{6})$/i, "#$100") : colors[1], pos: 100 }];
+  // From a solid colour: that colour fading out (a token's can't take an alpha, so it fades to transparent).
+  const fade = (c) => (/^#[0-9a-f]{6}$/i.test(c) ? `${c}00` : "transparent");
+  const stops = f.stops ?? [{ color: colors[0], pos: 0 }, { color: colors[1] === "transparent" && f.kind === "solid" ? fade(colors[0]) : colors[1], pos: 100 }];
   return { kind, angle: kind === "conic" ? 0 : f.angle ?? 180, x: f.x ?? 50, y: f.y ?? 50, shape: f.shape ?? "circle", stops };
 }
 
@@ -625,11 +650,11 @@ function asKind(f, kind) {
 const CHECK = "repeating-conic-gradient(#2a2a2f 0 25%, #1c1c20 0 50%) 0 0 / 10px 10px";
 
 /** A row that opens its editor in a popover: a swatch, a summary, and a remove button. */
-function PopRow({ swatch, label, sub, onRemove, children, width = 264, removeTitle = "Remove" }) {
+function PopRow({ swatch, label, sub, onRemove, children, width = 264, removeTitle = "Remove", title = "Edit" }) {
   const ref = useRef();
   const [open, setOpen] = useState(false);
   return html`<div class="bd-prow ${open ? "open" : ""}">
-    <button class="bd-prow-main" ref=${ref} onClick=${() => setOpen(!open)} title="Edit">
+    <button class="bd-prow-main" ref=${ref} onClick=${() => setOpen(!open)} title=${title}>
       ${swatch !== undefined && html`<span class="bd-swatch" style=${{ background: swatch ? `${swatch}, ${CHECK}` : CHECK }}></span>`}
       <span class="lbl">${label}</span>
       ${sub && html`<span class="sub">${sub}</span>`}
@@ -641,7 +666,7 @@ function PopRow({ swatch, label, sub, onRemove, children, width = 264, removeTit
 
 const solidSwatch = (c) => `linear-gradient(${c}, ${c})`;
 const fillLabel = (f) =>
-  f.kind === "solid" ? f.color : f.kind === "image" ? (f.url ?? "").split("/").pop() || "Picture" : f.kind === "css" ? "CSS" : `${f.kind[0].toUpperCase()}${f.kind.slice(1)}`;
+  f.kind === "solid" ? tokenTag(f.color) ?? f.color : f.kind === "image" ? (f.url ?? "").split("/").pop() || "Picture" : f.kind === "css" ? "CSS" : `${f.kind[0].toUpperCase()}${f.kind.slice(1)}`;
 const fillSub = (f) => (f.kind === "linear" ? `${round(f.angle, 1)}°` : f.kind === "image" ? { cover: "Fill", contain: "Fit", auto: "Tile" }[f.size ?? "cover"] : f.stops ? `${f.stops.length} colours` : "");
 
 function FillSection() {
@@ -653,12 +678,13 @@ function FillSection() {
   return html`<${Section} title="Fill" right=${html`<button class="icon-btn sm" title=${fills.length ? "Add a fill on top" : "Add a fill"} onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
     ${fills.map((f, i) => {
       const set = (patch, key) => put(fills.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `fill${i}:${key}`);
-      const swatch = f.kind === "image" ? (f.url ? `url("${f.url.startsWith("/") ? fileUrl(f.url) : f.url}") center / cover` : "") : f.kind === "solid" ? solidSwatch(f.color) : fillCss(f, true);
+      // Swatches are drawn through the board's tokens, as the canvas draws the fill.
+      const swatch = f.kind === "image" ? (f.url ? `url("${f.url.startsWith("/") ? fileUrl(f.url) : f.url}") center / cover` : "") : f.kind === "solid" ? solidSwatch(paint(f.color)) : f.stops ? fillCss({ ...f, stops: f.stops.map((x) => ({ ...x, color: paint(x.color) })) }, true) : resolveVars(fillCss(f, true), B.board.tokens);
       return html`<${PopRow} key=${i} swatch=${swatch} label=${fillLabel(f)} sub=${fillSub(f)} removeTitle="Remove this fill" onRemove=${() => put(fills.filter((_, j) => j !== i))}>
         ${f.kind === "css"
           ? html`<textarea class="textarea bd-mono" rows="3" onKeyDown=${(e) => e.stopPropagation()} onChange=${(e) => set({ css: e.target.value.trim() })}>${f.css}</textarea>`
           : html`<${Seg} value=${f.kind} options=${FILL_KINDS} onChange=${(kind) => put(fills.map((x, j) => (j === i ? asKind(x, kind) : x)))} />
-            ${f.kind === "solid" && html`<${ColorPicker} value=${f.color} onChange=${(c) => c && set({ color: c }, "c")} />`}
+            ${f.kind === "solid" && html`<${BoardPicker} value=${f.color} onChange=${(c) => c && set({ color: c }, "c")} />`}
             ${f.stops && html`<${Gradient} f=${f} set=${set} />`}
             ${f.kind === "image" && html`<${ImageFill} f=${f} set=${set} />`}`}
       <//>`;
@@ -690,8 +716,8 @@ function Gradient({ f, set }) {
     set({ stops: [...stops.map((x, j) => ({ ...x, pos: at(j) })), { color: stops[cur].color, pos }].sort((a, b) => a.pos - b.pos) });
   };
   return html`<div class="bd-grad">
-    <div class="bd-grad-bar" ref=${bar} style=${{ background: `linear-gradient(90deg, ${stops.map((x, i) => `${x.color} ${at(i)}%`).join(", ")}), ${CHECK}` }} onPointerDown=${addAt} title="Click to add a colour">
-      ${stops.map((x, i) => html`<i class=${i === cur ? "on" : ""} style=${{ left: `${at(i)}%`, background: x.color }} onPointerDown=${dragStop(i)}></i>`)}
+    <div class="bd-grad-bar" ref=${bar} style=${{ background: `linear-gradient(90deg, ${stops.map((x, i) => `${paint(x.color)} ${at(i)}%`).join(", ")}), ${CHECK}` }} onPointerDown=${addAt} title="Click to add a colour">
+      ${stops.map((x, i) => html`<i class=${i === cur ? "on" : ""} style=${{ left: `${at(i)}%`, background: paint(x.color) }} onPointerDown=${dragStop(i)}></i>`)}
     </div>
     <div class="grid2">
       ${f.kind !== "radial" && html`<${Num} label=${html`<${Icon} n="rotate" s=${12} />`} title=${f.kind === "conic" ? "Starts at" : "Angle"} unit="°" value=${f.angle} onChange=${(v) => set({ angle: v ?? 0 }, "a")} />`}
@@ -702,7 +728,7 @@ function Gradient({ f, set }) {
       <${Num} label="" unit="%" title="Where it sits along the gradient" value=${at(cur)} min=${0} max=${100} onChange=${(v) => setStop(cur, { pos: v ?? 0 }, "p")} />
       <button class="icon-btn sm" title="Remove this colour" disabled=${stops.length <= 2} onClick=${() => (set({ stops: stops.filter((_, j) => j !== cur) }), setActive(0))}><${Icon} n="trash" s=${12} /></button>
     </div>
-    <${ColorPicker} value=${stops[cur].color} onChange=${(c) => c && setStop(cur, { color: c }, "c")} />
+    <${BoardPicker} value=${stops[cur].color} onChange=${(c) => c && setStop(cur, { color: c }, "c")} />
   </div>`;
 }
 
@@ -754,7 +780,7 @@ function LineSection({ kind }) {
   return html`<${Section} title=${outline ? "Outline" : "Border"} right=${b ? html`<button class="icon-btn sm" title=${`Remove the ${kind}`} onClick=${() => put(null)}><${Icon} n="minus" s=${14} /></button>` : html`<button class="icon-btn sm" title=${outline ? "Add an outline: a line round the layer that takes no room" : "Add a border"} onClick=${() => put({ width: outline ? 2 : 1, style: "solid", color: outline ? "#4c8dff" : "#e4e4e7" })}><${Icon} n="plus" s=${14} /></button>`}>
     ${b &&
     html`<div class="bd-line">
-        <${ColorButton} value=${b.color === "currentColor" ? undefined : b.color} auto="Text colour" onChange=${(c) => put({ ...b, color: c ?? "currentColor" }, `${kind}c`)} />
+        <${BoardColor} value=${b.color === "currentColor" ? undefined : b.color} auto="Text colour" onChange=${(c) => put({ ...b, color: c ?? "currentColor" }, `${kind}c`)} />
         <${Num} label="W" title="Width" value=${b.width} min=${0} onChange=${(v) => put({ ...b, width: v ?? 0 }, `${kind}w`)} />
       </div>
       <div class="grid2">
@@ -788,7 +814,8 @@ function ShadowSection() {
   return html`<${Section} title="Shadow" right=${html`<button class="icon-btn sm" title="Add a shadow" onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
     ${all.map((s, i) => {
       const set = (patch, key) => put(all.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `sh${i}${key}`);
-      return html`<${PopRow} key=${i} swatch=${solidSwatch(s.color)} label=${text ? "Text shadow" : s.inset ? "Inner shadow" : "Drop shadow"} sub=${`${s.x}, ${s.y}, ${s.blur}`} removeTitle="Remove this shadow" onRemove=${() => put(all.filter((_, j) => j !== i))}>
+      // A token's name says more than the numbers (which are in the popover), and both don't fit.
+      return html`<${PopRow} key=${i} swatch=${solidSwatch(paint(s.color))} label=${text ? "Text shadow" : s.inset ? "Inner shadow" : "Drop shadow"} sub=${tokenTag(s.color) ?? `${s.x}, ${s.y}, ${s.blur}`} title=${`${s.x}, ${s.y}, ${s.blur} ${s.color}`} removeTitle="Remove this shadow" onRemove=${() => put(all.filter((_, j) => j !== i))}>
         ${!text && html`<${Seg} value=${s.inset ? "in" : "out"} options=${[{ value: "out", label: "Outside" }, { value: "in", label: "Inside" }]} onChange=${(v) => set({ inset: v === "in" })} />`}
         <div class="grid2">
           <${Num} label="X" value=${s.x} onChange=${(v) => set({ x: v ?? 0 }, "x")} />
@@ -796,7 +823,7 @@ function ShadowSection() {
           <${Num} label="Blur" value=${s.blur} min=${0} onChange=${(v) => set({ blur: v ?? 0 }, "b")} />
           ${!text && html`<${Num} label="Spread" value=${s.spread} onChange=${(v) => set({ spread: v ?? 0 }, "s")} />`}
         </div>
-        <${ColorPicker} value=${s.color} onChange=${(c) => c && set({ color: c }, "c")} />
+        <${BoardPicker} value=${s.color} onChange=${(c) => c && set({ color: c }, "c")} />
       <//>`;
     })}
   <//>`;
@@ -870,20 +897,29 @@ function FiltersSection() {
   <//>`;
 }
 
-// Selection colours: every colour used in the selection, to change them all at once.
-const COLOR_RE = /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)/gi;
+// Selection colours: every colour used in the selection, tokens too, to change them all at once.
+const COLOR_RE = /#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|oklch\([^)]*\)|var\(\s*--[A-Za-z0-9_-]+\s*\)/gi;
+const HAS_COLOR = new RegExp(COLOR_RE.source, "i");
+/** A token keeps its name as written (names are case-sensitive in CSS); a colour is the same in any case. */
+const isVar = (c) => /^var\(/i.test(c);
 function SelectionColors() {
   const list = ids();
   const found = new Map();
+  const add = (c, use) => {
+    const key = isVar(c) ? c : c.toLowerCase();
+    found.set(key, [...(found.get(key) ?? []), use]);
+  };
+  const scan = (v, use) => {
+    for (const m of String(v ?? "").matchAll(COLOR_RE)) add(m[0], use);
+  };
   for (const id of list)
     for (const x of subtree(B.board, id)) {
       const n = node(x);
-      for (const [k, v] of Object.entries(n.style)) for (const m of v.matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k }]);
-      for (const m of (n.text ?? "").matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: "text" }]);
-      for (const [k, v] of Object.entries(n.attrs ?? {})) for (const m of v.matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: `attrs.${k}` }]);
-      for (const m of (n.defs ?? "").matchAll(COLOR_RE)) found.set(m[0].toLowerCase(), [...(found.get(m[0].toLowerCase()) ?? []), { id: x, k: "defs" }]);
-      if (n.shape) for (const k of ["fill", "stroke", "labelColor"]) if (typeof n.shape[k] === "string" && COLOR_RE.test(n.shape[k])) (COLOR_RE.lastIndex = 0), found.set(n.shape[k].toLowerCase(), [...(found.get(n.shape[k].toLowerCase()) ?? []), { id: x, k: `shape.${k}` }]);
-      COLOR_RE.lastIndex = 0;
+      for (const [k, v] of Object.entries(n.style)) scan(v, { id: x, k });
+      scan(n.text, { id: x, k: "text" });
+      for (const [k, v] of Object.entries(n.attrs ?? {})) scan(v, { id: x, k: `attrs.${k}` });
+      scan(n.defs, { id: x, k: "defs" });
+      if (n.shape) for (const k of ["fill", "stroke", "labelColor"]) if (typeof n.shape[k] === "string" && HAS_COLOR.test(n.shape[k])) add(n.shape[k], { id: x, k: `shape.${k}` });
     }
   if (found.size < 2) return null;
   const replace = (from, to, key) => {
@@ -891,7 +927,7 @@ function SelectionColors() {
     for (const { id, k } of found.get(from)) {
       const n = node(id);
       const op = ops.get(id) ?? { op: "set", id };
-      const swap = (v) => v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), to);
+      const swap = (v) => v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), isVar(from) ? "g" : "gi"), to);
       if (k === "text") op.text = swap(op.text ?? n.text);
       else if (k === "defs") op.defs = swap(op.defs ?? n.defs);
       else if (k.startsWith("attrs.")) (op.attrs ??= {})[k.slice(6)] = swap(op.attrs?.[k.slice(6)] ?? n.attrs[k.slice(6)]);
@@ -902,7 +938,7 @@ function SelectionColors() {
     commit([...ops.values()], { key: `selcolor:${key}`, label: "Colour" });
   };
   return html`<${Section} title="Selection colours" count=${found.size} collapsible open=${false} id="board-selcolors">
-    ${[...found.entries()].slice(0, 12).map(([c, uses]) => html`<div class="bd-selcolor" key=${c}><${ColorButton} value=${c} allowAuto=${false} onChange=${(to) => to && replace(c, to, c)} /><span class="n">${uses.length}×</span></div>`)}
+    ${[...found.entries()].slice(0, 12).map(([c, uses]) => html`<div class="bd-selcolor" key=${c}><${BoardColor} value=${c} allowAuto=${false} onChange=${(to) => to && replace(c, to, c)} /><span class="n">${uses.length}×</span></div>`)}
   <//>`;
 }
 
@@ -917,8 +953,8 @@ function ShapeSection() {
   const line = t === "arrow" || t === "line";
   const words = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(t);
   return html`<${Section} title=${SHAPE_NAMES[t] ?? "Shape"}>
-    ${!line && html`<div class="row"><label>Fill</label><${ColorButton} value=${sh.fill && sh.fill !== "none" ? sh.fill : undefined} auto="None" onChange=${(c) => set({ fill: c ?? "none" }, "fill")} /></div>`}
-    ${!words && html`<div class="row"><label>Stroke</label><${ColorButton} value=${sh.stroke && sh.stroke !== "none" ? sh.stroke : undefined} auto="None" onChange=${(c) => set({ stroke: c ?? "none" }, "stroke")} /></div>
+    ${!line && html`<div class="row"><label>Fill</label><${BoardColor} value=${sh.fill && sh.fill !== "none" ? sh.fill : undefined} auto="None" onChange=${(c) => set({ fill: c ?? "none" }, "fill")} /></div>`}
+    ${!words && html`<div class="row"><label>Stroke</label><${BoardColor} value=${sh.stroke && sh.stroke !== "none" ? sh.stroke : undefined} auto="None" onChange=${(c) => set({ stroke: c ?? "none" }, "stroke")} /></div>
       ${sh.stroke && sh.stroke !== "none" && html`<div class="grid2">
         <${Num} label="W" title="Stroke width" value=${sh.strokeWidth ?? 4} min=${0} onChange=${(v) => set({ strokeWidth: v ?? 0 }, "sw")} />
         <${Dropdown} value=${sh.dash ?? "solid"} options=${[{ value: "solid", label: "Solid" }, { value: "dashed", label: "Dashed" }, { value: "dotted", label: "Dotted" }]} onChange=${(v) => set({ dash: v })} />
@@ -933,7 +969,7 @@ function ShapeSection() {
     ${words && html`<div class="row"><label>Words</label><input class="input" value=${sh.text ?? ""} onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ text: e.target.value }, "text")} /></div>`}
     ${t === "laurel" && html`<div class="row"><label>Under it</label><input class="input" value=${sh.caption ?? ""} placeholder="App Store" onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ caption: e.target.value }, "cap")} /></div>`}
     ${t === "rating" && html`<${Num} label="Stars" digits=${1} step=${0.1} value=${sh.value ?? 5} min=${0} max=${5} onChange=${(v) => set({ value: v ?? 5 }, "val")} />`}
-    ${(t === "badge" || words) && html`<div class="row"><label>Words colour</label><${ColorButton} value=${sh.labelColor} allowAuto=${false} onChange=${(c) => c && set({ labelColor: c }, "lc")} /></div>`}
+    ${(t === "badge" || words) && html`<div class="row"><label>Words colour</label><${BoardColor} value=${sh.labelColor} allowAuto=${false} onChange=${(c) => c && set({ labelColor: c }, "lc")} /></div>`}
     <div class="bd-flex-opts">
       ${!words && html`<label class="bd-check"><input type="checkbox" checked=${Boolean(sh.sketch)} onChange=${(e) => set({ sketch: e.target.checked })} />Hand-drawn</label>`}
       <label class="bd-check"><input type="checkbox" checked=${Boolean(sh.shadow)} onChange=${(e) => set({ shadow: e.target.checked })} />Shadow</label>
@@ -950,7 +986,7 @@ function VectorSection() {
   const count = subtree(B.board, n.id).length - 1;
   return html`<${Section} title="Vector">
     ${tintable
-      ? html`<div class="row"><label>Colour</label><${ColorButton} value=${n.style.color} auto="Inherited" onChange=${(c) => setStyle({ color: c ?? null }, "vc")} /></div>`
+      ? html`<div class="row"><label>Colour</label><${BoardColor} value=${n.style.color} auto="Inherited" onChange=${(c) => setStyle({ color: c ?? null }, "vc")} /></div>`
       : html`<p class="bd-note">${inParts ? `In ${count} part${count === 1 ? "" : "s"}: pick one on the canvas (double-click, or ⌘-click) to change it.` : "Drawn in its own colours, as one piece. Filters below can still shift them."}</p>`}
     ${list.length === 1 &&
     (inParts
@@ -999,7 +1035,7 @@ function TypeSection() {
       <${Num} label="Letter" title="Letter spacing, in em" digits=${3} step=${0.005} value=${ls ? (/em$/.test(ls) ? parseFloat(ls) : (px(ls) ?? 0) / (px(n.style.fontSize) ?? 16)) : 0} onChange=${(v) => setStyle({ letterSpacing: v ? `${round(v, 3)}em` : null }, "ls")} />
     </div>
     <${Seg} value=${align} options=${[{ value: "left", icon: "alignL", label: "", title: "Left" }, { value: "center", icon: "alignC", label: "", title: "Centre" }, { value: "right", icon: "alignR", label: "", title: "Right" }, { value: "justify", icon: "alignJ", label: "", title: "Justify" }]} onChange=${(v) => setStyle({ textAlign: v === "left" ? null : v })} />
-    <${ColorButton} value=${color === "mixed" ? undefined : color} auto=${color === "mixed" ? "Mixed" : "Inherited"} onChange=${(c) => setStyle({ color: c ?? null }, "tc")} />
+    <${BoardColor} value=${color === "mixed" ? undefined : color} auto=${color === "mixed" ? "Mixed" : "Inherited"} onChange=${(c) => setStyle({ color: c ?? null }, "tc")} />
     <div class="grid2">
       <${Dropdown} value=${n.style.textTransform ?? "none"} options=${[{ value: "none", label: "As typed" }, { value: "uppercase", label: "UPPERCASE" }, { value: "lowercase", label: "lowercase" }, { value: "capitalize", label: "Title Case" }]} onChange=${(v) => setStyle({ textTransform: v === "none" ? null : v })} />
       <${Dropdown} value=${n.style.textDecoration ?? "none"} options=${[{ value: "none", label: "No line" }, { value: "underline", label: "Underline" }, { value: "line-through", label: "Strikethrough" }]} onChange=${(v) => setStyle({ textDecoration: v === "none" ? null : v })} />
@@ -1018,8 +1054,38 @@ function WordBar() {
     ${btn("italic", "I", "Italic (⌘I)", { fontStyle: "italic" })}
     ${btn("underline", "U", "Underline (⌘U)", { textDecoration: "underline" })}
     ${btn("strikeThrough", "S", "Strikethrough", { textDecoration: "line-through" })}
-    <label class="bd-word color ${picked ? "" : "off"}" title="Colour"><input type="color" disabled=${!picked} onInput=${(e) => styleWords("foreColor", e.target.value)} /><i></i></label>
+    <${WordColor} picked=${picked} />
   </div>`;
+}
+
+/** The colour the selected words have now: a token as its var(), anything else as a colour. */
+function wordsColor() {
+  let n = words.range?.startContainer;
+  if (n?.nodeType === 3) n = n.parentElement;
+  for (; n?.nodeType === 1; n = n.parentElement) {
+    const c = n.style?.color;
+    if (c) return tokenRef(c) ? c : normalizeColor(c) ?? undefined;
+    if (n.isContentEditable && !n.parentElement?.isContentEditable) break;
+  }
+  return undefined;
+}
+
+/**
+ * A colour for the selected words, from the board's picker (tokens included). Its popover sits
+ * inside the word bar and takes no focus from the words, so picking doesn't end the typing.
+ */
+function WordColor({ picked }) {
+  const ref = useRef();
+  const [open, setOpen] = useState(false);
+  const keep = (e) => e.preventDefault();
+  return html`<button class="bd-word color ${picked ? "" : "off"}" ref=${ref} title="Colour" disabled=${!picked} onPointerDown=${keep} onMouseDown=${keep} onClick=${() => setOpen(!open)}><i></i></button>
+    ${open &&
+    picked &&
+    html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${252} align="end">
+      <div class="bd-word-pop" tabIndex="-1" onMouseDown=${(e) => !e.target.closest("input") && e.preventDefault()}>
+        <${BoardPicker} value=${wordsColor()} onChange=${(c) => c && styleWords("foreColor", c)} />
+      </div>
+    <//>`}`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1084,12 +1150,13 @@ function BoardPanel() {
   const page = currentPage();
   const [adding, setAdding] = useState(false);
   const tokens = b.board.tokens;
+  const uses = tokenUses(b.board);
   const setToken = (name, value, key) => commit([{ op: "token", name, value }], { key: key ? `token:${name}` : null, label: "Token" });
   return html`<div class="panel-head"><h2>${b.board.name}</h2><span class="sub">${page?.children.length ?? 0} artboard${page?.children.length === 1 ? "" : "s"}</span></div>
     <div class="panel-body bd-insp">
       <${Section} title="Tokens" count=${tokens.length || undefined} right=${html`<button class="icon-btn sm" title="Add a token" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${14} /></button>`}>
-        <p class="bd-note">Colours, sizes and fonts with a name. Any layer can use one as <code>var(--name)</code>, so changing it here changes them all.</p>
-        ${tokens.map((t) => html`<${TokenRow} key=${t.name} t=${t} onChange=${(v) => setToken(t.name, v, true)} onRemove=${() => setToken(t.name, null)} />`)}
+        <p class="bd-note">Colours, sizes and fonts with a name. Any layer can use one as <code>var(--name)</code>, so changing it here changes them all. Every colour picker on the board lists the colour ones.</p>
+        ${tokens.map((t) => html`<${TokenRow} key=${t.name} t=${t} tokens=${tokens} uses=${uses.get(t.name)} onChange=${(v) => setToken(t.name, v, true)} onRemove=${() => setToken(t.name, null)} />`)}
         ${adding && html`<${NewToken} onDone=${(name, value) => (setAdding(false), name && setToken(name, value || "#000000"))} />`}
       <//>
       <${Section} title="Agents">
@@ -1106,12 +1173,44 @@ function BoardPanel() {
     </div>`;
 }
 
-function TokenRow({ t, onChange, onRemove }) {
-  const color = /^(#|rgb|hsl|oklch|color\()/i.test(t.value.trim());
+let usesOf = { board: null, uses: new Map() };
+/** The layers that use each token (by name): in their CSS, words, SVG or shape settings. */
+function tokenUses(board) {
+  if (usesOf.board === board) return usesOf.uses;
+  const uses = new Map();
+  for (const n of Object.values(board.nodes)) {
+    const text = [...Object.values(n.style), n.text, n.svg, n.defs, ...Object.values(n.attrs ?? {}), n.shape && JSON.stringify(n.shape)].join(" ");
+    if (!text.includes("var(")) continue;
+    for (const [, name] of text.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/g)) {
+      if (!uses.has(name)) uses.set(name, []);
+      if (!uses.get(name).includes(n.id)) uses.get(name).push(n.id);
+    }
+  }
+  usesOf = { board, uses };
+  return uses;
+}
+
+/** Select the layers that use a token: those on the page on show, or else those on the first page that has some. */
+function selectUses(list) {
+  const on = (id) => pageOf(B.board, id)?.id;
+  const here = list.filter((id) => on(id) === currentPage()?.id);
+  const pick = here.length ? here : list.filter((id) => on(id) === on(list[0]));
+  if (!pick.length) return;
+  const moved = on(pick[0]) !== currentPage()?.id;
+  if (moved) bset({ page: on(pick[0]) });
+  select(pick);
+  if (moved) requestAnimationFrame(() => fit(pick));
+}
+
+function TokenRow({ t, tokens, uses = [], onChange, onRemove }) {
+  // A colour, or a var() of another token that comes to one.
+  const color = Boolean(tokenColor(t.value, tokens));
   const [draft, setDraft] = useState(null);
+  const n = uses.length;
   return html`<div class="bd-token">
     <code title=${t.name}>${t.name.slice(2)}</code>
-    ${color ? html`<${ColorButton} value=${t.value} allowAuto=${false} onChange=${(c) => c && onChange(c)} />` : html`<input class="input bd-mono" value=${draft ?? t.value} onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} onBlur=${() => (draft !== null && draft.trim() && onChange(draft.trim()), setDraft(null))} />`}
+    ${color ? html`<${BoardColor} value=${t.value} tokens=${tokens.filter((x) => x.name !== t.name)} onMakeToken=${null} allowAuto=${false} onChange=${(c) => c && onChange(c)} />` : html`<input class="input bd-mono" value=${draft ?? t.value} onInput=${(e) => setDraft(e.target.value)} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} onBlur=${() => (draft !== null && draft.trim() && onChange(draft.trim()), setDraft(null))} />`}
+    <button class="bd-uses" disabled=${!n} title=${n ? `Used by ${n} layer${n === 1 ? "" : "s"}: click to select ${n === 1 ? "it" : "them"}` : "No layer uses it yet"} onClick=${() => selectUses(uses)}>${n}×</button>
     <button class="icon-btn sm" title="Remove" onClick=${onRemove}><${Icon} n="x" s=${12} /></button>
   </div>`;
 }
