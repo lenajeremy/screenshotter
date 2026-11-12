@@ -502,6 +502,23 @@ function Composer({ t, anchor }) {
   const [busy, setBusy] = useState(false);
   const area = useRef();
   const caretAt = useRef(null);
+  // The words drawn again behind the box (its own are see-through), so a tag is green as it's typed.
+  const mirror = useRef();
+  useLayoutEffect(() => {
+    const t = area.current;
+    const m = mirror.current;
+    if (!t || !m) return;
+    const cs = getComputedStyle(t);
+    for (const k of ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "textIndent", "tabSize"]) m.style[k] = cs[k];
+  }, []);
+  useLayoutEffect(() => {
+    const t = area.current;
+    if (!t) return;
+    // The box grows with what's written (up to about seven lines, then it scrolls).
+    t.style.height = "auto";
+    t.style.height = `${Math.min(t.scrollHeight, 150)}px`;
+    if (mirror.current) mirror.current.scrollTop = t.scrollTop;
+  });
   useLayoutEffect(() => {
     area.current?.focus();
   }, [t?.id]);
@@ -576,7 +593,7 @@ function Composer({ t, anchor }) {
       go();
     }
   };
-  const asking = tagged(text).length > 0;
+  const asking = tagged(text);
   return html`<div class="bd-compose">
     ${picking &&
     html`<div class="bd-picker" role="listbox">
@@ -589,10 +606,17 @@ function Composer({ t, anchor }) {
           </button>`)
         : html`<p class="bd-sent">${live.agentman ? "No agent called that." : "Agentman isn't running, so only this board's agents can be tagged."}</p>`}
     </div>`}
-    <textarea ref=${area} class="textarea" rows="2" placeholder=${t ? "Reply, or @ an agent" : "Add a comment, or @ an agent"} value=${text} onInput=${onInput} onKeyDown=${onKey}></textarea>
-    <div class="bd-compose-foot">
-      <span class="hint">${asking ? "The agents you tagged get it, and answer here" : "⏎ to post, ⇧⏎ for a new line"}</span>
-      <button class="btn sm" disabled=${!text.trim() || busy} onClick=${go}>${busy ? "Sending…" : asking ? "Send" : t ? "Reply" : "Comment"}</button>
+    <div class="bd-compose-box" onPointerDown=${(e) => e.target === e.currentTarget && (e.preventDefault(), area.current?.focus())}>
+      <div class="bd-compose-field">
+        <textarea ref=${area} class="bd-compose-input" rows="1" placeholder=${t ? "Reply, or @ an agent" : "Add a comment, or @ an agent"} value=${text} onInput=${onInput} onKeyDown=${onKey}
+          onScroll=${(e) => mirror.current && (mirror.current.scrollTop = e.target.scrollTop)}></textarea>
+        <div class="bd-compose-mirror" ref=${mirror} aria-hidden="true">${withMentions(text)}${"\u200b"}</div>
+      </div>
+      ${asking.length > 0 && html`<div class="bd-compose-row"><span class="to" title=${`${asking.map((k) => agentName(k)).join(", ")} will get it, and answer here`}>To ${asking.map((k) => agentName(k)).join(", ")}</span></div>`}
+      <button class="bd-send ${text.trim() ? "ready" : ""}" disabled=${!text.trim() || busy} onClick=${go}
+        title=${`${asking.length ? `Send to ${asking.map((k) => agentName(k)).join(", ")}` : t ? "Reply" : "Comment"} (⏎ · ⇧⏎ for a new line)`} aria-label=${asking.length ? "Send" : t ? "Reply" : "Comment"}>
+        ${busy ? html`<span class="spin"></span>` : html`<${Icon} n="up" s=${14} w=${2.4} />`}
+      </button>
     </div>
   </div>`;
 }

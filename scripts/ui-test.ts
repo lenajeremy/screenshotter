@@ -310,9 +310,16 @@ const CHECKS: Record<string, Check> = {
     if (listed !== "Helper") return `typing @Hel lists "${listed}", not Agentman's Helper`;
     await page.keyboard.press("Enter");
     await page.keyboard.type("can you tidy this row?");
+    // The tag is green while it's being written, not only once it's sent.
+    const inBox = await S(page, () => {
+      const m = document.querySelector(".bd-compose-mirror .bd-mention");
+      return m ? `${m.textContent} ${getComputedStyle(m).color}` : "";
+    });
+    if (inBox !== "@Helper rgb(74, 222, 128)") return `while typing, the tag shows as "${inBox}"`;
     const typed = await S(page, () => (document.querySelector(".bd-thread textarea") as HTMLTextAreaElement).value);
-    const button = await S(page, () => document.querySelector(".bd-compose .btn")?.textContent ?? "");
-    if (typed !== "Hey @Helper can you tidy this row?" || button !== "Send") return `the words are "${typed}", the button says "${button}"`;
+    const button = await S(page, () => document.querySelector(".bd-compose .bd-send")?.getAttribute("aria-label") ?? "");
+    const to = await S(page, () => document.querySelector(".bd-compose-row .to")?.textContent ?? "");
+    if (typed !== "Hey @Helper can you tidy this row?" || button !== "Send" || to !== "To Helper") return `the words are "${typed}", the button says "${button}", "${to}"`;
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Helper"), null, { timeout: 8000 }).catch(() => undefined);
     const sent = agentman.sent.find((x) => x.sessionId === "codex:helper");
@@ -403,7 +410,7 @@ const CHECKS: Record<string, Check> = {
     await page.waitForSelector(".bd-thread textarea");
     const note = await S(page, () => document.querySelector(".bd-compose .bd-sent")?.textContent ?? "");
     await page.keyboard.type("Too much space between the rows");
-    await page.click(".bd-compose .btn");
+    await page.click(".bd-compose .bd-send");
     await page.waitForTimeout(500);
     const th = talk.getComments(t.id).threads[0];
     const layers = (th?.anchor.layers ?? []).map((id) => boards.getBoard(t.id).nodes[id]?.name).join();
