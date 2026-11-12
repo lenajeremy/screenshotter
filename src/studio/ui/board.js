@@ -50,7 +50,7 @@ const TOOLS = [
   { id: "frame", icon: "frame", label: "Frame", key: "F" },
   { id: "rect", icon: "square", label: "Rectangle", key: "R" },
   { id: "text", icon: "text", label: "Text", key: "T" },
-  { id: "image", icon: "image", label: "Image", key: "⇧⌘K" },
+  { id: "image", icon: "image", label: "Image or video", key: "⇧⌘K" },
   { id: "comment", icon: "comment", label: "Comment", key: "C" },
   { id: "hand", icon: "hand", label: "Pan", key: "H or Space" },
 ];
@@ -197,6 +197,7 @@ export function layerIcon(n, b = B.board) {
   if (n.instanceOf) return "instance";
   if (n.type === "text") return "text";
   if (n.type === "image") return "image";
+  if (n.type === "video") return "video";
   if (n.type === "svg") return "vector";
   if (n.type === "vector") return { g: "layers", rect: "square", circle: "ellipse", ellipse: "ellipse", line: "line", polyline: "line", polygon: "triangle", path: "pen", text: "text", image: "image" }[n.tag] ?? "vector";
   if (!n.parent) return "frame";
@@ -658,7 +659,7 @@ function copySelection() {
 
 /** The frame Preview opens: the selected frame (or the frame round a selected text or picture), else the page's first artboard. */
 function previewTarget() {
-  const leaf = (n) => ["text", "image", "svg", "vector"].includes(n.type);
+  const leaf = (n) => ["text", "image", "video", "svg", "vector"].includes(n.type);
   let id = B.sel[0];
   while (id && node(id) && leaf(node(id))) id = node(id).parent;
   if (id && node(id)) return id;
@@ -722,7 +723,7 @@ function pasteTarget(kind = "frame") {
 
 function onPaste(e) {
   if (!S.boardId || typingNow() || S.modal) return;
-  const files = [...(e.clipboardData?.files ?? [])].filter((f) => /^image\//.test(f.type));
+  const files = [...(e.clipboardData?.files ?? [])].filter(isMedia);
   const htmlText = e.clipboardData?.getData("text/html") ?? "";
   const plain = e.clipboardData?.getData("text/plain") ?? "";
   e.preventDefault();
@@ -821,10 +822,15 @@ function pasteStyles() {
 // =============================================================================================
 // Images
 
+/** A picture or a video a board can take (Figma's "Place image/video"). */
+export const isVideoFile = (f) => /^video\/(mp4|quicktime|webm|x-m4v)$/.test(f.type) || /\.(mp4|m4v|mov|webm)$/i.test(f.name ?? "");
+export const isMedia = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name ?? "") || isVideoFile(f);
+export const MEDIA_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";
+
 function pickImages() {
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml";
+  input.accept = MEDIA_ACCEPT;
   input.multiple = true;
   input.onchange = () => addImages([...input.files], pasteTarget());
   input.click();
@@ -835,12 +841,17 @@ export async function addImages(files, { at, into, after, ev } = {}) {
   try {
     const layers = [];
     for (const f of files) {
-      const r = await api(`/api/upload?kind=image&name=${encodeURIComponent(f.name || "pasted.png")}`, f, true);
-      const w0 = r.width ?? 400;
-      const h0 = r.height ?? 300;
+      const video = isVideoFile(f);
+      const r = await api(`/api/upload?kind=${video ? "video" : "image"}&name=${encodeURIComponent(f.name || "pasted.png")}`, f, true);
+      const w0 = r.width ?? (video ? 640 : 400);
+      const h0 = r.height ?? (video ? 360 : 300);
       const k = Math.min(1, 720 / Math.max(w0, h0));
       const id = newId();
-      layers.push({ id, type: "image", name: (f.name || "Image").replace(/\.[a-z0-9]+$/i, ""), parent: null, src: r.path, style: { width: `${Math.round(w0 * k)}px`, height: `${Math.round(h0 * k)}px`, objectFit: "cover", flexShrink: "0" } });
+      const style = { width: `${Math.round(w0 * k)}px`, height: `${Math.round(h0 * k)}px`, objectFit: "cover", flexShrink: "0" };
+      const name = (f.name || (video ? "Video" : "Image")).replace(/\.[a-z0-9]+$/i, "");
+      // A video plays as Figma's do unless changed: on its own, over and over, with sound.
+      if (video) layers.push({ id, type: "video", name, parent: null, src: r.path, ...(r.poster ? { poster: r.poster } : {}), video: { autoplay: true, loop: true, muted: false }, style });
+      else layers.push({ id, type: "image", name, parent: null, src: r.path, style });
     }
     let point = at;
     if (!point) {
@@ -854,7 +865,7 @@ export async function addImages(files, { at, into, after, ev } = {}) {
       select(layers.map((l) => l.id));
     } else placeNew(layers, into ?? null, point, ev);
   } catch (e) {
-    fail(e, "Couldn't add the picture");
+    fail(e, files.some(isVideoFile) ? "Couldn't add the video" : "Couldn't add the picture");
   }
 }
 

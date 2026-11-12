@@ -1,9 +1,9 @@
 // The board's right panel: a layer's CSS in plain words (layout, size, flex, fill, border, shadow,
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, renameTokenOps, round, serializeSvg, sizeWord, styleText, subtree, vectorName } from "./board-core.js";
+import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, renameTokenOps, round, serializeSvg, sizeWord, styleText, subtree, vectorName, videoSettings } from "./board-core.js";
 import { B, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
-import { fit, shiftSteps, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
+import { fit, shiftSteps, toggleVideo, useVideo, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
 import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html, normalizeColor, resolveVars, tokenColor, tokenRef } from "./controls.js";
@@ -75,7 +75,7 @@ export function Inspector() {
   return html`<div class="panel-head bd-ihead">
       <span class="ico"><${Icon} n=${layerIcon(n)} s=${15} /></span>
       <h2>${many ? `${list.length} layers` : n.name}</h2>
-      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", svg: "Vector" }[n.type]}</span>`}
+      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", video: "Video", svg: "Vector", vector: "Vector" }[n.type]}</span>`}
     </div>
     <div class="panel-body bd-insp">
       ${!many && html`<${ComponentSection} />`}
@@ -84,10 +84,11 @@ export function Inspector() {
       ${!many && n.parent && isFlex(node(n.parent)) && html`<${ChildSection} />`}
       ${allText && html`<${TypeSection} />`}
       ${!many && n.type === "image" && html`<${ImageSection} />`}
+      ${!many && n.type === "video" && html`<${VideoSection} />`}
       ${!many && n.shape && html`<${ShapeSection} />`}
       ${!many && n.type === "svg" && !n.shape && html`<${VectorSection} />`}
       <${LookSection} />
-      ${!allText && n.type !== "image" && n.type !== "svg" && html`<${FillSection} />`}
+      ${!allText && n.type !== "image" && n.type !== "video" && n.type !== "svg" && html`<${FillSection} />`}
       ${n.type !== "svg" && html`<${LineSection} kind="border" />`}
       <${LineSection} kind="outline" />
       ${n.type !== "svg" && html`<${ShadowSection} />`}
@@ -1113,6 +1114,83 @@ function ImageSection() {
   return html`<${Section} title="Image">
     <div class="bd-src"><span title=${n.src}>${(n.src ?? "").split("/").pop() || "No picture"}</span><button class="btn sm" onClick=${replace}>Replace…</button></div>
     <${Seg} value=${n.style.objectFit ?? "fill"} options=${[{ value: "cover", label: "Fill" }, { value: "contain", label: "Fit" }, { value: "fill", label: "Stretch" }]} onChange=${(v) => setStyle({ objectFit: v === "fill" ? null : v })} />
+  <//>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// A video: its file, how it fills its box, a player to watch it on the canvas (play, scrub, jump to
+// a time), and how it plays in Preview: Figma's autoplay, loop and sound.
+
+const clock = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
+/** "1:05" → 65, "12" → 12, "0:03.5" → 3.5; null for anything else. */
+const parseClock = (text) => {
+  const m = /^\s*(?:(\d+):)?(\d+(?:\.\d+)?)\s*$/.exec(text);
+  return m ? Number(m[1] ?? 0) * 60 + Number(m[2]) : null;
+};
+
+function VideoSection() {
+  const id = ids()[0];
+  const n = node(id);
+  const v = useVideo(id);
+  const s = videoSettings(n);
+  const track = useRef();
+  const [drag, setDrag] = useState(false);
+  const dur = v && Number.isFinite(v.duration) ? v.duration : 0;
+  const t = v ? v.currentTime : 0;
+  const playing = Boolean(v && !v.paused);
+  const seek = (ev) => {
+    if (!v || !dur) return;
+    const r = track.current.getBoundingClientRect();
+    v.currentTime = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)) * dur;
+  };
+  const play = (k, on, label) => commit([{ op: "set", id, video: { ...s, [k]: on } }], { label });
+  const replace = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";
+    input.onchange = async () => {
+      const f = input.files[0];
+      if (!f) return;
+      try {
+        const r = await api(`/api/upload?kind=video&name=${encodeURIComponent(f.name)}`, f, true);
+        commit([{ op: "set", id, src: r.path, poster: r.poster ?? null }], { label: "Replace video" });
+      } catch (e) {
+        fail(e, "Couldn't add the video");
+      }
+    };
+    input.click();
+  };
+  const frac = dur ? t / dur : 0;
+  return html`<${Section} title="Video">
+    <div class="bd-src"><span title=${n.src}>${(n.src ?? "").split("/").pop() || "No video"}</span><button class="btn sm" onClick=${replace}>Replace…</button></div>
+    <${Seg} value=${n.style.objectFit ?? "fill"} options=${[{ value: "cover", label: "Fill" }, { value: "contain", label: "Fit" }, { value: "fill", label: "Stretch" }]} onChange=${(val) => setStyle({ objectFit: val === "fill" ? null : val })} />
+    <div class="bd-player">
+      <button class="icon-btn sm bd-player-play" title=${playing ? "Pause" : "Play it on the canvas"} aria-label=${playing ? "Pause" : "Play"} disabled=${!v} onClick=${() => toggleVideo(id)}><${Icon} n=${playing ? "pause" : "play"} s=${13} /></button>
+      <div class="bd-scrub ${drag ? "active" : ""} ${dur ? "" : "off"}" ref=${track}
+        onPointerDown=${(e) => {
+          if (!dur) return;
+          e.preventDefault();
+          track.current.setPointerCapture(e.pointerId);
+          setDrag(true);
+          seek(e);
+        }}
+        onPointerMove=${(e) => drag && seek(e)} onPointerUp=${() => setDrag(false)} onPointerCancel=${() => setDrag(false)}>
+        <div class="bd-scrub-rail"><div class="bd-scrub-fill" style=${{ width: frac * 100 + "%" }}></div></div><div class="bd-scrub-knob" style=${{ left: frac * 100 + "%" }}></div>
+      </div>
+      <input class="bd-time" value=${clock(t)} title="Go to a time (m:ss)" aria-label="Time" disabled=${!dur} onFocus=${(e) => e.target.select()}
+        onKeyDown=${(e) => e.key === "Enter" && e.target.blur()}
+        onChange=${(e) => {
+          const at = parseClock(e.target.value);
+          if (v && at !== null) v.currentTime = Math.min(dur, Math.max(0, at));
+          e.target.value = clock(v ? v.currentTime : 0);
+        }} /><span class="bd-dur">/ ${clock(dur)}</span>
+    </div>
+    <div class="bd-video-opts">
+      <${Switch} checked=${s.autoplay} label="Autoplay" onChange=${(on) => play("autoplay", on, on ? "Autoplay" : "No autoplay")} />
+      <${Switch} checked=${s.loop} label="Loop" onChange=${(on) => play("loop", on, on ? "Loop" : "Play once")} />
+      <${Switch} checked=${!s.muted} label="Sound" onChange=${(on) => play("muted", !on, on ? "Sound on" : "Sound off")} />
+    </div>
+    <p class="bd-note">How it plays in Preview. On the canvas it shows its first frame until you press play.</p>
   <//>`;
 }
 

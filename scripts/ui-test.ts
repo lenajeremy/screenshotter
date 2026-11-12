@@ -215,6 +215,50 @@ const CHECKS: Record<string, Check> = {
     const shown = await st();
     return !hidden.left && !hidden.right && shown.left && shown.right ? "ok" : `⌘K: hidden ${hidden.left}/${hidden.right}, shown ${shown.left}/${shown.right}`;
   },
+  async "a video shows its first frame, plays from its button, and stops when let go"(page) {
+    const t = await openTestBoard(page);
+    // A clip each engine can play: H.264 where it can, else VP8 WebM (Playwright's Chromium has no H.264).
+    const { execFileSync } = await import("node:child_process");
+    const mp4 = path.join(LIB, "clip.mp4");
+    const webm = path.join(LIB, "clip.webm");
+    const still = path.join(LIB, "clip.jpg");
+    if (!existsSync(webm)) {
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4]);
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15", "-t", "3", "-c:v", "libvpx", "-b:v", "400k", webm]);
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-i", mp4, "-frames:v", "1", still]);
+    }
+    const h264 = await S(page, () => document.createElement("video").canPlayType('video/mp4; codecs="avc1.42E01E"'));
+    const id = boardCore.newId();
+    const phoneId = t.byName("Phone");
+    boards.changeBoard(t.id, [{ op: "add", nodes: { [id]: { id, type: "video", name: "Clip", parent: phoneId, src: h264 ? mp4 : webm, poster: still, video: { autoplay: true, loop: true, muted: true }, style: { width: "300px", height: "170px", objectFit: "cover", flexShrink: "0" } } }, ids: [id], parent: phoneId, index: 1 }], "agent");
+    await page.waitForSelector(`.bd-world [data-bid="${id}"]`, { timeout: 5000 });
+    const state = () => S(page, (vid: string) => {
+      const v = document.querySelector(`[data-bid="${vid}"]`) as HTMLVideoElement;
+      return { tag: v.tagName, paused: v.paused, poster: Boolean(v.getAttribute("poster")), at: v.currentTime };
+    }, id);
+    const first = await state();
+    if (first.tag !== "VIDEO" || !first.paused || !first.poster) return `on the canvas it's ${JSON.stringify(first)}, not its still`;
+    await S(page, async (vid: string) => (await import("/ui/board-state.js" as string)).select(vid), id);
+    await page.waitForTimeout(300);
+    const marks = await S(page, () => `${document.querySelector(".bd-video-tag")?.textContent ?? ""}|${Boolean(document.querySelector(".bd-video-play"))}`);
+    if (marks !== "Video|true") return `selected, it shows "${marks}"`;
+    await page.click(".bd-video-play");
+    await page.waitForTimeout(1200);
+    const playing = await state();
+    if (playing.paused || playing.at <= 0) return `after play it's ${JSON.stringify(playing)}`;
+    const dur = await S(page, () => document.querySelector(".bd-dur")?.textContent ?? "");
+    if (dur !== "/ 0:03") return `the panel's player says ${dur}`;
+    // How it plays in Preview: Figma's switches.
+    await page.locator(".bd-video-opts .switch", { hasText: "Loop" }).click();
+    await page.waitForTimeout(900);
+    const loop = boards.getBoard(t.id).nodes[id].video?.loop;
+    if (loop !== false) return `turning Loop off left it ${loop}`;
+    // Let go of it, and it's its first frame again.
+    await S(page, async (pid: string) => (await import("/ui/board-state.js" as string)).select(pid), phoneId);
+    await page.waitForTimeout(400);
+    const after = await state();
+    return after.paused && after.at === 0 ? "ok" : `after letting go it's ${JSON.stringify(after)}`;
+  },
   async "Preview opens a frame as a live web page"(page) {
     const t = await openTestBoard(page);
     await S(page, () => {

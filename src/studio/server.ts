@@ -35,6 +35,8 @@ import { noteStudioFolder } from "../util/studio.js";
 import { changeBoard, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard } from "../board/store.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers, previewDocument } from "../board/render.js";
+import { VIDEO_EXT, videoStill } from "../board/video.js";
+import { mediaInfo } from "../util/media.js";
 import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
 import { agentsNow, bringIn, deliver, getComments, markSending, remove, reply, setResolved, startThread, type AnchorInput } from "../board/comments.js";
@@ -1077,7 +1079,9 @@ async function upload(req: http.IncomingMessage, url: URL) {
   const ext = (path.extname(raw).toLowerCase() || ".png").replace(/[^.a-z0-9]/g, "");
   // An SVG or GIF is never a screenshot: whichever way it arrives, it's a picture for an image block.
   const kind = [".svg", ".gif"].includes(ext) && url.searchParams.get("kind") !== "backdrop" ? "image" : url.searchParams.get("kind");
-  if (kind === "image" ? ![".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext) : ![".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"].includes(ext))
+  // A board's video layer: MP4, MOV or WebM, with its first frame as its still.
+  if (kind === "video" && !VIDEO_EXT.test(ext)) throw new HttpError(400, "Add an MP4, MOV or WebM video");
+  if (kind !== "video" && (kind === "image" ? ![".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext) : ![".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov"].includes(ext)))
     throw new HttpError(400, kind === "image" ? "Add a PNG, JPEG, WebP, GIF or SVG" : "Upload a PNG, JPEG, WebP, MP4 or MOV");
   const folder = kind === "backdrop" ? "backdrops" : kind === "image" ? "images" : "uploads";
   const file = path.join(ensureDir(path.join(outputRoot(), folder)), `${slug(path.parse(raw).name)}-${timestamp()}${ext}`);
@@ -1088,6 +1092,10 @@ async function upload(req: http.IncomingMessage, url: URL) {
   } catch (e) {
     rmSync(file, { force: true });
     throw e;
+  }
+  if (kind === "video") {
+    const info = await mediaInfo(file).catch(() => undefined);
+    return { path: file, poster: await videoStill(file), width: info?.width, height: info?.height, length: info?.length };
   }
   if (ext === ".svg") return { path: file, ...(svgSize(readFileSync(file, "utf8")) ?? {}) };
   if (![".mp4", ".mov"].includes(ext)) return { path: file, ...(await imageSize(file).catch(() => ({}))) };

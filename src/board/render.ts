@@ -26,7 +26,7 @@ export function artboardDocument(board: Board, rootId: string): string {
   const links = fontLinks(fontFamilies(board, [rootId]))
     .map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
-  const art = nodeHtml(board, rootId, { ids: true, src: srcUrl });
+  const art = nodeHtml(board, rootId, { ids: true, src: srcUrl, still: true });
   return `<!doctype html><html><head><meta charset="utf-8">${links}<style>${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
 }
 
@@ -63,8 +63,9 @@ export function previewDocument(board: Board, id: string, opts: { width?: number
         ? `padding:clamp(0px,calc((100vw - ${w}px) / 2),48px) 0;}#bd-frame{width:${w}px;`
         : `padding:48px 0;}#bd-frame{width:fit-content;`) +
     `max-width:100%;margin:0 auto;${styleText(inherit)}}#bd-frame>*{position:relative!important;left:auto!important;top:auto!important;max-width:100%${page ? ";width:100%!important;min-height:100vh" : ""}}`;
+  // Videos that autoplay with sound start without it when the browser won't allow sound before a click.
   // Every second, while the tab shows: if the board changed, take the new frame from this same address.
-  const live = `<script>let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title}catch{}},1000)</script>`;
+  const live = `<script>const play=()=>{for(const v of document.querySelectorAll("video[autoplay]"))v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})};play();let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title;play()}catch{}},1000)</script>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(n.name)} · ${esc(board.name)}</title>${links}<style id="bd-css">${css}</style></head><body><div id="bd-frame">${body}</div>${live}</body></html>`;
 }
 

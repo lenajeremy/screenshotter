@@ -7,7 +7,22 @@
  * through `applyOps`, which also returns the steps that undo it.
  */
 
-export type NodeType = "frame" | "text" | "image" | "svg" | "vector";
+export type NodeType = "frame" | "text" | "image" | "svg" | "vector" | "video";
+
+/** How a video plays in Preview (and the page it becomes): Figma's settings, autoplay, loop and sound. */
+export interface VideoSettings {
+  autoplay?: boolean;
+  loop?: boolean;
+  /** Sound off. */
+  muted?: boolean;
+}
+
+/** A video's settings with the defaults filled in: like Figma, it autoplays and loops, with sound. */
+export const videoSettings = (n: Pick<BoardNode, "video">): Required<VideoSettings> => ({
+  autoplay: n.video?.autoplay ?? true,
+  loop: n.video?.loop ?? true,
+  muted: n.video?.muted ?? false,
+});
 /** CSS properties in camelCase ("backgroundColor", "--brand" for custom properties), values as CSS. */
 export type Style = Record<string, string>;
 
@@ -21,8 +36,15 @@ export interface BoardNode {
   style: Style;
   /** A text layer's words, as inline HTML (<b>, <span style>, <br>…). */
   text?: string;
-  /** An image layer's picture: a file path, a URL or a data: URI. */
+  /** An image layer's picture, or a video layer's video: a file path, a URL or a data: URI. */
   src?: string;
+  /**
+   * A video layer's still: a picture of its first frame. The canvas shows it until the video is
+   * played (as Figma does), and pictures of the board (exports, thumbnails, screenshots) use it.
+   */
+  poster?: string;
+  /** A video layer's playback in Preview. */
+  video?: VideoSettings;
   /**
    * A vector drawn as one piece: its <svg> markup. Without it, an svg layer's parts (its shapes,
    * paths, groups and words) are vector layers of their own, inside it.
@@ -811,6 +833,22 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
       for (const k of ["width", "height"] as const) if (!style[k] && pxValue(el.attrs[k]) !== undefined) style[k] = `${pxValue(el.attrs[k])}px`;
       return add({ type: "image", name: nameFor(el, "Image"), parent, style, src: el.attrs.src ?? "" });
     }
+    if (el.tag === "video") {
+      // As HTML has it: autoplay, loop and muted when the tag says so. Its file is the src, or its first <source>.
+      if (!style.objectFit && style.width && style.height) style.objectFit = "cover";
+      for (const k of ["width", "height"] as const) if (!style[k] && pxValue(el.attrs[k]) !== undefined) style[k] = `${pxValue(el.attrs[k])}px`;
+      const source = el.children.find((c): c is HEl => typeof c !== "string" && c.tag === "source" && Boolean(c.attrs.src));
+      const has = (k: string) => k in el.attrs && el.attrs[k] !== "false";
+      return add({
+        type: "video",
+        name: nameFor(el, "Video"),
+        parent,
+        style,
+        src: el.attrs.src ?? source?.attrs.src ?? "",
+        ...(el.attrs.poster ? { poster: el.attrs.poster } : {}),
+        video: { autoplay: has("autoplay"), loop: has("loop"), muted: has("muted") },
+      });
+    }
     if (el.tag === "svg") {
       const view = (el.attrs.viewBox ?? el.attrs.viewbox ?? "").split(/[\s,]+/).map(Number);
       const w = pxValue(el.attrs.width) ?? (view.length === 4 && view[2] > 0 ? view[2] : 24);
@@ -920,6 +958,8 @@ export interface HtmlOptions {
   placed?: boolean;
   /** Include hidden layers (shown hidden). */
   hidden?: boolean;
+  /** Draw a video as its still (its first frame), for pictures: exports, thumbnails, screenshots. */
+  still?: boolean;
 }
 
 /** CSS with each url(…) passed through `fn` (a local path made a loadable URL). */
@@ -947,6 +987,12 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
       const src = n.src ? (opts.src ? opts.src(n.src) : n.src) : "";
       return `<img${attrs} src="${escAttr(src)}" alt="${escAttr(n.name)}">`;
     }
+    case "video": {
+      const url = (s: string | undefined) => (s ? (opts.src ? opts.src(s) : s) : "");
+      if (opts.still) return n.poster ? `<img${attrs} src="${escAttr(url(n.poster))}" alt="${escAttr(n.name)}">` : `<div${attrs}></div>`;
+      const v = videoSettings(n);
+      return `<video${attrs} src="${escAttr(url(n.src))}"${n.poster ? ` poster="${escAttr(url(n.poster))}"` : ""}${v.autoplay ? " autoplay" : ""}${v.loop ? " loop" : ""}${v.muted ? " muted" : ""} playsinline preload="metadata"></video>`;
+    }
     case "svg": {
       const inner = `display:block;width:100%;height:100%${n.style.overflow ? `;overflow:${n.style.overflow}` : ""}`;
       if (n.svg) return `<div${attrs}>${n.svg.replace(/^<svg\b/i, `<svg style="${inner}"`)}</div>`;
@@ -964,7 +1010,7 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
 }
 
 /** The CSS every board is drawn with, in the Studio and in exports alike. */
-export const BOARD_CSS = "*,*::before,*::after{box-sizing:border-box}img{display:block}";
+export const BOARD_CSS = "*,*::before,*::after{box-sizing:border-box}img,video{display:block}";
 
 /** A token's name as CSS has it: "--brand" (a name given as "brand" gets its dashes). */
 export const tokenName = (name: string) => (name.trim().startsWith("--") ? name.trim() : `--${name.trim()}`);
@@ -1155,6 +1201,8 @@ export type Op =
       name?: string;
       text?: string | null;
       src?: string | null;
+      poster?: string | null;
+      video?: VideoSettings | null;
       svg?: string | null;
       /** A vector part's SVG attributes (null removes one). */
       attrs?: Record<string, string | null>;
@@ -1297,7 +1345,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           back.tag = n.tag ?? null;
           n.tag = vectorTag(op.tag);
         }
-        for (const k of ["text", "src", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
+        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
           if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
@@ -1533,7 +1581,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
 const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate"];
 
-const FIELDS = ["text", "src", "svg", "defs", "tag", "shape", "hidden", "name"] as const;
+const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name"] as const;
 
 /** The keys a set step changes, as overrides name them ("style.color", "text"). */
 function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {
@@ -1809,9 +1857,9 @@ export function sizeWord(board: Board, id: string, axis: "width" | "height"): st
     const row = !(p.style.flexDirection ?? "row").startsWith("column");
     const main = (axis === "width") === row;
     if (main && (pxValue(s.flexGrow) ?? 0) > 0) return "fill";
-    if (!main && !v && (s.alignSelf === "stretch" || (!s.alignSelf && (p.style.alignItems ?? "stretch") === "stretch")) && n.type !== "image") return "fill";
+    if (!main && !v && (s.alignSelf === "stretch" || (!s.alignSelf && (p.style.alignItems ?? "stretch") === "stretch")) && n.type !== "image" && n.type !== "video") return "fill";
   }
-  if (!v || v === "auto" || v === "fit-content" || v === "max-content") return n.type === "image" && !v ? "auto" : "fit";
+  if (!v || v === "auto" || v === "fit-content" || v === "max-content") return (n.type === "image" || n.type === "video") && !v ? "auto" : "fit";
   if (v === "100%") return "fill";
   const px = pxValue(v);
   return px !== undefined ? String(round(px, 1)) : v;
@@ -1844,6 +1892,10 @@ function describe(board: Board, id: string): string {
     bits.push(JSON.stringify(words.length > 60 ? words.slice(0, 59) + "…" : words));
   }
   if (n.type === "image") bits.push(`src ${(n.src ?? "").slice(0, 80)}`);
+  if (n.type === "video") {
+    const v = videoSettings(n);
+    bits.push(`src ${(n.src ?? "").slice(0, 80)}`, [v.autoplay ? "autoplay" : "no autoplay", v.loop ? "loop" : "once", v.muted ? "no sound" : "sound"].join(" "));
+  }
   if (n.type === "svg") bits.push(n.svg ? (n.shape ? `shape ${String(n.shape.type ?? "")}` : "one piece") : `in parts${n.attrs?.viewBox ? `, viewBox ${n.attrs.viewBox}` : ""}`);
   if (n.isComponent) bits.push("component");
   if (n.instanceOf) bits.push(`copy of component #${n.instanceOf}`);

@@ -40,6 +40,28 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   const svg = icon.nodes[icon.roots[0]];
   const part = icon.nodes[svg.children![0]];
   check(svg.type === "svg" && svg.style.width === "24px" && !svg.svg && svg.attrs?.viewBox === "0 0 24 24" && !svg.attrs.onclick && svg.children?.length === 1, "an svg is a vector in parts, made safe, sized from its viewBox");
+  {
+    // Video: as HTML has it coming in; as Figma's playback (autoplay, loop, sound) when unset.
+    const { videoSettings } = await import("../src/board/core.js");
+    const a = htmlToNodes('<video src="/x/clip.mp4" autoplay loop muted style="width:320px;height:180px"></video>');
+    const va = a.nodes[a.roots[0]];
+    check(va.type === "video" && va.src === "/x/clip.mp4" && va.style.objectFit === "cover" && va.video?.autoplay === true && va.video.loop === true && va.video.muted === true, "a <video> is a video layer, playing as its attributes say");
+    const b2 = htmlToNodes('<video style="width:320px;height:180px"><source src="/x/clip.webm" type="video/webm"></video>');
+    const vb = b2.nodes[b2.roots[0]];
+    check(vb.src === "/x/clip.webm" && vb.video?.autoplay === false && vb.video.loop === false && vb.video.muted === false, "its file can come from a <source>; no attributes, no autoplay");
+    const d = videoSettings({});
+    check(d.autoplay && d.loop && !d.muted, "unset, a video autoplays and loops with sound, as Figma's do");
+    const vb2 = { ...emptyBoard("vid", "Video", new Date().toISOString()) };
+    vb2.nodes = { v1: { id: "v1", type: "video", name: "Clip", parent: null, style: { width: "320px", height: "180px" }, src: "/x/clip.mp4", poster: "/x/clip.jpg", video: { autoplay: true, loop: false, muted: true } } };
+    vb2.pages[0].children = ["v1"];
+    const live = nodeHtml(vb2, "v1");
+    const still = nodeHtml(vb2, "v1", { still: true });
+    check(/^<video\b/.test(live) && / poster="\/x\/clip\.jpg" autoplay muted playsinline/.test(live) && !/ loop/.test(live), `as HTML it's a <video> with its settings (${live.slice(0, 160)})`);
+    check(/^<img\b[^>]* src="\/x\/clip\.jpg"/.test(still), "in pictures of the board it's its still");
+    const set = applyOps(vb2, [{ op: "set", id: "v1", video: { autoplay: false, loop: true, muted: false }, poster: "/x/other.jpg" }]);
+    const back = applyOps(set.board, set.inverse).board.nodes.v1;
+    check(set.board.nodes.v1.video?.loop === true && set.board.nodes.v1.poster === "/x/other.jpg" && back.video?.loop === false && back.poster === "/x/clip.jpg", "its playback and still change, and undo");
+  }
   check(part.type === "vector" && part.tag === "path" && part.attrs?.d === "M0 0h24v24" && part.name === "Path", "its path is a part of its own, with its attributes");
 
   // Unsplash sources on boards: words are a search ("#2" the second photo); an id names one photo.
@@ -399,6 +421,29 @@ const list = await call("board_list", {});
 check(list.json.find((x: any) => x.id === board).working.length >= 1, "the artboards being worked on are listed");
 await call("board_done", { board });
 check((await call("board_list", {})).json.find((x: any) => x.id === board).working.length === 0, "board_done clears them");
+
+// Videos: an agent writes <video>; it's copied into the library with its first frame as its still.
+{
+  const { execFileSync } = await import("node:child_process");
+  const clip = path.join(out, "clip.mp4");
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
+  const made = await call("board_write_html", { board, html: `<video data-name="Clip" src="${clip}" autoplay loop muted style="width:320px;height:180px;border-radius:10px"></video>` });
+  const vid = made.json.created[0].id;
+  const nb = (await import("../src/board/store.js")).getBoard(board);
+  const v = nb.nodes[vid];
+  const { existsSync } = await import("node:fs");
+  check(v.type === "video" && existsSync(v.src!) && v.src!.endsWith(".mp4") && Boolean(v.poster?.endsWith(".still.jpg")) && existsSync(v.poster!), "a video an agent writes gets its first frame as its still");
+  const tree = await call("board_read", { board, node: vid, what: "tree" });
+  check(/video "Clip" .*autoplay loop no sound/.test(tree.text), "board_read says it's a video, and how it plays");
+  const pic = await call("board_screenshot", { board, nodes: [vid] });
+  check(pic.images.length === 1, "board_screenshot draws it (as its still)");
+  const clip2 = path.join(mkdtempSync(path.join(tmpdir(), "board-clip-")), "clip2.mp4");
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip2]);
+  await call("board_edit", { board, changes: [{ do: "image", id: vid, src: clip2 }] });
+  const v2 = (await import("../src/board/store.js")).getBoard(board).nodes[vid];
+  check(v2.src !== v.src && v2.src!.startsWith(out) && v2.poster !== v.poster && existsSync(v2.poster!), "board_edit image swaps a video layer's video (copied into the library from outside it), and its still");
+  await call("board_edit", { board, changes: [{ do: "delete", ids: [vid] }] });
+}
 
 // The scratchpad: one board that's always there, a new page for each try.
 {

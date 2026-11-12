@@ -1,10 +1,11 @@
 // The board canvas: every artboard drawn as the real HTML and CSS it is, on an endless canvas you
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
-import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord, vectorFit, vectorTag, vectorTransform } from "./board-core.js";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
+import { Icon } from "./icons.js";
 import { fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
@@ -156,6 +157,8 @@ class Layer extends Component {
       return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></div>`;
     }
     if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
+    // Its first frame (the still) until it's played: videos don't play on their own on the canvas.
+    if (n.type === "video") return html`<video ...${attrs} src=${n.src ? srcUrl(n.src) : undefined} poster=${n.poster ? srcUrl(n.poster) : undefined} preload="metadata" playsinline draggable=${false}></video>`;
     const nodes = B.board.nodes;
     if (n.type === "svg") {
       if (n.svg) return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg, n.style.overflow) }}></div>`;
@@ -376,6 +379,7 @@ function Overlay() {
     ${group && html`<div class="bd-group" style=${{ left: group.x + "px", top: group.y + "px", width: group.width + "px", height: group.height + "px" }}></div>
       ${!busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} data-group="1" style=${{ left: group.x + (h.includes("w") ? 0 : h.includes("e") ? group.width : group.width / 2) + "px", top: group.y + (h.includes("n") ? 0 : h.includes("s") ? group.height : group.height / 2) + "px" }}></div>`)}
       ${(!busy || busy === "resize") && html`<div class="bd-size" style=${{ left: group.x + group.width / 2 + "px", top: group.y + group.height + 8 + "px" }}>${Math.round(group.width / b.view.z)} × ${Math.round(group.height / b.view.z)}</div>`}`}
+    ${box && !busy && !b.editing && node(one)?.type === "video" && html`<${VideoBadge} key=${one} id=${one} box=${box} />`}
     ${altDown && one && !busy && html`<${Distances} from=${one} to=${b.hover && b.hover !== one ? b.hover : node(one)?.parent} />`}
     ${b.drop?.line && html`<div class="bd-drop-line" style=${{ left: b.drop.line.x + "px", top: b.drop.line.y + "px", width: b.drop.line.width + "px", height: b.drop.line.height + "px" }}></div>`}
     ${b.drop?.into && (() => {
@@ -386,6 +390,66 @@ function Overlay() {
     ${b.guides.map((g, i) => html`<div key=${i} class="bd-guide ${g.axis}" style=${g.axis === "x" ? { left: g.at + "px", top: g.from + "px", height: g.to - g.from + "px" } : { top: g.at + "px", left: g.from + "px", width: g.to - g.from + "px" }}></div>`)}
     <${CommentLayer} />
   </div>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Video, as Figma has it: the canvas shows a video's first frame; selected, it's marked "Video" and
+// has a play button, to watch it right there. Its own settings (sound, loop) apply; selecting
+// something else stops it and shows the first frame again.
+
+/** Play or pause a video layer on the canvas. */
+export function toggleVideo(id) {
+  const v = elOf(id);
+  const n = node(id);
+  if (!v || !n || n.type !== "video") return;
+  if (!v.paused) return v.pause();
+  const s = videoSettings(n);
+  v.muted = s.muted;
+  v.loop = s.loop;
+  v.play().catch(() => {
+    v.muted = true;
+    v.play().catch(() => {});
+  });
+}
+
+/** A video layer's element and whether it's playing, kept up to date. */
+export function useVideo(id) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const v = elOf(id);
+    if (!v || v.tagName !== "VIDEO") return;
+    const on = () => tick((t) => t + 1);
+    const events = ["play", "pause", "ended", "timeupdate", "loadedmetadata", "seeked"];
+    for (const e of events) v.addEventListener(e, on);
+    return () => {
+      for (const e of events) v.removeEventListener(e, on);
+    };
+  }, [id]);
+  const v = elOf(id);
+  return v && v.tagName === "VIDEO" ? v : null;
+}
+
+/** Back to the first frame, as it shows when it isn't being watched. */
+function stillAgain(id) {
+  const v = elOf(id);
+  if (!v || v.tagName !== "VIDEO") return;
+  if (!v.paused || v.currentTime > 0) {
+    v.pause();
+    v.load();
+  }
+}
+
+function VideoBadge({ id, box }) {
+  const v = useVideo(id);
+  useEffect(() => () => stillAgain(id), [id]);
+  const playing = Boolean(v && !v.paused);
+  const big = box.width >= 90 && box.height >= 70;
+  return html`<div class="bd-video-tag" style=${{ left: box.x + 8 + "px", top: box.y + 8 + "px" }}><${Icon} n="video" s=${11} />Video</div>
+    <button class="bd-video-play ${playing ? "playing" : ""} ${big ? "" : "small"}" title=${playing ? "Pause" : "Play it here"} aria-label=${playing ? "Pause" : "Play"}
+      style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height / 2 + "px" }}
+      onPointerDown=${(e) => e.stopPropagation()} onDblClick=${(e) => e.stopPropagation()} onClick=${(e) => (e.stopPropagation(), toggleVideo(id))}>
+      <${Icon} n=${playing ? "pause" : "play"} s=${big ? 18 : 12} />
+    </button>`;
 }
 
 const unionOf = (boxes) => {
@@ -1185,9 +1249,9 @@ async function dropFiles(e) {
     const { addAsset } = await import("./board-assets.js");
     return addAsset(JSON.parse(asset), { at: toWorld(e.clientX, e.clientY), into: frameAt(e.clientX, e.clientY), ev: e });
   }
-  const files = [...(e.dataTransfer?.files ?? [])].filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name));
+  const { addImages, isMedia } = await import("./board.js");
+  const files = [...(e.dataTransfer?.files ?? [])].filter(isMedia);
   if (!files.length) return;
-  const { addImages } = await import("./board.js");
   addImages(files, { at: toWorld(e.clientX, e.clientY), into: frameAt(e.clientX, e.clientY), ev: e });
 }
 

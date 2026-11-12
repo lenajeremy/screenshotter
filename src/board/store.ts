@@ -253,10 +253,11 @@ export function duplicateBoard(id: unknown): Board {
 export function adoptImages(nodes: Record<string, BoardNode>, warnings: string[] = []): Record<string, BoardNode> {
   const lib = path.resolve(libraryFolder());
   for (const n of Object.values(nodes)) {
-    if (n.type !== "image" || !n.src) continue;
+    if ((n.type !== "image" && n.type !== "video") || !n.src) continue;
     const adopted = adoptImage(n.src, lib);
     if (adopted.warning) warnings.push(adopted.warning);
     n.src = adopted.src;
+    if (n.type === "video" && n.poster) n.poster = adoptImage(n.poster, lib).src;
   }
   return nodes;
 }
@@ -267,7 +268,12 @@ export function adoptImage(src: string, lib = path.resolve(libraryFolder())): { 
   if (!existsSync(file)) return { src, warning: `There's no picture at ${src}: its image layer is empty.` };
   if (file.startsWith(lib + path.sep)) return { src: file };
   const ext = path.extname(file).toLowerCase() || ".png";
-  const hash = createHash("sha1").update(readFileSync(file)).digest("hex").slice(0, 16);
+  // A big file (a video) is known by where it is, its size and when it changed, not read whole to be hashed.
+  const st = statSync(file);
+  const hash = createHash("sha1")
+    .update(st.size > 64 * 1024 * 1024 ? `${file}:${st.size}:${st.mtimeMs}` : readFileSync(file))
+    .digest("hex")
+    .slice(0, 16);
   const out = path.join(assetDir(), `${hash}${ext}`);
   if (!existsSync(out)) copyFileSync(file, out);
   return { src: out };

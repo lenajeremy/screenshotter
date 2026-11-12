@@ -49,6 +49,7 @@ import { cacheDir } from "../util/files.js";
 import { htmlToNodes, type BoardNode } from "./core.js";
 import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photos.js";
 import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
+import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
 import { describeAnchor, getComments, keysOf, reply, startThread, threadForAgent } from "./comments.js";
 
@@ -72,6 +73,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
 - Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
+- Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
 - Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment; the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
@@ -160,7 +162,7 @@ const ChangeSchema = z.discriminatedUnion("do", [
   }),
   z.object({ do: z.literal("visibility"), ids: z.array(z.string()).min(1), hidden: z.boolean() }),
   z.object({ do: z.literal("lock"), ids: z.array(z.string()).min(1), locked: z.boolean() }),
-  z.object({ do: z.literal("image"), id: z.string(), src: z.string().describe('A file path or URL for the image layer, or "unsplash:<words>" for the top free Unsplash photo ("#2" for the second).') }),
+  z.object({ do: z.literal("image"), id: z.string(), src: z.string().describe('A file path or URL for the image layer, or "unsplash:<words>" for the top free Unsplash photo ("#2" for the second). On a video layer: a video file (MP4, MOV or WebM).') }),
   z.object({
     do: z.literal("artboard"),
     name: z.string(),
@@ -378,6 +380,7 @@ export function registerBoardTools(server: McpServer) {
         const photos: string[] = [];
         await placePhotos(made.nodes, made.warnings, photos);
         adoptImages(made.nodes, made.warnings);
+        await addVideoStills(made.nodes, made.warnings);
         // New artboards go where asked, else to the right of the others.
         if (!parent) {
           const pid = page ?? b.pages[0].id;
@@ -541,7 +544,18 @@ export function registerBoardTools(server: McpServer) {
               break;
             case "image": {
               const n = need(c.id);
-              if (n.type !== "image") throw new Error(`${n.name} isn't an image layer.`);
+              if (n.type === "video") {
+                // A new video: in the library, with its own first frame as its still.
+                const got = adoptImage(c.src);
+                if (got.warning) throw new Error(got.warning);
+                const one: Record<string, BoardNode> = { [n.id]: { ...n, src: got.src, poster: undefined, style: { ...n.style } } };
+                await addVideoStills(one);
+                ops.push({ op: "set", id: c.id, src: got.src, poster: one[n.id].poster ?? null });
+                touched.push(c.id);
+                results.push({ video: c.id });
+                break;
+              }
+              if (n.type !== "image") throw new Error(`${n.name} isn't an image or video layer.`);
               if (isUnsplash(c.src)) {
                 const p = await unsplashPicture(c.src, { width: pxValue(n.style.width) ?? 1200, height: pxValue(n.style.height) ?? 800 });
                 if (p.credit) photos.push(p.credit);
