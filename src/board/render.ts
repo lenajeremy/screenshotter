@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { newPage } from "../render/browser.js";
-import { BOARD_CSS, fontFamilies, fontLinks, nodeHtml, rootOf, tokenCss, type Board } from "./core.js";
+import { BOARD_CSS, fontFamilies, fontLinks, nodeHtml, pxValue, rootOf, styleText, tokenCss, type Board } from "./core.js";
 
 export interface Box {
   x: number;
@@ -28,6 +28,36 @@ export function artboardDocument(board: Board, rootId: string): string {
     .join("");
   const art = nodeHtml(board, rootId, { ids: true, src: srcUrl });
   return `<!doctype html><html><head><meta charset="utf-8">${links}<style>${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
+}
+
+/** What a layer takes from the layers around it, so a frame previewed by itself still looks as it does in place. */
+const INHERITED = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "color", "textAlign", "textTransform", "whiteSpace", "direction"];
+
+/**
+ * A frame by itself as a web page, to open in a browser and use: the board's fonts and tokens,
+ * pictures from `src`, and what it inherits from its parents. It keeps its designed width, but
+ * never wider than the window (so narrowing the window shows how it reflows), and it updates
+ * itself when the board changes.
+ */
+export function previewDocument(board: Board, id: string, opts: { width?: number; src: (src: string) => string }): string {
+  const n = board.nodes[id];
+  const inherit: Record<string, string> = {};
+  for (let p = n.parent ? board.nodes[n.parent] : undefined; p; p = p.parent ? board.nodes[p.parent] : undefined)
+    for (const k of INHERITED) if (p.style?.[k] && !(k in inherit)) inherit[k] = String(p.style[k]);
+  const own = /^\s*[\d.]+px\s*$/.test(String(n.style?.width ?? "")) ? pxValue(n.style.width) : undefined;
+  const w = Math.round(own ?? opts.width ?? 0) || undefined;
+  const links = fontLinks(fontFamilies(board, [rootOf(board, id)]))
+    .map((href) => `<link rel="stylesheet" href="${href}">`)
+    .join("");
+  const body = nodeHtml(board, id, { src: opts.src });
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const css =
+    `${BOARD_CSS}:root{${tokenCss(board)}}html,body{margin:0}body{min-height:100vh;background:#e9e9ec;` +
+    (w ? `padding:clamp(0px,calc((100vw - ${w}px) / 2),48px) 0;}#bd-frame{width:${w}px;` : `padding:48px 0;}#bd-frame{width:fit-content;`) +
+    `max-width:100%;margin:0 auto;${styleText(inherit)}}#bd-frame>*{position:relative!important;left:auto!important;top:auto!important;max-width:100%}`;
+  // Every second, while the tab shows: if the board changed, take the new frame from this same address.
+  const live = `<script>let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title}catch{}},1000)</script>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(n.name)} · ${esc(board.name)}</title>${links}<style id="bd-css">${css}</style></head><body><div id="bd-frame">${body}</div>${live}</body></html>`;
 }
 
 interface Drawn {

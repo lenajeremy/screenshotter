@@ -10,7 +10,7 @@ import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
-import { S, api, fail, toast } from "./store.js";
+import { S, api, fail, native, toast } from "./store.js";
 
 const mod = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
 
@@ -87,6 +87,7 @@ function BoardTopbar() {
       <button class="icon-btn" title="Undo (⌘Z)" disabled=${!b.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!b.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
       <button class="btn ghost sm bd-zoom" ref=${zoomBtn} title="Zoom" onClick=${() => setZoomOpen(!zoomOpen)}>${Math.round(b.view.z * 100)}%<${Icon} n="down" s=${12} /></button>
+      <button class="btn ghost sm bd-preview" disabled=${!currentPage()?.children.length} title=${`Preview ${node(previewTarget())?.name ?? "the frame"} in your browser (⌥⌘P)`} onClick=${() => previewFrame()}><${Icon} n="play" s=${13} />Preview</button>
       <button class="btn primary" ref=${exportBtn} disabled=${!currentPage()?.children.length} onClick=${() => setExporting(!exporting)}><${Icon} n="export" s=${15} w=${2} />Export</button>
       <span class="topbar-sep"></span>
       <button class="icon-btn ${b.leftOpen ? "on" : ""}" title="Pages and layers (⌥⌘S)" onClick=${() => bset({ leftOpen: !B.leftOpen })}><${Icon} n="sidebar" s=${16} /></button>
@@ -655,6 +656,24 @@ function copySelection() {
   return { token, html: ids.map((id) => nodeHtml(B.board, id)).join("\n") };
 }
 
+/** The frame Preview opens: the selected frame (or the frame round a selected text or picture), else the page's first artboard. */
+function previewTarget() {
+  const leaf = (n) => ["text", "image", "svg", "vector"].includes(n.type);
+  let id = B.sel[0];
+  while (id && node(id) && leaf(node(id))) id = node(id).parent;
+  if (id && node(id)) return id;
+  return currentPage()?.children.find((c) => !node(c)?.hidden) ?? null;
+}
+
+/** Open a frame as a web page in the browser, where it can be used, resized and inspected; it follows the board as it changes. */
+function previewFrame(id = previewTarget()) {
+  if (!id) return;
+  const w = worldBox(id)?.width;
+  const url = `${location.origin}/board/preview?board=${encodeURIComponent(B.id)}&node=${encodeURIComponent(id)}${w ? `&w=${Math.round(w)}` : ""}`;
+  if (native) native.call("openURL", { url });
+  else window.open(url, "_blank", "noopener");
+}
+
 function copyHtml(ids) {
   const text = ids.map((id) => nodeHtml(B.board, id)).join("\n");
   navigator.clipboard
@@ -952,6 +971,7 @@ export function openLayerMenu(x, y, { stack = [] } = {}) {
     { label: "Paste", icon: "paste", kbd: "⌘V", run: () => navigator.clipboard?.readText?.().then((t) => t && onPaste({ preventDefault() {}, clipboardData: { files: [], getData: (k) => (k === "text/plain" ? t : "") } })).catch(() => toast({ kind: "info", title: "Press ⌘V to paste", timeout: 2400 })) },
     any && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: duplicateSelection },
     any && { label: "Copy as HTML", icon: "code", run: () => copyHtml(outermost()) },
+    any && { label: "Preview in browser", icon: "play", kbd: "⌥⌘P", run: () => previewFrame() },
     any && "-",
     one && { label: "Rename", icon: "text", kbd: "⌘R", run: () => bset({ renaming: one.id }) },
     any && !vectors && { label: "Wrap in flex frame", icon: "flexCol", kbd: "⇧A", run: () => wrapSelection() },
@@ -1008,6 +1028,7 @@ function onKey(e) {
   if (m && e.shiftKey && k === "l") return take(), toggleAll("locked");
   if (m && e.shiftKey && k === "k") return take(), pickImages();
   if (m && !e.altKey && (k === "k" || e.code === "KeyK")) return take(), togglePanels();
+  if (m && e.altKey && (k === "p" || e.code === "KeyP")) return take(), previewFrame();
   if (m && e.altKey && k === "c") return take(), copyStyles();
   if (m && e.altKey && k === "v") return take(), pasteStyles();
   if (m && e.altKey && k === "s") return take(), bset({ leftOpen: !B.leftOpen });

@@ -215,6 +215,47 @@ const CHECKS: Record<string, Check> = {
     const shown = await st();
     return !hidden.left && !hidden.right && shown.left && shown.right ? "ok" : `⌘K: hidden ${hidden.left}/${hidden.right}, shown ${shown.left}/${shown.right}`;
   },
+  async "Preview opens a frame as a live web page"(page) {
+    const t = await openTestBoard(page);
+    await S(page, () => {
+      const w = window as unknown as { __opened: string[]; open: (u: string) => null };
+      w.__opened = [];
+      w.open = (u: string) => (w.__opened.push(u), null);
+    });
+    const opened = () => S(page, () => (window as unknown as { __opened: string[] }).__opened.slice(-1)[0] ?? "");
+    // The button previews the selected frame, at its width on the canvas.
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), t.byName("List"));
+    await page.click(".bd-preview");
+    const a = new URL(await opened());
+    if (a.pathname !== "/board/preview" || a.searchParams.get("node") !== t.byName("List") || a.searchParams.get("w") !== "350") return `the button opened ${a.href}`;
+    // ⌥⌘P with words selected previews the frame round them.
+    const words = boards.getBoard(t.id).nodes[t.byName("Row Two")].children!.find((c) => boards.getBoard(t.id).nodes[c].type === "text")!;
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), words);
+    await page.keyboard.press("Meta+Alt+KeyP");
+    const b = new URL(await opened());
+    if (b.searchParams.get("node") !== t.byName("Row Two")) return `⌥⌘P opened ${b.href}`;
+    // The page: the frame alone, its parents' font, its own width, and it follows the board.
+    const ctx = await page.context().browser()!.newContext();
+    const view = await ctx.newPage();
+    try {
+      await view.goto(a.href);
+      const got = await view.evaluate(() => {
+        const f = document.getElementById("bd-frame")!;
+        return `${document.title}|${getComputedStyle(f).fontFamily.split(",")[0]}|${f.getBoundingClientRect().width}|${f.innerText.replace(/\s+/g, " ").trim()}`;
+      });
+      if (got !== "List · UI test board|Inter|350|One Two Three") return `the preview shows "${got}"`;
+      const one = boards.getBoard(t.id).nodes[t.byName("Row One")].children!.find((c) => boards.getBoard(t.id).nodes[c].type === "text")!;
+      boards.changeBoard(t.id, [{ op: "set", id: one, text: "Uno" }], "agent");
+      await view.waitForFunction(() => document.getElementById("bd-frame")?.innerText.includes("Uno"), null, { timeout: 5000 }).catch(() => {});
+      const after = await view.evaluate(() => document.getElementById("bd-frame")?.innerText.replace(/\s+/g, " ").trim());
+      if (after !== "Uno Two Three") return `after a change the preview shows "${after}"`;
+      const gone = await view.goto(a.href.replace(/node=[^&]+/, "node=nope"));
+      if (gone?.status() !== 404) return `a frame that isn't there gives ${gone?.status()}`;
+    } finally {
+      await ctx.close();
+    }
+    return "ok";
+  },
   async "on a board, the frame tool draws an artboard and text is typed in place"(page) {
     const t = await openTestBoard(page);
     const c = (await page.locator(".bd-canvas").boundingBox())!;

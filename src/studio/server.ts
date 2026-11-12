@@ -34,7 +34,7 @@ import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { noteStudioFolder } from "../util/studio.js";
 import { changeBoard, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard } from "../board/store.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
-import { drawLayers } from "../board/render.js";
+import { drawLayers, previewDocument } from "../board/render.js";
 import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
 import { agentsNow, bringIn, deliver, getComments, markSending, remove, reply, setResolved, startThread, type AnchorInput } from "../board/comments.js";
@@ -609,6 +609,18 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     return send(200, list);
   }
   if (req.method === "GET" && url.pathname === "/api/board") return send(200, getBoard(url.searchParams.get("id")));
+  if (req.method === "GET" && url.pathname === "/board/preview") {
+    // A frame as a web page, to open in a browser: /board/preview?board=…&node=…&w=<its width on the canvas>
+    const b = getBoard(url.searchParams.get("board"));
+    const id = url.searchParams.get("node") ?? "";
+    const page = (status: number, body: string) => {
+      res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(body);
+    };
+    if (!b.nodes[id]) return page(404, `<!doctype html><html><head><meta charset="utf-8"><title>Preview</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;font:14px system-ui;color:#666;background:#e9e9ec">That frame isn't on the board any more.</body></html>`);
+    const src = (s: string) => (/^(https?:|data:|blob:)/i.test(s) ? s : `/file?path=${encodeURIComponent(s.replace(/^file:\/\//, ""))}`);
+    return page(200, previewDocument(b, id, { width: Number(url.searchParams.get("w")) || undefined, src }));
+  }
   if (req.method === "GET" && url.pathname === "/api/board/rev") {
     const b = getBoard(url.searchParams.get("id"));
     // `talk` changes with the comments and the agents who worked here, so the Studio fetches those again.
