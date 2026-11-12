@@ -48,7 +48,7 @@ import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
 import { htmlToNodes, type BoardNode } from "./core.js";
 import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photos.js";
-import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, summarizeBoard } from "./store.js";
+import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
 import { describeAnchor, getComments, keysOf, reply, startThread, threadForAgent } from "./comments.js";
 
@@ -66,6 +66,7 @@ async function guard(fn: () => Promise<Content>): Promise<CallToolResult> {
 export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's built): a board is a design made of real HTML and CSS, on pages of artboards, that the person watches you build live in the Studio and can edit after you. Use it to show a screen, a flow or a component before writing the code.
 - board_create (or board_list to find one), then board_write_html to add an artboard: one top-level element with an explicit width and height (e.g. 390×844 for a phone screen, 1440×900 for desktop; height "fit-content" to grow with its content), styled inline. Then add to it piece by piece: target the artboard (or a frame in it) and write one visual group per call (a header, a card, a row), so the person sees it come together.
 - Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox (display:flex, flex-direction, gap, padding, align-items); elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
+- The scratchpad: the person keeps one board, "scratchpad", for trying things out. When they say to use their scratchpad (or it's a quick experiment, not a design to keep), call board_create with scratchpad: true: it adds a page named for the try to the scratchpad instead of making a board. Pass that page's id as \`page\` when you write artboards.
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
@@ -75,7 +76,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
 - Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment; the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
-const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name.");
+const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name; \"scratchpad\" is the person's scratchpad.");
 
 /** <img src="sticker:heart"> and "art:squiggle" become the built-in pictures as vectors (one-ink art takes `color`). */
 function inlineBuiltins(nodes: Record<string, BoardNode>, warnings: string[]) {
@@ -242,7 +243,7 @@ export function registerBoardTools(server: McpServer) {
     "board_list",
     {
       title: "List boards",
-      description: "The boards in the person's Studio (designs made of HTML and CSS), newest first, each with its pages and artboards (ids, names, sizes, positions).",
+      description: "The boards in the person's Studio (designs made of HTML and CSS): their scratchpad first, then newest first, each with its pages and artboards (ids, names, sizes, positions).",
       inputSchema: {},
     },
     () => guard(async () => [text(listBoards().map(({ thumb: _t, ...b }) => b))]),
@@ -252,11 +253,20 @@ export function registerBoardTools(server: McpServer) {
     "board_create",
     {
       title: "Make a board",
-      description: "Make a new, empty board in the Studio (it appears under Boards, where the person can watch you work). Returns its id and its first page. Then add artboards with board_write_html.",
-      inputSchema: { name: z.string().max(120).describe("What it's for, e.g. \"Onboarding flow\".") },
+      description:
+        "Make a new, empty board in the Studio (it appears under Boards, where the person can watch you work). Returns its id and its first page. Then add artboards with board_write_html. With scratchpad: true, it adds a new page to the person's scratchpad instead (one board that's always there for trying things out): use that when they ask you to use their scratchpad.",
+      inputSchema: {
+        name: z.string().max(120).describe("What it's for, e.g. \"Onboarding flow\" (with scratchpad, the new page's name)."),
+        scratchpad: z.boolean().optional().describe("A new page on the person's scratchpad, not a new board."),
+      },
     },
     (a) =>
       guard(async () => {
+        if (a.scratchpad) {
+          const { board, page } = scratchPage(a.name, "agent");
+          changeBoard(board.id, workingOps(board, [], await whoAmI()), "agent");
+          return [text({ id: board.id, name: board.name, page, note: `A new page on the scratchpad. Pass page: "${page.id}" to board_write_html (no target) for its artboards: without it they go on the first page.` })];
+        }
         const b = createBoard(a.name, "agent");
         changeBoard(b.id, workingOps(b, [], await whoAmI()), "agent");
         return [text({ id: b.id, name: b.name, page: b.pages[0], note: "Empty. Add an artboard with board_write_html (no target) or board_edit { do: \"artboard\" }." })];

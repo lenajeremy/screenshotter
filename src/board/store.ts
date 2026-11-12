@@ -109,7 +109,41 @@ export function summarizeBoard(b: Board): BoardSummary {
   };
 }
 
+/** The person's scratchpad: one board that's always there for trying things out, a page per try. */
+export const SCRATCHPAD = "scratchpad";
+
+/** "scratchpad", "my scratchpad", "Scratch pad"…: what the person or an agent calls it. */
+export const isScratchpad = (ref: unknown) => typeof ref === "string" && /^(my\s+|the\s+)?scratch\s*pad$/i.test(ref.trim());
+
+/** The scratchpad, made the first time anyone asks for it. */
+export function scratchpad(): Board {
+  return (
+    read(SCRATCHPAD) ??
+    withLock(SCRATCHPAD, () => {
+      const had = read(SCRATCHPAD);
+      if (had) return had;
+      const b: Board = { ...emptyBoard(SCRATCHPAD, "Scratchpad", new Date().toISOString()), by: "studio" };
+      write(b);
+      return b;
+    })
+  );
+}
+
+/** A fresh page on the scratchpad for one try, named for it (the first page, while it's still empty and unnamed). */
+export function scratchPage(name: string | undefined, by: "agent" | "studio"): { board: Board; page: { id: string; name: string } } {
+  const b = scratchpad();
+  const title = name?.trim().slice(0, 80) || `Try ${b.pages.length + 1}`;
+  const first = b.pages[0];
+  if (b.pages.length === 1 && !first.children.length && first.name === "Page 1") {
+    return { board: changeBoard(SCRATCHPAD, [{ op: "setPage", id: first.id, name: title }], by).board, page: { id: first.id, name: title } };
+  }
+  const id = newId();
+  return { board: changeBoard(SCRATCHPAD, [{ op: "addPage", page: { id, name: title, children: [] } }], by).board, page: { id, name: title } };
+}
+
+/** Every board, newest first, with the scratchpad (made if it isn't yet) always at the top. */
 export function listBoards(): BoardSummary[] {
+  scratchpad();
   const out: BoardSummary[] = [];
   for (const f of readdirSync(dir())) {
     if (!f.endsWith(".json")) continue;
@@ -121,11 +155,12 @@ export function listBoards(): BoardSummary[] {
       // One odd file never hides the rest.
     }
   }
-  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return out.sort((a, b) => Number(b.id === SCRATCHPAD) - Number(a.id === SCRATCHPAD) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function getBoard(id: unknown): Board {
   if (!validBoardId(id)) throw new Error("Unknown board");
+  if (id === SCRATCHPAD) return scratchpad();
   const b = read(id);
   if (!b) throw new Error("That board doesn't exist (it may have been deleted).");
   return b;
@@ -133,6 +168,7 @@ export function getBoard(id: unknown): Board {
 
 /** A board by id, or by name: the exact name, else the only one containing the words. */
 export function findBoard(ref: string): Board {
+  if (ref === SCRATCHPAD || isScratchpad(ref)) return scratchpad();
   if (validBoardId(ref) && existsSync(boardFile(ref))) return getBoard(ref);
   const q = ref.trim().toLowerCase();
   const all = listBoards();
@@ -192,6 +228,7 @@ export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?
 
 export function deleteBoard(id: unknown) {
   if (!validBoardId(id)) throw new Error("Unknown board");
+  if (id === SCRATCHPAD) throw new Error("The scratchpad is always there: delete its pages instead.");
   rmSync(boardFile(id), { force: true });
   rmSync(boardThumb(id), { force: true });
   rmSync(commentsFile(id), { force: true });

@@ -46,6 +46,8 @@ export function BoardsGrid({ q }) {
 
 function BoardCard({ b, renaming, onRename }) {
   const artboards = b.pages.reduce((n, p) => n + p.artboards.length, 0);
+  // The scratchpad is always there (a page per try): it can be emptied page by page, not deleted.
+  const scratch = b.id === "scratchpad";
   const [loaded, setLoaded] = useState(false);
   const more = (e) => {
     e.stopPropagation();
@@ -54,15 +56,15 @@ function BoardCard({ b, renaming, onRename }) {
       { label: "Open", icon: "right", run: () => openBoard(b.id) },
       { label: "Rename", icon: "text", run: () => onRename(b.id) },
       { label: "Duplicate", icon: "duplicate", run: () => api("/api/board/duplicate", { id: b.id }).then(refreshBoards).catch((err) => fail(err, "Couldn't duplicate")) },
-      "-",
-      { label: "Delete", icon: "trash", danger: true, run: () => removeBoard(b) },
+      ...(scratch ? [] : ["-", { label: "Delete", icon: "trash", danger: true, run: () => removeBoard(b) }]),
     ]);
   };
-  return html`<div class="sp-card bd-card" data-board=${b.id} tabindex="0" role="button" aria-label=${b.name}
+  return html`<div class="sp-card bd-card ${scratch ? "scratch" : ""}" data-board=${b.id} tabindex="0" role="button" aria-label=${b.name}
       onClick=${() => !renaming && openBoard(b.id)} onKeyDown=${(e) => e.key === "Enter" && openBoard(b.id)}
       onContextMenu=${(e) => (e.preventDefault(), more(e))}>
     <div class="sp-thumb">
-      ${b.thumb ? html`<img class=${loaded ? "in" : ""} src=${fileUrl(b.thumb, Math.round(b.thumbAt ?? 0))} alt="" onLoad=${() => setLoaded(true)} />` : html`<span class="bd-thumb-empty"><${Icon} n="frame" s=${22} /></span>`}
+      ${b.thumb ? html`<img class=${loaded ? "in" : ""} src=${fileUrl(b.thumb, Math.round(b.thumbAt ?? 0))} alt="" onLoad=${() => setLoaded(true)} />` : html`<span class="bd-thumb-empty"><${Icon} n=${scratch ? "pen" : "frame"} s=${22} />${scratch && html`<small>Try things out here, a page each</small>`}</span>`}
+      ${scratch && html`<span class="sp-badge scratch">Scratchpad</span>`}
       ${b.working.length > 0 && html`<span class="sp-badge"><i></i>Agent at work</span>`}
     </div>
     <div class="sp-info">
@@ -76,7 +78,7 @@ function BoardCard({ b, renaming, onRename }) {
               }}
               onBlur=${(e) => renameBoard(b, e.target.value.trim()).then(() => onRename(null))} />`
           : html`<b title=${b.name}>${b.name}</b>`}
-        <span class="sp-meta"><span>${artboards} artboard${artboards === 1 ? "" : "s"}</span><span>Edited ${when(b.updatedAt)}</span></span>
+        <span class="sp-meta">${scratch ? html`<span>${b.pages.length} page${b.pages.length === 1 ? "" : "s"}</span>` : html`<span>${artboards} artboard${artboards === 1 ? "" : "s"}</span>`}<span>Edited ${when(b.updatedAt)}</span></span>
       </div>
       <button class="sp-more" title="More" onClick=${more}><${Icon} n="dots" s=${16} /></button>
     </div>

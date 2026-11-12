@@ -938,6 +938,26 @@ const CHECKS: Record<string, Check> = {
     const handed = moved.shot === 2 && moved.devices[1].length === 0 && moved.devices[2].length === 1 && Math.abs(moved.devices[2][0] - 0.5) < 0.15;
     return /Across 1 & 2/.test(label) && onSeam && handed ? "ok" : `label "${label}", across ${JSON.stringify(across)}, moved ${JSON.stringify(moved)}`;
   },
+  async "the scratchpad comes first among the boards, and stays"(page) {
+    boards.createBoard("A newer board", "studio");
+    await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      st.set({ libraryShelf: "boards" });
+      (await import("/ui/scenes.js" as string)).openScenesPage();
+    });
+    await page.locator('.sp-shelves [role="tab"]', { hasText: "Boards" }).click();
+    await page.waitForSelector(".bd-card");
+    const first = await S(page, () => {
+      const c = document.querySelector(".bd-card")!;
+      return `${c.getAttribute("data-board")} ${c.querySelector(".sp-badge.scratch")?.textContent ?? ""}`;
+    });
+    if (first !== "scratchpad Scratchpad") return `the first board is "${first}"`;
+    await page.locator('.bd-card[data-board="scratchpad"] .sp-more').click();
+    await page.waitForTimeout(200);
+    const items = await S(page, () => [...document.querySelectorAll(".ctx-item .ctx-label")].map((x) => x.textContent).join(","));
+    await page.keyboard.press("Escape");
+    return items === "Open,Rename,Duplicate" ? "ok" : `its menu has ${items}`;
+  },
   async "My designs' list lines up in columns, and the store page keeps its own layout"(page) {
     // Two saved designs, so the list has rows.
     for (const name of ["List test A", "List test B"]) {

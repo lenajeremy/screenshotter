@@ -396,15 +396,33 @@ check(close.images.length === 1 && pngSize(close.images[0]).width === 640, "a la
 const exp = await call("board_export", { board, scale: 1 });
 check(exp.json.files.length === 6 && exp.json.files.every((f: string) => readFileSync(f).length > 100), "every artboard exports");
 const list = await call("board_list", {});
-check(list.json[0].working.length >= 1, "the artboards being worked on are listed");
+check(list.json.find((x: any) => x.id === board).working.length >= 1, "the artboards being worked on are listed");
 await call("board_done", { board });
-check((await call("board_list", {})).json[0].working.length === 0, "board_done clears them");
+check((await call("board_list", {})).json.find((x: any) => x.id === board).working.length === 0, "board_done clears them");
+
+// The scratchpad: one board that's always there, a new page for each try.
+{
+  check((await call("board_list", {})).json[0].id === "scratchpad", "board_list has the scratchpad, first");
+  const one = await call("board_create", { name: "Try buttons", scratchpad: true });
+  const two = await call("board_create", { name: "Try cards", scratchpad: true });
+  check(one.json.id === "scratchpad" && one.json.page.name === "Try buttons" && two.json.page.name === "Try cards" && two.json.page.id !== one.json.page.id, "board_create with scratchpad adds a page named for the try");
+  const art = await call("board_write_html", { board: "my scratchpad", page: two.json.page.id, html: '<div style="width:300px;height:200px;background:#eee"></div>' });
+  const sp = (await call("board_read", { board: "Scratchpad" })).json;
+  check(sp.pages.length === 2 && sp.pages[0].name === "Try buttons" && sp.pages[1].artboards.length === 1 && sp.pages[0].artboards.length === 0 && art.json.created?.length === 1, "the first try takes its empty first page; an artboard lands on the try's page; \"my scratchpad\" finds it");
+}
 
 // ---------------------------------------------------------------------------------------------
 // Comments: who worked on a board, and comments that reach them through (a stand-in for) Agentman
 
 {
   const store = await import("../src/board/store.js");
+  let kept = "";
+  try {
+    store.deleteBoard("scratchpad");
+  } catch (e) {
+    kept = (e as Error).message;
+  }
+  check(/always there/.test(kept), "the scratchpad can't be deleted (its pages can)");
   const talk = await import("../src/board/comments.js");
   const b0 = store.getBoard(board);
   const agent = b0.agents?.[AGENT];
