@@ -350,6 +350,16 @@ const shaped = await call("board_edit", { board, changes: [{ do: "shape", type: 
 check(shaped.json.results.every((r: any) => r.shape), "an agent adds Screenshotter's shapes, in a frame or on the page");
 const dev = await call("board_edit", { board, changes: [{ do: "device", artboard: second.json.created[0].id, height: 300, x: 1500, y: 0 }] });
 check(dev.json.results[0].device && dev.json.results[0].picture.endsWith(".png"), "an agent puts an artboard in a device frame");
+{
+  // Around the frame is see-through, not white, so the device sits on whatever is behind it.
+  const { readBmp } = await import("../src/util/png.js");
+  const { execFileSync } = await import("node:child_process");
+  const bmp = path.join(out, "device.bmp");
+  execFileSync("sips", ["-s", "format", "bmp", dev.json.results[0].picture, "--out", bmp], { stdio: "ignore" });
+  const f = readBmp(readFileSync(bmp));
+  const alpha = (x: number, y: number) => f.rgba[(y * f.width + x) * 4 + 3];
+  check(alpha(2, 2) === 0 && alpha(f.width - 3, f.height - 3) === 0 && alpha(f.width >> 1, f.height >> 1) === 255, `a device picture is see-through round the frame (corner alpha ${alpha(2, 2)}, middle ${alpha(f.width >> 1, f.height >> 1)})`);
+}
 // In one batch, each change works from the ones before it: a copy placed after its component was restyled has the new style.
 const pillMade = await call("board_write_html", { board, target: art, html: `<div data-name="Pill" style="display:flex;padding:6px 12px;background:#dddddd"><span>Pill</span></div>` });
 const pill = pillMade.json.created[0].id;

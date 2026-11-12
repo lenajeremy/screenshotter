@@ -109,6 +109,9 @@ function normalize(input: BackgroundInput | undefined): { bg: BackgroundObject; 
   if (input === undefined) return normalize("midnight");
   if (typeof input === "string") {
     const s = input.trim();
+    // "transparent" and "none" mean no background at all, the same as { type: "transparent" }, not a
+    // see-through solid colour (which still leaves the page's white behind everything).
+    if (/^(transparent|none)$/i.test(s)) return { bg: { type: "transparent" } };
     const look = findLook(s);
     if (look) return { bg: { ...look.background }, look, source: look };
     if (!looksLikeCss(s)) throw unknownLook(s);

@@ -21,7 +21,8 @@ const jobs = new Map<string, Promise<{ path: string; width: number; height: numb
 
 export async function deviceImage(screenshot: string, opts: DeviceOptions = {}): Promise<{ path: string; width: number; height: number }> {
   if (!existsSync(screenshot)) throw new Error(`There's no screenshot at ${screenshot}.`);
-  const key = createHash("sha1").update(JSON.stringify([screenshot, statSync(screenshot).mtimeMs, opts])).digest("hex").slice(0, 16);
+  // "clear": pictures cached before devices came out on a see-through background had a white one; a new key leaves them behind.
+  const key = createHash("sha1").update(JSON.stringify(["clear", screenshot, statSync(screenshot).mtimeMs, opts])).digest("hex").slice(0, 16);
   const out = path.join(cacheDir("board-devices"), `${key}.png`);
   if (existsSync(out)) return { path: out, ...(await imageSize(out)) };
   const running = jobs.get(key);
@@ -29,13 +30,13 @@ export async function deviceImage(screenshot: string, opts: DeviceOptions = {}):
   const job = (async () => {
     const dev = { screenshot, ...(opts.device ? { device: opts.device } : {}), ...(opts.color ? { color: opts.color } : {}), ...(opts.clay ? { clay: opts.clay } : {}), shadow: "none" as const, x: 0.5, y: 0.5, anchor: "center" as const };
     // Where the device comes out on a big square canvas, to fit the real one closely round it.
-    const probe = await layoutScene({ devices: [{ ...dev, height: 0.8 }], canvas: { width: 2400, height: 2400 }, layout: "custom", background: "transparent" });
+    const probe = await layoutScene({ devices: [{ ...dev, height: 0.8 }], canvas: { width: 2400, height: 2400 }, layout: "custom", background: { type: "transparent" } });
     const d = probe.entities.find((e) => e.kind === "device");
     if (!d?.width || !d.height) throw new Error("Couldn't work out the device's size.");
     const pad = 0.02;
     const W = Math.round(d.width * 2400 * (1 + pad * 2));
     const H = Math.round(d.height * 2400 * (1 + pad * 2));
-    await createMockup({ devices: [{ ...dev, height: 1 / (1 + pad * 2) }], canvas: { width: W, height: H }, layout: "custom", background: "transparent", format: "png", output: out, preview: false });
+    await createMockup({ devices: [{ ...dev, height: 1 / (1 + pad * 2) }], canvas: { width: W, height: H }, layout: "custom", background: { type: "transparent" }, format: "png", output: out, preview: false });
     return { path: out, width: W, height: H };
   })();
   jobs.set(key, job);
