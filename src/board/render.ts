@@ -35,10 +35,13 @@ const INHERITED = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHei
 
 /**
  * A frame by itself as a web page, to open in a browser and use: the board's fonts and tokens,
- * pictures from `src`, and what it inherits from its parents. It keeps its designed width, but
- * never wider than the window (so narrowing the window shows how it reflows), and it updates
- * itself when the board changes.
+ * pictures from `src`, and what it inherits from its parents. A desktop-size frame (PAGE_WIDTH or
+ * wider) is the page: it fills the window, edge to edge and at least as tall. Anything smaller (a
+ * phone, a card) keeps its size, centred on a quiet backdrop. Neither is ever wider than the window,
+ * so narrowing it shows how the frame reflows. It updates itself when the board changes.
  */
+const PAGE_WIDTH = 1024;
+
 export function previewDocument(board: Board, id: string, opts: { width?: number; src: (src: string) => string }): string {
   const n = board.nodes[id];
   const inherit: Record<string, string> = {};
@@ -51,10 +54,15 @@ export function previewDocument(board: Board, id: string, opts: { width?: number
     .join("");
   const body = nodeHtml(board, id, { src: opts.src });
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const page = (w ?? 0) >= PAGE_WIDTH;
   const css =
     `${BOARD_CSS}:root{${tokenCss(board)}}html,body{margin:0}body{min-height:100vh;background:#e9e9ec;` +
-    (w ? `padding:clamp(0px,calc((100vw - ${w}px) / 2),48px) 0;}#bd-frame{width:${w}px;` : `padding:48px 0;}#bd-frame{width:fit-content;`) +
-    `max-width:100%;margin:0 auto;${styleText(inherit)}}#bd-frame>*{position:relative!important;left:auto!important;top:auto!important;max-width:100%}`;
+    (page
+      ? `}#bd-frame{width:100%;`
+      : w
+        ? `padding:clamp(0px,calc((100vw - ${w}px) / 2),48px) 0;}#bd-frame{width:${w}px;`
+        : `padding:48px 0;}#bd-frame{width:fit-content;`) +
+    `max-width:100%;margin:0 auto;${styleText(inherit)}}#bd-frame>*{position:relative!important;left:auto!important;top:auto!important;max-width:100%${page ? ";width:100%!important;min-height:100vh" : ""}}`;
   // Every second, while the tab shows: if the board changed, take the new frame from this same address.
   const live = `<script>let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title}catch{}},1000)</script>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(n.name)} · ${esc(board.name)}</title>${links}<style id="bd-css">${css}</style></head><body><div id="bd-frame">${body}</div>${live}</body></html>`;

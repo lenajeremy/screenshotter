@@ -249,6 +249,11 @@ const CHECKS: Record<string, Check> = {
       await view.waitForFunction(() => document.getElementById("bd-frame")?.innerText.includes("Uno"), null, { timeout: 5000 }).catch(() => {});
       const after = await view.evaluate(() => document.getElementById("bd-frame")?.innerText.replace(/\s+/g, " ").trim());
       if (after !== "Uno Two Three") return `after a change the preview shows "${after}"`;
+      // A desktop-size frame is the page: it fills the window, with no backdrop round it.
+      boards.changeBoard(t.id, [{ op: "set", id: t.byName("Phone"), style: { width: "1200px" } }], "agent");
+      await view.goto(`${a.origin}/board/preview?board=${t.id}&node=${t.byName("Phone")}&w=1200`);
+      const wide = await view.evaluate(() => `${document.getElementById("bd-frame")!.firstElementChild!.getBoundingClientRect().width}/${innerWidth} ${getComputedStyle(document.body).paddingTop}`);
+      if (wide !== `${await view.evaluate(() => innerWidth)}/${await view.evaluate(() => innerWidth)} 0px`) return `a desktop-size frame is ${wide} wide`;
       const gone = await view.goto(a.href.replace(/node=[^&]+/, "node=nope"));
       if (gone?.status() !== 404) return `a frame that isn't there gives ${gone?.status()}`;
     } finally {
