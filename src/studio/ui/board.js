@@ -230,6 +230,9 @@ function LayersList() {
   </section>`;
 }
 
+/** How far each level of the layer list steps in: the chevron (16) and the gap after it (4). */
+const INDENT = 20;
+
 function LayerRow({ id, depth, n }) {
   const on = B.sel.includes(id);
   const open = B.open.has(id);
@@ -240,7 +243,8 @@ function LayerRow({ id, depth, n }) {
     bset({ open: o });
   };
   const name = n.type === "text" && /^Text$|^Text \d+$/.test(n.name) ? plainText(n.text).slice(0, 40) || n.name : n.name;
-  return html`<div class="bd-row ${on ? "on" : ""} ${B.hover === id ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""}" data-lid=${id} style=${{ paddingLeft: 6 + depth * 14 + "px" }}
+  // Each level steps in by the chevron and its gap, so a layer's chevron sits under its parent's icon.
+  return html`<div class="bd-row ${on ? "on" : ""} ${B.hover === id ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ paddingLeft: 6 + depth * INDENT + "px" }}
       onPointerEnter=${() => bset({ hover: id })} onPointerLeave=${() => B.hover === id && bset({ hover: null })}
       onDblClick=${(e) => (e.stopPropagation(), bset({ renaming: id }))}
       onContextMenu=${(e) => {
