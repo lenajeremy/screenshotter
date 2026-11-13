@@ -62,6 +62,11 @@ h1 span { color: var(--text-3); }
 .reel video { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 14px 14px 0 0; box-shadow: 0 0 0 1px var(--line-3); background: #000; }
 @media (max-width: 560px) { .reel { margin-bottom: -22px; } }
 
+/* ------------------------------------------------------------------ Boards */
+.pic { margin: auto 0 -28px; padding-top: 28px; }
+.pic img { display: block; width: 100%; height: auto; border-radius: 10px 10px 0 0; box-shadow: 0 0 0 1px var(--line-2); }
+@media (max-width: 560px) { .pic { margin-bottom: -22px; } }
+
 /* ------------------------------------------------------------------ agent session */
 .sess { padding: 18px; font: 12.5px/1.6 var(--mono); }
 .sess .ln { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; color: var(--text-2); transition: opacity 300ms ease, transform 400ms var(--ease); }
@@ -106,6 +111,7 @@ h1 span { color: var(--text-3); }
     <a class="brand" href="#top"><img src="favicon.svg" alt="" width="24" height="24">Screenshotter</a>
     <nav class="links" aria-label="Sections">
       <a href="#how">How it works</a>
+      <a href="#boards">Boards</a>
       <a href="#agents">Agents</a>
       <a href="features.html">Features</a>
       <a href="changelog.html">What's new</a>
@@ -352,12 +358,60 @@ h1 span { color: var(--text-3); }
   </div>
 </section>
 
+<!-- ============================================================ boards -->
+<section class="sec" id="boards">
+  <div class="wrap">
+    <h2 class="h2 rv">Boards.<span>Design with your agent, on one canvas.</span></h2>
+    <div class="cells g3">
+      <article class="cell c2 rv">
+        <h3>A canvas of real HTML and CSS</h3>
+        <p>Draw artboards, nudge them and lay them out with flex, as in Figma; every layer is code you can ship.</p>
+        <div class="pic"><img src="assets/boards-editor.webp" alt="A board in Screenshotter: three phone artboards for a recipe app, its layers on the left, the selected screenshot's settings on the right, and an agent at work on the third artboard" width="2880" height="1800" loading="lazy"></div>
+      </article>
+      <article class="cell rv">
+        <h3>Comment, and your agent answers</h3>
+        <p>Pin a comment to a layer and tag an agent: it gets the message and replies on the board.</p>
+        <div class="pic"><img src="assets/boards-comment.webp" alt="A comment on a headline asking an agent to make it warmer, and the agent's reply saying what it changed" width="1070" height="1032" loading="lazy"></div>
+      </article>
+    </div>
+    <div class="cells g3">
+      <article class="cell rv">
+        <h3>Agents design while you watch</h3>
+        <p>Ask yours for a screen and it lands on the board change by change, each one a step you can undo.</p>
+      </article>
+      <article class="cell rv">
+        <h3>Preview it in the browser</h3>
+        <p><b>⌥⌘P</b> opens a frame as a live web page that updates as the board changes.</p>
+      </article>
+      <article class="cell rv">
+        <h3>Scale everything at once</h3>
+        <p><b>K</b> scales a layer with its type, padding, corners and shadows, all in proportion.</p>
+      </article>
+    </div>
+    <div class="cells g3">
+      <article class="cell rv">
+        <h3>Components and tokens</h3>
+        <p>Make a button once and place copies that follow it; name colours and sizes once and use them everywhere.</p>
+      </article>
+      <article class="cell rv">
+        <h3>Video, the Figma way</h3>
+        <p>Drop in an MP4: the canvas shows its first frame, and Preview plays it.</p>
+      </article>
+      <article class="cell rv">
+        <h3>A scratchpad for every idea</h3>
+        <p>One board that's always there, with a page per try. Tell your agent to use it.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
 <!-- ============================================================ agents -->
 <section class="sec agents" id="agents">
   <div class="wrap split">
     <div class="rv">
       <h2 class="h2">Or let your agent do it.<span>Claude Code, Codex, OpenCode.</span></h2>
       <p class="lead">Add Screenshotter once, then ask for App Store screenshots. Your agent captures the app, designs the set and hands you the files.</p>
+      <p class="lead">Or have it design screens on a board while you watch.</p>
       <p class="lead">Rather ask in the app? Press <kbd>⌘K</kbd>.</p>
     </div>
     <div class="agent-card rv">
