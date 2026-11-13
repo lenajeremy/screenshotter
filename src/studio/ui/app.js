@@ -776,7 +776,8 @@ function AIChat({ docked }) {
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "k") {
               e.preventDefault();
               dockAI(!docked);
-            } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+            } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+              // (Not the Enter that confirms Japanese, Chinese or Korean input: Safari gives it keyCode 229.)
               e.preventDefault();
               send();
             } else if (e.key === "Escape") setAi({ open: false });

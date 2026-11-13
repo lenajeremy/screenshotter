@@ -490,6 +490,9 @@ function TextEnt({ e, H, editing, onDone }) {
   const finish = (ev, part) => onDone(part, accentFromEdit(ev.target));
   const keys = (ev, part) => {
     ev.stopPropagation();
+    // Enter or Escape while composing Japanese, Chinese or Korean is the input method's (Safari
+    // says isComposing is false on the key that confirms it, but gives it keyCode 229).
+    if (ev.isComposing || ev.keyCode === 229) return;
     if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "b") {
       ev.preventDefault();
       toggleAccentIn(ev.currentTarget, accentCss(accent));

@@ -975,8 +975,9 @@ export function AccentText({ value, onChange, placeholder, rows = 2, onFocus }) 
       onKeyDown=${(e) => {
         e.stopPropagation();
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") return toggle(e);
-        // Enter finishes, like the canvas's own text editing; Shift+Enter breaks the line.
-        if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing) {
+        // Enter finishes, like the canvas's own text editing; Shift+Enter breaks the line. Not
+        // while an input method is composing (Safari gives its confirming Enter keyCode 229).
+        if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
           e.preventDefault();
           e.target.blur();
         }

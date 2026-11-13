@@ -1238,6 +1238,31 @@ const CHECKS: Record<string, Check> = {
     await page.keyboard.up("Space");
     return panning.space && !after.space ? "ok" : `Space with nothing focused: pan ${panning.space}; after the window lost focus: still ${after.space}`;
   },
+  async "Enter while composing Japanese keeps the text being edited, and emptying a text lets go of it"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", texts: [{ text: "First", x: 0.5, y: 0.2 }, { text: "Second", x: 0.5, y: 0.35 }] }), selected: "text-1" });
+    await page.waitForTimeout(1500);
+    await S(page, async () => (await import("/ui/canvas.js" as string)).canvasApi.editText("text-1"));
+    await page.waitForSelector(".stage .editing[contenteditable]");
+    // The Enter that confirms a word in an input method: isComposing, or Safari's keyCode 229.
+    await S(page, () => {
+      const el = document.querySelector(".stage .editing[contenteditable]")!;
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
+      const safari = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      Object.defineProperty(safari, "keyCode", { value: 229 });
+      el.dispatchEvent(safari);
+    });
+    await page.waitForTimeout(200);
+    const still = await S(page, () => Boolean(document.querySelector(".stage .editing[contenteditable]")));
+    // Emptied (its words are all selected as editing starts) and finished: it goes, and nothing is left selected.
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(600);
+    const r = await S(page, async () => {
+      const s = (await import("/ui/store.js" as string)).S;
+      return { texts: (s.scene.texts ?? []).map((t: { text: string }) => t.text).join(), sel: s.selected };
+    });
+    return still && r.texts === "Second" && r.sel === null ? "ok" : `editing after a composing Enter: ${still}; texts "${r.texts}", selected ${r.sel}`;
+  },
 };
 
 const engines = { chromium, webkit } as const;
