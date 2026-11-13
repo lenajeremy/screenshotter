@@ -8,7 +8,7 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { outputRoot, slug } from "../util/files.js";
+import { outputRoot, resolveUserPath, slug } from "../util/files.js";
 import {
   applyOps,
   expandOps,
@@ -50,7 +50,7 @@ import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
 import { htmlToNodes, type BoardNode } from "./core.js";
 import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photos.js";
-import { adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
+import { adoptCssPictures, adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
 import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
 import { describeAnchor, getComments, keysOf, reply, startThread, threadForAgent } from "./comments.js";
@@ -391,7 +391,10 @@ export function registerBoardTools(server: McpServer) {
         // New artboards go where asked, else to the right of the others.
         if (!parent) {
           const pid = page ?? b.pages[0].id;
-          let { left, top } = a.x !== undefined || a.y !== undefined ? { left: a.x ?? 0, top: a.y ?? 0 } : freeSpot(b, pid, 0);
+          const was = mode === "replace" && a.target && !b.nodes[a.target]?.parent ? b.nodes[a.target] : undefined;
+          // An artboard being replaced keeps its place; any other new one goes where asked, else beside the others.
+          let { left, top } =
+            a.x !== undefined || a.y !== undefined ? { left: a.x ?? 0, top: a.y ?? 0 } : was ? { left: pxValue(was.style.left) ?? 0, top: pxValue(was.style.top) ?? 0 } : freeSpot(b, pid, 0);
           for (const id of made.roots) {
             const s = made.nodes[id].style;
             s.left = `${Math.round(left)}px`;
@@ -453,6 +456,7 @@ export function registerBoardTools(server: McpServer) {
                   if (done === null) delete style[k];
                   else style[k] = done;
                 }
+                adoptCssPictures(style, photoWarnings);
                 ops.push({ op: "set", id, style });
               }
               touched.push(...c.ids);
@@ -492,9 +496,8 @@ export function registerBoardTools(server: McpServer) {
               break;
             case "scale": {
               for (const id of c.ids) need(id);
-              // From the board as this call's earlier changes left it, so it doesn't undo them.
-              const now = ops.length ? applyOps(b, expandOps(b, ops)).board : b;
-              for (const id of c.ids) ops.push(...scaleOps(now, id, c.by));
+              // `b` already has this call's earlier changes (they're applied as each one is read).
+              for (const id of c.ids) ops.push(...scaleOps(b, id, c.by));
               results.push({ scaled: c.ids.length, by: c.by });
               break;
             }
@@ -684,7 +687,7 @@ export function registerBoardTools(server: McpServer) {
                 writeFileSync(shot, images[c.artboard]);
               }
               if (!shot) throw new Error("A device needs a `screenshot` or an `artboard`.");
-              const img = await deviceImage(path.resolve(shot), { device: c.device, color: c.color });
+              const img = await deviceImage(resolveUserPath(shot), { device: c.device, color: c.color });
               const h = c.height ?? 460;
               const w = Math.round((img.width / img.height) * h);
               const where = placeFor(b, c, need);
@@ -826,7 +829,7 @@ export function registerBoardTools(server: McpServer) {
     (a) =>
       guard(async () => {
         const me = await whoAmI();
-        const boards = a.board ? [findBoard(a.board)] : listBoards().map((s) => getBoard(s.id));
+        const boards = a.board ? [findBoard(a.board)] : listBoards().filter((s) => !s.damaged).map((s) => getBoard(s.id));
         const out = [];
         for (const b of boards) {
           const mine = keysOf(b, me);

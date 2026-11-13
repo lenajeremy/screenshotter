@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import path from "node:path";
 import { libraryFolder } from "../studio/scenes.js";
 import { ensureDir, resolveUserPath } from "../util/files.js";
-import { applyOps, emptyBoard, expandOps, newId, pxValue, reconcileOps, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
+import { applyOps, emptyBoard, expandOps, mapCssUrls, newId, pxValue, reconcileOps, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
 
 const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));
 export const boardFile = (id: string) => path.join(dir(), `${id}.json`);
@@ -265,7 +265,7 @@ export function findBoard(ref: string): Board {
   if (ref === SCRATCHPAD || isScratchpad(ref)) return scratchpad();
   if (validBoardId(ref) && existsSync(boardFile(ref))) return getBoard(ref);
   const q = ref.trim().toLowerCase();
-  const all = listBoards();
+  const all = listBoards().filter((x) => !x.damaged);
   const exact = all.filter((x) => x.name.toLowerCase() === q);
   const hits = exact.length ? exact : all.filter((x) => x.name.toLowerCase().includes(q));
   if (hits.length === 1) return getBoard(hits[0].id);
@@ -356,7 +356,27 @@ export function adoptImages(nodes: Record<string, BoardNode>, warnings: string[]
     n.src = adopted.src;
     if (n.type === "video" && n.poster) n.poster = adoptImage(n.poster, lib).src;
   }
+  for (const n of Object.values(nodes)) adoptCssPictures(n.style, warnings, lib);
   return nodes;
+}
+
+/** A local file in CSS (url(/path), url(~/path), url(file://…)): a picture to copy into the library. */
+const LOCAL_URL = /url\(\s*['"]?(\/|~|file:)/i;
+
+/**
+ * Pictures that CSS points at (a background-image, say) copied into the library like image layers'
+ * are, so the Studio can show them (it serves only the library's files).
+ */
+export function adoptCssPictures(style: Record<string, string | null | undefined>, warnings: string[] = [], lib = path.resolve(libraryFolder())) {
+  for (const [k, v] of Object.entries(style)) {
+    if (typeof v !== "string" || !LOCAL_URL.test(v)) continue;
+    style[k] = mapCssUrls(v, (src) => {
+      if (!/^(\/|~|file:)/i.test(src)) return src;
+      const adopted = adoptImage(src, lib);
+      if (adopted.warning) warnings.push(adopted.warning);
+      return adopted.src;
+    });
+  }
 }
 
 export function adoptImage(src: string, lib = path.resolve(libraryFolder())): { src: string; warning?: string } {

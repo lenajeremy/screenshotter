@@ -344,7 +344,7 @@ function recentFiles(): Array<{ path: string; kind: string; mtime: number; scene
     const dir = path.join(outputRoot(), kind);
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
-      if (!/\.(png|jpe?g|webp|mp4|mov|webm|gif)$/i.test(f) || /\.(tmp|page)\.png$|\.poster\.|\.filmstrip\./.test(f) || STILL.test(f)) continue;
+      if (!/\.(png|jpe?g|webp|mp4|mov|webm|gif)$/i.test(f) || /\.(tmp|page)\.png$|\.poster\.|\.filmstrip\.|\.still\.jpg$/.test(f) || STILL.test(f)) continue;
       const p = path.join(dir, f);
       out.push({ path: p, kind, mtime: statSync(p).mtimeMs, scene: kind === "mockups" || kind === "videos" ? exportScene(p) : undefined });
     }
@@ -950,9 +950,14 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const { images } = await drawLayers(b, a.nodes, { scale: Math.max(0.5, Math.min(4, a.scale ?? 2)), format, transparent: format === "png" });
       const folder = ensureDir(path.join(outputRoot(), "boards", slug(b.name) || b.id));
       const files: string[] = [];
+      const taken = new Map<string, number>();
       for (const id of a.nodes) {
         if (!images[id]) continue;
-        const f = path.join(folder, `${(b.nodes[id]?.name ?? id).replace(/[/:\\]/g, "-")}${a.scale && a.scale !== 1 ? ` @${a.scale}x` : ""}.${format === "jpeg" ? "jpg" : "png"}`);
+        // Two artboards called the same (a duplicate keeps its name) go to "Name" and "Name 2".
+        const name = (b.nodes[id]?.name ?? id).replace(/[/:\\]/g, "-");
+        const n = (taken.get(name.toLowerCase()) ?? 0) + 1;
+        taken.set(name.toLowerCase(), n);
+        const f = path.join(folder, `${name}${n > 1 ? ` ${n}` : ""}${a.scale && a.scale !== 1 ? ` @${a.scale}x` : ""}.${format === "jpeg" ? "jpg" : "png"}`);
         writeFileSync(f, images[id]);
         files.push(f);
       }

@@ -1812,7 +1812,30 @@ export function expandOps(input: Board, ops: Op[]): Op[] {
     if (!sync) {
       if (op.op === "add" && op.parent) {
         const r = instanceRootOf(pre, op.parent);
-        if (r && !Object.values(op.nodes).every((n) => n.master)) throw new OpError(inCopyMessage(pre, r));
+        // The Studio duplicates a layer inside a copy as more of that copy (every new layer follows
+        // one); a copy of another component can't go in, as the copy's next repair would drop it.
+        const nodes = Object.values(op.nodes);
+        if (r && (!nodes.every((n) => n.master) || nodes.some((n) => n.instanceOf))) throw new OpError(inCopyMessage(pre, r));
+      }
+      // A copy of a component inside that component would hold a copy of itself, without end.
+      if (op.op === "add") {
+        // Up from each new copy: through the new layers holding it, then from where they land.
+        const a = op;
+        const holder = (x: string): string | null => {
+          const p = a.nodes[x] ? a.nodes[x].parent : pre.nodes[x]?.parent;
+          return a.nodes[x] && !(p && a.nodes[p]) ? a.parent : (p ?? null);
+        };
+        for (const n of Object.values(a.nodes)) {
+          if (!n.instanceOf) continue;
+          for (let x = holder(n.id), i = 0; x && i < 1000; x = holder(x), i++) if (x === n.instanceOf) throw new OpError(selfCopyMessage(pre, n.instanceOf));
+        }
+      }
+      if (op.op === "move" && op.parent && pre.nodes[op.id]) {
+        const holders = new Set([op.parent, ...ancestors(pre, op.parent)]);
+        for (const x of subtree(pre, op.id)) {
+          const m = pre.nodes[x].instanceOf;
+          if (m && holders.has(m)) throw new OpError(selfCopyMessage(pre, m));
+        }
       }
       if (op.op === "delete")
         for (const id of op.ids) {
@@ -1838,6 +1861,21 @@ export function expandOps(input: Board, ops: Op[]): Op[] {
     for (const p of propagate(pre, w, op)) run(p, depth + 1);
   };
   for (const op of ops) run(op, 0);
+  return out;
+}
+
+const selfCopyMessage = (board: Board, main: string) => `A copy of the component “${board.nodes[main]?.name ?? "?"}” can't go inside that component: it would hold a copy of itself.`;
+
+/** Steps that make the copies of components going with `ids` (themselves, or inside them) ordinary layers. */
+function detachGone(pre: Board, post: Board, ids: string[]): Op[] {
+  const out: Op[] = [];
+  for (const id of ids) {
+    if (!pre.nodes[id]) continue;
+    for (const c of subtree(pre, id)) {
+      if (!pre.nodes[c].isComponent) continue;
+      for (const r of instancesOf(post, c)) for (const x of subtree(post, r)) out.push({ op: "set", id: x, instanceOf: null, master: null, overrides: null, sync: true });
+    }
+  }
   return out;
 }
 
@@ -1878,19 +1916,21 @@ function propagate(pre: Board, post: Board, op: Op): Op[] {
     return out;
   }
   if (op.op === "delete") {
+    // A component deleted, or the artboard or frame holding one: its copies stay, as ordinary layers.
+    out.push(...detachGone(pre, post, op.ids));
     for (const id of op.ids) {
       if (!pre.nodes[id]) continue;
       const main = mainOf(pre, id);
-      if (!main) continue;
-      if (id === main) {
-        // A component deleted: its copies stay, as ordinary layers.
-        for (const r of instancesOf(pre, id)) for (const x of subtree(post, r)) out.push({ op: "set", id: x, instanceOf: null, master: null, overrides: null, sync: true });
-        continue;
-      }
+      if (!main || main === id) continue;
       const gone = (followersMap(pre).get(id) ?? []).filter((y) => post.nodes[y]);
       if (gone.length) out.push({ op: "delete", ids: gone, sync: true });
     }
     return out;
+  }
+  if (op.op === "deletePage") {
+    // The same for a page that goes with components on it.
+    const page = pre.pages.find((p) => p.id === op.id);
+    return page ? detachGone(pre, post, page.children) : out;
   }
   if (op.op === "move") {
     const was = pre.nodes[op.id];

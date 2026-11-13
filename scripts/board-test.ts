@@ -637,6 +637,45 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
   check(fake.sent.every((s) => s.sessionId === AGENT), "nothing went to an agent no one named");
 }
 await fake.close();
+
+// ---------------------------------------------------------------------------------------------
+// Fixes from the 0.14 review: copies of components in the wrong place, components that go with
+// their artboard, batches that scale, replaced artboards, and pictures CSS points at.
+{
+  const store = await import("../src/board/store.js");
+  const nb = await call("board_create", { name: "Review fixes" });
+  const rb = nb.json.id;
+  const cards = await call("board_write_html", { board: rb, html: `<div data-name="Parts" style="width:400px;height:300px;background:#fff;position:relative"><div data-name="Card" style="width:200px;height:120px;background:#eee;display:flex"><p style="margin:0">Card</p></div></div>` });
+  const partsArt = cards.json.created[0].id;
+  const cardId = Object.values(store.getBoard(rb).nodes).find((n) => n.name === "Card")!.id;
+  const elsewhere = await call("board_write_html", { board: rb, html: `<div data-name="Screen" style="width:400px;height:600px;background:#fafafa"></div>` });
+  const screenArt = elsewhere.json.created[0].id;
+  const placed = await call("board_edit", { board: rb, changes: [{ do: "component", id: cardId }, { do: "copy", of: cardId, into: screenArt }] });
+  const copy = placed.json.results[1].copy;
+  const layers = Object.keys(store.getBoard(rb).nodes).length;
+  await call("board_edit", { board: rb, changes: [{ do: "copy", of: cardId, into: cardId }] }, true);
+  await call("board_edit", { board: rb, changes: [{ do: "move", id: copy, into: cardId }] }, true);
+  check(Object.keys(store.getBoard(rb).nodes).length === layers, "a copy of a component can't go inside that component (it would hold a copy of itself)");
+  // Deleting the artboard that holds the component: its copy becomes ordinary layers, not stuck.
+  await call("board_edit", { board: rb, changes: [{ do: "delete", ids: [partsArt] }] });
+  const after = store.getBoard(rb);
+  check(after.nodes[copy] && !after.nodes[copy].instanceOf && !Object.values(after.nodes).some((n) => n.master), "deleting the artboard that holds a component leaves its copies as ordinary layers");
+  await call("board_write_html", { board: rb, target: copy, html: "<p>Now it can hold this</p>" });
+  // A change that adds layers, then a scale, in one batch.
+  const both = await call("board_edit", { board: rb, changes: [{ do: "artboard", name: "Extra", width: 200, height: 200 }, { do: "scale", ids: [screenArt], by: 0.5 }] });
+  check(both.json?.results?.[1]?.scaled === 1 && store.getBoard(rb).nodes[screenArt].style.width === "200px", "a scale after a change that adds layers, in the same batch, works");
+  // Replacing an artboard keeps it where it was.
+  const at = { left: store.getBoard(rb).nodes[screenArt].style.left, top: store.getBoard(rb).nodes[screenArt].style.top };
+  const replaced = await call("board_write_html", { board: rb, target: screenArt, position: "replace", html: `<div data-name="Screen 2" style="width:300px;height:500px;background:#000"></div>` });
+  const nn = store.getBoard(rb).nodes[replaced.json.created[0].id];
+  check(nn.style.left === at.left && nn.style.top === at.top, "an artboard replaced through board_write_html keeps its place");
+  // A picture CSS points at, from outside the library, is copied in like an image layer's.
+  const outside = path.join(mkdtempSync(path.join(tmpdir(), "outside-")), "pic.png");
+  writeFileSync(outside, readFileSync(path.join(out, "welcome.png")));
+  const bg = await call("board_write_html", { board: rb, html: `<div data-name="Backdrop" style="width:300px;height:300px;background-image:url(${outside})"></div>` });
+  const bgStyle = store.getBoard(rb).nodes[bg.json.created[0].id].style.backgroundImage ?? "";
+  check(bgStyle.includes(path.join(".studio", "boards", "assets")) && !bgStyle.includes(outside), "a CSS picture from outside the library is copied into it");
+}
 console.log(`\nFiles in ${out}`);
 
 await client.close();

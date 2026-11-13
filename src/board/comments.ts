@@ -71,9 +71,19 @@ export interface BoardComments {
 const MAX_TEXT = 8000;
 
 function read(id: string): BoardComments {
+  let text: string;
   try {
-    const c = JSON.parse(readFileSync(commentsFile(id), "utf8"));
+    text = readFileSync(commentsFile(id), "utf8");
+  } catch {
+    return { rev: 0, threads: [] };
+  }
+  try {
+    const c = JSON.parse(text);
     if (Array.isArray(c?.threads)) return { rev: Number(c.rev) || 0, threads: c.threads };
+  } catch {}
+  // A file that can't be read is kept aside, so the next comment doesn't write over every thread in it.
+  try {
+    renameSync(commentsFile(id), `${commentsFile(id)}.damaged-${new Date().toISOString().replace(/[:.]/g, "-")}`);
   } catch {}
   return { rev: 0, threads: [] };
 }
