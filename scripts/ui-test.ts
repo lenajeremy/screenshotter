@@ -173,7 +173,7 @@ const CHECKS: Record<string, Check> = {
     if (after !== "Row Two,Row Three,Row One") return `after the drag: ${after}`;
     return undone === "Row One,Row Two,Row Three" ? "ok" : `after undo: ${undone}`;
   },
-  async "on a board, deep layers are easy to reach: double-click, ⌘, right-click → Select layer, and ⌘K clears the panels"(page) {
+  async "on a board, deep layers are easy to reach: double-click, ⌘, right-click → Select layer, and ⌘\\ clears the panels"(page) {
     const t = await openTestBoard(page);
     const st = async () => S(page, async () => {
       const m = await import("/ui/board-state.js" as string);
@@ -206,14 +206,14 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(150);
     const picked = await st();
     if (picked.sel !== "Row Three") return `Select layer picked ${picked.sel}`;
-    // ⌘K hides both panels, and brings both back.
-    await page.keyboard.press("Meta+k");
+    // ⌘\ hides both panels, and brings both back.
+    await page.keyboard.press("Meta+Backslash");
     await page.waitForTimeout(200);
     const hidden = await st();
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("Meta+Backslash");
     await page.waitForTimeout(200);
     const shown = await st();
-    return !hidden.left && !hidden.right && shown.left && shown.right ? "ok" : `⌘K: hidden ${hidden.left}/${hidden.right}, shown ${shown.left}/${shown.right}`;
+    return !hidden.left && !hidden.right && shown.left && shown.right ? "ok" : `⌘\\: hidden ${hidden.left}/${hidden.right}, shown ${shown.left}/${shown.right}`;
   },
   async "a video shows its first frame, plays from its button, and stops when let go"(page) {
     const t = await openTestBoard(page);
@@ -576,6 +576,61 @@ const CHECKS: Record<string, Check> = {
     const widths = boards.getBoard(t.id).pages[0].children.map((id) => parseFloat(boards.getBoard(t.id).nodes[id].style.width!));
     if (new Set(tops).size !== 1) return `tops after aligning: ${tops}`;
     return widths.every((w, i) => w > widths0[i]) ? "ok" : `widths ${widths0} → ${widths}`;
+  },
+  async "on a board, the Scale tool (K) scales a layer with everything in it, and ⌘\\ hides the panels"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    const title = boards.getBoard(t.id).nodes[phone].children!.find((c) => boards.getBoard(t.id).nodes[c].type === "text")!;
+    const row = t.byName("Row One");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), phone);
+    await page.keyboard.press("k");
+    await page.waitForTimeout(300);
+    const tool = await S(page, async () => (await import("/ui/board-state.js" as string)).B.tool);
+    if (tool !== "scale") return `K picked ${tool}`;
+    if (!(await page.locator(".bd-right section", { has: page.locator("h3", { hasText: "Scale" }) }).count())) return "no Scale panel with the Scale tool";
+    // A corner handle, dragged out: the artboard, its type and its spacing all grow by the same amount.
+    const se = (await page.locator(".bd-handle.h-se").boundingBox())!;
+    await page.mouse.move(se.x + 4, se.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(se.x + 4 + (await boxOf(page, phone)).width / 2, se.y + 4, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    let n = boards.getBoard(t.id).nodes;
+    const k = parseFloat(n[phone].style.width!) / 390;
+    const font = parseFloat(n[title].style.fontSize!) / 30;
+    const pad = n[row].style.padding;
+    if (Math.abs(k - 1.5) > 0.05) return `scaled by ${k}, not about 1.5`;
+    if (Math.abs(font - k) > 0.02) return `type scaled by ${font}, the artboard by ${k}`;
+    if (Math.abs(parseFloat(pad!) / 14 - k) > 0.02) return `a row's padding is ${pad}`;
+    if (Math.abs(parseFloat(n[phone].style.height!) / 844 - k) > 0.02) return `height ${n[phone].style.height}`;
+    // The panel: back to two thirds of that, by typing a percentage.
+    const field = page.locator(".bd-scale-row .num input");
+    await field.click();
+    await field.fill("50");
+    await field.press("Enter");
+    await page.waitForTimeout(800);
+    n = boards.getBoard(t.id).nodes;
+    if (Math.abs(parseFloat(n[phone].style.width!) - 390 * k * 0.5) > 1) return `50% made it ${n[phone].style.width}`;
+    // Each scale is one step of undo.
+    await page.locator(".bd-stage").hover();
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(800);
+    n = boards.getBoard(t.id).nodes;
+    if (Math.abs(parseFloat(n[phone].style.width!) / 390 - k) > 0.01) return `undo left it at ${n[phone].style.width}`;
+    // ⌘\ puts both side panels away and back; ⌘K doesn't any more.
+    const panels = () => S(page, async () => {
+      const m = await import("/ui/board-state.js" as string);
+      return `${m.B.leftOpen}/${m.B.rightOpen}`;
+    });
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(200);
+    if ((await panels()) !== "true/true") return `⌘K changed the panels: ${await panels()}`;
+    await page.keyboard.press("Meta+Backslash");
+    await page.waitForTimeout(200);
+    const hidden = await panels();
+    await page.keyboard.press("Meta+Backslash");
+    await page.waitForTimeout(200);
+    return hidden === "false/false" && (await panels()) === "true/true" ? "ok" : `⌘\\ gave ${hidden}, then ${await panels()}`;
   },
   async "on a board, assets from the rest of the app go into the selected frame, and filters apply"(page) {
     const t = await openTestBoard(page);

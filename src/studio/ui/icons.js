@@ -108,6 +108,7 @@ const P = {
   alignBottomE: '<path d="M3.5 20h17"/><rect x="6" y="5.5" width="4.5" height="11" rx="1.2"/><rect x="13.5" y="9.5" width="4.5" height="7" rx="1.2"/>',
   distH: '<path d="M4 4v16M20 4v16"/><rect x="9.5" y="7" width="5" height="10" rx="1.2"/>',
   distV: '<path d="M4 4h16M4 20h16"/><rect x="7" y="9.5" width="10" height="5" rx="1.2"/>',
+  scale: '<rect x="4" y="13" width="7" height="7" rx="1.2"/><path d="M4 9.5V5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-4"/><path d="M11.5 12.5L16 8"/><path d="M12.2 8H16v3.8"/>',
   pointer: '<path d="M6 3.5l12 7.2-5.4 1.4-2.9 5.4z"/><path d="M12.6 12.1l4.4 6.4"/>',
   comment: '<path d="M20.5 11.5a8 8 0 0 1-11.9 7l-4.1 1 1.1-3.9a8 8 0 1 1 14.9-4.1z"/>',
   hand: '<path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V5a1.5 1.5 0 0 1 3 0v6.5"/><path d="M14 11.5V6.5a1.5 1.5 0 0 1 3 0V14a6.5 6.5 0 0 1-6.5 6.5h-.6a5.5 5.5 0 0 1-4.3-2.1L3.4 15a1.6 1.6 0 0 1 2.4-2.1L8 15"/>',

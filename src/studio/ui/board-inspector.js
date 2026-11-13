@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, renameTokenOps, round, serializeSvg, sizeWord, styleText, subtree, vectorName, videoSettings } from "./board-core.js";
 import { B, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
-import { fit, shiftSteps, toggleVideo, useVideo, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
+import { fit, scalePlan, shiftSteps, toggleVideo, useVideo, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
 import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html, normalizeColor, resolveVars, tokenColor, tokenRef } from "./controls.js";
@@ -78,6 +78,7 @@ export function Inspector() {
       ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", video: "Video", svg: "Vector", vector: "Vector" }[n.type]}</span>`}
     </div>
     <div class="panel-body bd-insp">
+      ${b.tool === "scale" && html`<${ScaleSection} />`}
       ${!many && html`<${ComponentSection} />`}
       <${LayoutSection} />
       ${allFrames && html`<${FlexSection} />`}
@@ -326,6 +327,56 @@ function SizeField({ axis, label }) {
       onChange=${(v, live) => v !== undefined && commit(list.map((x) => ({ op: "set", id: x, style: sizeStyle(x, axis, mode === "relative" ? "relative" : "fixed", v) })), { key: `size:${axis}:${list.join()}`, label: "Resize" })} />
     <${Dropdown} value=${mode} placeholder="Mixed" options=${modes} btnClass="dd-btn bd-mode" title="Fixed: a size in px. Fit: as big as what's inside. Fill: as big as the space it's in. Relative: a share of its frame." onChange=${(m) => commit(list.map((x) => ({ op: "set", id: x, style: sizeStyle(x, axis, m) })), { label: "Resize" })} />
   </div>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scale (the Scale tool, K): the selection by a factor, or to a width or height, with everything in it
+
+/** The point of the selection that stays put, left to right and top to bottom. */
+const SCALE_FROM = [[0, 0], [0.5, 0], [1, 0], [0, 0.5], [0.5, 0.5], [1, 0.5], [0, 1], [0.5, 1], [1, 1]];
+const FROM_NAMES = ["top left", "top", "top right", "left", "centre", "right", "bottom left", "bottom", "bottom right"];
+
+/** A scrub on one of the fields: shown live from where it started, kept as one step when the pointer lifts. */
+let scrubbing = null;
+function scaleTo(factor, live) {
+  if (!live) {
+    scrubbing = null;
+    const plan = scalePlan(ids());
+    if (!plan.box) return;
+    plan.to(factor(plan.box), B.scaleFrom);
+    return plan.done();
+  }
+  if (!scrubbing) {
+    const plan = (scrubbing = scalePlan(ids()));
+    addEventListener("pointerup", () => scrubbing === plan && ((scrubbing = null), plan.done()), { once: true });
+  }
+  if (scrubbing.box) scrubbing.to(factor(scrubbing.box), B.scaleFrom);
+}
+
+function ScaleSection() {
+  const b = useBoard();
+  const boxes = ids().map(worldBox).filter(Boolean);
+  if (!boxes.length) return null;
+  const x0 = Math.min(...boxes.map((r) => r.x));
+  const y0 = Math.min(...boxes.map((r) => r.y));
+  const w = Math.max(...boxes.map((r) => r.x + r.width)) - x0;
+  const h = Math.max(...boxes.map((r) => r.y + r.height)) - y0;
+  return html`<${Section} title="Scale">
+    <div class="grid2">
+      <${Num} label="W" title="Scale to this width" value=${Math.round(w)} min=${1} onChange=${(v, live) => v && scaleTo((g) => v / g.width, live)} />
+      <${Num} label="H" title="Scale to this height" value=${Math.round(h)} min=${1} onChange=${(v, live) => v && scaleTo((g) => v / g.height, live)} />
+    </div>
+    <div class="bd-scale-row">
+      <${Num} label=${html`<${Icon} n="scale" s=${12} />`} title="Scale by" value=${Math.round((b.scaling ?? 1) * 100)} unit="%" min=${1} onChange=${(v, live) => v && scaleTo(() => v / 100, live)} />
+      <div class="bd-scale-from" role="radiogroup" aria-label="Scale from">
+        ${SCALE_FROM.map(([x, y], i) => {
+          const on = b.scaleFrom[0] === x && b.scaleFrom[1] === y;
+          return html`<button key=${i} role="radio" aria-checked=${on} class=${on ? "on" : ""} title=${`Scale from the ${FROM_NAMES[i]}`} onClick=${() => bset({ scaleFrom: [x, y] })}><i></i></button>`;
+        })}
+      </div>
+    </div>
+    <p class="bd-note">Handles scale everything inside, type and spacing too. ⌥ scales from the centre.</p>
+  <//>`;
 }
 
 function rotationOf(n) {

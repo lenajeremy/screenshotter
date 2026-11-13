@@ -1048,6 +1048,133 @@ export function renameTokenOps(board: Board, from: string, to: string): Op[] {
   return ops;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Scale: a layer made bigger or smaller with everything in it (type, padding, gaps, corners,
+// borders, shadows), as Figma's Scale tool does, where resizing only changes the box.
+
+/** Properties that are one length (or a few), where a token can be scaled as calc(var(--x) * k). */
+const LENGTH_PROP = /^(width|height|(min|max)(Width|Height)|left|top|right|bottom|inset|padding\w*|margin\w*|gap|rowGap|columnGap|fontSize|letterSpacing|wordSpacing|textIndent|border\w*Radius|border\w*Width|outlineWidth|outlineOffset|flexBasis)$/;
+/** Where a layer sits in its parent: the one thing about the layer being scaled that stays (its corner is placed by whoever scales it). */
+const PLACE_PROP = new Set(["left", "top", "right", "bottom", "inset"]);
+const NUM = (n: number) => String(Math.round(n * 100) / 100);
+/** var(--x) or var(--x, fallback), and calc(var(--x) * n) as written by an earlier scale. */
+const VAR_RE = /calc\(\s*(var\(\s*(--[\w-]+)(?:\s*,[^()]*(?:\([^()]*\)[^()]*)*)?\))\s*\*\s*(\d*\.?\d+)\s*\)|var\(\s*(--[\w-]+)(?:\s*,[^()]*(?:\([^()]*\)[^()]*)*)?\)/g;
+
+/**
+ * Lengths in CSS text multiplied by `k`: numbers in px, pt or rem, not inside url(…), quotes or a
+ * name (--gap-8px). Relative ones (em, %, vw) follow by themselves.
+ */
+export function scaleLengths(css: string, k: number): string {
+  return css.replace(/url\([^)]*\)|"[^"]*"|'[^']*'|(?<![\w.-])(-?(?:\d+\.?\d*|\.\d+))(px|pt|rem)\b/gi, (m, n?: string, unit?: string) => (n === undefined ? m : `${NUM(Number(n) * k)}${unit}`));
+}
+
+/**
+ * One property's value scaled by `k`. A token in a length (padding: var(--space)) becomes
+ * calc(var(--space) * k), so it still follows the token; `own` are custom properties set inside
+ * what's scaled, which scale where they're set instead.
+ */
+export function scaleCss(prop: string, value: string, k: number, own: Set<string> = new Set()): string {
+  const kept: string[] = [];
+  const hold = (s: string) => `\u0000${kept.push(s) - 1}\u0000`;
+  const length = LENGTH_PROP.test(prop);
+  const marked = value.replace(VAR_RE, (m, inner?: string, name1?: string, times?: string, name2?: string) => {
+    const name = name1 ?? name2!;
+    if (!length || own.has(name)) return hold(m);
+    return hold(inner ? `calc(${inner} * ${NUM(Number(times) * k)})` : `calc(${m} * ${NUM(k)})`);
+  });
+  return scaleLengths(marked, k).replace(/\u0000(\d+)\u0000/g, (_, i: string) => kept[Number(i)]);
+}
+
+/** Inline HTML (a text layer's words) with the lengths in its style attributes scaled. */
+function scaleInline(htmlText: string, k: number): string {
+  return htmlText.replace(/(\sstyle=")([^"]*)(")/g, (_m, a: string, css: string, c: string) => {
+    const plain = css.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+    return a + escAttr(scaleLengths(plain, k)) + c;
+  });
+}
+
+/** What a layer gets from outside it that a scale has to carry: type size, spacing, line height. */
+export interface Inherited {
+  /** The layer's font size in px, as drawn (the Studio measures it; otherwise worked out from the layers holding it). */
+  fontSize?: number;
+  /** Its letter spacing in px (inherited as a length, so it doesn't follow the font size). */
+  letterSpacing?: number;
+}
+
+/** A length in px from CSS written in px or rem (rem as 16px). */
+const absPx = (v: string | undefined) => {
+  const m = v && /^\s*(-?\d*\.?\d+)(px|rem)?\s*$/i.exec(v);
+  return m ? Number(m[1]) * (m[2]?.toLowerCase() === "rem" ? 16 : 1) : undefined;
+};
+
+/**
+ * Steps that scale a layer and everything in it by `k` (1.5 is half as big again), as Figma's Scale
+ * tool does: every length in its CSS, the type in its words, tokens through calc(). Where it sits
+ * (left, top) stays: the caller places its anchor. A vector part (in an SVG's own coordinates) and
+ * an SVG's insides follow their box, so only the box is scaled.
+ */
+export function scaleOps(board: Board, id: string, k: number, inherited: Inherited = {}): Op[] {
+  const root = board.nodes[id];
+  if (!root || !Number.isFinite(k) || k <= 0 || Math.abs(k - 1) < 1e-6) return [];
+  const ids: string[] = [];
+  const walk = (x: string) => {
+    const n = board.nodes[x];
+    if (!n) return;
+    ids.push(x);
+    if (n.type === "svg" || n.type === "vector") return;
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(id);
+  const own = new Set<string>();
+  for (const x of ids) for (const p of Object.keys(board.nodes[x].style)) if (p.startsWith("--")) own.add(p);
+  const ops: Array<Extract<Op, { op: "set" }>> = [];
+  let words = false;
+  let relative = false;
+  for (const x of ids) {
+    const n = board.nodes[x];
+    if (n.type === "text") words = true;
+    const style: Record<string, string> = {};
+    for (const [p, v] of Object.entries(n.style)) {
+      if (x === id && PLACE_PROP.has(p)) continue;
+      if (typeof v !== "string") continue;
+      if (/\d(em|ex|ch)\b/.test(v)) relative = true;
+      const out = scaleCss(p, v, k, own);
+      if (out !== v) style[p] = out;
+    }
+    const op: Extract<Op, { op: "set" }> = { op: "set", id: x, ...(Object.keys(style).length ? { style } : {}) };
+    if (n.type === "text" && n.text) {
+      const t = scaleInline(n.text, k);
+      if (t !== n.text) op.text = t;
+    }
+    if (op.style || op.text !== undefined) ops.push(op);
+  }
+  // Type and spacing the layer only inherits don't change with it: it gets them, scaled, of its own.
+  if (words || relative) {
+    const up = ancestors(board, id).map((a) => board.nodes[a]?.style ?? {});
+    const first = (p: string) => up.find((s) => s[p] !== undefined)?.[p];
+    if (ops[0]?.id !== id) ops.unshift({ op: "set", id });
+    const set = ops[0];
+    const mine = root.style;
+    // No size of its own, or one relative to what it inherits (1.2em, 120%): written in px, scaled.
+    if (absPx(mine.fontSize) === undefined && !/var\(/.test(mine.fontSize ?? "")) {
+      const rel = /^\s*(\d*\.?\d+)(em|%)\s*$/.exec(mine.fontSize ?? "");
+      const parent = absPx(first("fontSize")) ?? 16;
+      const drawn = inherited.fontSize ?? (rel ? (parent * Number(rel[1])) / (rel[2] === "%" ? 100 : 1) : parent);
+      (set.style ??= {}).fontSize = `${NUM(drawn * k)}px`;
+    }
+    if (mine.lineHeight === undefined) {
+      const lh = absPx(first("lineHeight"));
+      if (lh !== undefined) (set.style ??= {}).lineHeight = `${NUM(lh * k)}px`;
+    }
+    if (mine.letterSpacing === undefined) {
+      const ls = inherited.letterSpacing ?? absPx(first("letterSpacing"));
+      if (ls) (set.style ??= {}).letterSpacing = `${NUM(ls * k)}px`;
+    }
+    if (!set.style && set.text === undefined) ops.shift();
+  }
+  return ops;
+}
+
 export function tokenCss(board: Board): string {
   return board.tokens.map((t) => `${t.name}:${t.value}`).join(";");
 }

@@ -47,6 +47,7 @@ export function BoardApp() {
 
 const TOOLS = [
   { id: "move", icon: "pointer", label: "Move", key: "V" },
+  { id: "scale", icon: "scale", label: "Scale: handles scale everything inside, type and spacing too", key: "K" },
   { id: "frame", icon: "frame", label: "Frame", key: "F" },
   { id: "rect", icon: "square", label: "Rectangle", key: "R" },
   { id: "text", icon: "text", label: "Text", key: "T" },
@@ -963,7 +964,7 @@ function selectLayerMenu(x, y, stack) {
   );
 }
 
-/** ⌘K: both side panels away for room on the canvas, or both back. */
+/** ⌘\ (or ⌘|): both side panels away for room on the canvas, or both back. */
 export function togglePanels() {
   const open = B.leftOpen !== false || B.rightOpen !== false;
   bset({ leftOpen: !open, rightOpen: !open });
@@ -1015,7 +1016,7 @@ export function openLayerMenu(x, y, { stack = [] } = {}) {
 // =============================================================================================
 // Keys
 
-const TOOL_KEYS = { v: "move", f: "frame", r: "rect", t: "text", c: "comment", h: "hand" };
+const TOOL_KEYS = { v: "move", k: "scale", f: "frame", r: "rect", t: "text", c: "comment", h: "hand" };
 
 function onKey(e) {
   if (!S.boardId || S.modal || S.menu) return;
@@ -1038,7 +1039,7 @@ function onKey(e) {
   if (m && e.shiftKey && k === "h") return take(), toggleAll("hidden");
   if (m && e.shiftKey && k === "l") return take(), toggleAll("locked");
   if (m && e.shiftKey && k === "k") return take(), pickImages();
-  if (m && !e.altKey && (k === "k" || e.code === "KeyK")) return take(), togglePanels();
+  if (m && !e.altKey && (k === "\\" || k === "|" || e.code === "Backslash")) return take(), togglePanels();
   if (m && e.altKey && (k === "p" || e.code === "KeyP")) return take(), previewFrame();
   if (m && e.altKey && k === "c") return take(), copyStyles();
   if (m && e.altKey && k === "v") return take(), pasteStyles();
@@ -1095,8 +1096,8 @@ export function boardCommand(name) {
     delete: deleteSelection,
     exportImage: () => document.querySelector(".bd-topbar .btn.primary")?.click(),
     toggleLeft: () => bset({ leftOpen: !B.leftOpen }),
-    // ⌘K (the app's menu sends it as "ai"): boards have no Ask AI, so it makes room on the canvas instead.
-    ai: togglePanels,
+    // ⌘\ (the app's menu calls it Focus Mode): both side panels away, or back.
+    focus: togglePanels,
     toggleRight: () => bset({ rightOpen: !B.rightOpen }),
     save: () => toast({ kind: "ok", icon: "check", title: "Boards save themselves", text: "Every change is on disk as you make it.", timeout: 2400 }),
   }[name];

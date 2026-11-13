@@ -31,8 +31,12 @@ export const B = {
   /** An insertion line or a drop target while dragging. */
   drop: null,
   guides: [],
-  /** What's being dragged on the canvas: move, resize, marquee, draw, pan. */
+  /** What's being dragged on the canvas: move, resize, scale, marquee, draw, pan. */
   dragging: null,
+  /** How much the selection is being scaled right now (the Scale tool), or null. */
+  scaling: null,
+  /** The point of the selection that stays put when the Scale panel scales it: [0, 0] its top left. */
+  scaleFrom: [0, 0],
   /** The board's comments and the agents who worked on it, kept apart from the design (and its undo). */
   comments: { rev: 0, threads: [], agents: {} },
   /** The comment thread open by its pin, or a new comment being written (its anchor). */

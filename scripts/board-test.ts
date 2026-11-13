@@ -357,6 +357,14 @@ const edit = await call("board_edit", {
 });
 check(edit.json.results[3].copies.length === 1 && edit.json.results[4].artboard, "edits run together and report new ids");
 await call("board_edit", { board, changes: [{ do: "style", ids: ["nope"], style: { color: "red" } }] }, true);
+const toScale = await call("board_write_html", { board, html: `<div data-name="Snippet" style="width:420px;padding:16px 20px;border-radius:var(--radius, 12px);border:1px solid #333;background:#1d1b16;box-shadow:0 2px 8px rgba(0,0,0,.3)"><p style="margin:0;font-size:13px">TodoList.tsx</p><p style="margin:12px 0 0">const <span style="font-size:14px">todos</span></p></div>` });
+const snip = toScale.json.created[0].id;
+await call("board_edit", { board, changes: [{ do: "style", ids: [snip], style: { gap: 10 } }, { do: "scale", ids: [snip], by: 2 }] });
+const snipHtml = (await call("board_read", { board, what: "html", node: snip })).text;
+check(
+  ["width:840px", "padding:32px 40px", "border-radius:calc(var(--radius, 12px) * 2)", "border:2px solid #333", "box-shadow:0 4px 16px", "font-size:26px", "margin:24px 0 0", "font-size:28px", "gap:20px", "font-size:32px"].every((s) => snipHtml.includes(s)),
+  "board_edit scale grows a layer with everything in it: type, padding, borders, shadows, tokens, and its inherited type size",
+);
 await call("board_write_html", { board, target: second.json.created[0].id, html: "<p style=\"color:#111\">Hi</p>", position: "after" });
 const comp = await call("board_edit", { board, changes: [{ do: "component", id: card }, { do: "copy", of: card }, { do: "style", ids: [card], style: { borderRadius: 8 } }] });
 const copyId = comp.json.results[1].copy;
@@ -416,7 +424,7 @@ writeFileSync(path.join(out, "welcome.png"), shot.images[0]);
 const close = await call("board_screenshot", { board, nodes: [card], scale: 2 });
 check(close.images.length === 1 && pngSize(close.images[0]).width === 640, "a layer is cut out of its artboard (its 320 px at 2×)");
 const exp = await call("board_export", { board, scale: 1 });
-check(exp.json.files.length === 6 && exp.json.files.every((f: string) => readFileSync(f).length > 100), "every artboard exports");
+check(exp.json.files.length === 7 && exp.json.files.every((f: string) => readFileSync(f).length > 100), "every artboard exports");
 const list = await call("board_list", {});
 check(list.json.find((x: any) => x.id === board).working.length >= 1, "the artboards being worked on are listed");
 await call("board_done", { board });

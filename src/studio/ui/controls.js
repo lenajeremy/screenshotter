@@ -86,6 +86,8 @@ export function Slider({ value, min, max, step = 0.01, onChange, fallback, forma
 
 export function Num({ label, value, onChange, step = 1, min = -Infinity, max = Infinity, unit = "", digits = 0, placeholder = "auto", title, scale = 1 }) {
   const [draft, setDraft] = useState(null);
+  // Enter and Escape are done with the field before the blur they cause: that blur mustn't commit (again).
+  const settled = useRef(false);
   const shown = value === undefined || value === null ? "" : (value * scale).toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
   const commit = (text) => {
     setDraft(null);
@@ -116,10 +118,11 @@ export function Num({ label, value, onChange, step = 1, min = -Infinity, max = I
     <input value=${draft ?? shown} placeholder=${placeholder}
       onFocus=${(e) => e.target.select()}
       onInput=${(e) => setDraft(e.target.value)}
-      onBlur=${(e) => draft !== null && commit(e.target.value)}
+      onBlur=${(e) => (settled.current ? (settled.current = false) : draft !== null && commit(e.target.value))}
       onKeyDown=${(e) => {
         if (e.key === "Enter") {
           commit(e.target.value);
+          settled.current = true;
           e.target.blur();
         } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
           e.preventDefault();
@@ -128,6 +131,7 @@ export function Num({ label, value, onChange, step = 1, min = -Infinity, max = I
           setDraft(null);
         } else if (e.key === "Escape") {
           setDraft(null);
+          settled.current = true;
           e.target.blur();
         }
         e.stopPropagation();

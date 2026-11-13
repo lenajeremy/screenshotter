@@ -2,7 +2,7 @@
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -335,6 +335,8 @@ export function BoardCanvas() {
 // What's drawn over the design: selection, handles, labels, guides
 
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+/** The tools that pick and move layers: Move, and Scale (whose handles scale instead of resizing). */
+const picking = () => B.tool === "move" || B.tool === "scale";
 
 function sizeLabel(id, box) {
   const z = B.view.z;
@@ -375,10 +377,10 @@ function Overlay() {
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
     ${box && !locked && !b.editing && !busy &&
     HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} style=${{ left: box.x + (h.includes("w") ? 0 : h.includes("e") ? box.width : box.width / 2) + "px", top: box.y + (h.includes("n") ? 0 : h.includes("s") ? box.height : box.height / 2) + "px" }}></div>`)}
-    ${box && !b.editing && (!busy || busy === "resize") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}</div>`}
+    ${box && !b.editing && (!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}
     ${group && html`<div class="bd-group" style=${{ left: group.x + "px", top: group.y + "px", width: group.width + "px", height: group.height + "px" }}></div>
       ${!busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} data-group="1" style=${{ left: group.x + (h.includes("w") ? 0 : h.includes("e") ? group.width : group.width / 2) + "px", top: group.y + (h.includes("n") ? 0 : h.includes("s") ? group.height : group.height / 2) + "px" }}></div>`)}
-      ${(!busy || busy === "resize") && html`<div class="bd-size" style=${{ left: group.x + group.width / 2 + "px", top: group.y + group.height + 8 + "px" }}>${Math.round(group.width / b.view.z)} × ${Math.round(group.height / b.view.z)}</div>`}`}
+      ${(!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: group.x + group.width / 2 + "px", top: group.y + group.height + 8 + "px" }}>${Math.round(group.width / b.view.z)} × ${Math.round(group.height / b.view.z)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}`}
     ${box && !busy && !b.editing && node(one)?.type === "video" && html`<${VideoBadge} key=${one} id=${one} box=${box} />`}
     ${altDown && one && !busy && html`<${Distances} from=${one} to=${b.hover && b.hover !== one ? b.hover : node(one)?.parent} />`}
     ${b.drop?.line && html`<div class="bd-drop-line" style=${{ left: b.drop.line.x + "px", top: b.drop.line.y + "px", width: b.drop.line.width + "px", height: b.drop.line.height + "px" }}></div>`}
@@ -574,12 +576,12 @@ function hoverAt(clientX, clientY, deep) {
 }
 for (const [type, deep] of [["keydown", true], ["keyup", false]])
   addEventListener(type, (e) => {
-    if ((e.key === "Meta" || e.key === "Control") && B.id && B.tool === "move" && pointer && !B.dragging) hoverAt(pointer.x, pointer.y, deep);
+    if ((e.key === "Meta" || e.key === "Control") && B.id && picking() && pointer && !B.dragging) hoverAt(pointer.x, pointer.y, deep);
   });
 
 function hoverMove(e) {
   pointer = { x: e.clientX, y: e.clientY };
-  if (e.buttons || (B.tool !== "move" && B.tool !== "comment") || spaceDown) return;
+  if (e.buttons || (!picking() && B.tool !== "comment") || spaceDown) return;
   const hit = e.target.closest?.("[data-bid]");
   const label = e.target.closest?.("[data-label]");
   // With the comment tool, the layer a click would pin a comment to (until one is being written).
@@ -680,6 +682,7 @@ function down(e) {
   // Working on the design closes a comment's thread.
   if (B.thread || B.draft) closeThread();
   const handle = e.target.closest?.("[data-handle]");
+  if (handle && B.tool === "scale") return scaleDrag(e, handle.dataset.group ? B.sel.filter((id) => !node(id)?.locked) : B.sel.slice(0, 1), handle.dataset.handle);
   if (handle && handle.dataset.group) return resizeMany(e, B.sel.filter((id) => !node(id)?.locked), handle.dataset.handle);
   if (handle && B.sel.length === 1) return resize(e, B.sel[0], handle.dataset.handle);
   if (B.tool === "frame" || B.tool === "rect" || B.tool === "text") return create(e);
@@ -982,7 +985,7 @@ function resized(b, h, dx, dy, keep) {
   return { x: h.includes("w") ? b.x + b.width - w : b.x, y: h.includes("n") ? b.y + b.height - hh : b.y, width: w, height: hh };
 }
 
-function resizeVector(e, id, h) {
+function resizeVector(e, id, h, keep = false) {
   const base = B.board;
   const sp = vectorSpace(id);
   if (!sp) return;
@@ -991,7 +994,7 @@ function resizeVector(e, id, h) {
     threshold: 0,
     kind: "resize",
     move: (ev) => {
-      ops = [vectorStep(base.nodes[id], sp, resized(sp.from, h, ev.clientX - e.clientX, ev.clientY - e.clientY, ev.shiftKey && h.length === 2))];
+      ops = [vectorStep(base.nodes[id], sp, resized(sp.from, h, ev.clientX - e.clientX, ev.clientY - e.clientY, keep || (ev.shiftKey && h.length === 2)))];
       preview(base, ops);
     },
     up: (ev, moved) => {
@@ -1002,9 +1005,9 @@ function resizeVector(e, id, h) {
   });
 }
 
-function resize(e, id, h) {
+function resize(e, id, h, keep = false) {
   e.stopPropagation();
-  if (isVector(id)) return resizeVector(e, id, h);
+  if (isVector(id)) return resizeVector(e, id, h, keep);
   const base = B.board;
   const n = node(id);
   const box0 = worldBox(id);
@@ -1056,7 +1059,7 @@ function resize(e, id, h) {
 }
 
 /** Resize several layers as one: each keeps its place and share of the box they make together. */
-function resizeMany(e, ids, h) {
+function resizeMany(e, ids, h, keep = false) {
   e.stopPropagation();
   const base = B.board;
   const top = ids.filter((id) => !ancestors(base, id).some((a) => ids.includes(a)));
@@ -1076,7 +1079,7 @@ function resizeMany(e, ids, h) {
       const dy = (ev.clientY - e.clientY) / z;
       let w = Math.max(4, g.width + (h.includes("e") ? dx : h.includes("w") ? -dx : 0));
       let hh = Math.max(4, g.height + (h.includes("s") ? dy : h.includes("n") ? -dy : 0));
-      if (ev.shiftKey) {
+      if (keep || ev.shiftKey) {
         const k = Math.abs(w / g.width - 1) > Math.abs(hh / g.height - 1) ? w / g.width : hh / g.height;
         w = g.width * k;
         hh = g.height * k;
@@ -1113,6 +1116,87 @@ function resizeMany(e, ids, h) {
       B.board = base;
       commit(ops, { label: "Resize" });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scale (K): the selection made bigger or smaller with everything in it, type, padding, corners,
+// borders and shadows too, as Figma's Scale tool does. Resizing only changes the box.
+
+/** What a layer inherits that a scale has to carry, as drawn: its font size and letter spacing. */
+function inheritedOf(id) {
+  const el = elOf(id);
+  if (!el) return {};
+  const cs = getComputedStyle(el);
+  const ls = parseFloat(cs.letterSpacing);
+  return { fontSize: parseFloat(cs.fontSize) || undefined, letterSpacing: Number.isFinite(ls) && ls ? ls : undefined };
+}
+
+/**
+ * Scaling the layers as they are now: `to(k, anchor)` shows them `k` times their size, the point of
+ * their box at `anchor` ([0, 0] the top left, [0.5, 0.5] the centre) staying where it is; `done()`
+ * keeps the last one as a step of undo. Layers in a layout keep their place in it.
+ */
+export function scalePlan(ids) {
+  const base = B.board;
+  const top = ids.filter((id) => base.nodes[id] && !ancestors(base, id).some((a) => ids.includes(a)));
+  const boxes = Object.fromEntries(top.map((id) => [id, worldBox(id)]).filter(([, b]) => b && b.width > 0 && b.height > 0));
+  const list = Object.keys(boxes);
+  const g = list.length ? unionOf(Object.values(boxes)) : null;
+  const starts = Object.fromEntries(list.filter((id) => !inFlow(base, id)).map((id) => [id, placeOf(id)]));
+  const measured = Object.fromEntries(list.map((id) => [id, inheritedOf(id)]));
+  let ops = [];
+  return {
+    box: g,
+    to(k, [ax, ay] = [0, 0]) {
+      if (!g) return;
+      k = Math.max(0.01, k);
+      const px = g.x + g.width * ax;
+      const py = g.y + g.height * ay;
+      ops = [];
+      for (const id of list) {
+        ops.push(...scaleOps(base, id, k, measured[id]));
+        const s = starts[id];
+        if (!s) continue;
+        const b = boxes[id];
+        ops.push({ op: "set", id, style: { left: `${round(s.left + px + (b.x - px) * k - b.x, 2)}px`, top: `${round(s.top + py + (b.y - py) * k - b.y, 2)}px` } });
+      }
+      B.scaling = k;
+      preview(base, ops);
+    },
+    done() {
+      B.scaling = null;
+      if (!ops.length) return notify();
+      B.board = base;
+      commit(ops, { label: "Scale" });
+    },
+  };
+}
+
+/** Drag a handle with the Scale tool: in proportion, the opposite side staying put (⌥: the centre). */
+function scaleDrag(e, ids, h) {
+  e.stopPropagation();
+  // A vector's parts live in their SVG's own coordinates: they resize, in proportion.
+  if (ids.some(isVector)) return ids.length === 1 ? resize(e, ids[0], h, true) : resizeMany(e, ids, h, true);
+  const plan = scalePlan(ids);
+  const g = plan.box;
+  if (!g) return;
+  const own = ids.length === 1 ? pxValue(node(ids[0])?.style.width) : undefined;
+  const z = B.view.z;
+  drag(e, {
+    threshold: 0,
+    kind: "scale",
+    move: (ev) => {
+      const both = ev.altKey ? 2 : 1;
+      const kx = (g.width + both * (h.includes("e") ? 1 : h.includes("w") ? -1 : 0) * ((ev.clientX - e.clientX) / z)) / g.width;
+      const ky = (g.height + both * (h.includes("s") ? 1 : h.includes("n") ? -1 : 0) * ((ev.clientY - e.clientY) / z)) / g.height;
+      const byX = h.length === 2 ? Math.abs(kx - 1) > Math.abs(ky - 1) : h === "e" || h === "w";
+      // Whole pixels: the width its CSS gives it, or else the side being dragged.
+      const k = own ? Math.round(own * (byX ? kx : ky)) / own : byX ? Math.round(g.width * kx) / g.width : Math.round(g.height * ky) / g.height;
+      const anchor = ev.altKey ? [0.5, 0.5] : [h.includes("w") ? 1 : h.includes("e") ? 0 : 0.5, h.includes("n") ? 1 : h.includes("s") ? 0 : 0.5];
+      plan.to(k, anchor);
+    },
+    up: (ev, moved) => (moved ? plan.done() : (B.scaling = null)),
   });
 }
 
@@ -1221,7 +1305,7 @@ export function placeNew(layers, into, at, ev) {
 // Double-click and right-click
 
 function dblclick(e) {
-  if (B.tool !== "move") return;
+  if (!picking()) return;
   const hit = e.target.closest?.("[data-bid]");
   const label = e.target.closest?.("[data-label]");
   if (label) return bset({ renaming: label.dataset.label });

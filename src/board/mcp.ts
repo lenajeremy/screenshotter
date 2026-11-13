@@ -35,6 +35,7 @@ import {
   pageOf,
   pxValue,
   rootOf,
+  scaleOps,
   siblingsOf,
   sizeWord,
   treeText,
@@ -68,7 +69,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - board_create (or board_list to find one), then board_write_html to add an artboard: one top-level element with an explicit width and height (e.g. 390×844 for a phone screen, 1440×900 for desktop; height "fit-content" to grow with its content), styled inline. Then add to it piece by piece: target the artboard (or a frame in it) and write one visual group per call (a header, a card, a row), so the person sees it come together.
 - Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox (display:flex, flex-direction, gap, padding, align-items); elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
 - The scratchpad: the person keeps one board, "scratchpad", for trying things out. When they say to use their scratchpad (or it's a quick experiment, not a design to keep), call board_create with scratchpad: true: it adds a page named for the try to the scratchpad instead of making a board. Pass that page's id as \`page\` when you write artboards.
-- board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
+- board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens, scale: a layer bigger or smaller with its type and spacing) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
 - Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
@@ -145,6 +146,11 @@ const ChangeSchema = z.discriminatedUnion("do", [
   }),
   z.object({ do: z.literal("split"), id: z.string().describe("A vector drawn as one piece (a sticker, a shape, an older vector): a layer for each of its parts.") }),
   z.object({ do: z.literal("flatten"), id: z.string().describe("A vector in parts: one layer again, its parts as SVG markup.") }),
+  z.object({
+    do: z.literal("scale"),
+    ids: z.array(z.string()).min(1).describe("Layers to scale, each with everything in it."),
+    by: z.number().positive().max(20).describe("How much: 1.5 is half as big again, 0.5 half the size."),
+  }),
   z.object({ do: z.literal("rename"), id: z.string(), name: z.string() }),
   z.object({ do: z.literal("delete"), ids: z.array(z.string()).min(1) }),
   z.object({
@@ -414,7 +420,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -483,6 +489,14 @@ export function registerBoardTools(server: McpServer) {
               touched.push(c.id);
               results.push({ flattened: c.id });
               break;
+            case "scale": {
+              for (const id of c.ids) need(id);
+              // From the board as this call's earlier changes left it, so it doesn't undo them.
+              const now = ops.length ? applyOps(b, expandOps(b, ops)).board : b;
+              for (const id of c.ids) ops.push(...scaleOps(now, id, c.by));
+              results.push({ scaled: c.ids.length, by: c.by });
+              break;
+            }
             case "rename":
               need(c.id);
               ops.push({ op: "set", id: c.id, name: c.name });
