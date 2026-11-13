@@ -34,7 +34,7 @@ import { createSequence, sequenceStoryboard, SequenceInputShape, TRANSITIONS } f
 import { previewBase64 } from "./util/image.js";
 import { BOARD_INSTRUCTIONS, registerBoardTools } from "./board/mcp.js";
 
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 
 const INSTRUCTIONS = `Screenshotter captures real app screens and turns them into marketing-ready device mockups and App Store sets.
 
