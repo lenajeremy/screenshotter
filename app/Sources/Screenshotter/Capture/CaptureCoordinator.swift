@@ -36,11 +36,13 @@ import ScreenCaptureKit
         self.openStudio = openStudio
         self.editInStudio = editInStudio
         self.openRecording = openRecording
-        installStatusItem()
+        // The shortcut first: the menu only shows it if it's really Screenshotter's.
         installHotKey()
+        installStatusItem()
         watch = model.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.syncPreview() }
         }
+        CaptureFiles.tidy()
     }
 
     // MARK: The bar
@@ -192,6 +194,8 @@ import ScreenCaptureKit
     private func capture() {
         guard !model.busy else { return }
         guard Permissions.screen() else { return }
+        // Screenshotter can run for weeks: old out-of-the-way files are cleared as it's used, too.
+        CaptureFiles.tidy()
         capturing = true
         bar?.orderOut(nil)
         if model.mode == .screenshot, model.shutterSound { ShutterSound.prepare() }
@@ -896,7 +900,7 @@ import ScreenCaptureKit
         } else {
             button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Screenshotter")
             button.contentTintColor = nil
-            menu.addItem(entry("Take a Screenshot…", #selector(MenuTarget.menuScreenshot), key: "2"))
+            menu.addItem(entry("Take a Screenshot…", #selector(MenuTarget.menuScreenshot), key: hotKey != nil ? "2" : ""))
             menu.addItem(entry("Record the Screen…", #selector(MenuTarget.menuRecord)))
             menu.addItem(.separator())
             menu.addItem(entry("Open Screenshotter", #selector(MenuTarget.menuOpen)))
@@ -930,7 +934,12 @@ import ScreenCaptureKit
             return noErr
         }, 1, &spec, nil, nil)
         let id = EventHotKeyID(signature: OSType(0x5353_4854), id: 1)
-        RegisterEventHotKey(UInt32(kVK_ANSI_2), UInt32(cmdKey | shiftKey), id, GetApplicationEventTarget(), 0, &hotKey)
+        let status = RegisterEventHotKey(UInt32(kVK_ANSI_2), UInt32(cmdKey | shiftKey), id, GetApplicationEventTarget(), 0, &hotKey)
+        // Another app has ⌘⇧2: the menu bar menu stops offering a shortcut that won't work.
+        if status != noErr {
+            hotKey = nil
+            NSLog("Screenshotter: ⌘⇧2 couldn't be registered (error \(status)); another app may be using it")
+        }
     }
 
     func hotKeyPressed() {
