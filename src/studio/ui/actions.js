@@ -1,5 +1,6 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
+import { closeBoard } from "./board-state.js";
 import { setAutoZoom } from "./recording.js";
 import { DEFAULT_SCENE, S, clamp, fileUrl, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, onSaveRefused, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
 
@@ -2192,6 +2193,8 @@ export function answerConfirm(ok) {
 
 /** Start a clean canvas. The scene you were on is already saved in the Scenes list. */
 export async function newScene() {
+  // A board still open behind the library would be drawn instead of the new design.
+  if (S.boardId) closeBoard({ toLibrary: false });
   await saveSceneNow();
   set({
     scene: { devices: [], background: DEFAULT_SCENE.background },
@@ -2285,6 +2288,8 @@ function bubbleMoves(path) {
  */
 export async function openScreenshot(r) {
   if (!r?.image) return;
+  // The capture's Edit opens it as a design, so a board open on screen makes way.
+  if (S.boardId) closeBoard({ toLibrary: false });
   await saveSceneNow();
   set({
     scene: {
@@ -2329,6 +2334,7 @@ export async function openScreenshot(r) {
  */
 export async function openRecording(r) {
   if (!r?.video) return;
+  if (S.boardId) closeBoard({ toLibrary: false });
   await saveSceneNow();
   const devices = [{ label: "Recording", screenshot: r.poster, video: r.video, frame: "none", x: 0.5, y: 0.5, height: r4(1 - 2 * FRAMED.padding), radius: FRAMED.radius, shadow: FRAMED.shadow }];
   const animations = [];
@@ -2397,6 +2403,7 @@ export async function openRecording(r) {
 }
 
 export async function openScene(id) {
+  if (S.boardId) closeBoard({ toLibrary: false });
   if (id === S.sceneId) return set({ scenesOpen: false, scenesPage: false });
   await saveSceneNow();
   try {

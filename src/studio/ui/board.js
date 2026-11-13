@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { B, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
-import { BoardCanvas, canvasEl, elOf, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
+import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AssetsPanel } from "./board-assets.js";
 import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
@@ -70,6 +70,8 @@ function BoardTopbar() {
       <input class="scene-name" data-nodrag value=${b.board.name} spellcheck=${false} title="Rename this board"
         onKeyDown=${(e) => {
           e.stopPropagation();
+          // Escape puts the name back before leaving the field, so nothing is renamed.
+          if (e.key === "Escape") e.target.value = B.board.name;
           if (e.key === "Enter" || e.key === "Escape") e.target.blur();
         }}
         onChange=${(e) => {
@@ -176,6 +178,13 @@ function PagesList() {
 
 function NameInput({ value, onDone }) {
   const ref = useRef();
+  // Enter and Escape finish it; the blur their removal of the field causes mustn't finish it again.
+  const settled = useRef(false);
+  const done = (v) => {
+    if (settled.current) return;
+    settled.current = true;
+    onDone(v);
+  };
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
@@ -184,10 +193,10 @@ function NameInput({ value, onDone }) {
     onClick=${(e) => e.stopPropagation()} onPointerDown=${(e) => e.stopPropagation()}
     onKeyDown=${(e) => {
       e.stopPropagation();
-      if (e.key === "Enter") onDone(e.target.value.trim());
-      if (e.key === "Escape") onDone(null);
+      if (e.key === "Enter") done(e.target.value.trim());
+      if (e.key === "Escape") done(null);
     }}
-    onBlur=${(e) => onDone(e.target.value.trim())} />`;
+    onBlur=${(e) => done(e.target.value.trim())} />`;
 }
 
 // =============================================================================================
@@ -271,6 +280,12 @@ function LayerRow({ id, depth, n }) {
 function layerDown(e) {
   const row = e.target.closest?.(".bd-row");
   if (!row || e.button !== 0) return;
+  // Words being typed, or a field being edited, are kept for the layer they were for, before the
+  // selection moves (as a press on the canvas does).
+  // (A focused text layer keeps its words through its own blur; one that isn't focused is finished here.)
+  const typing = B.editing && elOf(B.editing);
+  if (typing && document.activeElement !== typing) finishText(B.editing, typing);
+  document.activeElement?.blur?.();
   const id = row.dataset.lid;
   if (e.metaKey || e.ctrlKey) select(id, { toggle: true });
   else if (e.shiftKey && B.sel.length) {
@@ -395,7 +410,10 @@ export function wrapSelection({ free = false } = {}) {
   if (ids.some((id) => node(id).parent !== parent)) return toast({ kind: "err", title: "Pick layers in the same frame", text: "Only layers side by side can go into one frame." });
   const sibs = siblingsOf(B.board, ids[0]);
   const ordered = sibs.filter((x) => ids.includes(x));
-  const boxes = ordered.map(worldBox);
+  // Hidden layers go in too, but only the ones drawn say where the frame goes and how big it is.
+  const all = ordered.map(worldBox);
+  const boxes = all.filter(Boolean);
+  if (!boxes.length) return toast({ kind: "info", title: "Show the layers first", text: "Hidden layers have no place to wrap a frame round." });
   const minX = Math.min(...boxes.map((b) => b.x));
   const minY = Math.min(...boxes.map((b) => b.y));
   const maxX = Math.max(...boxes.map((b) => b.x + b.width));
@@ -415,7 +433,7 @@ export function wrapSelection({ free = false } = {}) {
   const ops = [{ op: "add", nodes: { [id]: { id, type: "frame", name: free ? "Group" : "Frame", parent, style, children: [] } }, ids: [id], parent, page: parent ? undefined : currentPage().id, index: sibs.indexOf(ordered[0]) }];
   ordered.forEach((x, k) => {
     ops.push({ op: "move", id: x, parent: id, index: k });
-    const b = boxes[k];
+    const b = all[k] ?? { x: minX, y: minY };
     if (free) ops.push({ op: "set", id: x, style: { position: "absolute", left: `${Math.round(b.x - minX)}px`, top: `${Math.round(b.y - minY)}px` } });
     else ops.push({ op: "set", id: x, style: { position: null, left: null, top: null } });
   });
@@ -514,7 +532,10 @@ export function setFlex(id, on) {
     return commit(ops, { label: "Add flex" });
   }
   const fb = worldBox(id);
-  const cs = getComputedStyle(elOf(id));
+  const el = elOf(id);
+  // A hidden frame isn't drawn, so there's nowhere to measure its layers from.
+  if (!fb || !el) return toast({ kind: "info", title: "Show the frame first", text: "Its layers are placed where they're drawn, and a hidden frame isn't drawn." });
+  const cs = getComputedStyle(el);
   const ops = [{ op: "set", id, style: { display: null, flexDirection: null, flexWrap: null, gap: null, rowGap: null, columnGap: null, justifyContent: null, alignItems: null, position: n.style.position ?? (n.parent ? "relative" : null), width: `${Math.round(fb.width)}px`, height: `${Math.round(fb.height)}px` } }];
   for (const c of n.children ?? []) {
     const cb = worldBox(c);
@@ -766,6 +787,19 @@ function pasteLayers(from) {
       }
       if (n.isComponent) delete n.isComponent;
     }
+    // A layer copied out of a component's copy pastes as an ordinary layer: it no longer follows the
+    // component (a whole copy inside it still does).
+    const root = c.nodes[c.id];
+    if (root?.master && !root.instanceOf) {
+      const free = (x) => {
+        const n = c.nodes[x];
+        if (!n || n.instanceOf) return;
+        delete n.master;
+        delete n.overrides;
+        for (const k of n.children ?? []) free(k);
+      };
+      free(c.id);
+    }
     Object.assign(nodes, c.nodes);
     made.push(c.id);
   }
@@ -837,37 +871,56 @@ function pickImages() {
   input.click();
 }
 
-export async function addImages(files, { at, into, after, ev } = {}) {
+export async function addImages(files, opts = {}) {
   if (!files.length) return;
   try {
-    const layers = [];
+    const uploaded = [];
     for (const f of files) {
       const video = isVideoFile(f);
       const r = await api(`/api/upload?kind=${video ? "video" : "image"}&name=${encodeURIComponent(f.name || "pasted.png")}`, f, true);
-      const w0 = r.width ?? (video ? 640 : 400);
-      const h0 = r.height ?? (video ? 360 : 300);
-      const k = Math.min(1, 720 / Math.max(w0, h0));
-      const id = newId();
-      const style = { width: `${Math.round(w0 * k)}px`, height: `${Math.round(h0 * k)}px`, objectFit: "cover", flexShrink: "0" };
-      const name = (f.name || (video ? "Video" : "Image")).replace(/\.[a-z0-9]+$/i, "");
-      // A video plays as Figma's do unless changed: on its own, over and over, with sound.
-      if (video) layers.push({ id, type: "video", name, parent: null, src: r.path, ...(r.poster ? { poster: r.poster } : {}), video: { autoplay: true, loop: true, muted: false }, style });
-      else layers.push({ id, type: "image", name, parent: null, src: r.path, style });
+      uploaded.push({ ...r, name: f.name, video });
     }
-    let point = at;
-    if (!point) {
-      const c = canvasEl.current.getBoundingClientRect();
-      point = toWorld(c.left + c.width / 2, c.top + c.height / 2);
-    }
-    if (after && into) {
-      const f = node(into);
-      const nodes = Object.fromEntries(layers.map((l) => [l.id, { ...l, parent: into }]));
-      commit([{ op: "add", nodes, ids: layers.map((l) => l.id), parent: into, index: (f.children ?? []).indexOf(after) + 1 }], { label: "Add image" });
-      select(layers.map((l) => l.id));
-    } else placeNew(layers, into ?? null, point, ev);
+    placeMedia(uploaded, opts);
   } catch (e) {
     fail(e, files.some(isVideoFile) ? "Couldn't add the video" : "Couldn't add the picture");
   }
+}
+
+/**
+ * Files the app brought in while a board is open (pasted in the Mac app, opened from Finder, dropped
+ * on the Dock icon): onto the board, where the paste would go, rather than into a design out of sight.
+ */
+export function importToBoard(items) {
+  const media = (items ?? []).filter((r) => r?.path);
+  if (media.length) placeMedia(media.map((r) => ({ ...r, video: /\.(mp4|mov|m4v|webm)$/i.test(r.path) })), pasteTarget());
+}
+
+/** Pictures and videos already in the library ({path, poster?, width?, height?}) as layers. */
+function placeMedia(uploaded, { at, into, after, ev } = {}) {
+  const layers = [];
+  for (const r of uploaded) {
+    const video = Boolean(r.video);
+    const w0 = r.width ?? (video ? 640 : 400);
+    const h0 = r.height ?? (video ? 360 : 300);
+    const k = Math.min(1, 720 / Math.max(w0, h0));
+    const id = newId();
+    const style = { width: `${Math.round(w0 * k)}px`, height: `${Math.round(h0 * k)}px`, objectFit: "cover", flexShrink: "0" };
+    const name = (r.name || r.path?.split("/").pop() || (video ? "Video" : "Image")).replace(/\.[a-z0-9]+$/i, "");
+    // A video plays as Figma's do unless changed: on its own, over and over, with sound.
+    if (video) layers.push({ id, type: "video", name, parent: null, src: r.path, ...(r.poster ? { poster: r.poster } : {}), video: { autoplay: true, loop: true, muted: false }, style });
+    else layers.push({ id, type: "image", name, parent: null, src: r.path, style });
+  }
+  let point = at;
+  if (!point) {
+    const c = canvasEl.current.getBoundingClientRect();
+    point = toWorld(c.left + c.width / 2, c.top + c.height / 2);
+  }
+  if (after && into) {
+    const f = node(into);
+    const nodes = Object.fromEntries(layers.map((l) => [l.id, { ...l, parent: into }]));
+    commit([{ op: "add", nodes, ids: layers.map((l) => l.id), parent: into, index: (f.children ?? []).indexOf(after) + 1 }], { label: "Add image" });
+    select(layers.map((l) => l.id));
+  } else placeNew(layers, into ?? null, point, ev);
 }
 
 // =============================================================================================
@@ -1034,17 +1087,17 @@ function onKey(e) {
   if (m && !e.shiftKey && k === "r") return take(), B.sel.length === 1 && bset({ renaming: B.sel[0] });
   if (m && e.altKey && (k === "k" || e.code === "KeyK")) return take(), makeComponent();
   if (m && e.altKey && (k === "b" || e.code === "KeyB")) return take(), B.sel.length === 1 && detachCopy(B.sel[0]);
-  if (m && e.altKey && k === "g") return take(), wrapSelection({ free: true });
+  if (m && e.altKey && (k === "g" || e.code === "KeyG")) return take(), wrapSelection({ free: true });
   if (m && e.shiftKey && k === "g") return take(), ungroupSelection();
   if (m && e.shiftKey && k === "h") return take(), toggleAll("hidden");
   if (m && e.shiftKey && k === "l") return take(), toggleAll("locked");
   if (m && e.shiftKey && k === "k") return take(), pickImages();
   if (m && !e.altKey && (k === "\\" || k === "|" || e.code === "Backslash")) return take(), togglePanels();
   if (m && e.altKey && (k === "p" || e.code === "KeyP")) return take(), previewFrame();
-  if (m && e.altKey && k === "c") return take(), copyStyles();
-  if (m && e.altKey && k === "v") return take(), pasteStyles();
-  if (m && e.altKey && k === "s") return take(), bset({ leftOpen: !B.leftOpen });
-  if (m && e.altKey && k === "i") return take(), bset({ rightOpen: !B.rightOpen });
+  if (m && e.altKey && (k === "c" || e.code === "KeyC")) return take(), copyStyles();
+  if (m && e.altKey && (k === "v" || e.code === "KeyV")) return take(), pasteStyles();
+  if (m && e.altKey && (k === "s" || e.code === "KeyS")) return take(), bset({ leftOpen: !B.leftOpen });
+  if (m && e.altKey && (k === "i" || e.code === "KeyI")) return take(), bset({ rightOpen: !B.rightOpen });
   if (m && (k === "=" || k === "+")) return take(), zoomBy(1.25, undefined, { animate: true });
   if (m && k === "-") return take(), zoomBy(0.8, undefined, { animate: true });
   if (m && (k === "0" || e.code === "Digit0")) return take(), fit();
@@ -1092,8 +1145,8 @@ export function boardCommand(name) {
     zoomOut: () => zoomBy(0.8, undefined, { animate: true }),
     fit: () => fit(),
     actual: () => zoomTo(1, undefined, { animate: true }),
-    duplicate: duplicateSelection,
-    delete: deleteSelection,
+    duplicate: () => !typingNow() && duplicateSelection(),
+    delete: () => !typingNow() && deleteSelection(),
     exportImage: () => document.querySelector(".bd-topbar .btn.primary")?.click(),
     toggleLeft: () => bset({ leftOpen: !B.leftOpen }),
     // ⌘\ (the app's menu calls it Focus Mode): both side panels away, or back.

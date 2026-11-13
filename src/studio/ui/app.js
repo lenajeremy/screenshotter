@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html, keysForCanvas } from "./controls.js";
 import { Icon } from "./icons.js";
-import { BoardApp, boardCommand } from "./board.js";
+import { BoardApp, boardCommand, importToBoard } from "./board.js";
 import { openBoard, saved as boardSaved } from "./board-state.js";
 import { refreshBoards } from "./board-library.js";
 import { IMAGE_PROVIDERS, S, STORE_GAP, hasDesign, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
@@ -1663,6 +1663,8 @@ const commands = {
   // place them exactly like a drop, recordings included.
   imported: async (items) => {
     await booted;
+    // A paste in the Mac app, or a file opened from Finder, while a board is open goes onto the board.
+    if (S.boardId && !S.scenesPage) return importToBoard(items);
     await refreshFiles().catch(() => undefined);
     placeImports(items ?? []);
   },

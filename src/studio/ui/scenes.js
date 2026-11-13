@@ -8,7 +8,7 @@ import { addDevice, deleteSavedScene, designForMe, duplicateSavedScene, newScene
 import { openMenu } from "./menu.js";
 import { ExportsGrid } from "./panels.js";
 import { BoardsGrid } from "./board-library.js";
-import { newBoard } from "./board-state.js";
+import { closeBoard, newBoard } from "./board-state.js";
 
 // ---------------------------------------------------------------------------------------------
 // Dates, the way people say them
@@ -58,6 +58,8 @@ export function SceneThumb({ x }) {
 }
 
 export function openScenesPage() {
+  // From a board (⇧⌘O): the board closes first (its view is kept), so a design opened next shows.
+  if (S.boardId) return closeBoard();
   set({ scenesPage: true, scenesOpen: false, exportOpen: false, menu: null, renaming: null });
   refreshScenes();
   // The design on screen joins the list with its latest name and look.

@@ -93,11 +93,16 @@ export function keysForCanvas() {
   const a = document.activeElement;
   if (!a || a === document.body || a === document.documentElement) return true;
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable) return false;
-  try {
-    return !a.matches(":focus-visible");
-  } catch {
-    return false;
-  }
+  return a === clickedFocus;
+}
+
+// How focus arrived, told by when: focus that comes just after a press of the pointer was a click.
+// (:focus-visible can't tell: both engines switch it on during the very key press being handled.)
+let pressedAt = -1e9;
+let clickedFocus = null;
+if (typeof addEventListener === "function") {
+  addEventListener("pointerdown", () => (pressedAt = performance.now()), true);
+  addEventListener("focusin", (e) => (clickedFocus = performance.now() - pressedAt < 600 ? e.target : null), true);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -574,6 +574,8 @@ function Composer({ t, anchor }) {
   };
   const onKey = (e) => {
     e.stopPropagation();
+    // Enter that picks a Japanese, Chinese or Korean word belongs to the input method, not Send.
+    if (e.isComposing || e.keyCode === 229) return;
     if (picking && options.length) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();

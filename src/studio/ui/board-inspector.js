@@ -450,8 +450,9 @@ function ChildSection() {
   const abs = isAbsolute(n);
   const toggle = (on) => {
     if (on) {
-      const me = worldBox(id);
-      const p = worldBox(n.parent);
+      // A hidden layer isn't drawn: it's placed at its frame's corner.
+      const p = worldBox(n.parent) ?? { x: 0, y: 0 };
+      const me = worldBox(id) ?? { ...p, width: 100 };
       return commit([{ op: "set", id, style: { position: "absolute", left: `${Math.round(me.x - p.x)}px`, top: `${Math.round(me.y - p.y)}px`, width: n.style.width ?? `${Math.round(me.width)}px` } }, ...(node(n.parent).style.position ? [] : [{ op: "set", id: n.parent, style: { position: "relative" } }])], { label: "Absolute position" });
     }
     commit([{ op: "set", id, style: { position: null, left: null, top: null, right: null, bottom: null } }], { label: "In the flow" });
@@ -1294,7 +1295,7 @@ function BoardPanel() {
       <//>
       <${Section} title="Shortcuts" collapsible open=${false} id="board-keys">
         <dl class="bd-keys">
-          ${[["V F R T H", "Move, frame, rectangle, text, pan"], ["⇧A", "Wrap in a flex frame (or add flex)"], ["⌥⌘G", "Wrap in a frame"], ["⇧⌘G", "Ungroup"], ["Esc / Enter", "Select the parent / the children"], ["Double-click", "The deepest layer under the pointer (and into its words)"], ["⌘ held", "Point at the deepest layer; click to select it"], ["Right-click", "Select layer…: any layer under the pointer"], ["⌘K", "Hide or show both panels"], ["⇧0 ⇧1 ⇧2", "100%, fit, zoom to selection"], ["⌥⌘C / ⌥⌘V", "Copy / paste styles"]].map(
+          ${[["V K F R T H", "Move, scale, frame, rectangle, text, pan"], ["⇧A", "Wrap in a flex frame (or add flex)"], ["⌥⌘G", "Wrap in a frame"], ["⇧⌘G", "Ungroup"], ["Esc / Enter", "Select the parent / the children"], ["Double-click", "The deepest layer under the pointer (and into its words)"], ["⌘ held", "Point at the deepest layer; click to select it"], ["Right-click", "Select layer…: any layer under the pointer"], ["⌘\\", "Hide or show both panels"], ["⇧0 ⇧1 ⇧2", "100%, fit, zoom to selection"], ["⌥⌘C / ⌥⌘V", "Copy / paste styles"]].map(
             ([k, d]) => html`<dt>${k}</dt><dd>${d}</dd>`,
           )}
         </dl>

@@ -124,7 +124,191 @@ const boardSel = (page: Page) => S(page, async () => {
 });
 const boxOf = async (page: Page, id: string) => (await page.locator(`.bd-world [data-bid="${id}"]`).boundingBox())!;
 
+const bstate = (page: Page) => S(page, async () => {
+  const m = await import("/ui/board-state.js" as string);
+  return { sel: m.B.sel.map((id: string) => m.B.board.nodes[id]?.name ?? `?${id}`).join(","), editing: m.B.editing, past: m.B.past.map((e: { label: string }) => e.label).join("|"), future: m.B.future.length };
+});
+const textOf = (t: { id: string }, id: string) => boards.getBoard(t.id).nodes[id].text;
+const styleOf = (t: { id: string }, id: string) => boards.getBoard(t.id).nodes[id].style;
+const nodeOf = (t: { id: string }, id: string) => boards.getBoard(t.id).nodes[id];
+const sel = (page: Page, ids: string[]) => S(page, async (ids: string[]) => (await import("/ui/board-state.js" as string)).select(ids), ids);
+
 const CHECKS: Record<string, Check> = {
+  // From the 0.14 review of the board editor.
+  async "board review: typing then clicking another layer row keeps the words"(page) {
+    const t = await openTestBoard(page);
+    const two = await boxOf(page, t.byName("Two"));
+    await page.mouse.dblclick(two.x + 8, two.y + two.height / 2);
+    await page.waitForTimeout(300);
+    await page.keyboard.type("Hello");
+    await page.waitForTimeout(100);
+    // Click the List row in the layer list.
+    await page.locator(`.bd-rows .bd-row[data-lid="${t.byName("List")}"]`).click();
+    await page.waitForTimeout(1200);
+    const after = textOf(t, t.byName("Two"));
+    const st = await bstate(page);
+    return after === "Hello" ? "ok" : `text on disk is ${JSON.stringify(after)} (sel ${st.sel}, past ${st.past})`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: a width typed then a click on another layer row goes to the first layer"(page) {
+    const t = await openTestBoard(page);
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), t.byName("Row One"));
+    await page.waitForTimeout(300);
+    const st0 = await bstate(page);
+    const w = page.locator('.bd-right .num[title="Opacity"] input').first();
+    await w.click();
+    await page.keyboard.press("Meta+a");
+    await page.keyboard.type("40");
+    await page.locator(`.bd-rows .bd-row[data-lid="${t.byName("Row Two")}"]`).click();
+    await page.waitForTimeout(1200);
+    const one = styleOf(t, t.byName("Row One")).opacity;
+    const two = styleOf(t, t.byName("Row Two")).opacity;
+    return one === "0.4" && two === undefined ? "ok" : `selected ${st0.sel}; Row One opacity ${one}, Row Two opacity ${two}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: escape in a layer rename keeps the old name"(page) {
+    const t = await openTestBoard(page);
+    await sel(page, [t.byName("List")]);
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Meta+r");
+    await page.waitForTimeout(200);
+    await page.keyboard.type("Renamed");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(1200);
+    const name = nodeOf(t, t.byName("List")).name;
+    return name === "List" ? "ok" : `after Escape the layer is called ${name}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: drawing a rectangle over a copy of a component"(page) {
+    const t = await openTestBoard(page);
+    const one = t.byName("Row One");
+    await S(page, async (id: string) => {
+      const m = await import("/ui/board-state.js" as string);
+      const b = await import("/ui/board.js" as string);
+      m.select(id);
+      b.makeComponent();
+      b.placeCopy(id);
+    }, one);
+    await page.waitForTimeout(800);
+    const copy = Object.values(boards.getBoard(t.id).nodes).find((n) => n.instanceOf === one);
+    if (!copy) return "no copy made";
+    const cb = await boxOf(page, copy.id);
+    await page.keyboard.press("r");
+    await page.mouse.move(cb.x + 10, cb.y + 5);
+    await page.mouse.down();
+    await page.mouse.move(cb.x + 40, cb.y + 30, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+    const st = await bstate(page);
+    const rects = Object.values(boards.getBoard(t.id).nodes).filter((n) => /^Rectangle/.test(n.name)).length;
+    const msg = await toasts(page);
+    return rects === 1 ? "ok" : `no rectangle drawn (sel ${st.sel}); toasts: ${msg.slice(0, 160)}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: opening a design from My designs while a board is open shows the design"(page) {
+    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Design to open", scene: phone({ headline: "Design to open" }) });
+    await S(page, async () => (await import("/ui/store.js" as string)).saveSceneNow());
+    await page.waitForTimeout(500);
+    const sid = await S(page, async () => (await import("/ui/store.js" as string)).S.sceneId);
+    // A second design on screen, so opening the first isn't a no-op.
+    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Other", scene: phone({ headline: "Other" }) });
+    await openTestBoard(page);
+    await page.keyboard.press("Meta+Shift+o");
+    await page.waitForTimeout(1500);
+    const onLib = await S(page, async () => (await import("/ui/store.js" as string)).S.scenesPage);
+    const card = page.locator(`[data-scene="${sid}"], .sp-card:has-text("Design to open")`).first();
+    const found = await card.count();
+    if (found) await card.click();
+    else await S(page, async (id: string) => (await import("/ui/actions.js" as string)).openScene(id), sid);
+    await page.waitForTimeout(1200);
+    const st = await S(page, async () => { const s = (await import("/ui/store.js" as string)).S; return { boardId: Boolean(s.boardId), scenesPage: s.scenesPage, sceneId: s.sceneId, headline: s.scene?.headline }; });
+    const boardShown = await S(page, () => Boolean(document.querySelector(".bd-app")));
+    return !boardShown ? "ok" : `library open: ${onLib}, card clicked: ${found > 0}; after opening design ${sid}: the board is on screen (${JSON.stringify(st)})`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: a layer copied out of a component's copy and pasted on the page no longer follows the component"(page) {
+    const t = await openTestBoard(page);
+    const one = t.byName("Row One");
+    const out = await S(page, async (id: string) => {
+      const m = await import("/ui/board-state.js" as string);
+      const b = await import("/ui/board.js" as string);
+      m.select(id);
+      b.makeComponent();
+      b.placeCopy(id);
+      await new Promise((r) => setTimeout(r, 300));
+      const copy = Object.values(m.B.board.nodes).find((n: any) => n.instanceOf === id) as any;
+      const words = copy.children.map((c: string) => m.B.board.nodes[c]).find((n: any) => n.type === "text");
+      m.select(words.id);
+      await new Promise((r) => setTimeout(r, 100));
+      const dt = new DataTransfer();
+      window.dispatchEvent(new ClipboardEvent("copy", { clipboardData: dt, bubbles: true, cancelable: true }));
+      m.select([]);
+      await new Promise((r) => setTimeout(r, 100));
+      window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 300));
+      const pasted = m.B.sel[0];
+      // Change the component's own words.
+      const mainWords = m.B.board.nodes[id].children.map((c: string) => m.B.board.nodes[c]).find((n: any) => n.type === "text");
+      m.commit([{ op: "set", id: mainWords.id, text: "Changed in the component" }], { label: "Typing" });
+      await new Promise((r) => setTimeout(r, 300));
+      const p = m.B.board.nodes[pasted];
+      return { pasted: Boolean(p), parent: p?.parent ?? null, master: p?.master ?? null, text: p?.text, html: dt.getData("text/html").slice(0, 40) };
+    }, one);
+    return out.pasted && out.parent === null && out.text !== "Changed in the component" ? "ok" : `pasted on the page: ${JSON.stringify(out)}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: a hidden layer wrapped with shift-A"(page) {
+    const t = await openTestBoard(page);
+    const two = t.byName("Row Two");
+    await sel(page, [two]);
+    await page.keyboard.press("Meta+Shift+h");
+    await page.waitForTimeout(900);
+    const hidden = nodeOf(t, two).hidden;
+    await page.locator(`.bd-rows .bd-row[data-lid="${two}"]`).click();
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Shift+a");
+    await page.waitForTimeout(900);
+    const p = nodeOf(t, two).parent;
+    // Wrapping only a hidden layer says to show it first, and changes nothing (no error either).
+    return hidden && nodeOf(t, p!).name === "List" ? "ok" : `hidden ${hidden}; parent now ${nodeOf(t, p!).name}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: remove flex on a hidden flex frame"(page) {
+    const t = await openTestBoard(page);
+    const list = t.byName("List");
+    await sel(page, [list]);
+    await page.keyboard.press("Meta+Shift+h");
+    await page.waitForTimeout(900);
+    await page.locator('.bd-right button[title^="Remove flex"]').click();
+    await page.waitForTimeout(900);
+    // A hidden frame keeps its flex (there's nothing drawn to place its layers from), without an error.
+    return nodeOf(t, list).style.display === "flex" ? "ok" : `display now ${nodeOf(t, list).style.display}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: absolute position ticked on a hidden layer in a flex frame"(page) {
+    const t = await openTestBoard(page);
+    const two = t.byName("Row Two");
+    await sel(page, [two]);
+    await page.keyboard.press("Meta+Shift+h");
+    await page.waitForTimeout(900);
+    await page.locator('.bd-right label.bd-check', { hasText: "Absolute position" }).locator("input").click();
+    await page.waitForTimeout(900);
+    return nodeOf(t, two).style.position === "absolute" ? "ok" : `position now ${nodeOf(t, two).style.position}`;
+  },
+  // From the 0.14 review of the board editor.
+  async "board review: the app's Duplicate menu command while typing in a text layer"(page) {
+    const t = await openTestBoard(page);
+    const two = await boxOf(page, t.byName("Two"));
+    await page.mouse.dblclick(two.x + 8, two.y + two.height / 2);
+    await page.waitForTimeout(300);
+    await page.keyboard.type("Hello");
+    // What Edit > Duplicate (⌘D) sends when the page leaves the key alone, as it does while typing.
+    await S(page, () => (window as any).studio.command("duplicate"));
+    await page.waitForTimeout(1200);
+    const texts = Object.values(boards.getBoard(t.id).nodes).filter((n) => n.type === "text" && /Two|Hello/.test(n.text ?? "")).map((n) => n.text);
+    // The menu's Duplicate does nothing while typing: the words stay in the one text being edited.
+    return texts.length === 1 ? "ok" : `texts now: ${JSON.stringify(texts)}`;
+  },
   async "a board draws its HTML, lists its layers and fits its panels"(page) {
     const t = await openTestBoard(page);
     const drawn = await S(page, () => document.querySelectorAll(".bd-world [data-bid]").length);
@@ -651,6 +835,21 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(500);
     const steps = (await past()) - before;
     return boards.getBoard(t.id).nodes[phone].style.width === "300px" && steps === 1 ? "ok" : `Enter: width ${boards.getBoard(t.id).nodes[phone].style.width}, ${steps} undo steps`;
+  },
+  async "with a board open, a paste goes onto the board, and a capture's Edit opens the design"(page) {
+    const t = await openTestBoard(page);
+    // A paste in the Mac app (or a file opened from Finder) arrives as `imported`.
+    await S(page, (p: string) => (window as unknown as { studio: { command: (n: string, a: unknown) => unknown } }).studio.command("imported", [{ path: p, width: 390, height: 844 }]), shot);
+    await page.waitForTimeout(1500);
+    const onBoard = Object.values(boards.getBoard(t.id).nodes).some((n) => n.type === "image" && n.src === shot);
+    // The corner card's Edit after a screenshot: the board makes way for the design.
+    await S(page, (p: string) => (window as unknown as { studio: { command: (n: string, a: unknown) => unknown } }).studio.command("openRecording", { image: p, width: 1206, height: 2622 }), shot);
+    await page.waitForTimeout(1800);
+    const st = await S(page, async () => {
+      const s = (await import("/ui/store.js" as string)).S;
+      return { board: Boolean(s.boardId), shown: Boolean(document.querySelector(".bd-app")), devices: (s.scene.devices ?? []).map((d: { screenshot?: string }) => d.screenshot) };
+    });
+    return onBoard && !st.board && !st.shown && st.devices.includes(shot) ? "ok" : `pasted onto the board: ${onBoard}; after Edit: ${JSON.stringify(st)}`;
   },
   async "on a board, a save the engine misses is tried again, and one it refuses leaves undo"(page) {
     const t = await openTestBoard(page);
@@ -1270,6 +1469,17 @@ const CHECKS: Record<string, Check> = {
     if (!visible) return "the zoom button, focused after a key, isn't :focus-visible";
     if (held.space || z1.zoom === z0.zoom) return `with the zoom button focused, Space ${held.space ? "panned" : "didn't pan"} and the zoom went ${z0.zoom} → ${z1.zoom}`;
     if (tabbed.sel !== "device-1") return `with a button focused, Tab changed the selection to ${tabbed.sel}`;
+    // A button that has focus only because it was clicked leaves Space to the canvas: it pans,
+    // rather than pressing the button again.
+    await page.locator('.zoom-ctl button[title^="Zoom in"]').click();
+    await page.waitForTimeout(200);
+    const c0 = await st();
+    await page.keyboard.down("Space");
+    const clickedHeld = await st();
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(200);
+    const c1 = await st();
+    if (!clickedHeld.space || c1.zoom !== c0.zoom) return `after clicking the zoom button, Space ${clickedHeld.space ? "panned" : "didn't pan"} and the zoom went ${c0.zoom} → ${c1.zoom}`;
     // Nothing focused again: Space pans, and switching to another app mid-pan lets go of it.
     await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.down("Space");

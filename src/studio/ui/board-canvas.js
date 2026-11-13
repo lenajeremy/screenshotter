@@ -2,7 +2,7 @@
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -212,6 +212,8 @@ function EditableText({ id, style }) {
     onPointerDown=${(e) => e.stopPropagation()}
     onKeyDown=${(e) => {
       e.stopPropagation();
+      // Enter or Escape that picks a Japanese, Chinese or Korean word belongs to the input method.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         ref.current.blur();
@@ -527,6 +529,12 @@ addEventListener("keyup", (e) => {
     spaceDown = false;
     notify();
   }
+});
+// Space let go in another app (⌘Tab while panning) never reaches this one: leaving clears it.
+addEventListener("blur", () => {
+  if (!spaceDown) return;
+  spaceDown = false;
+  notify();
 });
 
 /**
@@ -1210,6 +1218,10 @@ function frameAt(clientX, clientY, except) {
     const h = el.closest?.("[data-bid]");
     if (!h || !h.closest(".bd-world")) continue;
     let id = h.dataset.bid;
+    // Nothing goes into a component's copy (only its component changes it): what's drawn or
+    // dropped on one lands beside it, in the frame holding the copy.
+    const copy = instanceRootOf(B.board, id);
+    if (copy) id = node(copy)?.parent;
     while (id && (node(id)?.type !== "frame" || id === except || (except && ancestors(B.board, id).includes(except)))) id = node(id)?.parent;
     if (id && !node(id)?.locked) return id;
   }
@@ -1296,7 +1308,7 @@ export function placeNew(layers, into, at, ev) {
       ops.push({ op: "add", nodes, ids: tops, parent: into });
     }
   }
-  commit(ops, { label: "Add" });
+  if (commit(ops, { label: "Add" }) === false) return;
   select(tops);
   return tops;
 }
