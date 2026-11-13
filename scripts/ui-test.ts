@@ -1278,6 +1278,108 @@ const CHECKS: Record<string, Check> = {
     if (!drawn) return "the first design's other screens weren't drawn";
     return !r.stale && r.tiles === 2 ? "ok" : `${r.stale} pictures of the first design's screens in the row, ${r.tiles} "couldn't show" tiles`;
   },
+  async "the colour picker keeps transparency, ⌘B keeps line breaks, one Escape closes one popover, popovers follow scrolling, and a menu works by keyboard"(page) {
+    // tsx keeps the names of the functions written below, through a helper of its own the page needs too.
+    await page.evaluate("globalThis.__name = (f) => f");
+    return S(page, async () => {
+      const { h, render } = await import("preact" as string);
+      const c = await import("/ui/controls.js" as string);
+      const bad: string[] = [];
+      const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+      const host = () => {
+        const el = document.createElement("div");
+        el.style.cssText = "position:fixed;left:40px;top:60px;width:260px;z-index:5000";
+        document.body.append(el);
+        return el;
+      };
+      const down = (el: Element, fx: number, fy: number) => {
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, button: 0, buttons: 1, pointerType: "mouse", bubbles: true, cancelable: true }));
+      };
+      // A see-through colour keeps its alpha as its colour is changed; Escape mid-drag puts it back.
+      const h1 = host();
+      let got = "";
+      render(h(c.ColorPicker, { value: "rgba(255, 0, 0, 0.5)", onChange: (v: string) => (got = v) }), h1);
+      await wait();
+      down(h1.querySelector(".cp-sv")!, 0.5, 0.5);
+      window.dispatchEvent(new PointerEvent("pointerup", { button: 0, pointerType: "mouse", bubbles: true }));
+      if (!/^rgba\(\d+, \d+, \d+, 0\.5\)$/.test(got)) bad.push(`dragging a 50% red gave ${got}`);
+      down(h1.querySelector(".cp-hue")!, 0.5, 0.5);
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      if (got !== "rgba(255, 0, 0, 0.5)") bad.push(`Escape mid-drag left ${got}`);
+      render(null, h1);
+      // ⌘B over two lines makes both accent words, keeping the line; again makes them plain.
+      const ed = document.createElement("div");
+      ed.contentEditable = "true";
+      ed.innerHTML = c.accentEditHtml("one\ntwo");
+      document.body.append(ed);
+      const all = document.createRange();
+      all.selectNodeContents(ed);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(all);
+      c.toggleAccentIn(ed, "");
+      const on = c.accentFromEdit(ed);
+      c.toggleAccentIn(ed, "");
+      const off = c.accentFromEdit(ed);
+      ed.remove();
+      if (on !== "**one**\n**two**" || off !== "one\ntwo") bad.push(`⌘B over two lines: ${JSON.stringify(on)}, then ${JSON.stringify(off)}`);
+      if (!/<span data-acc[^>]*>two<br>lines<\/span>/.test(c.accentEditHtml("**two\nlines**"))) bad.push("an accent over a line break isn't read as one");
+      // Two popovers open: one Escape closes the newer only.
+      const h2 = host();
+      const [a1, a2] = [document.createElement("button"), document.createElement("button")];
+      h2.append(a1, a2);
+      const pops = document.createElement("div");
+      h2.append(pops);
+      const closed: string[] = [];
+      const onFirst = () => closed.push("first");
+      render(h("div", null, h(c.Popover, { anchor: a1, onClose: onFirst }, "One")), pops);
+      await wait();
+      render(h("div", null, h(c.Popover, { anchor: a1, onClose: onFirst }, "One"), h(c.Popover, { anchor: a2, onClose: () => closed.push("second") }, "Two")), pops);
+      await wait();
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      if (closed.join() !== "second") bad.push(`one Escape closed ${closed.join() || "nothing"}`);
+      render(null, pops);
+      h2.remove();
+      // A popover follows its anchor as its panel scrolls, and closes once the anchor is out of sight.
+      const box = document.createElement("div");
+      box.style.cssText = "position:fixed;left:420px;top:100px;width:200px;height:200px;overflow:auto";
+      box.innerHTML = '<div style="height:120px"></div><button>Anchor</button><div style="height:900px"></div>';
+      document.body.append(box);
+      const h3 = host();
+      let gone = false;
+      render(h(c.Popover, { anchor: box.querySelector("button"), onClose: () => (gone = true) }, "Follows"), h3);
+      await wait();
+      const pop = h3.querySelector(".pop") as HTMLElement;
+      const t0 = parseFloat(pop.style.top);
+      box.scrollTop = 50;
+      await wait();
+      const t1 = parseFloat(pop.style.top);
+      if (Math.abs(t0 - 50 - t1) > 2) bad.push(`scrolled 50 px, the popover moved ${t0 - t1} px`);
+      box.scrollTop = 500;
+      await wait();
+      if (!gone) bad.push("the popover stayed open with its anchor scrolled out of sight");
+      render(null, h3);
+      box.remove();
+      // A menu without a search box: the arrow keys move through it (keeping the row in sight) and Enter picks.
+      const h4 = host();
+      let picked: unknown = null;
+      render(h(c.Dropdown, { value: 0, options: Array.from({ length: 40 }, (_, i) => ({ value: i, label: `Option ${i}` })), onChange: (v: unknown) => (picked = v) }), h4);
+      await wait();
+      (h4.querySelector("button") as HTMLButtonElement).click();
+      await wait(200);
+      for (let i = 0; i < 25; i++) document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      await wait(200);
+      const list = h4.querySelector(".pop")!.getBoundingClientRect();
+      const row = h4.querySelector(".menu-item.active")?.getBoundingClientRect();
+      if (!row || row.top < list.top - 1 || row.bottom > list.bottom + 1) bad.push(`the highlighted row is ${row ? `at ${Math.round(row.top)}–${Math.round(row.bottom)}, the menu ${Math.round(list.top)}–${Math.round(list.bottom)}` : "missing"}`);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await wait();
+      if (picked !== 25) bad.push(`25 × ↓ and Enter picked ${picked}`);
+      render(null, h4);
+      h4.remove();
+      return bad.length ? bad.join("; ") : "ok";
+    });
+  },
 };
 
 const engines = { chromium, webkit } as const;

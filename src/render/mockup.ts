@@ -167,7 +167,8 @@ function richText(text: string, accent: AccentStyle, by?: Unit): string {
   // A trailing newline (Enter at the end of a text box) would add an empty line.
   return text
     .replace(/(\\n|\n|\s)+$/, "")
-    .split(/\*\*(.+?)\*\*/g)
+    // An accent can run over a line break ("**two\nlines**").
+    .split(/\*\*([\s\S]+?)\*\*/g)
     .map((part, i) => {
       const safe = esc(part).replace(/\\n|\n/g, "<br>");
       if (i % 2 === 0) return safe;

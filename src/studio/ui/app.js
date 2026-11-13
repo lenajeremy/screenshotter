@@ -1459,7 +1459,7 @@ function StorePage() {
 }
 
 /** Toasts show AI summaries verbatim; drop the **accent** markers. */
-const plain = (v) => (typeof v === "string" ? v.replace(/\*\*(.+?)\*\*/g, "$1") : v);
+const plain = (v) => (typeof v === "string" ? v.replace(/\*\*([\s\S]+?)\*\*/g, "$1") : v);
 
 function Toasts() {
   const s = useStore();

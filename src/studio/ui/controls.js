@@ -302,11 +302,17 @@ export function Section({ title, count, children, right, collapsible = false, op
 }
 
 // ---------------------------------------------------------------------------------------------
-// Popover anchored to an element. Closes on outside click or Escape.
+// Popover anchored to an element. Closes on outside click or Escape (the one on top only), and
+// follows its anchor as what's around it scrolls (closing once the anchor is scrolled out of view).
+
+/** The popovers open now, the newest last: Escape closes only that one. */
+const openPopovers = [];
 
 export function Popover({ anchor, onClose, children, class: cls = "", align = "start", offset = 6, width, avoid }) {
   const ref = useRef();
   const [pos, setPos] = useState(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useLayoutEffect(() => {
     const place = () => {
       if (!anchor) return;
@@ -333,24 +339,44 @@ export function Popover({ anchor, onClose, children, class: cls = "", align = "s
       }
       let top = a.bottom + offset;
       if (top + hgt > window.innerHeight - 8 && a.top - offset - hgt > 8) top = a.top - offset - hgt;
-      setPos({ left, top: clamp(top, 8, window.innerHeight - 40) });
+      // Kept whole on screen: a tall one near the bottom moves up rather than running off it.
+      setPos({ left, top: clamp(top, 8, Math.max(8, window.innerHeight - hgt - 8)) });
     };
     place();
     const ro = new ResizeObserver(place);
     ro.observe(ref.current);
+    // Something round the anchor scrolled (a panel, the page): follow it, or close once it's out of sight.
+    const scrolled = (e) => {
+      if (!anchor || ref.current?.contains(e.target)) return;
+      const box = e.target instanceof Element ? e.target.getBoundingClientRect() : null;
+      if (box && !e.target.contains(anchor)) return;
+      const a = anchor.getBoundingClientRect();
+      const view = box ?? { top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth };
+      const gone = !anchor.isConnected || a.bottom <= view.top || a.top >= view.bottom || a.right <= view.left || a.left >= view.right;
+      if (gone) close.current();
+      else place();
+    };
     window.addEventListener("resize", place);
+    window.addEventListener("scroll", scrolled, true);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", scrolled, true);
     };
   }, [anchor]);
+  const mine = useRef({});
+  useEffect(() => {
+    openPopovers.push(mine.current);
+    return () => openPopovers.splice(openPopovers.indexOf(mine.current), 1);
+  }, []);
   useEffect(() => {
     const down = (e) => {
       if (ref.current?.contains(e.target) || anchor?.contains(e.target)) return;
       onClose();
     };
     const key = (e) => {
-      if (e.key === "Escape") {
+      // One Escape closes one popover: the newest (a colour picker opened from a menu goes first).
+      if (e.key === "Escape" && openPopovers[openPopovers.length - 1] === mine.current) {
         e.stopPropagation();
         onClose();
       }
@@ -375,33 +401,67 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const field = useRef();
+  const list = useRef();
   const current = options.find((o) => o.value === value);
   const filtered = q ? options.filter((o) => `${o.label} ${o.hint ?? ""} ${o.group ?? ""}`.toLowerCase().includes(q.toLowerCase())) : options;
+  /** Scroll the highlighted row into sight, in the menu's own scroll. */
+  const showActive = () => {
+    const item = list.current?.querySelector(".menu-item.active");
+    const box = item?.closest(".pop");
+    if (!box) return;
+    const b = box.getBoundingClientRect();
+    const r = item.getBoundingClientRect();
+    if (r.top < b.top) box.scrollTop -= b.top - r.top + 6;
+    else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom + 6;
+  };
+  // The button was given the keyboard only for the menu: it goes back when the menu closes.
+  const lent = useRef(false);
   useEffect(() => {
     if (open) setActive(Math.max(0, filtered.findIndex((o) => o.value === value)));
     else setQ("");
+    if (!open && lent.current && document.activeElement === btn.current) btn.current.blur();
+    lent.current = open && !search && document.activeElement !== btn.current;
     // autofocus only works for what's on the page when it loads: focus the search box by hand.
-    if (open && search) requestAnimationFrame(() => field.current?.focus());
+    // Without one the button keeps the keyboard (WebKit doesn't focus a clicked button), so the
+    // arrow keys and Enter reach the menu.
+    if (open)
+      requestAnimationFrame(() => {
+        (search ? field.current : btn.current)?.focus({ preventScroll: true });
+        showActive();
+      });
   }, [open]);
+  // The arrow keys move the highlight: it stays in sight (hovering doesn't scroll).
+  const follow = useRef(false);
+  useEffect(() => {
+    if (follow.current) showActive();
+    follow.current = false;
+  }, [active]);
   const pick = (o) => {
     onChange(o.value);
     setOpen(false);
   };
   const key = (e) => {
-    if (e.key === "ArrowDown") {
+    const go = (fn) => {
       e.preventDefault();
-      setActive((a) => Math.min(filtered.length - 1, a + 1));
-    } else if (e.key === "ArrowUp") {
+      // The keys are the menu's while it's open (not the canvas's: arrows would move the selection).
+      e.stopPropagation();
+      follow.current = true;
+      setActive(fn);
+    };
+    if (e.key === "ArrowDown") go((a) => Math.min(filtered.length - 1, a + 1));
+    else if (e.key === "ArrowUp") go((a) => Math.max(0, a - 1));
+    else if (e.key === "Home" && !search) go(() => 0);
+    else if (e.key === "End" && !search) go(() => filtered.length - 1);
+    else if (e.key === "Enter" && filtered[active]) {
       e.preventDefault();
-      setActive((a) => Math.max(0, a - 1));
-    } else if (e.key === "Enter" && filtered[active]) {
-      e.preventDefault();
+      e.stopPropagation();
       pick(filtered[active]);
     }
   };
   let lastGroup;
   return html`
-    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title ?? (current ? `${current.label}${current.hint ? ` · ${current.hint}` : ""}` : undefined)} onClick=${() => setOpen(!open)}>
+    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title ?? (current ? `${current.label}${current.hint ? ` · ${current.hint}` : ""}` : undefined)} onClick=${() => setOpen(!open)}
+      onKeyDown=${open && !search ? key : undefined}>
       ${trigger ??
       html`${icon && html`<${Icon} n=${icon} s=${14} />`}
         <span class="label">${current ? (render ? render(current) : html`${current.label}${current.hint && html`<span class="muted">${current.hint}</span>`}`) : html`<span class="muted">${placeholder}</span>`}</span>
@@ -409,7 +469,7 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
     </button>
     ${open &&
     html`<${Popover} anchor=${btn.current} onClose=${() => setOpen(false)}>
-      <div onKeyDown=${key}>
+      <div onKeyDown=${key} ref=${list}>
         ${search &&
         html`<div class="menu-search"><div class="input-wrap"><${Icon} n="search" s=${13} /><input class="input sm" ref=${field} placeholder="Search" value=${q}
           onInput=${(e) => {
@@ -442,7 +502,21 @@ function hexToRgb(hex) {
   if (s.length === 3) s = [...s].map((c) => c + c).join("");
   return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
 }
+/**
+ * A colour's red, green, blue and alpha (0–1): from hex, or the rgba() that normalizeColor gives a
+ * see-through colour. null if it's neither.
+ */
+function readRgba(c) {
+  const rgb = hexToRgb(c);
+  if (rgb) return [...rgb, 1];
+  const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/i.exec(String(c ?? "").trim());
+  if (!m) return null;
+  const a = m[4] === undefined ? 1 : Number(m[4]) / (m[5] ? 100 : 1);
+  return [Number(m[1]), Number(m[2]), Number(m[3]), clamp(a, 0, 1)];
+}
 const toHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, "0")).join("");
+/** A colour as the picker writes it: #rrggbb, or rgba() when it's see-through. */
+const toColor = ([r, g, b], a = 1) => (a < 1 ? `rgba(${[r, g, b].map((v) => Math.round(clamp(v, 0, 255))).join(", ")}, ${Math.round(a * 1000) / 1000})` : toHex(r, g, b));
 function rgbToHsv([r, g, b]) {
   r /= 255;
   g /= 255;
@@ -619,28 +693,28 @@ export function ColorPicker({ value: given, onChange, tokens, onMakeToken }) {
   // A token shows as the colour it stands for; changing that colour makes it a plain one again.
   const ref = tokens ? tokenRef(given) : null;
   const value = ref ? tokenColor(given, tokens) ?? undefined : given;
-  const rgb = hexToRgb(value) ?? [255, 255, 255];
-  const [hsv, setHsv] = useState(() => rgbToHsv(rgb));
+  // A see-through colour keeps how see-through it is as its colour is changed here.
+  const rgba = readRgba(value);
+  const alpha = rgba?.[3] ?? 1;
+  const [hsv, setHsv] = useState(() => rgbToHsv(rgba?.slice(0, 3) ?? [255, 255, 255]));
   const [text, setText] = useState(value ?? "#ffffff");
   const [picking, setPicking] = useState(false);
   useEffect(() => {
     const cur = toHex(...hsvToRgb(...hsv));
-    if (value && value.toLowerCase() !== cur) {
-      const next = hexToRgb(value);
-      if (next) setHsv(rgbToHsv(next));
-    }
+    const next = readRgba(value);
+    if (next && toHex(...next) !== cur) setHsv(rgbToHsv(next.slice(0, 3)));
     setText(value ?? "");
   }, [value, given]);
-  const emit = (next, live) => {
+  const emit = (next, live, a = alpha) => {
     setHsv(next);
-    const hex = toHex(...hsvToRgb(...next));
-    setText(hex);
-    onChange(hex, live);
+    const c = toColor(hsvToRgb(...next), a);
+    setText(c);
+    onChange(c, live);
   };
-  /** Apply a colour from outside the picker (paste, eyedropper, typed). */
+  /** Apply a colour from outside the picker (paste, eyedropper, typed), with its own alpha. */
   const apply = (c) => {
-    const rgbv = hexToRgb(c);
-    if (rgbv) emit(rgbToHsv(rgbv));
+    const v = readRgba(c);
+    if (v) emit(rgbToHsv(v.slice(0, 3)), undefined, v[3]);
     else {
       setText(c);
       onChange(c);
@@ -856,7 +930,8 @@ export const accentEditHtml = (text, accentCss = "") => {
   const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const css = accentCss.replace(/"/g, "'");
   return String(text ?? "")
-    .split(/\*\*(.+?)\*\*/g)
+    // An accent can run over a line break ("**two\nlines**").
+    .split(/\*\*([\s\S]+?)\*\*/g)
     .map((part, i) => {
       const h = esc(part).replace(/\\n|\n/g, "<br>");
       return i % 2 ? `<span data-acc style="${css}">${h}</span>` : h;
@@ -913,7 +988,7 @@ export const toggleAccentIn = (root, accentCss = "") => {
     tail.setEnd(acc, acc.childNodes.length);
     const after = tail.extractContents();
     const plain = document.createElement("span");
-    plain.textContent = r.extractContents().textContent;
+    plain.append(plainWords(r.extractContents()));
     acc.after(plain);
     if (after.textContent) {
       const rest = acc.cloneNode(false);
@@ -926,10 +1001,27 @@ export const toggleAccentIn = (root, accentCss = "") => {
   const span = document.createElement("span");
   span.setAttribute("data-acc", "");
   span.style.cssText = accentCss;
-  span.textContent = r.extractContents().textContent;
+  span.append(plainWords(r.extractContents()));
   r.insertNode(span);
   pick(span);
 };
+
+/**
+ * Chosen words as plain text that keeps its line breaks (a <br> each, as a new line typed in the
+ * middle comes as a block of its own), without the accents inside: textContent would join the lines.
+ */
+function plainWords(fragment) {
+  const out = document.createDocumentFragment();
+  const walk = (n) =>
+    n.childNodes.forEach((c) => {
+      if (c.nodeType === 3) return out.append(c.data);
+      if (c.nodeName === "BR") return out.append(document.createElement("br"));
+      if ((c.nodeName === "DIV" || c.nodeName === "P") && out.childNodes.length && out.lastChild.nodeName !== "BR") out.append(document.createElement("br"));
+      walk(c);
+    });
+  walk(fragment);
+  return out;
+}
 
 
 /** How accent words look while being typed in a panel (the design's own colour shows on the canvas). */

@@ -231,12 +231,14 @@ const rich = (text, accent = {}, by) =>
   by ? richUnits(text, accent, by) :
   String(text ?? "")
     .replace(/(\\n|\n|\s)+$/, "")
-    .split(/\*\*(.+?)\*\*/g)
+    // An accent can run over a line break ("**two\nlines**"), as the render draws it.
+    .split(/\*\*([\s\S]+?)\*\*/g)
     .map((part, i) => {
-      if (i % 2 === 0) return part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
-      if (accent.mark) return marked(part, accent);
-      if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${part}</strong>`;
-      return html`<span style=${accentStyle(accent)}>${part}</span>`;
+      const lines = part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
+      if (i % 2 === 0) return lines;
+      if (accent.mark) return marked(lines, accent);
+      if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${lines}</strong>`;
+      return html`<span style=${accentStyle(accent)}>${lines}</span>`;
     });
 
 /**
