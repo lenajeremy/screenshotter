@@ -159,7 +159,7 @@ enum RecordingRenderer {
         func at<T>(_ list: [T]?, _ i: Int) -> T? { list.flatMap { $0.isEmpty ? nil : $0[min(i, $0.count - 1)] } }
 
         for i in 0..<spec.frames {
-            autoreleasepool {
+            try autoreleasepool {
                 let t = Double(i) / Double(spec.fps)
                 var frame = transparent ? CIImage(color: .clear).cropped(to: canvas) : CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: canvas)
                 for (k, layer) in spec.layers.enumerated() {
@@ -239,12 +239,14 @@ enum RecordingRenderer {
                     frame = layer.blend.map { blended(layerImage, over: frame, mode: $0, amount: 1) } ?? layerImage.composited(over: frame)
                 }
                 frame = frame.cropped(to: canvas)
-                while !input.isReadyForMoreMediaData { usleep(2000) }
+                try waitForRoom(input, in: writer)
                 var buffer: CVPixelBuffer?
                 if let pool = adaptor.pixelBufferPool { CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) }
                 guard let pb = buffer else { return }
                 context.render(frame, to: pb, bounds: canvas, colorSpace: srgb)
-                adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(spec.fps)))
+                if !adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(spec.fps))), writer.status == .failed {
+                    throw writer.error ?? CaptureError.writeFailed("the video encoder failed")
+                }
                 if i % 15 == 0 || i == spec.frames - 1 {
                     print("progress \(i + 1)/\(spec.frames)")
                     fflush(stdout)
@@ -254,8 +256,19 @@ enum RecordingRenderer {
         input.markAsFinished()
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
-        done.wait()
+        if done.wait(timeout: .now() + 120) == .timedOut { throw CaptureError.writeFailed("the video encoder stopped responding while finishing") }
         if writer.status != .completed { throw writer.error ?? CaptureError.writeFailed("the video didn't finish") }
+    }
+
+    /// Waits until the encoder takes another frame. It can stop for good (its writer failed, or
+    /// macOS's encoder got stuck): then the export fails, rather than waiting for ever.
+    private static func waitForRoom(_ input: AVAssetWriterInput, in writer: AVAssetWriter) throws {
+        let giveUp = Date().addingTimeInterval(30)
+        while !input.isReadyForMoreMediaData {
+            if writer.status != .writing { throw writer.error ?? CaptureError.writeFailed("the video encoder stopped") }
+            if Date() > giveUp { throw CaptureError.writeFailed("the video encoder stopped responding") }
+            usleep(2000)
+        }
     }
 
     /// `top` over `bottom` in a CSS blend mode, `amount` of the way (an element's opacity).
@@ -414,7 +427,7 @@ final class VideoSource {
             found = tracks?.first
             sem.signal()
         }
-        sem.wait()
+        if sem.wait(timeout: .now() + 60) == .timedOut { throw CaptureError.writeFailed("a video in the design couldn't be read") }
         guard let track = found else { throw CaptureError.noImage }
         output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         output.alwaysCopiesSampleData = false
