@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Carbon.HIToolbox
 import Combine
+import ScreenCaptureKit
 
 /// Runs the capture bar's flows: choose what to capture, take the screenshot or the recording
 /// (with the camera bubble and the countdown), put it together, save it where you chose (the
@@ -35,11 +36,13 @@ import Combine
         self.openStudio = openStudio
         self.editInStudio = editInStudio
         self.openRecording = openRecording
-        installStatusItem()
+        // The shortcut first: the menu only shows it if it's really Screenshotter's.
         installHotKey()
+        installStatusItem()
         watch = model.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.syncPreview() }
         }
+        CaptureFiles.tidy()
     }
 
     // MARK: The bar
@@ -191,6 +194,8 @@ import Combine
     private func capture() {
         guard !model.busy else { return }
         guard Permissions.screen() else { return }
+        // Screenshotter can run for weeks: old out-of-the-way files are cleared as it's used, too.
+        CaptureFiles.tidy()
         capturing = true
         bar?.orderOut(nil)
         if model.mode == .screenshot, model.shutterSound { ShutterSound.prepare() }
@@ -253,7 +258,7 @@ import Combine
     // MARK: Recording
 
     /// One recording under way: the screen, the camera (with the microphone) or the screen with it, the pill.
-    private final class Recording {
+    @MainActor private final class Recording {
         let region: CaptureRegion
         let clock = PauseClock()
         let files: CaptureFiles
@@ -277,6 +282,16 @@ import Combine
         var saveTo: URL?
         /// The cursor, logged beside the recording (cursor effects on).
         var cursor: CursorRecorder?
+        /// The countdown, while it runs.
+        var countdown: Countdown?
+        /// Thrown away, or stopped before it began: whatever its start was still setting up goes too.
+        var calledOff = false
+        /// Why it stopped by itself (the window closed, the disk filled up), if it did.
+        var problem: Error?
+        /// How long it ran, read as it stopped.
+        var elapsed: TimeInterval = 0
+        /// The finished video is written (quitting needn't remove a half-made one).
+        var outputReady = false
         init(region: CaptureRegion, files: CaptureFiles, output: URL, parts: URL) {
             self.region = region
             self.files = files
@@ -288,6 +303,7 @@ import Combine
     private func record(_ region: CaptureRegion) {
         model.busy = true
         Task {
+            var made: Recording?
             do {
                 if model.cameraOn, !(await Permissions.media(.video)) { return notStarted() }
                 let micOn = model.micOn && model.micAvailable
@@ -299,6 +315,7 @@ import Combine
                 let files = edit ? CaptureFiles(library: library()) : chosen
                 let output = try files.newRecording(named: region.name)
                 let rec = Recording(region: region, files: files, output: output, parts: try files.parts(for: output))
+                made = rec
                 rec.edit = edit
                 if edit, !chosen.inLibrary { rec.saveTo = try chosen.newRecording(named: region.name).deletingLastPathComponent() }
                 // The camera's preview carries on into the recording (started now if it wasn't up),
@@ -308,9 +325,9 @@ import Combine
                     while previewStarting { try? await Task.sleep(nanoseconds: 50_000_000) }
                     if preview?.camera.cameraID != model.cameraID {
                         stopPreview()
-                        guard await startPreview() else { return notStarted() }
+                        guard await startPreview() else { return notStarted(rec) }
                     }
-                    guard let p = preview else { return notStarted() }
+                    guard let p = preview else { return notStarted(rec) }
                     preview = nil
                     rec.camera = p.camera
                     rec.bubble = p.bubble
@@ -322,6 +339,8 @@ import Combine
                 recording = rec
                 capturing = false
                 let source = try await ScreenShot.source(for: region)
+                // Stopped or thrown away meanwhile: nothing more is started for it.
+                guard recording === rec else { return await tearDown(rec) }
                 let screenMic = micOn && !model.cameraOn ? model.micID : nil
                 // Cursor effects: the cursor is logged and drawn by the editor, so it stays out of the picture.
                 if edit, model.cursorEffects { rec.cursor = CursorRecorder(region: region.frame) }
@@ -329,6 +348,8 @@ import Combine
                     try ScreenRecorder(region: region, source: source, url: rec.parts.appendingPathComponent("screen.mp4"),
                                        systemAudio: model.systemAudio, micID: screenMic, clock: rec.clock, showsCursor: rec.cursor == nil)
                 }
+                // Before it starts: the stream can stop by itself as soon as it's running.
+                rec.screen?.onStop = whenStopped(rec)
                 // The screen stream and the cursor log warm up while the countdown runs (keeping
                 // nothing yet), so the recording starts the moment it ends, without a stall.
                 timed("cursor log") { rec.cursor?.start() }
@@ -336,29 +357,36 @@ import Combine
                     // The countdown runs while the stream starts; then wait for it to finish.
                     var outcome: Bool?
                     var waiting: CheckedContinuation<Bool, Never>?
-                    Countdown(over: region.frame, sound: model.countdownSound).run { go in
+                    let countdown = Countdown(over: region.frame, sound: model.countdownSound)
+                    rec.countdown = countdown
+                    countdown.run { go in
                         if let waiting { waiting.resume(returning: go) } else { outcome = go }
                     }
                     try await rec.screen?.start(waiting: true)
                     let go = await withCheckedContinuation { done in
                         if let outcome { done.resume(returning: outcome) } else { waiting = done }
                     }
-                    if !go { return discard() }
+                    rec.countdown = nil
+                    // Called off with a click or Escape.
+                    if !go, recording === rec {
+                        recording = nil
+                        rec.calledOff = true
+                    }
                 } else {
                     try await rec.screen?.start(waiting: true)
                 }
-                // Stopped or thrown away during the countdown.
-                guard recording === rec else { return }
-                try timed("camera writer") { try rec.camera?.startRecording(to: rec.parts.appendingPathComponent("camera.mov"), clock: rec.clock) }
+                // Stopped or thrown away while the stream started or the countdown ran: everything
+                // started for it goes (the stream, the cursor log, the camera, its folder).
+                guard recording === rec else { return await tearDown(rec) }
+                try timed("camera writer") {
+                    try rec.camera?.startRecording(to: rec.parts.appendingPathComponent("camera.mov"), clock: rec.clock, onFailure: whenStopped(rec))
+                }
                 rec.startedAt = CACurrentMediaTime()
                 rec.screen?.begin()
                 if let bubble = rec.bubble {
                     let tracker = BubbleTracker(bubble: bubble)
                     timed("bubble tracker") { tracker.start() }
                     rec.bubbleTracker = tracker
-                }
-                rec.screen?.onStop = { [weak self] error in
-                    DispatchQueue.main.async { self?.fail("The recording stopped", error) }
                 }
                 let pill = timed("pill") {
                     RecordingPill(on: region.screen, camera: rec.bubble != nil,
@@ -371,17 +399,51 @@ import Combine
                 timed("pill shown") { pill.begin() }
                 timed("menu bar") { updateStatusItem() }
             } catch {
-                await tearDown(keepFiles: false)
-                fail("Couldn't start recording", error)
+                capturing = false
+                guard let rec = made else { return fail("Couldn't start recording", error) }
+                if recording === rec { recording = nil }
+                await tearDown(rec)
+                // Thrown away as it started (the stream's start cut short): not a failure.
+                if !rec.calledOff { fail("Couldn't start recording", error) }
             }
         }
     }
 
     /// A recording that didn't get going (permission turned down, the camera wouldn't start).
-    private func notStarted() {
+    private func notStarted(_ rec: Recording? = nil) {
+        if let rec { try? FileManager.default.removeItem(at: rec.parts) }
         capturing = false
         model.busy = false
         syncPreview()
+    }
+
+    /// What a recording's stream or files call when it can't go on, from their own queues (so it's
+    /// made outside the main actor, and goes there itself).
+    private func whenStopped(_ rec: Recording) -> (Error) -> Void { Self.stopHandler(self, rec) }
+
+    private nonisolated static func stopHandler(_ owner: CaptureCoordinator, _ rec: Recording) -> (Error) -> Void {
+        { [weak owner, weak rec] error in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let owner, let rec else { return }
+                    owner.stoppedByItself(rec, error)
+                }
+            }
+        }
+    }
+
+    /// The recording stopped without being asked (the window closed or the display went, the disk
+    /// filled up): it's stopped as Stop does, keeping what it has, and you're told why.
+    private func stoppedByItself(_ rec: Recording, _ error: Error) {
+        guard recording === rec, rec.problem == nil else { return }
+        // Stopped from macOS's own screen recording menu: that's a Stop like any other.
+        let e = error as NSError
+        let byYou = e.domain == SCStreamErrorDomain && e.code == SCStreamError.Code.userStopped.rawValue
+        if !byYou { rec.problem = error }
+        guard rec.startedAt == nil else { return stop() }
+        // Before it began: there's nothing to keep.
+        discard()
+        if !byYou { fail("Couldn't start recording", Self.reason(error)) }
     }
 
     func togglePause() {
@@ -393,59 +455,84 @@ import Combine
 
     func stop() {
         guard let rec = recording else { return }
+        // Before the recording began (during the countdown, say) there's nothing to keep.
+        guard rec.startedAt != nil else { return discard() }
         recording = nil
-        let elapsed = rec.pill?.elapsed ?? 0
+        rec.elapsed = rec.pill?.elapsed ?? 0
         rec.pill?.end()
         rec.camera?.endNow()
-        let bubblePlacement = rec.bubblePlacement ?? rec.bubble?.placement(in: rec.region.frame)
+        rec.bubblePlacement = rec.bubblePlacement ?? rec.bubble?.placement(in: rec.region.frame)
         rec.cursor?.stop()
         rec.bubbleTracker?.stop()
         if let bubble = rec.bubble { bubbleSpot = bubble.frame.origin }
         rec.bubble?.orderOut(nil)
         updateStatusItem()
         let hud = newHUD(on: rec.region.screen)
-        hud.show(saving: rec.edit ? "Getting your recording ready to edit…" : "Saving your recording…")
-        Task {
-            defer { model.busy = false }
-            if rec.clock.isPaused { rec.clock.resume() }
-            // When each started, read before the files close.
-            let cameraStart = rec.camera?.firstTime
-            let screenOK = await rec.screen?.stop() ?? false
-            var cameraURL: URL?
-            if let cam = rec.camera {
-                if await cam.stopRecording() { cameraURL = rec.parts.appendingPathComponent("camera.mov") }
-                let bubble = rec.bubble
-                cam.shutDown { bubble?.detach() }
+        hud.show(saving: quitting ? "Saving your recording before Screenshotter quits…" : rec.edit ? "Getting your recording ready to edit…" : "Saving your recording…")
+        saving = (rec, Task { await save(rec, hud: hud) })
+    }
+
+    /// The recording being saved, from Stop until it's ready (quitting waits for it).
+    private var saving: (rec: Recording, task: Task<Void, Never>)?
+    /// Screenshotter is quitting: a recording is saved, but nothing opens or asks anything.
+    private var quitting = false
+
+    /// A stopped recording, saved: its files closed, then the finished video made (or, to edit,
+    /// opened in the Studio).
+    private func save(_ rec: Recording, hud: CaptureHUD) async {
+        defer {
+            if saving?.rec === rec { saving = nil }
+            model.busy = false
+        }
+        if rec.clock.isPaused { rec.clock.resume() }
+        // When each started, read before the files close.
+        let cameraStart = rec.camera?.firstTime
+        let screenOK = await rec.screen?.stop() ?? false
+        var cameraURL: URL?
+        if let cam = rec.camera {
+            if await cam.stopRecording() { cameraURL = rec.parts.appendingPathComponent("camera.mov") }
+            let bubble = rec.bubble
+            cam.shutDown { bubble?.detach() }
+        }
+        guard screenOK, let screenWriter = rec.screen?.writer else {
+            // Nothing to keep: its folder goes too (unless the camera's file made it).
+            if cameraURL == nil { try? FileManager.default.removeItem(at: rec.parts) }
+            if let problem = rec.problem, !quitting {
+                hud.dismiss()
+                fail("The recording stopped", Self.reason(problem) + " Nothing could be saved.")
+            } else {
+                hud.failed((rec.problem ?? rec.screen?.writer.failure).map(Self.reason) ?? "Nothing was recorded. Try again.")
             }
-            guard screenOK, let screenWriter = rec.screen?.writer else {
-                hud.failed("Nothing was recorded. Try again.")
-                return
-            }
-            // The camera's first frame against the screen's: how far apart the two files start.
-            var offset = 0.0
-            if let a = screenWriter.firstTime, let b = cameraStart { offset = (b - a).seconds }
-            // Where the bubble went: it starts where it was when recording began.
-            let path = cameraURL == nil ? [] : (rec.bubbleTracker?.path(in: rec.region.frame, start: screenWriter.firstTime ?? .zero, clock: rec.clock) ?? [])
-            var bubble = bubblePlacement
-            if let first = path.first, first.count == 4 {
-                bubble?.x = first[1]
-                bubble?.y = first[2]
-                bubble?.diameter = first[3]
-            }
-            var parts = RecordingParts(screen: "screen.mp4", camera: cameraURL == nil ? nil : "camera.mov", cameraOffset: offset,
-                                       bubble: cameraURL == nil ? nil : bubble, systemAudio: model.systemAudio,
-                                       microphone: model.micOn && model.micAvailable)
-            if path.count > 1 { parts.bubblePath = path }
-            if let data = try? JSONEncoder().encode(parts) { try? data.write(to: rec.parts.appendingPathComponent("parts.json")) }
-            var cursorLog: URL?
-            if let cursor = rec.cursor, let start = screenWriter.firstTime {
-                let url = rec.parts.appendingPathComponent("cursor.json")
-                cursor.write(to: url, start: start, clock: rec.clock)
-                cursorLog = url
-            }
-            if rec.edit { return await openToEdit(rec, screen: screenWriter.url, camera: cameraURL, parts: parts, cursor: cursorLog, hud: hud) }
+            return
+        }
+        // The camera's first frame against the screen's: how far apart the two files start.
+        var offset = 0.0
+        if let a = screenWriter.firstTime, let b = cameraStart { offset = (b - a).seconds }
+        // Where the bubble went: it starts where it was when recording began.
+        let path = cameraURL == nil ? [] : (rec.bubbleTracker?.path(in: rec.region.frame, start: screenWriter.firstTime ?? .zero, clock: rec.clock) ?? [])
+        var bubble = rec.bubblePlacement
+        if let first = path.first, first.count == 4 {
+            bubble?.x = first[1]
+            bubble?.y = first[2]
+            bubble?.diameter = first[3]
+        }
+        var parts = RecordingParts(screen: "screen.mp4", camera: cameraURL == nil ? nil : "camera.mov", cameraOffset: offset,
+                                   bubble: cameraURL == nil ? nil : bubble, systemAudio: model.systemAudio,
+                                   microphone: model.micOn && model.micAvailable)
+        if path.count > 1 { parts.bubblePath = path }
+        if let data = try? JSONEncoder().encode(parts) { try? data.write(to: rec.parts.appendingPathComponent("parts.json")) }
+        var cursorLog: URL?
+        if let cursor = rec.cursor, let start = screenWriter.firstTime {
+            let url = rec.parts.appendingPathComponent("cursor.json")
+            cursor.write(to: url, start: start, clock: rec.clock)
+            cursorLog = url
+        }
+        if rec.edit {
+            await openToEdit(rec, screen: screenWriter.url, camera: cameraURL, parts: parts, cursor: cursorLog, hud: hud)
+        } else {
             do {
                 try await Finisher.finish(screen: screenWriter.url, camera: cameraURL, parts: parts, to: rec.output)
+                rec.outputReady = true
                 let posterURL = CaptureFiles.poster(for: rec.output)
                 let poster = await Finisher.poster(for: rec.output, at: posterURL)
                 let size = poster.map { CGSize(width: $0.width, height: $0.height) }
@@ -453,12 +540,16 @@ import Combine
                     let kind: String? = { if case .area = rec.region { return nil }; return "mac" }()
                     CaptureFiles.writeNotes(for: posterURL, kind: kind, app: nil, scale: 2, size: size)
                 }
-                let length = String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60)
+                let length = String(format: "%d:%02d", Int(rec.elapsed) / 60, Int(rec.elapsed) % 60)
                 hud.ready(file: rec.output, image: poster.map { NSImage(cgImage: $0, size: .zero) }, title: "Recording saved · \(length)",
                           detail: "\(cameraURL != nil ? "With your camera · " : "")\(rec.files.placeName(video: true))", isVideo: true)
             } catch {
                 hud.failed(error.localizedDescription)
             }
+        }
+        // The pill went without you stopping it: say why (the corner says whether it saved).
+        if let problem = rec.problem, !quitting {
+            fail("The recording stopped early", Self.reason(problem) + (rec.outputReady ? " What was recorded up to then is saved." : ""))
         }
     }
 
@@ -467,6 +558,7 @@ import Combine
     private func openToEdit(_ rec: Recording, screen: URL, camera: URL?, parts: RecordingParts, cursor: URL?, hud: CaptureHUD) async {
         do {
             try await Finisher.editable(screen: screen, camera: camera, parts: parts, to: rec.output)
+            rec.outputReady = true
             let asset = AVURLAsset(url: rec.output)
             let duration = try await asset.load(.duration).seconds
             let size = try await asset.loadTracks(withMediaType: .video).first?.load(.naturalSize) ?? .zero
@@ -475,6 +567,8 @@ import Combine
                 let kind: String? = { if case .area = rec.region { return nil }; return "mac" }()
                 CaptureFiles.writeNotes(for: posterURL, kind: kind, app: nil, scale: 2, size: CGSize(width: poster.width, height: poster.height))
             }
+            // Quitting: it's kept in Recordings (with its poster, so the Studio lists it) to edit later.
+            if quitting { return }
             let stamp = Date()
             let f = DateFormatter()
             f.locale = Locale(identifier: "en_US_POSIX")
@@ -511,29 +605,60 @@ import Combine
     }
 
     func discard() {
-        guard recording != nil else { return }
-        Task { await tearDown(keepFiles: false) }
+        guard let rec = recording else { return }
+        recording = nil
+        rec.calledOff = true
+        Task { await tearDown(rec) }
     }
 
-    private func tearDown(keepFiles: Bool) async {
-        guard let rec = recording else {
-            model.busy = false
-            return
-        }
-        recording = nil
+    /// Everything a recording started goes: the countdown, the pill and bubble, the stream, the
+    /// camera, the cursor log and its files. Safe to repeat: a recording called off while it was
+    /// starting is torn down again once the start gets back, for whatever that started meanwhile.
+    private func tearDown(_ rec: Recording) async {
+        rec.countdown?.cancel()
+        rec.countdown = nil
         rec.pill?.end()
         rec.cursor?.stop()
+        rec.bubbleTracker?.stop()
         rec.bubble?.orderOut(nil)
         await rec.screen?.cancel()
         rec.camera?.cancelRecording()
         let bubble = rec.bubble
         rec.camera?.shutDown { bubble?.detach() }
-        if !keepFiles {
-            try? FileManager.default.removeItem(at: rec.parts)
-            try? FileManager.default.removeItem(at: rec.output)
-        }
-        model.busy = false
+        try? FileManager.default.removeItem(at: rec.parts)
+        try? FileManager.default.removeItem(at: rec.output)
+        // Unless another recording has started (or is saving) meanwhile.
+        if recording == nil, saving == nil { model.busy = false }
         updateStatusItem()
+    }
+
+    // MARK: Quitting
+
+    /// A recording under way, or one still being saved.
+    var needsTimeToQuit: Bool { recording != nil || saving != nil }
+
+    /// Quitting: a recording under way stops and is saved as Stop does, and one already being
+    /// saved is waited for, so its files are closed (an unfinished one doesn't play) and the
+    /// finished video made. It's left in Recordings rather than opened to edit.
+    func finishBeforeQuit() async {
+        quitting = true
+        if let rec = recording {
+            if rec.startedAt == nil {
+                recording = nil
+                rec.calledOff = true
+                await tearDown(rec)
+            } else {
+                stop()
+            }
+        }
+        await saving?.task.value
+    }
+
+    /// Quitting couldn't wait any longer: a finished video still being made is removed rather than
+    /// left half-written (the recording's own files, closed first, stay in its parts folder).
+    func abandonSaving() {
+        guard let rec = saving?.rec, !rec.outputReady else { return }
+        try? FileManager.default.removeItem(at: rec.output)
     }
 
     // MARK: After a capture
@@ -628,13 +753,32 @@ import Combine
     }
 
     private func fail(_ title: String, _ error: Error?) {
+        fail(title, error?.localizedDescription ?? "Something went wrong.")
+    }
+
+    private func fail(_ title: String, _ text: String) {
         model.busy = false
-        if let testLog { return testLog("\(title): \(error?.localizedDescription ?? "no detail")") }
+        if let testLog { return testLog("\(title): \(text)") }
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = error?.localizedDescription ?? "Something went wrong."
+        alert.informativeText = text
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+    }
+
+    /// Why a recording stopped by itself, in words that say what to do.
+    private static func reason(_ error: Error) -> String {
+        let e = error as NSError
+        let under = e.userInfo[NSUnderlyingErrorKey] as? NSError
+        if (e.domain == AVFoundationErrorDomain && e.code == AVError.Code.diskFull.rawValue)
+            || (e.domain == NSCocoaErrorDomain && e.code == NSFileWriteOutOfSpaceError)
+            || (under?.domain == NSPOSIXErrorDomain && under?.code == Int(ENOSPC)) {
+            return "Your disk is full. Free up some space, then record again."
+        }
+        if e.domain == SCStreamErrorDomain, e.code == SCStreamError.Code.noCaptureSource.rawValue {
+            return "The window or display you were recording went away. Record again once it's back."
+        }
+        return error.localizedDescription
     }
 
     // MARK: Self-test
@@ -756,7 +900,7 @@ import Combine
         } else {
             button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Screenshotter")
             button.contentTintColor = nil
-            menu.addItem(entry("Take a Screenshot…", #selector(MenuTarget.menuScreenshot), key: "2"))
+            menu.addItem(entry("Take a Screenshot…", #selector(MenuTarget.menuScreenshot), key: hotKey != nil ? "2" : ""))
             menu.addItem(entry("Record the Screen…", #selector(MenuTarget.menuRecord)))
             menu.addItem(.separator())
             menu.addItem(entry("Open Screenshotter", #selector(MenuTarget.menuOpen)))
@@ -790,7 +934,12 @@ import Combine
             return noErr
         }, 1, &spec, nil, nil)
         let id = EventHotKeyID(signature: OSType(0x5353_4854), id: 1)
-        RegisterEventHotKey(UInt32(kVK_ANSI_2), UInt32(cmdKey | shiftKey), id, GetApplicationEventTarget(), 0, &hotKey)
+        let status = RegisterEventHotKey(UInt32(kVK_ANSI_2), UInt32(cmdKey | shiftKey), id, GetApplicationEventTarget(), 0, &hotKey)
+        // Another app has ⌘⇧2: the menu bar menu stops offering a shortcut that won't work.
+        if status != noErr {
+            hotKey = nil
+            NSLog("Screenshotter: ⌘⇧2 couldn't be registered (error \(status)); another app may be using it")
+        }
     }
 
     func hotKeyPressed() {

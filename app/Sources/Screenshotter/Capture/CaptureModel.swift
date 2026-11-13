@@ -241,6 +241,28 @@ struct CaptureFiles {
         return support.appendingPathComponent("posters", isDirectory: true).appendingPathComponent(beside.lastPathComponent)
     }
 
+    /// Clears out the out-of-the-way files nothing uses once the capture's corner card has gone:
+    /// clipboard-only screenshots, and the posters and parts of recordings saved outside the
+    /// library (the video itself is where you saved it). Only ones over a week old, in the
+    /// background. Library recordings' parts stay: designs made from them use them.
+    static func tidy() {
+        let root = support
+        DispatchQueue.global(qos: .utility).async {
+            let fm = FileManager.default
+            let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+            func old(_ url: URL) -> Bool {
+                ((try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantFuture) < cutoff
+            }
+            func items(_ dir: URL) -> [URL] {
+                (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            }
+            for url in items(root) where url.pathExtension.lowercased() == "png" && old(url) { try? fm.removeItem(at: url) }
+            for folder in ["posters", "parts"] {
+                for url in items(root.appendingPathComponent(folder, isDirectory: true)) where old(url) { try? fm.removeItem(at: url) }
+            }
+        }
+    }
+
     /// Where a recording's parts are (see `parts(for:)`).
     static func partsFolder(for recording: URL) -> URL {
         let stem = recording.deletingPathExtension().lastPathComponent

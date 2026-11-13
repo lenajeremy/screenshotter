@@ -83,12 +83,19 @@ final class TrackWriter: @unchecked Sendable {
     private(set) var soundDelay: [Track: (total: Double, count: Int)] = [:]
     /// A gap or overlap smaller than this is left be (the clocks' jitter).
     private let slack = CMTime(value: 3, timescale: 1000)
+    /// Why the file stopped taking samples (a full disk, say), once it has.
+    private(set) var failure: Error?
+    /// Told once, on the caller's queue, the moment the file fails: the recording can't go on.
+    var onFailure: ((Error) -> Void)?
 
     init(url: URL, size: CGSize, fps: Int, audioTracks: [(Track, Int)], clock: PauseClock) throws {
         self.url = url
         self.clock = clock
         try? FileManager.default.removeItem(at: url)
         writer = try AVAssetWriter(outputURL: url, fileType: url.pathExtension.lowercased() == "mov" ? .mov : .mp4)
+        // Written in pieces every two seconds, so a file cut off (a crash, the Mac losing power, a
+        // full disk) still plays up to its last piece. Finished normally it's an ordinary file.
+        writer.movieFragmentInterval = CMTime(value: 2, timescale: 1)
         let w = Int(size.width) / 2 * 2
         let h = Int(size.height) / 2 * 2
         // Screens are mostly flat colour and sharp text: a generous bit rate keeps text crisp.
@@ -128,13 +135,15 @@ final class TrackWriter: @unchecked Sendable {
     /// Appends a sample (on the caller's queue). The file starts at the first video frame (or, once
     /// it no longer waits for one, the first sample of any kind).
     func append(_ sample: CMSampleBuffer, to track: Track) {
-        guard open, !finished, CMSampleBufferDataIsReady(sample) else { return }
+        guard open, !finished, failure == nil, CMSampleBufferDataIsReady(sample) else { return }
         let t = CMSampleBufferGetPresentationTimeStamp(sample)
         if let cutoff, t > cutoff { return }
         guard let at = clock.shifted(t) else { return }
         if firstTime == nil {
             // Audio before the first frame has nothing to go with.
-            guard track == .video || !waitsForVideo, writer.startWriting() else { return }
+            guard track == .video || !waitsForVideo else { return }
+            // Started once only: asking a writer that couldn't start to start again throws.
+            guard writer.status == .unknown, writer.startWriting() else { return noteFailure() }
             writer.startSession(atSourceTime: at)
             firstTime = t
             if videoEnded { video.markAsFinished() }
@@ -143,12 +152,15 @@ final class TrackWriter: @unchecked Sendable {
         guard let input, let out = at == t ? sample : retimed(sample, by: t - at) else { return }
         if track == .video {
             if videoEnded { return }
+            if writer.status == .failed { return noteFailure() }
             if !input.isReadyForMoreMediaData {
                 dropped[track, default: 0] += 1
             } else if input.append(out) {
                 lastTime = max(lastTime, at)
                 written[track, default: 0] += 1
                 pictureSpan = (pictureSpan?.start ?? at, at)
+            } else if writer.status == .failed {
+                return noteFailure()
             }
         } else {
             if let heard = heardEnd[track], t - heard > slack { gaps[track, default: 0] += (t - heard).seconds }
@@ -181,7 +193,12 @@ final class TrackWriter: @unchecked Sendable {
     /// Writes the waiting sound, in order, as far as the writer will take it. A gap before a
     /// sample is filled with silence and an overlap trimmed, so the sound keeps its time.
     private func writeSound() {
-        guard writer.status == .writing else { return }
+        guard writer.status == .writing else {
+            if writer.status == .failed { noteFailure() }
+            return
+        }
+        // A sound the writer won't take because it has failed (the loop stops at it).
+        defer { if writer.status == .failed { noteFailure() } }
         for (track, input) in audio {
             while var next = waiting[track]?.first, input.isReadyForMoreMediaData {
                 let start = CMSampleBufferGetPresentationTimeStamp(next)
@@ -262,9 +279,22 @@ final class TrackWriter: @unchecked Sendable {
         return out
     }
 
-    /// Closes the file. Returns false when nothing was recorded.
+    /// The writer has failed: nothing more goes in, and whoever's recording is told why, once.
+    private func noteFailure() {
+        guard failure == nil else { return }
+        let error = writer.error ?? CaptureError.writeFailed("the file stopped taking the recording")
+        failure = error
+        onFailure?(error)
+    }
+
+    /// Closes the file. Returns false when nothing that plays was recorded. A file that failed
+    /// partway (a full disk) keeps what it had written, as it's written in pieces.
     func finish() async -> Bool {
         finished = true
+        if failure != nil || writer.status == .failed {
+            noteFailure()
+            return await playable()
+        }
         guard firstTime != nil, writer.status == .writing else {
             writer.cancelWriting()
             return false
@@ -274,11 +304,25 @@ final class TrackWriter: @unchecked Sendable {
             writeSound()
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
+        // It can fail while the sound goes in, and a failed writer can't be finished.
+        guard writer.status == .writing else {
+            noteFailure()
+            return await playable()
+        }
         if !videoEnded { video.markAsFinished() }
         audio.values.forEach { $0.markAsFinished() }
         writer.endSession(atSourceTime: lastTime)
         await writer.finishWriting()
-        return writer.status == .completed
+        if writer.status == .completed { return true }
+        noteFailure()
+        return await playable()
+    }
+
+    /// Whether what's in the file plays, for one that couldn't be finished.
+    private func playable() async -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let (duration, ok) = try? await AVURLAsset(url: url).load(.duration, .isPlayable) else { return false }
+        return ok && duration.seconds > 0
     }
 
     func cancel() {
@@ -293,9 +337,13 @@ final class TrackWriter: @unchecked Sendable {
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let writer: TrackWriter
     let pixelSize: CGSize
-    private let stream: SCStream
+    /// Made once the recorder exists, as it's the stream's delegate.
+    private var stream: SCStream!
     private let queue = DispatchQueue(label: "screenshotter.screen-recorder", qos: .userInteractive)
-    var onStop: ((Error?) -> Void)?
+    /// Told (on the stream's or the file's queue) when the recording can't go on: the stream
+    /// stopped by itself (the window closed, the display went, it was stopped from the menu bar),
+    /// or its file failed. Set before `start`.
+    var onStop: ((Error) -> Void)?
 
     /// `showsCursor` false: the cursor stays out of the picture (it's logged beside it instead).
     init(region: CaptureRegion, source: ScreenShot.Source, url: URL, systemAudio: Bool, micID: String?, clock: PauseClock, showsCursor: Bool = true) throws {
@@ -337,8 +385,11 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             cfg.showMouseClicks = showsCursor
         }
         writer = try TrackWriter(url: url, size: size, fps: fps, audioTracks: tracks, clock: clock)
-        stream = SCStream(filter: source.filter, configuration: cfg, delegate: nil)
         super.init()
+        // Its delegate hears when it stops by itself, which would otherwise look like a recording
+        // carrying on with nothing in it.
+        stream = SCStream(filter: source.filter, configuration: cfg, delegate: self)
+        writer.onFailure = { [weak self] error in self?.onStop?(error) }
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         if systemAudio { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
         if mic, #available(macOS 15.0, *) { try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue) }
@@ -483,8 +534,10 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
     }
 
-    func startRecording(to url: URL, clock: PauseClock) throws {
+    /// `onFailure`: told (on the camera's queue) if its file fails partway (a full disk).
+    func startRecording(to url: URL, clock: PauseClock, onFailure: ((Error) -> Void)? = nil) throws {
         let w = try TrackWriter(url: url, size: videoSize, fps: 30, audioTracks: hasMic ? [(.audio1, 1)] : [], clock: clock)
+        w.onFailure = onFailure
         queue.sync {
             w.waitsForVideo = !cameraOff
             writer = w

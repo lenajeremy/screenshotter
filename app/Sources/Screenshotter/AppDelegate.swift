@@ -118,21 +118,51 @@ import WebKit
     func applicationWillTerminate(_ note: Notification) { engine.stop() }
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    /// Give the page a moment to save an edit it hasn't written yet (it saves half a second after
-    /// each change), then quit.
+    /// Before quitting: a recording under way is stopped and saved (an unfinished file doesn't
+    /// play), and the page gets a moment to save an edit it hasn't written yet (it saves half a
+    /// second after each change). Each has a time limit, so quitting never hangs.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard pageReady, !quitting else { return .terminateNow }
+        // Asked again while waiting (⌘Q twice): quit now, unless a recording is still being saved.
+        if quitting { return savingRecording ? .terminateCancel : .terminateNow }
+        let recording = capture?.needsTimeToQuit == true
+        guard pageReady || recording else { return .terminateNow }
         quitting = true
-        web.callAsyncJavaScript("await window.studio?.command('flush')", arguments: [:], in: nil, in: .page) { [weak self] _ in
-            self?.finishQuit()
+        if pageReady {
+            flushing = true
+            web.callAsyncJavaScript("await window.studio?.command('flush')", arguments: [:], in: nil, in: .page) { [weak self] _ in
+                self?.flushed()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.flushed() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.finishQuit() }
+        if recording {
+            savingRecording = true
+            Task { [weak self] in
+                await self?.capture.finishBeforeQuit()
+                self?.recordingSaved()
+            }
+            // Closing its files takes a moment; making the finished video can take longer.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+                guard let self, self.savingRecording else { return }
+                self.capture.abandonSaving()
+                self.recordingSaved()
+            }
+        }
         return .terminateLater
     }
     private var quitting = false
     private var quitAnswered = false
+    private var flushing = false
+    private var savingRecording = false
+    private func flushed() {
+        flushing = false
+        finishQuit()
+    }
+    private func recordingSaved() {
+        savingRecording = false
+        finishQuit()
+    }
     private func finishQuit() {
-        guard !quitAnswered else { return }
+        guard !quitAnswered, !flushing, !savingRecording else { return }
         quitAnswered = true
         NSApp.reply(toApplicationShouldTerminate: true)
     }
@@ -240,7 +270,9 @@ import WebKit
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        if let url = engine.baseURL { webView.load(URLRequest(url: url)) }
+        // The page is gone until it loads again: what's sent meanwhile waits for it (didFinish).
+        pageReady = false
+        if let url = engine.baseURL { webView.load(URLRequest(url: url)) } else { showStatus(engine.state) }
     }
 
     // MARK: Bridge (window.webkit.messageHandlers.native)
@@ -381,46 +413,91 @@ import WebKit
         var data = pb.data(forType: .png)
         if data == nil, let tiff = pb.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff) { data = rep.representation(using: .png, properties: [:]) }
         guard let png = data else { return }
-        uploadData([("pasted.png", png)])
+        send([.data("pasted.png", png)])
+    }
+
+    /// A file for the engine: its bytes, or a file sent straight from disk.
+    private enum Upload {
+        case data(String, Data)
+        case file(URL)
     }
 
     func upload(_ urls: [URL]) {
-        let accepted = urls.filter { u in StudioWebView.importableTypes.contains { UTType(filenameExtension: u.pathExtension)?.conforms(to: $0) == true } }
-        var files: [(String, Data)] = []
-        for u in accepted {
-            guard var data = try? Data(contentsOf: u) else { continue }
-            var name = u.lastPathComponent
-            // The engine takes PNG/JPEG/WebP; convert TIFF/HEIC first.
-            if ["tif", "tiff", "heic"].contains(u.pathExtension.lowercased()), let rep = NSImage(data: data).flatMap({ $0.tiffRepresentation }).flatMap(NSBitmapImageRep.init(data:)), let png = rep.representation(using: .png, properties: [:]) {
-                data = png
-                name = u.deletingPathExtension().lastPathComponent + ".png"
-            }
-            files.append((name, data))
-        }
-        uploadData(files)
+        let takes = { (u: URL) in StudioWebView.importableTypes.contains { UTType(filenameExtension: u.pathExtension)?.conforms(to: $0) == true } }
+        send(urls.filter(takes).map { .file($0) }, refused: urls.filter { !takes($0) }.map(\.lastPathComponent))
     }
 
-    private func uploadData(_ files: [(String, Data)]) {
-        guard let base = engine.baseURL, !files.isEmpty else { return }
+    /// Off the main thread (a long recording is gigabytes): each file goes to the engine, its
+    /// answer ({path, poster?, width?, height?}) to the page as is, so recordings can be matched
+    /// to a device by shape; any that couldn't be added are named in a notice.
+    private func send(_ uploads: [Upload], refused: [String] = []) {
+        guard let base = engine.baseURL, !uploads.isEmpty || !refused.isEmpty else { return }
         Task {
-            // The engine's answer for each file ({path, poster?, width?, height?}) goes to the page
-            // as is, so recordings can be matched to a device by shape.
             var items: [[String: Any]] = []
-            for (name, data) in files {
-                var components = URLComponents(url: base.appendingPathComponent("api/upload"), resolvingAgainstBaseURL: false)!
-                components.queryItems = [URLQueryItem(name: "name", value: name)]
-                var req = URLRequest(url: components.url!)
-                req.httpMethod = "POST"
-                req.setValue("studio", forHTTPHeaderField: "x-screenshotter")
-                req.httpBody = data
-                if let (body, _) = try? await URLSession.shared.data(for: req),
-                   let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any], json["path"] is String {
-                    items.append(json)
+            var problems: [String] = []
+            if !refused.isEmpty {
+                problems.append("Couldn't add \(refused.joined(separator: ", ")). Screenshotter adds pictures (PNG, JPEG, WebP, TIFF, HEIC, SVG, GIF) and videos (MP4, MOV).")
+            }
+            for upload in uploads {
+                let name: String
+                switch upload {
+                case .data(let n, _): name = n
+                case .file(let u): name = u.lastPathComponent
+                }
+                do { items.append(try await Self.post(upload, to: base)) } catch {
+                    let why = error.localizedDescription
+                    problems.append("Couldn't add \(name). \(why)\(why.hasSuffix(".") ? "" : ".")")
                 }
             }
-            let list = String(decoding: (try? JSONSerialization.data(withJSONObject: items)) ?? Data("[]".utf8), as: UTF8.self)
-            _ = try? await web.evaluateJavaScript("window.studio && window.studio.command('imported', \(list))")
+            if !items.isEmpty {
+                let list = String(decoding: (try? JSONSerialization.data(withJSONObject: items)) ?? Data("[]".utf8), as: UTF8.self)
+                _ = try? await web.evaluateJavaScript("window.studio && window.studio.command('imported', \(list))")
+            }
+            if !problems.isEmpty {
+                _ = try? await web.callAsyncJavaScript("window.studio && window.studio.command('error', text)",
+                                                       arguments: ["text": problems.joined(separator: " ")], contentWorld: .page)
+            }
         }
+    }
+
+    private static func post(_ upload: Upload, to base: URL) async throws -> [String: Any] {
+        var name: String
+        var body: Upload = upload
+        switch upload {
+        case .data(let n, _): name = n
+        case .file(let u):
+            name = u.lastPathComponent
+            guard FileManager.default.isReadableFile(atPath: u.path) else { throw ImportError("It isn't there any more, or Screenshotter isn't allowed to open it.") }
+            // The engine takes PNG/JPEG/WebP: TIFF and HEIC are made PNG first, off the main thread.
+            if ["tif", "tiff", "heic"].contains(u.pathExtension.lowercased()) {
+                let png = try await Task.detached(priority: .userInitiated) { () throws -> Data in
+                    guard let rep = NSImage(contentsOf: u).flatMap({ $0.tiffRepresentation }).flatMap(NSBitmapImageRep.init(data:)),
+                          let png = rep.representation(using: .png, properties: [:]) else { throw ImportError("It isn't a picture Screenshotter can read.") }
+                    return png
+                }.value
+                name = u.deletingPathExtension().lastPathComponent + ".png"
+                body = .data(name, png)
+            }
+        }
+        var components = URLComponents(url: base.appendingPathComponent("api/upload"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        var req = URLRequest(url: components.url!)
+        req.httpMethod = "POST"
+        req.setValue("studio", forHTTPHeaderField: "x-screenshotter")
+        let answer: Data
+        switch body {
+        case .data(_, let data): (answer, _) = try await URLSession.shared.upload(for: req, from: data)
+        // Sent from the file as it's read: a recording isn't loaded into memory first.
+        case .file(let u): (answer, _) = try await URLSession.shared.upload(for: req, fromFile: u)
+        }
+        let json = (try? JSONSerialization.jsonObject(with: answer)) as? [String: Any]
+        if let json, json["path"] is String { return json }
+        throw ImportError(json?["error"] as? String ?? "The engine didn't take it. Try again.")
+    }
+
+    private struct ImportError: LocalizedError {
+        let errorDescription: String?
+        init(_ why: String) { errorDescription = why }
     }
 
     // MARK: Menu

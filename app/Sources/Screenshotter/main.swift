@@ -82,6 +82,17 @@ MainActor.assumeIsolated {
         while done.wait(timeout: .now()) == .timedOut { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
         exit(0)
     }
+    // One Screenshotter at a time (two would each start an engine and a menu bar icon, and fight
+    // over ⌘⇧2): a second copy (another build, `open -n`) brings the running one forward and quits.
+    // Only a running app counts, not a `--render-recording` helper; the self-test runs beside it.
+    if let id = Bundle.main.bundleIdentifier, ProcessInfo.processInfo.environment["SCREENSHOTTER_CAPTURE_SELFTEST"] == nil,
+       let running = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+           .first(where: { $0.processIdentifier != getpid() && $0.activationPolicy == .regular }) {
+        NSApplication.shared.yieldActivation(to: running)
+        running.unhide()
+        running.activate(from: .current, options: [.activateAllWindows])
+        exit(0)
+    }
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
