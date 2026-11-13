@@ -3,7 +3,7 @@
  * agents (the MCP server, another process) both change them, so every change is a list of steps
  * applied to the latest file under a lock: neither overwrites what the other just did.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { libraryFolder } from "../studio/scenes.js";
@@ -16,12 +16,36 @@ export const boardThumb = (id: string) => path.join(dir(), `${id}.jpg`);
 export const assetDir = () => ensureDir(path.join(dir(), "assets"));
 export const validBoardId = (id: unknown): id is string => typeof id === "string" && /^[a-z0-9]{6,32}$/.test(id);
 
-function read(id: string): Board | undefined {
-  try {
-    return JSON.parse(readFileSync(boardFile(id), "utf8"));
-  } catch {
-    return undefined;
+/** A board's file that's there but can't be read (cut short, edited by hand, not a board). */
+export class DamagedBoard extends Error {
+  constructor(readonly id: string) {
+    super(`The board ${id} can't be read: its file is damaged (${boardFile(id)}).`);
   }
+}
+
+/** The board on disk; undefined when there's no file, DamagedBoard when there's one that can't be read. */
+function read(id: string): Board | undefined {
+  let text: string;
+  try {
+    text = readFileSync(boardFile(id), "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw e;
+  }
+  try {
+    const b = JSON.parse(text) as Board;
+    if (b && typeof b === "object" && Array.isArray(b.pages) && b.nodes && typeof b.nodes === "object") return b;
+  } catch {
+    // Falls through to the error below.
+  }
+  throw new DamagedBoard(id);
+}
+
+/** A damaged board's file moved out of the way (kept beside the others, not listed), so it can be recovered. */
+function setAside(id: string): string {
+  const kept = `${boardFile(id)}.damaged-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  renameSync(boardFile(id), kept);
+  return kept;
 }
 
 function write(b: Board) {
@@ -35,23 +59,68 @@ const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
 /** Run `fn` holding the board's lock. */
 const withLock = <T>(id: string, fn: () => T): T => withFileLock(boardFile(id), fn);
 
-/** Run `fn` holding a file's lock (a folder, which only one process can make at a time). */
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+const ownerOf = (lock: string) => {
+  try {
+    return readFileSync(path.join(lock, "owner"), "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * A lock left behind: its process has gone, or it was never finished being taken (no owner after
+ * a few seconds), or it's been held far longer than any change takes. A slow change by a live
+ * process keeps its lock.
+ */
+function staleLock(lock: string): string | false {
+  let age: number;
+  try {
+    age = Date.now() - statSync(lock).mtimeMs;
+  } catch {
+    return false;
+  }
+  const owner = ownerOf(lock);
+  if (owner === undefined) return age > 5000 ? "" : false;
+  const pid = Number(owner.split(":")[0]);
+  return !Number.isInteger(pid) || !alive(pid) || age > 60_000 ? owner : false;
+}
+
+/**
+ * Run `fn` holding a file's lock: a folder only one process can make at a time, with its owner
+ * (process and a random tag) written inside, so a stale one is told from a slow one and only its
+ * owner removes it.
+ */
 export function withFileLock<T>(file: string, fn: () => T): T {
   const lock = `${file}.lock`;
+  const me = `${process.pid}:${randomBytes(6).toString("hex")}`;
   const start = Date.now();
   for (;;) {
     try {
       mkdirSync(lock);
+      writeFileSync(path.join(lock, "owner"), me);
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      try {
-        // A lock left by a process that died mid-change.
-        if (Date.now() - statSync(lock).mtimeMs > 5000) {
-          rmSync(lock, { recursive: true, force: true });
-          continue;
+      const stale = staleLock(lock);
+      if (stale !== false) {
+        // Moved aside in one step, so of two processes clearing it only one does. If what was
+        // moved isn't the lock judged stale (it was replaced meanwhile), it goes back.
+        const aside = `${lock}.stale-${me.replace(":", "-")}`;
+        try {
+          renameSync(lock, aside);
+          if ((ownerOf(aside) ?? "") !== stale) renameSync(aside, lock);
+          else rmSync(aside, { recursive: true, force: true });
+        } catch {
+          // Someone else cleared it first.
         }
-      } catch {
         continue;
       }
       if (Date.now() - start > 8000) throw new Error("The board is busy; try again in a moment.");
@@ -61,7 +130,7 @@ export function withFileLock<T>(file: string, fn: () => T): T {
   try {
     return fn();
   } finally {
-    rmSync(lock, { recursive: true, force: true });
+    if (ownerOf(lock) === me) rmSync(lock, { recursive: true, force: true });
   }
 }
 
@@ -79,6 +148,9 @@ export interface BoardSummary {
   thumbAt?: number;
   /** Artboards an agent wrote to in the last minute. */
   working: string[];
+  /** Its file is there but can't be read: it can be deleted, or the file recovered by hand. */
+  damaged?: boolean;
+  file?: string;
 }
 
 export const WORKING_MS = 60_000;
@@ -117,16 +189,26 @@ export const isScratchpad = (ref: unknown) => typeof ref === "string" && /^(my\s
 
 /** The scratchpad, made the first time anyone asks for it. */
 export function scratchpad(): Board {
-  return (
-    read(SCRATCHPAD) ??
-    withLock(SCRATCHPAD, () => {
-      const had = read(SCRATCHPAD);
-      if (had) return had;
-      const b: Board = { ...emptyBoard(SCRATCHPAD, "Scratchpad", new Date().toISOString()), by: "studio" };
-      write(b);
-      return b;
-    })
-  );
+  const had = readOrAside(SCRATCHPAD);
+  if (had) return had;
+  return withLock(SCRATCHPAD, () => {
+    const now = readOrAside(SCRATCHPAD);
+    if (now) return now;
+    const b: Board = { ...emptyBoard(SCRATCHPAD, "Scratchpad", new Date().toISOString()), by: "studio" };
+    write(b);
+    return b;
+  });
+}
+
+/** The scratchpad is always there: a damaged one is kept aside (to recover) and a fresh one made, never written over. */
+function readOrAside(id: string): Board | undefined {
+  try {
+    return read(id);
+  } catch (e) {
+    if (!(e instanceof DamagedBoard)) throw e;
+    console.error(`${e.message} It was kept as ${setAside(id)}; a new one takes its place.`);
+    return undefined;
+  }
 }
 
 /** A fresh page on the scratchpad for one try, named for it (the first page, while it's still empty and unnamed). */
@@ -146,16 +228,28 @@ export function listBoards(): BoardSummary[] {
   scratchpad();
   const out: BoardSummary[] = [];
   for (const f of readdirSync(dir())) {
-    if (!f.endsWith(".json")) continue;
-    const b = read(f.slice(0, -5));
-    if (!b?.pages) continue;
+    const id = f.slice(0, -5);
+    if (!f.endsWith(".json") || !validBoardId(id)) continue;
     try {
-      out.push(summarizeBoard(b));
+      const b = read(id);
+      if (b) out.push(summarizeBoard(b));
     } catch {
-      // One odd file never hides the rest.
+      // One that can't be read is listed as that, so it doesn't just vanish (and can be deleted).
+      out.push(damagedSummary(id));
     }
   }
   return out.sort((a, b) => Number(b.id === SCRATCHPAD) - Number(a.id === SCRATCHPAD) || b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function damagedSummary(id: string): BoardSummary {
+  const at = (() => {
+    try {
+      return statSync(boardFile(id)).mtime.toISOString();
+    } catch {
+      return new Date(0).toISOString();
+    }
+  })();
+  return { id, name: `Damaged board (${id})`, rev: 0, createdAt: at, updatedAt: at, pages: [], layers: 0, working: [], damaged: true, file: boardFile(id) };
 }
 
 export function getBoard(id: unknown): Board {
@@ -229,8 +323,11 @@ export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?
 export function deleteBoard(id: unknown) {
   if (!validBoardId(id)) throw new Error("Unknown board");
   if (id === SCRATCHPAD) throw new Error("The scratchpad is always there: delete its pages instead.");
-  rmSync(boardFile(id), { force: true });
-  rmSync(boardThumb(id), { force: true });
+  // Under the board's lock: a change being saved meanwhile would otherwise write it back.
+  withLock(id, () => {
+    rmSync(boardFile(id), { force: true });
+    rmSync(boardThumb(id), { force: true });
+  });
   rmSync(commentsFile(id), { force: true });
 }
 

@@ -623,6 +623,27 @@ try {
     assert.equal(res.status, 200);
     assert.equal((await fetch(`${base}/thumb?path=${encodeURIComponent("/etc/hosts")}`)).status, 404);
   });
+  await check("files are served in byte ranges: a span, to the end, the last few, and none past the end", async () => {
+    const whole = await readFile(shot);
+    const url = `${base}/file?path=${encodeURIComponent(shot)}`;
+    const part = async (range: string) => {
+      const res = await fetch(url, { headers: { Range: range } });
+      return { status: res.status, range: res.headers.get("content-range"), body: Buffer.from(await res.arrayBuffer()) };
+    };
+    const span = await part("bytes=10-19");
+    assert.equal(span.status, 206);
+    assert.deepEqual(span.body, whole.subarray(10, 20));
+    const tail = await part("bytes=-8");
+    assert.equal(tail.range, `bytes ${whole.length - 8}-${whole.length - 1}/${whole.length}`);
+    assert.deepEqual(tail.body, whole.subarray(whole.length - 8));
+    const open = await part(`bytes=${whole.length - 5}-`);
+    assert.deepEqual(open.body, whole.subarray(whole.length - 5));
+    const over = await part(`bytes=${whole.length - 5}-${whole.length + 100}`);
+    assert.equal(over.status, 206);
+    assert.equal(over.body.length, 5);
+    assert.equal((await part(`bytes=${whole.length + 10}-`)).status, 416);
+    assert.equal((await part("bytes=0-1,5-6")).status, 200);
+  });
   const raw = (route: string, data: Buffer) => fetch(base + route, { method: "POST", headers: { "x-screenshotter": "studio", "Content-Type": "application/octet-stream" }, body: data });
   const listed = async () => ((await (await fetch(base + "/api/files")).json()) as Array<{ path: string }>).map((f) => f.path);
   await check("screenshots upload into the library, with their size", async () => {

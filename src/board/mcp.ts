@@ -18,6 +18,7 @@ import {
   canHold,
   flattenSvgOps,
   inlineHtml,
+  inlineSvgStyles,
   parseHtml,
   serializeSvg,
   splitSvgOps,
@@ -353,7 +354,7 @@ export function registerBoardTools(server: McpServer) {
             // SVG into a vector: its elements become parts of it.
             const into = mode === "inside" ? t.id : t.parent!;
             const el = parseHtml(`<svg>${a.html}</svg>`).children.find((c): c is Exclude<typeof c, string> => typeof c !== "string" && c.tag === "svg");
-            const got = el ? svgNodes(el, into, {}, "") : null;
+            const got = el ? svgNodes(inlineSvgStyles(el), into, {}, "") : null;
             const kids = got ? got.nodes[got.id].children ?? [] : [];
             if (!got || !kids.length) throw new Error("Write SVG elements (rect, circle, path, g, text…) into a vector.");
             const nodes = { ...got.nodes };

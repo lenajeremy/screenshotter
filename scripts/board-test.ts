@@ -4,7 +4,7 @@
  *
  *   npm run build && npm run test:board
  */
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -476,6 +476,57 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
     kept = (e as Error).message;
   }
   check(/always there/.test(kept), "the scratchpad can't be deleted (its pages can)");
+
+  // A board whose file is damaged is listed as that (not dropped), can't be opened, and can be deleted.
+  const { readdirSync, existsSync, utimesSync } = await import("node:fs");
+  const broken = store.createBoard("Broken", "studio");
+  writeFileSync(store.boardFile(broken.id), '{"pages": [');
+  const row = store.listBoards().find((x) => x.id === broken.id);
+  let unreadable = "";
+  try {
+    store.getBoard(broken.id);
+  } catch (e) {
+    unreadable = (e as Error).message;
+  }
+  check(row?.damaged === true && /damaged/.test(unreadable), "a damaged board is listed as damaged, and opening it says why");
+  store.deleteBoard(broken.id);
+  check(!existsSync(store.boardFile(broken.id)), "a damaged board can be deleted");
+  // A damaged scratchpad is kept aside and a fresh one made, never written over.
+  const spFile = store.boardFile("scratchpad");
+  const spText = readFileSync(spFile, "utf8");
+  writeFileSync(spFile, "not json");
+  const fresh = store.scratchpad();
+  const aside = readdirSync(path.dirname(spFile)).filter((f) => f.startsWith("scratchpad.json.damaged-"));
+  check(fresh.pages.length === 1 && aside.length === 1 && readFileSync(path.join(path.dirname(spFile), aside[0]), "utf8") === "not json", "a damaged scratchpad is kept aside and a new one takes its place");
+  writeFileSync(spFile, spText);
+  // Locks: one left by a process that's gone is cleared at once; a live one isn't taken, however old.
+  const lockBoard = store.createBoard("Locks", "studio");
+  const lock = `${store.boardFile(lockBoard.id)}.lock`;
+  mkdirSync(lock);
+  writeFileSync(path.join(lock, "owner"), "999999:dead");
+  const t0 = Date.now();
+  store.changeBoard(lockBoard.id, [{ op: "rename", name: "Locks 2" }], "studio");
+  check(Date.now() - t0 < 1000 && !existsSync(lock), "a lock left by a process that's gone is cleared");
+  mkdirSync(lock);
+  writeFileSync(path.join(lock, "owner"), `${process.pid}:other`);
+  utimesSync(lock, new Date(Date.now() - 20_000), new Date(Date.now() - 20_000));
+  let busy = "";
+  try {
+    store.changeBoard(lockBoard.id, [{ op: "rename", name: "Locks 3" }], "studio");
+  } catch (e) {
+    busy = (e as Error).message;
+  }
+  check(/busy/.test(busy) && readFileSync(path.join(lock, "owner"), "utf8").endsWith(":other"), "a slow change by a live process keeps its lock");
+  rmSync(lock, { recursive: true, force: true });
+  store.deleteBoard(lockBoard.id);
+
+  // An SVG's <style> is written onto its parts: two exports using the same class names don't colour each other.
+  const svgIn = (fill: string) => `<svg viewBox="0 0 10 10" width="40" height="40"><style>.cls-1{fill:${fill}}</style><rect class="cls-1" width="10" height="10"/></svg>`;
+  const two = htmlToNodes(`<div>${svgIn("#ff0000")}${svgIn("#00ff00")}</div>`);
+  const rects = Object.values(two.nodes).filter((n) => n.tag === "rect").map((n) => n.style.fill);
+  const whole = htmlToNodes(svgIn("#0000ff"), { wholeSvg: true });
+  const svgText = Object.values(whole.nodes)[0].svg ?? "";
+  check(rects.join() === "#ff0000,#00ff00" && !Object.values(two.nodes).some((n) => /<style/.test(n.defs ?? "")) && !/<style/.test(svgText) && /style="fill:#0000ff"/.test(svgText), "an SVG's <style> rules are written onto its parts, not left to style the whole page");
   const talk = await import("../src/board/comments.js");
   const b0 = store.getBoard(board);
   const agent = b0.agents?.[AGENT];

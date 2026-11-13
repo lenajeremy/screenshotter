@@ -123,6 +123,17 @@ function stopOnClose(res: http.ServerResponse): AbortController {
   return stop;
 }
 
+/**
+ * A file streamed as the answer. One that goes (or can't be read) between being found and being
+ * read ends the answer there, instead of an unhandled stream error taking the engine down.
+ */
+function stream(res: http.ServerResponse, file: string, range?: { start: number; end: number }) {
+  const s = createReadStream(file, range);
+  s.on("error", () => res.destroy());
+  res.on("close", () => s.destroy());
+  s.pipe(res);
+}
+
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -514,7 +525,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       throw new HttpError(404, "Not found");
     }
     res.writeHead(200, { "Content-Type": MIME[path.extname(file).toLowerCase()] ?? "application/octet-stream", "Cache-Control": "no-cache" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/thumb") {
@@ -529,7 +540,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       }
     }
     res.writeHead(200, { "Content-Type": MIME[path.extname(file).toLowerCase()] ?? "image/jpeg", "Cache-Control": "max-age=86400" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   // A file's sound as a waveform, for the timeline's Sound row.
@@ -557,7 +568,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     if (!allowedFile(video) || !isRecording(video) || !existsSync(video) || !Number.isFinite(t) || t < 0) throw new HttpError(404, "Not found");
     const file = await momentThumb(video, t, Number(url.searchParams.get("w") ?? 240));
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   // macOS's own wallpapers: those on this Mac, and the rest of Apple's set to download.
@@ -570,13 +581,13 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     if (!src) throw new HttpError(404, "Not found");
     const file = await asJpeg(src, 480);
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/look-thumb") {
     const file = await lookThumbnail(url.searchParams.get("name") ?? "");
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/bg-preview") {
@@ -593,7 +604,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     if (bg && typeof bg === "object" && "generate" in bg && !(await madeBackdrop(bg as BackgroundInput, w, h))) throw new HttpError(404, "AI backgrounds are generated when rendering");
     const file = await backgroundPreview(bg, w, h);
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=86400" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/unsplash") {
@@ -607,7 +618,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   if (req.method === "GET" && url.pathname === "/api/boards") {
     const list = listBoards();
     // Boards an agent changed since their thumbnail was drawn get a new one.
-    for (const b of list) if (!b.thumb || Date.parse(b.updatedAt) > (b.thumbAt ?? 0)) scheduleBoardThumb(b.id, 400);
+    for (const b of list) if (!b.damaged && (!b.thumb || Date.parse(b.updatedAt) > (b.thumbAt ?? 0))) scheduleBoardThumb(b.id, 400);
     return send(200, list);
   }
   if (req.method === "GET" && url.pathname === "/api/board") return send(200, getBoard(url.searchParams.get("id")));
@@ -661,16 +672,24 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     if (!allowedFile(p) || !existsSync(p)) throw new HttpError(404, "Not found");
     const stat = statSync(p);
     const type = MIME[path.extname(p).toLowerCase()] ?? "application/octet-stream";
-    const range = req.headers.range && /bytes=(\d*)-(\d*)/.exec(req.headers.range);
-    if (range) {
-      const start = Number(range[1] || 0);
-      const end = range[2] ? Number(range[2]) : stat.size - 1;
+    // One range: "bytes=10-20", "bytes=10-" (to the end) or "bytes=-500" (the last 500). Several, or
+    // a malformed one, get the whole file.
+    const range = req.headers.range && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range.trim());
+    if (range && (range[1] || range[2])) {
+      const suffix = !range[1];
+      const start = suffix ? Math.max(0, stat.size - Number(range[2])) : Number(range[1]);
+      const end = suffix || !range[2] ? stat.size - 1 : Math.min(Number(range[2]), stat.size - 1);
+      if (start >= stat.size || start > end) {
+        res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+        res.end();
+        return;
+      }
       res.writeHead(206, { "Content-Type": type, "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1 });
-      createReadStream(p, { start, end }).pipe(res);
+      stream(res, p, { start, end });
       return;
     }
     res.writeHead(200, { "Content-Type": type, "Content-Length": stat.size, "Accept-Ranges": "bytes", "Cache-Control": "no-cache" });
-    createReadStream(p).pipe(res);
+    stream(res, p);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/options") return send(200, await options());
@@ -704,7 +723,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       rmSync(`${file}.mockup.json`, { force: true });
     });
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/set-templates") return send(200, SET_TEMPLATES.map(({ id, name, description, forms }) => ({ id, name, description, ...(forms ? { forms } : {}) })));
@@ -731,7 +750,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const file = path.join(cacheDir("set-template-previews"), `${createHash("sha1").update(JSON.stringify(["mine", t, devices, body.words, w, stamp])).digest("hex").slice(0, 20)}.jpg`);
     await drawPreview(file, () => screensStrip(withSpill(fillTemplate(t, devices, body.words ?? [])), w, file));
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=600" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/set-template-preview") {
@@ -749,7 +768,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const file = path.join(cacheDir("set-template-previews"), `${createHash("sha1").update(JSON.stringify([id, body, w, stamp, 1])).digest("hex").slice(0, 20)}.jpg`);
     await drawPreview(file, () => setTemplateStrip(id, body, w, file));
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
-    createReadStream(file).pipe(res);
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/house-style") return send(200, { notes: houseStyle() });

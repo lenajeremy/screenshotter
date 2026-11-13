@@ -632,6 +632,29 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(200);
     return hidden === "false/false" && (await panels()) === "true/true" ? "ok" : `⌘\\ gave ${hidden}, then ${await panels()}`;
   },
+  async "on a board, a save the engine misses is tried again, and one it refuses leaves undo"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    // The engine away for two tries: the change still lands.
+    let missed = 0;
+    await page.route("**/api/board/ops", (r) => (missed++ < 2 ? r.abort() : r.continue()));
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).commit([{ op: "set", id, name: "Kept" }], { label: "Rename" }), phone);
+    for (let i = 0; i < 40 && boards.getBoard(t.id).nodes[phone].name !== "Kept"; i++) await page.waitForTimeout(150);
+    await page.unroute("**/api/board/ops");
+    if (boards.getBoard(t.id).nodes[phone].name !== "Kept") return `not saved after the engine came back (${missed} tries)`;
+    // Refused: the change goes, from the canvas and from undo, and the person is told.
+    await page.route("**/api/board/ops", (r) => r.fulfill({ status: 400, contentType: "application/json", headers: { "x-test-refusal": "1" }, body: JSON.stringify({ error: "No." }) }));
+    const after = await S(page, async (id: string) => {
+      const m = await import("/ui/board-state.js" as string);
+      const before = m.B.past.length;
+      m.commit([{ op: "set", id, name: "Refused" }], { label: "Rename" });
+      await new Promise((r) => setTimeout(r, 1500));
+      return { name: m.B.board.nodes[id].name, undo: m.B.past.length - before, labels: m.B.past.map((e: { label?: string }) => e.label) };
+    }, phone);
+    await page.unroute("**/api/board/ops");
+    const told = /Couldn.t save/.test(String(await toasts(page)));
+    return after.name === "Kept" && after.undo === 0 && told ? "ok" : `after a refusal: ${JSON.stringify(after)}, told ${told}`;
+  },
   async "on a board, assets from the rest of the app go into the selected frame, and filters apply"(page) {
     const t = await openTestBoard(page);
     const phone = t.byName("Phone");
@@ -1129,7 +1152,8 @@ try {
       const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
       page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
       // The backdrop's still is drawn on demand and may be refused for an unknown look: not a fault.
-      page.on("response", (r) => r.status() >= 400 && !r.url().includes("/api/bg-preview") && problems.push(`${r.status()} ${decodeURIComponent(r.url()).replace(tmp, "…").slice(-80)}`));
+      // A refusal a check fakes on purpose (x-test-refusal) isn't one either.
+      page.on("response", (r) => r.status() >= 400 && !r.url().includes("/api/bg-preview") && !r.headers()["x-test-refusal"] && problems.push(`${r.status()} ${decodeURIComponent(r.url()).replace(tmp, "…").slice(-80)}`));
       let result: string;
       try {
         await page.goto(BASE, { waitUntil: "networkidle" });

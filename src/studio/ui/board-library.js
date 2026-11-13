@@ -4,7 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
-import { api, fail, fileUrl, set, useStore } from "./store.js";
+import { api, fail, fileUrl, set, toast, useStore } from "./store.js";
 import { confirmDialog } from "./actions.js";
 import { newBoard, openBoard } from "./board-state.js";
 import { when } from "./scenes.js";
@@ -49,9 +49,17 @@ function BoardCard({ b, renaming, onRename }) {
   // The scratchpad is always there (a page per try): it can be emptied page by page, not deleted.
   const scratch = b.id === "scratchpad";
   const [loaded, setLoaded] = useState(false);
+  // A board whose file can't be read: it can be shown in Finder (to recover it) or deleted, not opened.
+  const open = () => (b.damaged ? toast({ kind: "err", title: "This board can't be read", text: "Its file is damaged. Show it in Finder to recover it from a backup, or delete it.", timeout: 9000 }) : openBoard(b.id));
   const more = (e) => {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
+    if (b.damaged)
+      return openMenu(r.left, r.bottom + 4, [
+        { label: "Show in Finder", icon: "folder", run: () => api("/api/reveal", { path: b.file }).catch((err) => fail(err, "Couldn't show it")) },
+        "-",
+        { label: "Delete", icon: "trash", danger: true, run: () => removeBoard(b) },
+      ]);
     openMenu(r.left, r.bottom + 4, [
       { label: "Open", icon: "right", run: () => openBoard(b.id) },
       { label: "Rename", icon: "text", run: () => onRename(b.id) },
@@ -60,11 +68,12 @@ function BoardCard({ b, renaming, onRename }) {
     ]);
   };
   return html`<div class="sp-card bd-card ${scratch ? "scratch" : ""}" data-board=${b.id} tabindex="0" role="button" aria-label=${b.name}
-      onClick=${() => !renaming && openBoard(b.id)} onKeyDown=${(e) => e.key === "Enter" && openBoard(b.id)}
+      onClick=${() => !renaming && open()} onKeyDown=${(e) => e.key === "Enter" && open()}
       onContextMenu=${(e) => (e.preventDefault(), more(e))}>
     <div class="sp-thumb">
-      ${b.thumb ? html`<img class=${loaded ? "in" : ""} src=${fileUrl(b.thumb, Math.round(b.thumbAt ?? 0))} alt="" onLoad=${() => setLoaded(true)} />` : html`<span class="bd-thumb-empty"><${Icon} n=${scratch ? "pen" : "frame"} s=${22} />${scratch && html`<small>Try things out here, a page each</small>`}</span>`}
+      ${b.thumb ? html`<img class=${loaded ? "in" : ""} src=${fileUrl(b.thumb, Math.round(b.thumbAt ?? 0))} alt="" onLoad=${() => setLoaded(true)} />` : html`<span class="bd-thumb-empty"><${Icon} n=${b.damaged ? "alert" : scratch ? "pen" : "frame"} s=${22} />${scratch && html`<small>Try things out here, a page each</small>`}</span>`}
       ${scratch && html`<span class="sp-badge scratch">Scratchpad</span>`}
+      ${b.damaged && html`<span class="sp-badge damaged">Can't be read</span>`}
       ${b.working.length > 0 && html`<span class="sp-badge"><i></i>Agent at work</span>`}
     </div>
     <div class="sp-info">

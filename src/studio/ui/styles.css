@@ -2003,6 +2003,7 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 @keyframes bd-spin { to { transform: rotate(1turn); } }
 /* The scratchpad: always first among the boards, marked, and inviting when it's empty */
 .sp-badge.scratch { left: auto; right: 10px; color: var(--text-2); }
+.sp-badge.damaged { color: var(--danger); }
 .bd-card .bd-thumb-empty { display: grid; place-items: center; align-content: center; gap: 8px; width: 100%; height: 100%; color: var(--text-4); }
 .bd-card .bd-thumb-empty small { font-size: 11.5px; color: var(--text-3); }
 /* A selected video on the canvas, as Figma marks it: a "Video" tag, and a play button in its middle */

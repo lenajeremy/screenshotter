@@ -372,6 +372,75 @@ export function serializeSvg(n: HNode): string {
   return inner ? `<${n.raw}${attrs}>${inner}</${n.raw}>` : `<${n.raw}${attrs}/>`;
 }
 
+/**
+ * An <svg>'s <style> rules written onto the elements they style, and the <style> taken out. A
+ * stylesheet in an SVG applies to the whole page it's drawn in: two exports that both use
+ * `.cls-1` (Illustrator's and Figma's habit) would colour each other, and a vector's parts keep no
+ * class to be matched by. Simple selectors (tag, #id, .class, and those joined: `path.cls-1`) are
+ * applied, in order of specificity, under each element's own style; anything else is left out and
+ * said in `warnings`.
+ */
+export function inlineSvgStyles(el: HEl, warnings: string[] = []): HEl {
+  const sheets: string[] = [];
+  const gather = (e: HEl) => {
+    for (const c of e.children) if (typeof c !== "string") (c.tag === "style" ? sheets.push(c.children.filter((x) => typeof x === "string").join("")) : gather(c));
+  };
+  gather(el);
+  if (!sheets.length) return el;
+  type Rule = { tag?: string; id?: string; classes: string[]; spec: number; order: number; style: Style };
+  const rules: Rule[] = [];
+  const skipped: string[] = [];
+  const css = sheets.join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+  let i = 0;
+  while (i < css.length) {
+    const open = css.indexOf("{", i);
+    const semi = css.indexOf(";", i);
+    const head = css.slice(i, open < 0 ? undefined : open).replace(/^[\s;]+/, "").trim();
+    // @import and the like end at a semicolon; @media, @font-face and the like are a block, left out whole.
+    if (/^@/.test(css.slice(i).trim()) && semi >= 0 && (open < 0 || semi < open)) {
+      skipped.push(css.slice(i, semi).trim());
+      i = semi + 1;
+      continue;
+    }
+    if (open < 0) break;
+    // To the brace that closes this one (j ends just past it).
+    let depth = 1;
+    let j = open + 1;
+    for (; j < css.length && depth > 0; j++) depth += css[j] === "{" ? 1 : css[j] === "}" ? -1 : 0;
+    const body = css.slice(open + 1, j - 1);
+    i = j;
+    if (head.startsWith("@")) {
+      skipped.push(head);
+      continue;
+    }
+    const style = parseStyle(body);
+    for (const sel of head.split(",").map((x) => x.trim()).filter(Boolean)) {
+      const m = /^(\*|[a-zA-Z][\w-]*)?(#[\w-]+)?((?:\.[\w-]+)*)$/.exec(sel);
+      if (!m || (!m[1] && !m[2] && !m[3])) {
+        skipped.push(sel);
+        continue;
+      }
+      const tag = m[1] && m[1] !== "*" ? m[1].toLowerCase() : undefined;
+      const classes = m[3] ? m[3].slice(1).split(".") : [];
+      rules.push({ tag, id: m[2]?.slice(1), classes, spec: (m[2] ? 100 : 0) + classes.length * 10 + (tag ? 1 : 0), order: rules.length, style });
+    }
+  }
+  rules.sort((a, b) => a.spec - b.spec || a.order - b.order);
+  if (skipped.length) warnings.push(`Some of an <svg>'s <style> couldn't be written onto its parts and was left out: ${skipped.slice(0, 4).join(", ")}${skipped.length > 4 ? "…" : ""}.`);
+  const apply = (e: HEl): HEl => {
+    const classes = (e.attrs.class ?? "").split(/\s+/).filter(Boolean);
+    const sheet: Style = {};
+    for (const r of rules) {
+      if ((r.tag && r.tag !== e.tag) || (r.id && r.id !== e.attrs.id) || r.classes.some((c) => !classes.includes(c))) continue;
+      Object.assign(sheet, r.style);
+    }
+    const attrs = { ...e.attrs };
+    if (Object.keys(sheet).length) attrs.style = styleText({ ...sheet, ...parseStyle(e.attrs.style) });
+    return { ...e, attrs, children: e.children.filter((c) => typeof c === "string" || c.tag !== "style").map((c) => (typeof c === "string" ? c : apply(c))) };
+  };
+  return apply(el);
+}
+
 /** A text layer's inline HTML: styled runs and line breaks only, whitespace as the browser shows it. */
 export function inlineHtml(nodes: HNode[]): string {
   const out = nodes.map(inlineOf).join("");
@@ -492,9 +561,9 @@ export function svgMarkup(board: Board, id: string): string {
 export function splitSvgOps(board: Board, id: string): Op[] {
   const n = board.nodes[id];
   if (!n || n.type !== "svg" || !n.svg) throw new OpError("Only a vector drawn as one piece can be split into its parts.");
-  const el = parseHtml(n.svg).children.find((c): c is HEl => typeof c !== "string" && c.tag === "svg");
-  if (!el) throw new OpError("There's no <svg> in that vector.");
-  const t = svgNodes(el, id, {}, n.name);
+  const found = parseHtml(n.svg).children.find((c): c is HEl => typeof c !== "string" && c.tag === "svg");
+  if (!found) throw new OpError("There's no <svg> in that vector.");
+  const t = svgNodes(inlineSvgStyles(found), id, {}, n.name);
   const root = t.nodes[t.id];
   const parts = { ...t.nodes };
   delete parts[t.id];
@@ -850,6 +919,7 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
       });
     }
     if (el.tag === "svg") {
+      el = inlineSvgStyles(el, warnings);
       const view = (el.attrs.viewBox ?? el.attrs.viewbox ?? "").split(/[\s,]+/).map(Number);
       const w = pxValue(el.attrs.width) ?? (view.length === 4 && view[2] > 0 ? view[2] : 24);
       const h = pxValue(el.attrs.height) ?? (view.length === 4 && view[3] > 0 ? view[3] : 24);

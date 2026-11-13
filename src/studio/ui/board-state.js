@@ -203,36 +203,95 @@ let mineUntil = 0;
 function send(ops) {
   if (!B.id || !ops.length) return;
   const last = queue[queue.length - 1];
-  if (last && last.id === B.id) last.ops.push(...ops);
-  else queue.push({ id: B.id, ops: [...ops] });
+  // Never added to the one on its way: it may be sent again as it was.
+  if (last && last.id === B.id && !last.out) last.ops.push(...ops);
+  else queue.push({ id: B.id, ops: [...ops], tries: 0 });
   flush();
 }
 
 /** What's still to be saved on the open board. */
 const pendingHere = () => queue.filter((q) => q.id === B.id).flatMap((q) => q.ops);
 
+/** Saves that didn't reach the engine (it's restarting, say) are tried again for about half a minute. */
+const RETRIES = [500, 1000, 2000, 4000, 8000, 15000];
+
+/** Post steps to the engine. An error says whether to try again: the engine couldn't be reached, rather than refused them. */
+async function postOps(body) {
+  let res;
+  try {
+    res = await fetch("/api/board/ops", { method: "POST", headers: { "x-screenshotter": "studio", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch {
+    throw Object.assign(new Error("Lost connection to the Screenshotter engine."), { retry: true });
+  }
+  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (!res.ok || data?.error) throw Object.assign(new Error(data?.error || `HTTP ${res.status}`), { retry: res.status >= 502 });
+  return data;
+}
+
 async function flush() {
   if (sending || !queue.length) return;
   sending = true;
-  const { id, ops } = queue.shift();
+  const item = queue[0];
+  item.out = true;
+  const { id, ops } = item;
   try {
-    const r = await api("/api/board/ops", { id, ops, base: id === B.id ? B.board?.rev : undefined });
+    const r = await postOps({ id, ops, base: id === B.id ? B.board?.rev : undefined });
+    queue.shift();
     if (id === B.id) {
       if (r.stale) await reload({ quiet: true });
       else if (B.board) B.board = { ...B.board, rev: r.rev, updatedAt: r.updatedAt };
       mineUntil = Date.now() + 400;
     }
   } catch (e) {
-    fail(e, "Couldn't save the board");
+    if (e.retry && item.tries < RETRIES.length) {
+      // Kept first in line (what comes after depends on it) and sent again in a moment.
+      setTimeout(() => ((sending = false), flush()), RETRIES[item.tries++]);
+      return;
+    }
+    // Refused, or the engine stayed away: this and every later change to that board are lost.
+    const lost = queue.filter((q) => q.id === id);
+    queue = queue.filter((q) => q.id !== id);
+    fail(e, lost.length > 1 || ops.length > 1 ? "Couldn't save your last changes to the board" : "Couldn't save that change to the board");
     // Start again from what's on disk rather than drift from it.
-    if (id === B.id) await reload({ quiet: true }).catch(() => undefined);
-  } finally {
-    sending = false;
-    if (queue.length) flush();
+    if (id === B.id) {
+      forget(lost.flatMap((q) => q.ops));
+      await reload({ quiet: true }).catch(() => undefined);
+    }
   }
+  sending = false;
+  if (queue.length) flush();
+}
+
+/**
+ * Changes that never reached the board leave undo: undoing one would undo something that isn't
+ * there. Redo goes too, since it was made on top of them.
+ */
+function forget(ops) {
+  const gone = new Set(ops);
+  B.past = B.past.filter((e) => !e.ops.some((o) => gone.has(o)) && !e.inverse.some((o) => gone.has(o)));
+  B.future = [];
+  lastKey = null;
 }
 
 export const saving = () => sending || queue.length > 0;
+
+/** Resolves once every change made so far is saved (or given up on), or after `ms`: the app waits for it before quitting. */
+export function saved(ms = 8000) {
+  const until = Date.now() + ms;
+  return new Promise((done) => {
+    const check = () => (!saving() || Date.now() > until ? done() : setTimeout(check, 50));
+    check();
+  });
+}
+
+// The window closing with changes still waiting: they go out as it closes, as far as the browser lets a page send then.
+addEventListener("pagehide", () => {
+  for (const q of queue) {
+    if (q.out) continue;
+    fetch("/api/board/ops", { method: "POST", keepalive: true, headers: { "x-screenshotter": "studio", "Content-Type": "application/json" }, body: JSON.stringify({ id: q.id, ops: q.ops }) }).catch(() => undefined);
+  }
+  queue = queue.filter((q) => q.out);
+});
 
 /** Load the board from disk. An agent's change becomes a step you can undo. */
 async function reload({ quiet = false, agent = false } = {}) {
@@ -246,7 +305,11 @@ async function reload({ quiet = false, agent = false } = {}) {
     try {
       board = applyOps(fresh, pending).board;
     } catch {
-      queue = queue.filter((q) => q.id !== B.id);
+      // Someone else changed the same layers meanwhile: what's still waiting can't go on top of it.
+      const lost = queue.filter((q) => q.id === B.id && !q.out);
+      queue = queue.filter((q) => q.id !== B.id || q.out);
+      forget(lost.flatMap((q) => q.ops));
+      toast({ kind: "info", title: "Some changes weren't saved", text: "An agent changed the same layers at the same moment, so the board shows their version.", timeout: 8000 });
     }
   }
   if (agent && B.board) {

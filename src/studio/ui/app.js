@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { BoardApp, boardCommand } from "./board.js";
-import { openBoard } from "./board-state.js";
+import { openBoard, saved as boardSaved } from "./board-state.js";
 import { refreshBoards } from "./board-library.js";
 import { IMAGE_PROVIDERS, S, STORE_GAP, hasDesign, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
@@ -1665,7 +1665,8 @@ const commands = {
     await refreshFiles().catch(() => undefined);
     placeImports(items ?? []);
   },
-  flush: () => flushPersist(),
+  // Before the app quits: the design and the open board's last changes.
+  flush: () => Promise.all([flushPersist(), boardSaved()]),
   error: (message) => toast({ kind: "err", title: "Something went wrong", text: message }),
 };
 window.studio = { command: (name, arg) => (S.boardId && !S.scenesPage && boardCommand(name, arg) ? undefined : commands[name]?.(arg)), isTyping: () => Boolean(typing()), state: S };
