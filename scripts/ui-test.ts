@@ -1106,6 +1106,27 @@ const CHECKS: Record<string, Check> = {
     const counts = await S(page, () => [...document.querySelectorAll(".ghost-wrap.set")].map((g) => g.querySelectorAll("img").length));
     return counts.length === 3 && counts.every((c) => c > 0) ? "ok" : `pictures on the other screens: ${counts}`;
   },
+  async "after undoing an added shape nothing stays selected, and Delete on a stale selection is safe"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone() });
+    await page.waitForTimeout(1000);
+    const r = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      (await import("/ui/actions.js" as string)).addShape("box");
+      await new Promise((r) => setTimeout(r, 300));
+      const picked = st.S.selected;
+      st.undo();
+      await new Promise((r) => setTimeout(r, 300));
+      return { picked, after: st.S.selected, shapes: (st.S.scene.shapes ?? []).length };
+    });
+    await page.keyboard.press("Delete");
+    // Even a selection left pointing at nothing (set by hand here) doesn't make Delete throw.
+    await S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "image-3" }));
+    await page.waitForTimeout(100);
+    await page.keyboard.press("Delete");
+    await page.waitForTimeout(300);
+    const devices = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.length);
+    return String(r.picked).startsWith("shape-") && r.after === null && r.shapes === 0 && devices === 1 ? "ok" : `added ${r.picked}, after undo selected ${r.after} with ${r.shapes} shapes, ${devices} devices left`;
+  },
 };
 
 const engines = { chromium, webkit } as const;

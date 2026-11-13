@@ -203,6 +203,7 @@ export function setScene(next, { key = null } = {}) {
     future: [],
     scene: next,
   });
+  dropGoneSelection();
   scheduleLayout();
   persist();
 }
@@ -284,18 +285,26 @@ export const redo = () => step(false);
 function fixSelection() {
   // A piece of sound is chosen by its place in the list, which an undo may have changed.
   if (S.soundSel != null || S.footageSel != null) set({ soundSel: null, footageSel: null });
+  dropGoneSelection();
+}
+/** Where each kind of canvas item lives in the scene ("shape-2" is scene.shapes[1]). */
+const ITEM_LISTS = { device: "devices", text: "texts", shape: "shapes", image: "images", spill: "spill" };
+/** Let go of a selected item that isn't in the scene any more (undone, or removed by a change), so nothing acts on it. */
+function dropGoneSelection() {
   const s = S.selected;
   if (!s) return;
   const [kind, n] = s.split("-");
-  if (kind === "device" && !S.scene.devices?.[n - 1]) set({ selected: null });
-  if (kind === "text" && !S.scene.texts?.[n - 1]) set({ selected: null });
-  if (s === "caption" && !S.scene.headline && !S.scene.subheadline) set({ selected: null });
+  const gone = s === "caption" ? !S.scene.headline && !S.scene.subheadline : ITEM_LISTS[kind] ? !S.scene[ITEM_LISTS[kind]]?.[n - 1] : false;
+  if (gone) set({ selected: null });
 }
 
 let layoutTimer = 0;
 let layoutSeq = 0;
 export function scheduleLayout(delay = 40) {
   clearTimeout(layoutTimer);
+  // A layout already on its way is for a scene older than this one: it mustn't land in the
+  // meantime (an item just dropped would jump back to where it was until the new one comes).
+  layoutSeq++;
   layoutTimer = setTimeout(fetchLayout, delay);
 }
 /**

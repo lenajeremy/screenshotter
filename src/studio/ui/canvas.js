@@ -1108,8 +1108,12 @@ export function CanvasView() {
     if (id === "caption") edit((d) => (d[part] = text.trim() || undefined));
     else {
       const i = Number(id.split("-")[1]) - 1;
-      if (!text.trim()) edit((d) => d.texts.splice(i, 1));
-      else edit((d) => (d.texts[i].text = text));
+      // The text may have gone while it was being typed (an undo, an agent's change): then there's nothing to write to.
+      if (!S.scene.texts?.[i]) return;
+      if (text.trim()) return edit((d) => (d.texts[i].text = text));
+      edit((d) => d.texts.splice(i, 1));
+      // Emptied, it's gone: the selection mustn't slide onto the text after it.
+      if (S.selected === id) set({ selected: null });
     }
   };
 

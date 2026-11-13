@@ -377,16 +377,17 @@ export function deleteEntity(id) {
   } else if (id.startsWith("device-")) {
     edit((d) => d.devices.splice(idx(id), 1));
   } else if (id.startsWith("text-")) {
-    edit((d) => d.texts.splice(idx(id), 1));
+    edit((d) => d.texts?.splice(idx(id), 1));
   } else if (id.startsWith("shape-")) {
+    // An item that's already gone (undone since it was selected) leaves the design as it is.
     edit((d) => {
-      d.shapes.splice(idx(id), 1);
-      if (!d.shapes.length) delete d.shapes;
+      d.shapes?.splice(idx(id), 1);
+      if (!d.shapes?.length) delete d.shapes;
     });
   } else if (id.startsWith("image-")) {
     edit((d) => {
-      d.images.splice(idx(id), 1);
-      if (!d.images.length) delete d.images;
+      d.images?.splice(idx(id), 1);
+      if (!d.images?.length) delete d.images;
     });
   }
   set({ selected: null });
