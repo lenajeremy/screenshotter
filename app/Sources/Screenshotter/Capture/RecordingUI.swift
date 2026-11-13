@@ -785,6 +785,8 @@ struct DiscardButton: View {
 
     override func mouseDown(with event: NSEvent) { finish(false) }
     override func cancelOperation(_ sender: Any?) { finish(false) }
+    /// Called off from outside: the recording was stopped or thrown away while it ran.
+    func cancel() { finish(false) }
 
     private func finish(_ go: Bool) {
         timer?.invalidate()

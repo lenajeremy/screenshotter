@@ -118,21 +118,51 @@ import WebKit
     func applicationWillTerminate(_ note: Notification) { engine.stop() }
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    /// Give the page a moment to save an edit it hasn't written yet (it saves half a second after
-    /// each change), then quit.
+    /// Before quitting: a recording under way is stopped and saved (an unfinished file doesn't
+    /// play), and the page gets a moment to save an edit it hasn't written yet (it saves half a
+    /// second after each change). Each has a time limit, so quitting never hangs.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard pageReady, !quitting else { return .terminateNow }
+        // Asked again while waiting (⌘Q twice): quit now, unless a recording is still being saved.
+        if quitting { return savingRecording ? .terminateCancel : .terminateNow }
+        let recording = capture?.needsTimeToQuit == true
+        guard pageReady || recording else { return .terminateNow }
         quitting = true
-        web.callAsyncJavaScript("await window.studio?.command('flush')", arguments: [:], in: nil, in: .page) { [weak self] _ in
-            self?.finishQuit()
+        if pageReady {
+            flushing = true
+            web.callAsyncJavaScript("await window.studio?.command('flush')", arguments: [:], in: nil, in: .page) { [weak self] _ in
+                self?.flushed()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.flushed() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.finishQuit() }
+        if recording {
+            savingRecording = true
+            Task { [weak self] in
+                await self?.capture.finishBeforeQuit()
+                self?.recordingSaved()
+            }
+            // Closing its files takes a moment; making the finished video can take longer.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+                guard let self, self.savingRecording else { return }
+                self.capture.abandonSaving()
+                self.recordingSaved()
+            }
+        }
         return .terminateLater
     }
     private var quitting = false
     private var quitAnswered = false
+    private var flushing = false
+    private var savingRecording = false
+    private func flushed() {
+        flushing = false
+        finishQuit()
+    }
+    private func recordingSaved() {
+        savingRecording = false
+        finishQuit()
+    }
     private func finishQuit() {
-        guard !quitAnswered else { return }
+        guard !quitAnswered, !flushing, !savingRecording else { return }
         quitAnswered = true
         NSApp.reply(toApplicationShouldTerminate: true)
     }
