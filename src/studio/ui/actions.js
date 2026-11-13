@@ -1,7 +1,7 @@
 // Everything the UI can do to the scene or the engine, shared by panels, canvas, keys and menus.
 import { timelineEnd } from "./animate.js";
 import { setAutoZoom } from "./recording.js";
-import { DEFAULT_SCENE, S, clamp, fileUrl, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
+import { DEFAULT_SCENE, S, clamp, fileUrl, TRANSITION_NAMES, activeScreens, checkpoint, aiEngine, aiName, allGroups, allShots, api, base, edit, entityLabel, fail, isVideo, native, persist, persistPrefs, r4, refreshFiles, refreshScenes, onSaveRefused, savePending, saveSceneNow, scheduleLayout, set, setScene, task, tidy, toast, touch, undo, pictureUrl, rememberLayout, knownLayout, canvasRatio, hasDesign, pictureName } from "./store.js";
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const idx = (id) => Number(String(id).split("-")[1]) - 1;
@@ -377,16 +377,17 @@ export function deleteEntity(id) {
   } else if (id.startsWith("device-")) {
     edit((d) => d.devices.splice(idx(id), 1));
   } else if (id.startsWith("text-")) {
-    edit((d) => d.texts.splice(idx(id), 1));
+    edit((d) => d.texts?.splice(idx(id), 1));
   } else if (id.startsWith("shape-")) {
+    // An item that's already gone (undone since it was selected) leaves the design as it is.
     edit((d) => {
-      d.shapes.splice(idx(id), 1);
-      if (!d.shapes.length) delete d.shapes;
+      d.shapes?.splice(idx(id), 1);
+      if (!d.shapes?.length) delete d.shapes;
     });
   } else if (id.startsWith("image-")) {
     edit((d) => {
-      d.images.splice(idx(id), 1);
-      if (!d.images.length) delete d.images;
+      d.images?.splice(idx(id), 1);
+      if (!d.images?.length) delete d.images;
     });
   }
   set({ selected: null });
@@ -2480,6 +2481,9 @@ export async function pickUpAgentChanges(scenes, known) {
   if (added.length === 1) toast({ kind: "ok", icon: "spark", title: "An agent saved a design", text: added[0].name, timeout: 9000, actions: [{ label: "Open", run: () => openScene(added[0].id) }] });
   else if (added.length > 1) toast({ kind: "ok", icon: "spark", title: `An agent saved ${added.length} designs`, text: added.map((x) => x.name).join(", "), timeout: 9000, actions: [{ label: "See them", run: () => set({ scenesPage: true }) }] });
 }
+// A save of ours the engine refused, because an agent saved the open design since: its version
+// comes onto the canvas now, the same way, rather than at the next check.
+onSaveRefused((summary) => pickUpAgentChanges([summary], null));
 
 export async function renameSavedScene(id, to) {
   const current = S.scenes.find((x) => x.id === id);

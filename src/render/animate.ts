@@ -359,7 +359,8 @@ export function textPieces(text: string | undefined, by: Unit, from = { w: 0, l:
   String(text ?? "")
     .replace(/\\n/g, "\n")
     .replace(/\s+$/, "")
-    .split(/\*\*(.+?)\*\*/g)
+    // An accent can run over a line break ("**two\nlines**").
+    .split(/\*\*([\s\S]+?)\*\*/g)
     .forEach((part, seg) => {
       const accent = seg % 2 === 1;
       for (const m of part.matchAll(/(\n)|([^\S\n]+)|(\S+)/g)) {

@@ -1,7 +1,7 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { createContext } from "preact";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Dropdown, accentEditHtml, accentFromEdit, html, toggleAccentIn } from "./controls.js";
+import { Dropdown, accentEditHtml, accentFromEdit, followDrag, html, keysForCanvas, toggleAccentIn } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, followVideo, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
@@ -231,12 +231,14 @@ const rich = (text, accent = {}, by) =>
   by ? richUnits(text, accent, by) :
   String(text ?? "")
     .replace(/(\\n|\n|\s)+$/, "")
-    .split(/\*\*(.+?)\*\*/g)
+    // An accent can run over a line break ("**two\nlines**"), as the render draws it.
+    .split(/\*\*([\s\S]+?)\*\*/g)
     .map((part, i) => {
-      if (i % 2 === 0) return part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
-      if (accent.mark) return marked(part, accent);
-      if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${part}</strong>`;
-      return html`<span style=${accentStyle(accent)}>${part}</span>`;
+      const lines = part.split(/\\n|\n/).map((line, j) => (j ? [html`<br />`, line] : line));
+      if (i % 2 === 0) return lines;
+      if (accent.mark) return marked(lines, accent);
+      if (!accent.color && !accent.font && accent.weight === undefined && !accent.italic) return html`<strong>${lines}</strong>`;
+      return html`<span style=${accentStyle(accent)}>${lines}</span>`;
     });
 
 /**
@@ -490,6 +492,9 @@ function TextEnt({ e, H, editing, onDone }) {
   const finish = (ev, part) => onDone(part, accentFromEdit(ev.target));
   const keys = (ev, part) => {
     ev.stopPropagation();
+    // Enter or Escape while composing Japanese, Chinese or Korean is the input method's (Safari
+    // says isComposing is false on the key that confirms it, but gives it keyCode 229).
+    if (ev.isComposing || ev.keyCode === 229) return;
     if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "b") {
       ev.preventDefault();
       toggleAccentIn(ev.currentTarget, accentCss(accent));
@@ -526,12 +531,21 @@ function TextEnt({ e, H, editing, onDone }) {
 
 // Each shot's layout from the engine, from the store's cache (by its contents). While a changed
 // screen's new layout comes, the row keeps drawing the last one it had for that screen, rather
-// than leaving a gap that flashes back.
+// than leaving a gap that flashes back. "That screen" is its place in this design at this size
+// showing the same screenshots: another design's, another size's, or a screen that moved into its
+// place never stands in for it. A screen that can't be laid out (`failed`) gets a tile saying so.
 const asking = new Set();
+const failed = new Set();
 const lastShown = new Map();
+let lastShownFor = null;
 function useShotLayouts(on) {
   const s = useStore();
   const [, bump] = useState(0);
+  const design = `${s.sceneId}|${s.group}`;
+  if (design !== lastShownFor) {
+    lastShownFor = design;
+    lastShown.clear();
+  }
   useEffect(() => {
     if (!on) return;
     let alive = true;
@@ -543,22 +557,29 @@ function useShotLayouts(on) {
       api("/api/layout", x.scene)
         .then((l) => {
           rememberLayout(x.scene, l);
-          if (alive) bump((n) => n + 1);
+          failed.delete(key);
         })
-        .catch(() => undefined)
-        .finally(() => asking.delete(key));
+        .catch(() => failed.add(key))
+        .finally(() => {
+          asking.delete(key);
+          if (alive) bump((n) => n + 1);
+        });
     });
     return () => {
       alive = false;
     };
   }, [on, s.shots, s.shot]);
   return (scene, i) => {
+    const id = `${design}|${i}|${(scene.devices ?? []).map((d) => d.screenshot ?? "").join(",")}`;
     const l = knownLayout(scene);
     if (l) {
-      lastShown.set(i, l);
+      lastShown.delete(id);
+      lastShown.set(id, l);
+      if (lastShown.size > 60) lastShown.delete(lastShown.keys().next().value);
       return l;
     }
-    return lastShown.get(i) ?? null;
+    if (failed.has(JSON.stringify(scene))) return "failed";
+    return lastShown.get(id) ?? null;
   };
 }
 
@@ -781,15 +802,13 @@ export function CanvasView() {
       setReorder({ from: i, to });
     };
     const up = () => {
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
       setReorder(null);
       if (to === null) return goToShot(i);
       const dest = to > i ? to - 1 : to;
       if (dest !== i) moveShotTo(i, dest);
     };
-    addEventListener("pointermove", move);
-    addEventListener("pointerup", up);
+    // Escape leaves the screens where they were.
+    followDrag({ move, done: up, cancel: () => setReorder(null) });
   };
   canvasApi.zoomBy = (f) => zoomAt(cam.current.scale * f);
   canvasApi.zoomTo = (z) => zoomAt(z);
@@ -843,20 +862,24 @@ export function CanvasView() {
     };
   }, []);
 
-  // Space to pan.
+  // Space to pan, unless a control has the keyboard (then Space presses it). Switching away to
+  // another app lets go of it, as its keyup goes there.
   useEffect(() => {
     const down = (e) => {
-      if (e.code === "Space" && !e.repeat && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName) && !document.activeElement?.isContentEditable) {
+      if (e.code === "Space" && !e.repeat && keysForCanvas()) {
         e.preventDefault();
         setSpace(true);
       }
     };
     const up = (e) => e.code === "Space" && setSpace(false);
+    const away = () => setSpace(false);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", away);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", away);
     };
   }, []);
 
@@ -865,11 +888,14 @@ export function CanvasView() {
   const layoutOf = useShotLayouts(multi || setMode);
   const world = useRef();
   const ghosts = new Map();
+  // Screens of the set the engine couldn't lay out: a tile in their place, to click and open.
+  const unshown = [];
   if ((multi || setMode) && layout) {
     s.shots.forEach((x, i) => {
       if (i === s.shot) return;
       const l = layoutOf(x.scene, i);
-      if (l) ghosts.set(i, { scene: x.scene, layout: l });
+      if (l === "failed") unshown.push(i);
+      else if (l) ghosts.set(i, { scene: x.scene, layout: l });
     });
   }
   const ghostsRef = useRef(ghosts);
@@ -900,13 +926,8 @@ export function CanvasView() {
     const z = scale;
     vp.current.classList.add("panning");
     const move = (e) => setView({ zoom: z, x: x0 + e.clientX - sx, y: y0 + e.clientY - sy });
-    const up = () => {
-      vp.current?.classList.remove("panning");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    const up = () => vp.current?.classList.remove("panning");
+    followDrag({ move, done: up });
   };
 
   const onPointerDown = (ev) => {
@@ -1072,8 +1093,6 @@ export function CanvasView() {
       setLive({ e: cur, mode });
     };
     const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       setGuides([]);
       if (moved) {
         pending.current = cur;
@@ -1083,8 +1102,12 @@ export function CanvasView() {
       }
       setLive(null);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    // Escape puts it back where it was; nothing is written.
+    const cancel = () => {
+      setGuides([]);
+      setLive(null);
+    };
+    followDrag({ move, done: up, cancel });
   };
 
   const onDblClick = (ev) => {
@@ -1108,8 +1131,12 @@ export function CanvasView() {
     if (id === "caption") edit((d) => (d[part] = text.trim() || undefined));
     else {
       const i = Number(id.split("-")[1]) - 1;
-      if (!text.trim()) edit((d) => d.texts.splice(i, 1));
-      else edit((d) => (d.texts[i].text = text));
+      // The text may have gone while it was being typed (an undo, an agent's change): then there's nothing to write to.
+      if (!S.scene.texts?.[i]) return;
+      if (text.trim()) return edit((d) => (d.texts[i].text = text));
+      edit((d) => d.texts.splice(i, 1));
+      // Emptied, it's gone: the selection mustn't slide onto the text after it.
+      if (S.selected === id) set({ selected: null });
     }
   };
 
@@ -1207,6 +1234,11 @@ export function CanvasView() {
       ${multi && html`<div class="join-matte" style=${{ width: W + "px", height: H + "px" }}></div>`}
       ${multi && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`g${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} />`)}
       ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} quiet=${quiet && !reorder} dragging=${reorder?.from === i} dropping=${dropOver === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
+      ${setMode &&
+      unshown.map(
+        (i) => html`<div key=${`u${i}`} class="set-unshown" data-shot=${i} style=${{ left: (i - s.shot) * (W + G) + "px", width: W + "px", height: H + "px" }} title=${`${screenName(i)}: click to edit it`}
+          onPointerDown=${(ev) => dragScreen(ev, i)}><span>Couldn't show this screen here</span><small>Click to open it</small></div>`,
+      )}
       ${setMode && s.shots.map((x, i) => html`<${SetLabel} key=${`l${i}`} i=${i} x=${(i - s.shot) * (W + G)} w=${W} on=${i === s.shot} dragging=${reorder?.from === i} renaming=${renaming === i} onDone=${() => setRenaming(null)} onGrab=${(ev) => dragScreen(ev, i)} />`)}
       ${setMode && reorder && html`<div class="set-drop" style=${{ left: (reorder.to - s.shot) * (W + G) - G / 2 + "px", height: H + "px" }}></div>`}
       ${setMode && html`<button class="set-add" style=${{ left: (s.shots.length - s.shot) * (W + G) + "px", width: W * SET_ADD + "px", height: H + "px" }} title="Add a screen at the end: a copy of the last one"

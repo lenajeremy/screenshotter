@@ -577,6 +577,30 @@ try {
     assert.throws(() => findScene({ name: "no such scene" }), /No scene named/);
     for (const id of [copy.id, original.id]) await post("/api/scenes/delete", { id });
   });
+  await check("the Studio's save doesn't write over an agent's newer save of the same design", async () => {
+    const { getScene, saveScene } = await import("../src/studio/scenes.js");
+    const sc = (headline: string) => ({ devices: [{ screenshot: shot }], headline });
+    const first = await (await post("/api/scenes/save", { name: "Race", scene: sc("Studio one") })).json();
+    await new Promise((r) => setTimeout(r, 20));
+    // An agent saves after the Studio's copy was made: the Studio's save based on its older copy is refused.
+    const agent = saveScene({ id: first.id, scene: sc("Agent's"), by: "agent" });
+    const refused = await (await post("/api/scenes/save", { id: first.id, name: "Race", scene: sc("Studio two"), base: first.updatedAt })).json();
+    assert.equal(refused.conflict, true);
+    assert.equal(refused.updatedAt, agent.updatedAt, "the answer is the agent's version, to take up");
+    assert.equal((getScene(first.id).scene as { headline: string }).headline, "Agent's");
+    // Once the Studio has the agent's version, its saves go in again.
+    const taken = await (await post("/api/scenes/save", { id: first.id, name: "Race", scene: sc("Studio three"), base: agent.updatedAt })).json();
+    assert.equal(taken.conflict, undefined);
+    assert.equal((getScene(first.id).scene as { headline: string }).headline, "Studio three");
+    // Agents' saves (no base) and saves with no agent change in between always go in.
+    assert.equal(saveScene({ id: first.id, scene: sc("Agent again"), by: "agent" }).conflict, undefined);
+    const own = await (await post("/api/scenes/save", { id: first.id, name: "Race", scene: sc("Mine"), base: "2000-01-01T00:00:00.000Z" })).json();
+    assert.equal(own.conflict, true, "a stale base against an agent's save is refused");
+    const plain = await (await post("/api/scenes/save", { id: first.id, name: "Race", scene: sc("No base") })).json();
+    assert.equal(plain.conflict, undefined);
+    assert.equal((getScene(first.id).scene as { headline: string }).headline, "No base");
+    await post("/api/scenes/delete", { id: first.id });
+  });
   await check("a design at several sizes keeps them all, and an agent saving the first size keeps the rest", async () => {
     const { getScene, saveScene } = await import("../src/studio/scenes.js");
     const sc = (canvas: string, headline: string) => ({ canvas, headline, devices: [{ screenshot: shot }] });

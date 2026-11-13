@@ -40,6 +40,67 @@ export function Seg({ value, options, onChange, class: cls = "" }) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Drags
+
+/**
+ * Follow a drag from a pointerdown until it ends, on the window so it carries on outside the
+ * element. Letting go calls `done`; so does a drag that's lost (the pointer cancelled, the window
+ * losing focus mid-drag with ⌘Tab, or a move with the button already up), so nothing is left
+ * following the pointer. Escape calls `cancel` instead, to put things back as they were. Other keys
+ * wait until it's over: Delete mid-drag would take away the very thing being dragged.
+ */
+export function followDrag({ move, done, cancel }) {
+  let over = false;
+  const stop = () => {
+    over = true;
+    removeEventListener("pointermove", onMove);
+    removeEventListener("pointerup", onUp);
+    removeEventListener("pointercancel", onUp);
+    removeEventListener("blur", onUp);
+    removeEventListener("keydown", onKey, true);
+  };
+  const end = (fn, e) => {
+    if (over) return;
+    stop();
+    fn?.(e);
+  };
+  const onUp = (e) => end(done, e);
+  const onMove = (e) => {
+    // A mouse moving with no button down was let go of somewhere we didn't hear about.
+    if (e.pointerType === "mouse" && e.buttons === 0) return end(done, e);
+    move?.(e);
+  };
+  const onKey = (e) => {
+    if (["Shift", "Alt", "Meta", "Control"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === "Escape") end(cancel ?? done, e);
+  };
+  addEventListener("pointermove", onMove);
+  addEventListener("pointerup", onUp);
+  addEventListener("pointercancel", onUp);
+  addEventListener("blur", onUp);
+  addEventListener("keydown", onKey, true);
+  return stop;
+}
+
+/**
+ * Whether keys like Space and Tab are the canvas's: only while no control has the keyboard. A
+ * button, field or menu reached with the keyboard keeps them (Space presses it, Tab moves on); one
+ * that only has focus because it was clicked (Chrome leaves it there) doesn't.
+ */
+export function keysForCanvas() {
+  const a = document.activeElement;
+  if (!a || a === document.body || a === document.documentElement) return true;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable) return false;
+  try {
+    return !a.matches(":focus-visible");
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Slider (value may be undefined = "auto"; double-click resets)
 
 export function Slider({ value, min, max, step = 0.01, onChange, fallback, format, centered = false, reset }) {
@@ -57,16 +118,24 @@ export function Slider({ value, min, max, step = 0.01, onChange, fallback, forma
     return snap(min + clamp((ev.clientX - r.left) / r.width, 0, 1) * (max - min));
   };
   const down = (ev) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
-    ref.current.setPointerCapture(ev.pointerId);
+    const was = value;
     setActive(true);
     onChange(at(ev), true);
+    followDrag({
+      move: (e) => onChange(at(e), true),
+      done: () => setActive(false),
+      // Escape puts it back as it was before the drag.
+      cancel: () => {
+        setActive(false);
+        onChange(was, true);
+      },
+    });
   };
-  const move = (ev) => active && onChange(at(ev), true);
-  const up = () => setActive(false);
   const text = format ? format(shown) : String(Math.round(shown * 100) / 100);
   return html`<div class="slider ${value === undefined ? "unset" : ""}">
-    <div class="track ${active ? "active" : ""} ${centered ? "centered" : ""}" ref=${ref} onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
+    <div class="track ${active ? "active" : ""} ${centered ? "centered" : ""}" ref=${ref} onPointerDown=${down}
       onDblClick=${() => onChange(reset !== undefined ? reset : undefined)}>
       <div class="rail-line"></div>
       ${centered && html`<div class="tick" style=${{ left: zero * 100 + "%" }}></div>`}
@@ -75,10 +144,62 @@ export function Slider({ value, min, max, step = 0.01, onChange, fallback, forma
     </div>
     <input class="val" value=${text} onFocus=${(e) => e.target.select()}
       onChange=${(e) => {
-        const n = parseFloat(e.target.value);
-        onChange(Number.isFinite(n) ? clamp(n, min, max) : undefined);
+        const v = sliderValue(e.target.value, { min, max, step, format });
+        // Words that aren't a value put back what was there; a value shows as the slider shows it.
+        e.target.value = String(v === null ? text : format ? format(v) : Math.round(v * 100) / 100);
+        if (v !== null) onChange(v);
       }} />
   </div>`;
+}
+
+/**
+ * A slider's typed value, in the units its box shows ("120%" or just 120 for a brightness shown as
+ * 120% is 1.2). `format` can scale, round, add a unit or show a word at one end ("Straight",
+ * "Off"), so it isn't undone by hand: the value is the slider's step whose shown number is nearest
+ * the typed one (on a tie, the roundest), or the step shown as the typed word. null when nothing
+ * typed reads as a value.
+ */
+export function sliderValue(typed, { min, max, step = 0.01, format }) {
+  const t = String(typed ?? "").trim().replace(/−/g, "-").replace(",", ".");
+  const numberIn = (s) => {
+    const m = /[-+]?(\d+\.?\d*|\.\d+)/.exec(String(s));
+    return m ? Number(m[0]) : NaN;
+  };
+  const n = numberIn(t);
+  if (!t) return null;
+  if (!format) return Number.isFinite(n) ? clamp(n, min, max) : null;
+  // Every value the slider can take (in at most a few thousand steps), with the number it shows.
+  const k = Math.max(step, (max - min) / 4000);
+  const vals = [min];
+  for (let i = Math.ceil(min / k - 1e-9); i * k < max - 1e-9; i++) if (i * k > min + 1e-9) vals.push(Number((i * k).toFixed(6)));
+  vals.push(max);
+  const shown = vals.map((v) => String(format(v)));
+  if (!Number.isFinite(n)) {
+    const word = t.toLowerCase().replace(/\s+/g, "");
+    const i = shown.findIndex((s) => s.toLowerCase().replace(/\s+/g, "") === word);
+    return i < 0 ? null : vals[i];
+  }
+  const nums = shown.map(numberIn);
+  // A step shown as a word ("Straight") stands for the number a straight line through the ends gives it.
+  const ends = nums.map((x, i) => i).filter((i) => Number.isFinite(nums[i]));
+  if (ends.length >= 2) {
+    const [a, b] = [ends[0], ends[ends.length - 1]];
+    const slope = (nums[b] - nums[a]) / (vals[b] - vals[a] || 1);
+    nums.forEach((x, i) => Number.isFinite(x) || (nums[i] = nums[a] + (vals[i] - vals[a]) * slope));
+  }
+  let best = Infinity;
+  let hits = [];
+  nums.forEach((x, i) => {
+    const d = Math.abs(x - n);
+    if (!Number.isFinite(d) || d > best + 1e-9) return;
+    if (d < best - 1e-9) hits = [];
+    best = Math.min(best, d);
+    hits.push(vals[i]);
+  });
+  if (!hits.length) return null;
+  const decimals = (v) => (String(v).split(".")[1] ?? "").length;
+  const mid = (hits[0] + hits[hits.length - 1]) / 2;
+  return hits.sort((a, b) => decimals(a) - decimals(b) || Math.abs(a - mid) - Math.abs(b - mid))[0];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -96,22 +217,28 @@ export function Num({ label, value, onChange, step = 1, min = -Infinity, max = I
     if (Number.isFinite(n)) onChange(clamp(n / scale, min, max));
   };
   const scrub = (ev) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
     const start = ev.clientX;
+    const was = value;
     const v0 = value ?? 0;
+    let moved = false;
     document.body.classList.add("scrubbing");
-    const move = (e) => {
-      const dx = e.clientX - start;
-      const s = e.shiftKey ? step * 10 : e.altKey ? step / 10 : step;
-      onChange(clamp(v0 + (Math.round(dx / 2) * s) / scale, min, max), true);
-    };
-    const up = () => {
-      document.body.classList.remove("scrubbing");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    const end = () => document.body.classList.remove("scrubbing");
+    followDrag({
+      move: (e) => {
+        const dx = e.clientX - start;
+        const s = e.shiftKey ? step * 10 : e.altKey ? step / 10 : step;
+        moved = true;
+        onChange(clamp(v0 + (Math.round(dx / 2) * s) / scale, min, max), true);
+      },
+      done: end,
+      // Escape puts the value back as it was before the scrub.
+      cancel: () => {
+        end();
+        if (moved) onChange(was, true);
+      },
+    });
   };
   return html`<div class="num ${value === undefined ? "auto" : ""}" title=${title}>
     <span class="scrub" onPointerDown=${scrub}>${label}</span>
@@ -175,11 +302,17 @@ export function Section({ title, count, children, right, collapsible = false, op
 }
 
 // ---------------------------------------------------------------------------------------------
-// Popover anchored to an element. Closes on outside click or Escape.
+// Popover anchored to an element. Closes on outside click or Escape (the one on top only), and
+// follows its anchor as what's around it scrolls (closing once the anchor is scrolled out of view).
+
+/** The popovers open now, the newest last: Escape closes only that one. */
+const openPopovers = [];
 
 export function Popover({ anchor, onClose, children, class: cls = "", align = "start", offset = 6, width, avoid }) {
   const ref = useRef();
   const [pos, setPos] = useState(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useLayoutEffect(() => {
     const place = () => {
       if (!anchor) return;
@@ -206,24 +339,44 @@ export function Popover({ anchor, onClose, children, class: cls = "", align = "s
       }
       let top = a.bottom + offset;
       if (top + hgt > window.innerHeight - 8 && a.top - offset - hgt > 8) top = a.top - offset - hgt;
-      setPos({ left, top: clamp(top, 8, window.innerHeight - 40) });
+      // Kept whole on screen: a tall one near the bottom moves up rather than running off it.
+      setPos({ left, top: clamp(top, 8, Math.max(8, window.innerHeight - hgt - 8)) });
     };
     place();
     const ro = new ResizeObserver(place);
     ro.observe(ref.current);
+    // Something round the anchor scrolled (a panel, the page): follow it, or close once it's out of sight.
+    const scrolled = (e) => {
+      if (!anchor || ref.current?.contains(e.target)) return;
+      const box = e.target instanceof Element ? e.target.getBoundingClientRect() : null;
+      if (box && !e.target.contains(anchor)) return;
+      const a = anchor.getBoundingClientRect();
+      const view = box ?? { top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth };
+      const gone = !anchor.isConnected || a.bottom <= view.top || a.top >= view.bottom || a.right <= view.left || a.left >= view.right;
+      if (gone) close.current();
+      else place();
+    };
     window.addEventListener("resize", place);
+    window.addEventListener("scroll", scrolled, true);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", scrolled, true);
     };
   }, [anchor]);
+  const mine = useRef({});
+  useEffect(() => {
+    openPopovers.push(mine.current);
+    return () => openPopovers.splice(openPopovers.indexOf(mine.current), 1);
+  }, []);
   useEffect(() => {
     const down = (e) => {
       if (ref.current?.contains(e.target) || anchor?.contains(e.target)) return;
       onClose();
     };
     const key = (e) => {
-      if (e.key === "Escape") {
+      // One Escape closes one popover: the newest (a colour picker opened from a menu goes first).
+      if (e.key === "Escape" && openPopovers[openPopovers.length - 1] === mine.current) {
         e.stopPropagation();
         onClose();
       }
@@ -248,33 +401,67 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const field = useRef();
+  const list = useRef();
   const current = options.find((o) => o.value === value);
   const filtered = q ? options.filter((o) => `${o.label} ${o.hint ?? ""} ${o.group ?? ""}`.toLowerCase().includes(q.toLowerCase())) : options;
+  /** Scroll the highlighted row into sight, in the menu's own scroll. */
+  const showActive = () => {
+    const item = list.current?.querySelector(".menu-item.active");
+    const box = item?.closest(".pop");
+    if (!box) return;
+    const b = box.getBoundingClientRect();
+    const r = item.getBoundingClientRect();
+    if (r.top < b.top) box.scrollTop -= b.top - r.top + 6;
+    else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom + 6;
+  };
+  // The button was given the keyboard only for the menu: it goes back when the menu closes.
+  const lent = useRef(false);
   useEffect(() => {
     if (open) setActive(Math.max(0, filtered.findIndex((o) => o.value === value)));
     else setQ("");
+    if (!open && lent.current && document.activeElement === btn.current) btn.current.blur();
+    lent.current = open && !search && document.activeElement !== btn.current;
     // autofocus only works for what's on the page when it loads: focus the search box by hand.
-    if (open && search) requestAnimationFrame(() => field.current?.focus());
+    // Without one the button keeps the keyboard (WebKit doesn't focus a clicked button), so the
+    // arrow keys and Enter reach the menu.
+    if (open)
+      requestAnimationFrame(() => {
+        (search ? field.current : btn.current)?.focus({ preventScroll: true });
+        showActive();
+      });
   }, [open]);
+  // The arrow keys move the highlight: it stays in sight (hovering doesn't scroll).
+  const follow = useRef(false);
+  useEffect(() => {
+    if (follow.current) showActive();
+    follow.current = false;
+  }, [active]);
   const pick = (o) => {
     onChange(o.value);
     setOpen(false);
   };
   const key = (e) => {
-    if (e.key === "ArrowDown") {
+    const go = (fn) => {
       e.preventDefault();
-      setActive((a) => Math.min(filtered.length - 1, a + 1));
-    } else if (e.key === "ArrowUp") {
+      // The keys are the menu's while it's open (not the canvas's: arrows would move the selection).
+      e.stopPropagation();
+      follow.current = true;
+      setActive(fn);
+    };
+    if (e.key === "ArrowDown") go((a) => Math.min(filtered.length - 1, a + 1));
+    else if (e.key === "ArrowUp") go((a) => Math.max(0, a - 1));
+    else if (e.key === "Home" && !search) go(() => 0);
+    else if (e.key === "End" && !search) go(() => filtered.length - 1);
+    else if (e.key === "Enter" && filtered[active]) {
       e.preventDefault();
-      setActive((a) => Math.max(0, a - 1));
-    } else if (e.key === "Enter" && filtered[active]) {
-      e.preventDefault();
+      e.stopPropagation();
       pick(filtered[active]);
     }
   };
   let lastGroup;
   return html`
-    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title ?? (current ? `${current.label}${current.hint ? ` · ${current.hint}` : ""}` : undefined)} onClick=${() => setOpen(!open)}>
+    <button class="${btnClass} ${open ? "open" : ""}" ref=${btn} title=${title ?? (current ? `${current.label}${current.hint ? ` · ${current.hint}` : ""}` : undefined)} onClick=${() => setOpen(!open)}
+      onKeyDown=${open && !search ? key : undefined}>
       ${trigger ??
       html`${icon && html`<${Icon} n=${icon} s=${14} />`}
         <span class="label">${current ? (render ? render(current) : html`${current.label}${current.hint && html`<span class="muted">${current.hint}</span>`}`) : html`<span class="muted">${placeholder}</span>`}</span>
@@ -282,7 +469,7 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
     </button>
     ${open &&
     html`<${Popover} anchor=${btn.current} onClose=${() => setOpen(false)}>
-      <div onKeyDown=${key}>
+      <div onKeyDown=${key} ref=${list}>
         ${search &&
         html`<div class="menu-search"><div class="input-wrap"><${Icon} n="search" s=${13} /><input class="input sm" ref=${field} placeholder="Search" value=${q}
           onInput=${(e) => {
@@ -315,7 +502,21 @@ function hexToRgb(hex) {
   if (s.length === 3) s = [...s].map((c) => c + c).join("");
   return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
 }
+/**
+ * A colour's red, green, blue and alpha (0–1): from hex, or the rgba() that normalizeColor gives a
+ * see-through colour. null if it's neither.
+ */
+function readRgba(c) {
+  const rgb = hexToRgb(c);
+  if (rgb) return [...rgb, 1];
+  const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/i.exec(String(c ?? "").trim());
+  if (!m) return null;
+  const a = m[4] === undefined ? 1 : Number(m[4]) / (m[5] ? 100 : 1);
+  return [Number(m[1]), Number(m[2]), Number(m[3]), clamp(a, 0, 1)];
+}
 const toHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, "0")).join("");
+/** A colour as the picker writes it: #rrggbb, or rgba() when it's see-through. */
+const toColor = ([r, g, b], a = 1) => (a < 1 ? `rgba(${[r, g, b].map((v) => Math.round(clamp(v, 0, 255))).join(", ")}, ${Math.round(a * 1000) / 1000})` : toHex(r, g, b));
 function rgbToHsv([r, g, b]) {
   r /= 255;
   g /= 255;
@@ -492,45 +693,49 @@ export function ColorPicker({ value: given, onChange, tokens, onMakeToken }) {
   // A token shows as the colour it stands for; changing that colour makes it a plain one again.
   const ref = tokens ? tokenRef(given) : null;
   const value = ref ? tokenColor(given, tokens) ?? undefined : given;
-  const rgb = hexToRgb(value) ?? [255, 255, 255];
-  const [hsv, setHsv] = useState(() => rgbToHsv(rgb));
+  // A see-through colour keeps how see-through it is as its colour is changed here.
+  const rgba = readRgba(value);
+  const alpha = rgba?.[3] ?? 1;
+  const [hsv, setHsv] = useState(() => rgbToHsv(rgba?.slice(0, 3) ?? [255, 255, 255]));
   const [text, setText] = useState(value ?? "#ffffff");
   const [picking, setPicking] = useState(false);
   useEffect(() => {
     const cur = toHex(...hsvToRgb(...hsv));
-    if (value && value.toLowerCase() !== cur) {
-      const next = hexToRgb(value);
-      if (next) setHsv(rgbToHsv(next));
-    }
+    const next = readRgba(value);
+    if (next && toHex(...next) !== cur) setHsv(rgbToHsv(next.slice(0, 3)));
     setText(value ?? "");
   }, [value, given]);
-  const emit = (next, live) => {
+  const emit = (next, live, a = alpha) => {
     setHsv(next);
-    const hex = toHex(...hsvToRgb(...next));
-    setText(hex);
-    onChange(hex, live);
+    const c = toColor(hsvToRgb(...next), a);
+    setText(c);
+    onChange(c, live);
   };
-  /** Apply a colour from outside the picker (paste, eyedropper, typed). */
+  /** Apply a colour from outside the picker (paste, eyedropper, typed), with its own alpha. */
   const apply = (c) => {
-    const rgbv = hexToRgb(c);
-    if (rgbv) emit(rgbToHsv(rgbv));
+    const v = readRgba(c);
+    if (v) emit(rgbToHsv(v.slice(0, 3)), undefined, v[3]);
     else {
       setText(c);
       onChange(c);
     }
   };
   const drag = (el, fn) => (ev) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
     const r = el.current.getBoundingClientRect();
     const go = (e) => fn(clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1));
+    // Escape puts back the colour it had before the drag.
+    const [hsv0, given0] = [hsv, given];
     go(ev);
-    const move = (e) => go(e);
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    followDrag({
+      move: go,
+      cancel: () => {
+        setHsv(hsv0);
+        setText(given0 ?? "");
+        onChange(given0, true);
+      },
+    });
   };
   const pick = async () => {
     setPicking(true);
@@ -725,7 +930,8 @@ export const accentEditHtml = (text, accentCss = "") => {
   const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const css = accentCss.replace(/"/g, "'");
   return String(text ?? "")
-    .split(/\*\*(.+?)\*\*/g)
+    // An accent can run over a line break ("**two\nlines**").
+    .split(/\*\*([\s\S]+?)\*\*/g)
     .map((part, i) => {
       const h = esc(part).replace(/\\n|\n/g, "<br>");
       return i % 2 ? `<span data-acc style="${css}">${h}</span>` : h;
@@ -782,7 +988,7 @@ export const toggleAccentIn = (root, accentCss = "") => {
     tail.setEnd(acc, acc.childNodes.length);
     const after = tail.extractContents();
     const plain = document.createElement("span");
-    plain.textContent = r.extractContents().textContent;
+    plain.append(plainWords(r.extractContents()));
     acc.after(plain);
     if (after.textContent) {
       const rest = acc.cloneNode(false);
@@ -795,10 +1001,27 @@ export const toggleAccentIn = (root, accentCss = "") => {
   const span = document.createElement("span");
   span.setAttribute("data-acc", "");
   span.style.cssText = accentCss;
-  span.textContent = r.extractContents().textContent;
+  span.append(plainWords(r.extractContents()));
   r.insertNode(span);
   pick(span);
 };
+
+/**
+ * Chosen words as plain text that keeps its line breaks (a <br> each, as a new line typed in the
+ * middle comes as a block of its own), without the accents inside: textContent would join the lines.
+ */
+function plainWords(fragment) {
+  const out = document.createDocumentFragment();
+  const walk = (n) =>
+    n.childNodes.forEach((c) => {
+      if (c.nodeType === 3) return out.append(c.data);
+      if (c.nodeName === "BR") return out.append(document.createElement("br"));
+      if ((c.nodeName === "DIV" || c.nodeName === "P") && out.childNodes.length && out.lastChild.nodeName !== "BR") out.append(document.createElement("br"));
+      walk(c);
+    });
+  walk(fragment);
+  return out;
+}
 
 
 /** How accent words look while being typed in a panel (the design's own colour shows on the canvas). */
@@ -844,8 +1067,9 @@ export function AccentText({ value, onChange, placeholder, rows = 2, onFocus }) 
       onKeyDown=${(e) => {
         e.stopPropagation();
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") return toggle(e);
-        // Enter finishes, like the canvas's own text editing; Shift+Enter breaks the line.
-        if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing) {
+        // Enter finishes, like the canvas's own text editing; Shift+Enter breaks the line. Not
+        // while an input method is composing (Safari gives its confirming Enter keyCode 229).
+        if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing && e.keyCode !== 229) {
           e.preventDefault();
           e.target.blur();
         }

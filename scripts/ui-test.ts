@@ -1129,6 +1129,316 @@ const CHECKS: Record<string, Check> = {
     const counts = await S(page, () => [...document.querySelectorAll(".ghost-wrap.set")].map((g) => g.querySelectorAll("img").length));
     return counts.length === 3 && counts.every((c) => c > 0) ? "ok" : `pictures on the other screens: ${counts}`;
   },
+  async "typing in a slider's box uses the units it shows, and words that aren't a value keep it"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", texts: [{ text: "Hello", x: 0.5, y: 0.2, size: 0.05 }] }), selected: "text-1", rightOpen: true });
+    await page.waitForTimeout(1500);
+    const field = page.locator(".panel.right .row", { has: page.locator("label", { hasText: /^Size$/ }) }).locator("input.val").first();
+    const size = () => S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      return { size: st.S.scene.texts?.[0]?.size as number, h: st.S.layout.canvas.height as number };
+    });
+    // Shown in pixels: 100 is 100 px, not the most the slider goes to.
+    await field.fill("100");
+    await field.press("Enter");
+    await page.waitForTimeout(500);
+    const a = await size();
+    const shown = await field.inputValue();
+    // Words that aren't a size leave it as it was.
+    await field.fill("bigger");
+    await field.press("Enter");
+    await page.waitForTimeout(500);
+    const b = await size();
+    const back = await field.inputValue();
+    const px = Math.round(a.size * a.h);
+    return Math.abs(px - 100) <= 2 && shown === `${px} px` && b.size === a.size && back === shown ? "ok" : `typing 100 made it ${px} px (box "${shown}"); "bigger" left ${Math.round(b.size * b.h)} px (box "${back}")`;
+  },
+  async "after undoing an added shape nothing stays selected, and Delete on a stale selection is safe"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone() });
+    await page.waitForTimeout(1000);
+    const r = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      (await import("/ui/actions.js" as string)).addShape("box");
+      await new Promise((r) => setTimeout(r, 300));
+      const picked = st.S.selected;
+      st.undo();
+      await new Promise((r) => setTimeout(r, 300));
+      return { picked, after: st.S.selected, shapes: (st.S.scene.shapes ?? []).length };
+    });
+    await page.keyboard.press("Delete");
+    // Even a selection left pointing at nothing (set by hand here) doesn't make Delete throw.
+    await S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "image-3" }));
+    await page.waitForTimeout(100);
+    await page.keyboard.press("Delete");
+    await page.waitForTimeout(300);
+    const devices = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.length);
+    return String(r.picked).startsWith("shape-") && r.after === null && r.shapes === 0 && devices === 1 ? "ok" : `added ${r.picked}, after undo selected ${r.after} with ${r.shapes} shapes, ${devices} devices left`;
+  },
+  async "Escape mid-drag puts a device back, Delete waits for the drag, and a lost mouse-up ends it"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", devices: [{ screenshot: shot, x: 0.5, y: 0.55, height: 0.6, anchor: "center" }] }) });
+    await page.waitForTimeout(1500);
+    const xs = () => S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.map((d: { x: number }) => d.x) as number[]);
+    const board = (await page.locator(".stage .artboard").first().boundingBox())!;
+    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+    const [sx, sy] = [dev.x + dev.width / 2, dev.y + dev.height / 2];
+    const x0 = (await xs())[0];
+    // Escape: nothing is written, and the device stays selected.
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    await page.mouse.move(sx + 60, sy, { steps: 6 });
+    await page.keyboard.press("Escape");
+    await page.mouse.move(sx + 120, sy, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    const esc = await xs();
+    const sel = await S(page, async () => (await import("/ui/store.js" as string)).S.selected);
+    if (esc[0] !== x0 || sel !== "device-1") return `after Escape the device is at ${esc[0]} (was ${x0}), selected ${sel}`;
+    // Delete mid-drag: ignored; the device lands where it's let go.
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    await page.mouse.move(sx + 60, sy, { steps: 6 });
+    await page.keyboard.press("Delete");
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    const del = await xs();
+    if (del.length !== 1 || del[0] <= x0) return `Delete mid-drag left ${del.length} device(s), at ${del}`;
+    // The window loses focus mid-drag (⌘Tab), so the mouse-up never comes: the drag ends there.
+    const d2 = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+    const [tx, ty] = [d2.x + d2.width / 2, d2.y + d2.height / 2];
+    await page.mouse.move(tx, ty);
+    await page.mouse.down();
+    await page.mouse.move(tx - 40, ty, { steps: 5 });
+    await S(page, () => window.dispatchEvent(new Event("blur")));
+    await page.mouse.move(tx - 160, ty, { steps: 5 });
+    await page.waitForTimeout(300);
+    const lost = await xs();
+    await page.mouse.up();
+    const by = (lost[0] - del[0]) * board.width;
+    return by < -15 && by > -90 ? "ok" : `after a lost mouse-up the device moved ${Math.round(by)} px (by 40 when the window lost focus, 160 by the end)`;
+  },
+  async "Space and Tab are the canvas's only while no control has the keyboard"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
+    await page.waitForTimeout(1500);
+    const st = () => S(page, async () => {
+      const s = (await import("/ui/store.js" as string)).S;
+      return { sel: s.selected as string | null, ids: s.layout.entities.map((e: { id: string }) => e.id) as string[], space: Boolean(document.querySelector(".viewport.space")), zoom: document.querySelector(".zoom-ctl .pct")?.textContent ?? "" };
+    });
+    // Nothing focused: Tab steps through the canvas's items, and past the last one lets go of them.
+    await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Tab");
+    const first = await st();
+    for (let i = 1; i < first.ids.length; i++) await page.keyboard.press("Tab");
+    const last = await st();
+    await page.keyboard.press("Tab");
+    const out = await st();
+    if (first.sel !== first.ids[0] || last.sel !== first.ids[first.ids.length - 1] || out.sel !== null) return `Tab selected ${first.sel}, then ${last.sel}, then ${out.sel} (items ${first.ids})`;
+    // A button with the keyboard keeps Space (it presses it, rather than panning) and Tab (focus moves on).
+    await S(page, async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      (await import("/ui/store.js" as string)).set({ selected: "device-1" });
+    });
+    await page.keyboard.press("Shift");
+    await page.focus('.zoom-ctl button[title^="Zoom in"]');
+    const visible = await S(page, () => document.activeElement!.matches(":focus-visible"));
+    const z0 = await st();
+    await page.keyboard.down("Space");
+    const held = await st();
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(200);
+    const z1 = await st();
+    await page.keyboard.press("Tab");
+    const tabbed = await st();
+    if (!visible) return "the zoom button, focused after a key, isn't :focus-visible";
+    if (held.space || z1.zoom === z0.zoom) return `with the zoom button focused, Space ${held.space ? "panned" : "didn't pan"} and the zoom went ${z0.zoom} → ${z1.zoom}`;
+    if (tabbed.sel !== "device-1") return `with a button focused, Tab changed the selection to ${tabbed.sel}`;
+    // Nothing focused again: Space pans, and switching to another app mid-pan lets go of it.
+    await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.down("Space");
+    await page.waitForTimeout(100);
+    const panning = await st();
+    await S(page, () => window.dispatchEvent(new Event("blur")));
+    await page.waitForTimeout(100);
+    const after = await st();
+    await page.keyboard.up("Space");
+    return panning.space && !after.space ? "ok" : `Space with nothing focused: pan ${panning.space}; after the window lost focus: still ${after.space}`;
+  },
+  async "Enter while composing Japanese keeps the text being edited, and emptying a text lets go of it"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", texts: [{ text: "First", x: 0.5, y: 0.2 }, { text: "Second", x: 0.5, y: 0.35 }] }), selected: "text-1" });
+    await page.waitForTimeout(1500);
+    await S(page, async () => (await import("/ui/canvas.js" as string)).canvasApi.editText("text-1"));
+    await page.waitForSelector(".stage .editing[contenteditable]");
+    // The Enter that confirms a word in an input method: isComposing, or Safari's keyCode 229.
+    await S(page, () => {
+      const el = document.querySelector(".stage .editing[contenteditable]")!;
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
+      const safari = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      Object.defineProperty(safari, "keyCode", { value: 229 });
+      el.dispatchEvent(safari);
+    });
+    await page.waitForTimeout(200);
+    const still = await S(page, () => Boolean(document.querySelector(".stage .editing[contenteditable]")));
+    // Emptied (its words are all selected as editing starts) and finished: it goes, and nothing is left selected.
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(600);
+    const r = await S(page, async () => {
+      const s = (await import("/ui/store.js" as string)).S;
+      return { texts: (s.scene.texts ?? []).map((t: { text: string }) => t.text).join(), sel: s.selected };
+    });
+    return still && r.texts === "Second" && r.sel === null ? "ok" : `editing after a composing Enter: ${still}; texts "${r.texts}", selected ${r.sel}`;
+  },
+  async "the set row never draws another design's screens, and says when it can't draw one"(page) {
+    const a = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `A${i}` });
+    await setDesign(page, { shots: [0, 1, 2].map((i) => ({ scene: a(i) })), shot: 0, groups: null, scene: a(0), leftOpen: false });
+    await page.waitForTimeout(2200);
+    const drawn = await S(page, () => document.querySelectorAll(".ghost-wrap.set img").length);
+    // The next design's other screens can't be laid out (the engine is away for them).
+    await page.route("**/api/layout", (route) => (/"B[12]"/.test(route.request().postData() ?? "") ? route.abort() : route.continue()));
+    const b = (i: number) => ({ devices: [{ screenshot: unused }], background: "cream-grain", canvas: "1:1", layout: "custom", headline: `B${i}` });
+    await setDesign(page, { shots: [0, 1, 2].map((i) => ({ scene: b(i) })), shot: 0, groups: null, scene: b(0) });
+    await page.waitForTimeout(2200);
+    const r = await S(page, () => ({ stale: [...document.querySelectorAll<HTMLImageElement>(".ghost-wrap.set img")].filter((i) => i.src.includes("phone.png")).length, tiles: document.querySelectorAll(".set-unshown").length }));
+    await page.unroute("**/api/layout");
+    if (!drawn) return "the first design's other screens weren't drawn";
+    return !r.stale && r.tiles === 2 ? "ok" : `${r.stale} pictures of the first design's screens in the row, ${r.tiles} "couldn't show" tiles`;
+  },
+  async "an agent's save of the open design isn't written over by the Studio's next save"(page) {
+    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Agent race", scene: phone({ headline: "Mine" }) });
+    const id = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      await st.saveSceneNow();
+      return st.S.sceneId as string;
+    });
+    const { saveScene, getScene } = await import("../src/studio/scenes.js");
+    // An agent replaces it (save_scene with replace), and the person edits it before the Studio has looked.
+    saveScene({ id, scene: phone({ headline: "Agent's" }), by: "agent" });
+    await S(page, async () => (await import("/ui/store.js" as string)).edit((d: { headline: string }) => (d.headline = "Mine again")));
+    await page.waitForTimeout(2500);
+    const kept = getScene(id).scene.headline;
+    const shown = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.headline);
+    const said = await toasts(page);
+    // Undo brings the person's edit back, and that one is saved.
+    await S(page, async () => (await import("/ui/store.js" as string)).undo());
+    await page.waitForTimeout(2000);
+    const mine = getScene(id).scene.headline;
+    return kept === "Agent's" && shown === "Agent's" && /agent updated/i.test(said) && mine === "Mine again" ? "ok" : `on disk "${kept}", on the canvas "${shown}", toasts "${said.slice(0, 80)}", after undo on disk "${mine}"`;
+  },
+  async "closing the window saves a design too big for a keepalive request"(page) {
+    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Long chat", scene: phone({ headline: "Before" }) });
+    const id = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      await st.saveSceneNow();
+      // A long Ask AI conversation: well past the 64 KB a keepalive request may carry.
+      st.set({ ai: { ...st.S.ai, thread: Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: `${i} ${"words ".repeat(400)}` })) } });
+      st.edit((d: { headline: string }) => (d.headline = "After"));
+      await st.flushPersist();
+      return st.S.sceneId as string;
+    });
+    const { getScene } = await import("../src/studio/scenes.js");
+    const s = getScene(id);
+    return s.scene.headline === "After" && s.chat?.length === 60 ? "ok" : `saved: "${s.scene.headline}", ${s.chat?.length ?? 0} messages`;
+  },
+  async "the colour picker keeps transparency, ⌘B keeps line breaks, one Escape closes one popover, popovers follow scrolling, and a menu works by keyboard"(page) {
+    // tsx keeps the names of the functions written below, through a helper of its own the page needs too.
+    await page.evaluate("globalThis.__name = (f) => f");
+    return S(page, async () => {
+      const { h, render } = await import("preact" as string);
+      const c = await import("/ui/controls.js" as string);
+      const bad: string[] = [];
+      const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+      const host = () => {
+        const el = document.createElement("div");
+        el.style.cssText = "position:fixed;left:40px;top:60px;width:260px;z-index:5000";
+        document.body.append(el);
+        return el;
+      };
+      const down = (el: Element, fx: number, fy: number) => {
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new PointerEvent("pointerdown", { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy, button: 0, buttons: 1, pointerType: "mouse", bubbles: true, cancelable: true }));
+      };
+      // A see-through colour keeps its alpha as its colour is changed; Escape mid-drag puts it back.
+      const h1 = host();
+      let got = "";
+      render(h(c.ColorPicker, { value: "rgba(255, 0, 0, 0.5)", onChange: (v: string) => (got = v) }), h1);
+      await wait();
+      down(h1.querySelector(".cp-sv")!, 0.5, 0.5);
+      window.dispatchEvent(new PointerEvent("pointerup", { button: 0, pointerType: "mouse", bubbles: true }));
+      if (!/^rgba\(\d+, \d+, \d+, 0\.5\)$/.test(got)) bad.push(`dragging a 50% red gave ${got}`);
+      down(h1.querySelector(".cp-hue")!, 0.5, 0.5);
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      if (got !== "rgba(255, 0, 0, 0.5)") bad.push(`Escape mid-drag left ${got}`);
+      render(null, h1);
+      // ⌘B over two lines makes both accent words, keeping the line; again makes them plain.
+      const ed = document.createElement("div");
+      ed.contentEditable = "true";
+      ed.innerHTML = c.accentEditHtml("one\ntwo");
+      document.body.append(ed);
+      const all = document.createRange();
+      all.selectNodeContents(ed);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(all);
+      c.toggleAccentIn(ed, "");
+      const on = c.accentFromEdit(ed);
+      c.toggleAccentIn(ed, "");
+      const off = c.accentFromEdit(ed);
+      ed.remove();
+      if (on !== "**one**\n**two**" || off !== "one\ntwo") bad.push(`⌘B over two lines: ${JSON.stringify(on)}, then ${JSON.stringify(off)}`);
+      if (!/<span data-acc[^>]*>two<br>lines<\/span>/.test(c.accentEditHtml("**two\nlines**"))) bad.push("an accent over a line break isn't read as one");
+      // Two popovers open: one Escape closes the newer only.
+      const h2 = host();
+      const [a1, a2] = [document.createElement("button"), document.createElement("button")];
+      h2.append(a1, a2);
+      const pops = document.createElement("div");
+      h2.append(pops);
+      const closed: string[] = [];
+      const onFirst = () => closed.push("first");
+      render(h("div", null, h(c.Popover, { anchor: a1, onClose: onFirst }, "One")), pops);
+      await wait();
+      render(h("div", null, h(c.Popover, { anchor: a1, onClose: onFirst }, "One"), h(c.Popover, { anchor: a2, onClose: () => closed.push("second") }, "Two")), pops);
+      await wait();
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      if (closed.join() !== "second") bad.push(`one Escape closed ${closed.join() || "nothing"}`);
+      render(null, pops);
+      h2.remove();
+      // A popover follows its anchor as its panel scrolls, and closes once the anchor is out of sight.
+      const box = document.createElement("div");
+      box.style.cssText = "position:fixed;left:420px;top:100px;width:200px;height:200px;overflow:auto";
+      box.innerHTML = '<div style="height:120px"></div><button>Anchor</button><div style="height:900px"></div>';
+      document.body.append(box);
+      const h3 = host();
+      let gone = false;
+      render(h(c.Popover, { anchor: box.querySelector("button"), onClose: () => (gone = true) }, "Follows"), h3);
+      await wait();
+      const pop = h3.querySelector(".pop") as HTMLElement;
+      const t0 = parseFloat(pop.style.top);
+      box.scrollTop = 50;
+      await wait();
+      const t1 = parseFloat(pop.style.top);
+      if (Math.abs(t0 - 50 - t1) > 2) bad.push(`scrolled 50 px, the popover moved ${t0 - t1} px`);
+      box.scrollTop = 500;
+      await wait();
+      if (!gone) bad.push("the popover stayed open with its anchor scrolled out of sight");
+      render(null, h3);
+      box.remove();
+      // A menu without a search box: the arrow keys move through it (keeping the row in sight) and Enter picks.
+      const h4 = host();
+      let picked: unknown = null;
+      render(h(c.Dropdown, { value: 0, options: Array.from({ length: 40 }, (_, i) => ({ value: i, label: `Option ${i}` })), onChange: (v: unknown) => (picked = v) }), h4);
+      await wait();
+      (h4.querySelector("button") as HTMLButtonElement).click();
+      await wait(200);
+      for (let i = 0; i < 25; i++) document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      await wait(200);
+      const list = h4.querySelector(".pop")!.getBoundingClientRect();
+      const row = h4.querySelector(".menu-item.active")?.getBoundingClientRect();
+      if (!row || row.top < list.top - 1 || row.bottom > list.bottom + 1) bad.push(`the highlighted row is ${row ? `at ${Math.round(row.top)}–${Math.round(row.bottom)}, the menu ${Math.round(list.top)}–${Math.round(list.bottom)}` : "missing"}`);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await wait();
+      if (picked !== 25) bad.push(`25 × ↓ and Enter picked ${picked}`);
+      render(null, h4);
+      h4.remove();
+      return bad.length ? bad.join("; ") : "ok";
+    });
+  },
 };
 
 const engines = { chromium, webkit } as const;

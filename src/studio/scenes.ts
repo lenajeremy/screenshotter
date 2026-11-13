@@ -245,10 +245,14 @@ function cleanGroups(raw: unknown[]): SavedGroup[] {
     .filter((g) => g.shots.length);
 }
 
-export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; groups?: unknown; appIcon?: unknown; appName?: unknown; by?: "agent" }): SceneSummary {
+export function saveScene(input: { id?: unknown; name?: unknown; scene: unknown; chat?: unknown; shots?: unknown; groups?: unknown; appIcon?: unknown; appName?: unknown; by?: "agent"; base?: unknown }): SceneSummary & { conflict?: true } {
   if (!input.scene || typeof input.scene !== "object" || !Array.isArray((input.scene as { devices?: unknown }).devices)) throw new Error("A scene needs a devices array");
   const now = new Date().toISOString();
   const existing = validId(input.id) ? read(input.id) : undefined;
+  // The Studio's saves say which save their copy started from (`base`, its updatedAt). If an agent
+  // has saved the design since, the agent's version stays, and the answer says so (`conflict`) so
+  // the Studio takes it up rather than writing over it. Agents' own saves don't say, and go in.
+  if (existing && typeof input.base === "string" && existing.by === "agent" && existing.updatedAt !== input.base) return { ...summarize(existing), conflict: true };
   const id = existing?.id ?? randomBytes(8).toString("hex");
   const name = (typeof input.name === "string" && input.name.trim().slice(0, 120)) || existing?.name || "Untitled design";
   const chat = Array.isArray(input.chat) ? input.chat.slice(-60) : existing?.chat;
