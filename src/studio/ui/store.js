@@ -517,6 +517,13 @@ export function saveBody() {
 }
 let sceneTimer = 0;
 let saving = Promise.resolve();
+/**
+ * An agent saved the open design after the save this copy started from, so the engine kept the
+ * agent's version and refused ours. Set by actions.js: it takes the agent's version up as
+ * pickUpAgentChanges does (ours stays a step back in undo).
+ */
+let refused = () => undefined;
+export const onSaveRefused = (fn) => (refused = fn);
 function scheduleSceneSave() {
   clearTimeout(sceneTimer);
   sceneTimer = setTimeout(() => {
@@ -532,8 +539,13 @@ export function saveSceneNow() {
   if (!hasContent(body.scene)) return saving;
   const forScene = S.scene;
   saving = saving
-    .then(() => api("/api/scenes/save", { ...body, id: S.sceneId ?? undefined }))
+    // Which save of the design this copy follows (read now, after the saves before it have answered).
+    .then(() => api("/api/scenes/save", { ...body, id: S.sceneId ?? undefined, base: S.sceneStamp ?? undefined }))
     .then((saved) => {
+      if (saved.conflict) {
+        if (saved.id === S.sceneId) refused(saved);
+        return saved;
+      }
       // Still the same document? (It may have been swapped while the save was in flight.)
       if (S.scene === forScene || S.sceneId === null || S.sceneId === saved.id) {
         const others = S.scenes.filter((x) => x.id !== saved.id);
@@ -552,20 +564,36 @@ export async function refreshScenes() {
   if (scenes) set({ scenes: scenes.map((x) => ({ ...x, at: Date.now() })) });
   return S.scenes;
 }
-/** Save a pending change right away (the window is closing or the app is quitting). */
+/**
+ * Browsers refuse keepalive requests past 64 KB in all, per page (and the save is lost without a
+ * word). Smaller saves go with keepalive, so they outlive a page being closed or reloaded.
+ */
+const KEEPALIVE_MAX = 60_000;
+/**
+ * Save a pending change right away (the window is closing or the app is quitting). The app waits
+ * for this promise before it quits, so a save too big for keepalive still gets there as an
+ * ordinary request.
+ */
 export function flushPersist() {
   const headers = { "x-screenshotter": "studio", "Content-Type": "application/json" };
-  const jobs = [];
+  const sends = [];
   if (sceneTimer && hasContent(S.scene)) {
     clearTimeout(sceneTimer);
     sceneTimer = 0;
-    jobs.push(fetch("/api/scenes/save", { method: "POST", keepalive: true, headers, body: JSON.stringify(saveBody()) }).catch(() => undefined));
+    sends.push(["/api/scenes/save", JSON.stringify({ ...saveBody(), base: S.sceneStamp ?? undefined })]);
   }
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = 0;
-    jobs.push(fetch("/api/state", { method: "POST", keepalive: true, headers, body: JSON.stringify(snapshot()) }).catch(() => undefined));
+    sends.push(["/api/state", JSON.stringify(snapshot())]);
   }
+  let room = KEEPALIVE_MAX;
+  const jobs = sends.map(([url, body]) => {
+    const size = new Blob([body]).size;
+    const keepalive = size <= room;
+    if (keepalive) room -= size;
+    return fetch(url, { method: "POST", keepalive, headers, body }).catch(() => undefined);
+  });
   return Promise.all(jobs).then(() => undefined);
 }
 addEventListener("pagehide", () => flushPersist());

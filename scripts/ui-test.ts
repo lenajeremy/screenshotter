@@ -1278,6 +1278,42 @@ const CHECKS: Record<string, Check> = {
     if (!drawn) return "the first design's other screens weren't drawn";
     return !r.stale && r.tiles === 2 ? "ok" : `${r.stale} pictures of the first design's screens in the row, ${r.tiles} "couldn't show" tiles`;
   },
+  async "an agent's save of the open design isn't written over by the Studio's next save"(page) {
+    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Agent race", scene: phone({ headline: "Mine" }) });
+    const id = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      await st.saveSceneNow();
+      return st.S.sceneId as string;
+    });
+    const { saveScene, getScene } = await import("../src/studio/scenes.js");
+    // An agent replaces it (save_scene with replace), and the person edits it before the Studio has looked.
+    saveScene({ id, scene: phone({ headline: "Agent's" }), by: "agent" });
+    await S(page, async () => (await import("/ui/store.js" as string)).edit((d: { headline: string }) => (d.headline = "Mine again")));
+    await page.waitForTimeout(2500);
+    const kept = getScene(id).scene.headline;
+    const shown = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.headline);
+    const said = await toasts(page);
+    // Undo brings the person's edit back, and that one is saved.
+    await S(page, async () => (await import("/ui/store.js" as string)).undo());
+    await page.waitForTimeout(2000);
+    const mine = getScene(id).scene.headline;
+    return kept === "Agent's" && shown === "Agent's" && /agent updated/i.test(said) && mine === "Mine again" ? "ok" : `on disk "${kept}", on the canvas "${shown}", toasts "${said.slice(0, 80)}", after undo on disk "${mine}"`;
+  },
+  async "closing the window saves a design too big for a keepalive request"(page) {
+    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Long chat", scene: phone({ headline: "Before" }) });
+    const id = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      await st.saveSceneNow();
+      // A long Ask AI conversation: well past the 64 KB a keepalive request may carry.
+      st.set({ ai: { ...st.S.ai, thread: Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: `${i} ${"words ".repeat(400)}` })) } });
+      st.edit((d: { headline: string }) => (d.headline = "After"));
+      await st.flushPersist();
+      return st.S.sceneId as string;
+    });
+    const { getScene } = await import("../src/studio/scenes.js");
+    const s = getScene(id);
+    return s.scene.headline === "After" && s.chat?.length === 60 ? "ok" : `saved: "${s.scene.headline}", ${s.chat?.length ?? 0} messages`;
+  },
   async "the colour picker keeps transparency, ⌘B keeps line breaks, one Escape closes one popover, popovers follow scrolling, and a menu works by keyboard"(page) {
     // tsx keeps the names of the functions written below, through a helper of its own the page needs too.
     await page.evaluate("globalThis.__name = (f) => f");
