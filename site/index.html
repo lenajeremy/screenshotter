@@ -65,6 +65,8 @@ h1 span { color: var(--text-3); }
 /* ------------------------------------------------------------------ Boards */
 .pic { margin: auto 0 -28px; padding-top: 28px; }
 .pic img { display: block; width: 100%; height: auto; border-radius: 10px 10px 0 0; box-shadow: 0 0 0 1px var(--line-2); }
+.pic.fill { flex: 1; min-height: 0; display: flex; }
+.pic.fill img { height: 100%; min-height: 280px; object-fit: cover; object-position: right top; }
 @media (max-width: 560px) { .pic { margin-bottom: -22px; } }
 
 /* ------------------------------------------------------------------ agent session */
@@ -371,7 +373,7 @@ h1 span { color: var(--text-3); }
       <article class="cell rv">
         <h3>Comment, and your agent answers</h3>
         <p>Pin a comment to a layer and tag an agent: it gets the message and replies on the board.</p>
-        <div class="pic"><img src="assets/boards-comment.webp" alt="A comment on a headline asking an agent to make it warmer, and the agent's reply saying what it changed" width="1070" height="1032" loading="lazy"></div>
+        <div class="pic fill"><img src="assets/boards-comment.webp" alt="A comment on a headline asking an agent to make it warmer, and the agent's reply saying what it changed" width="800" height="952" loading="lazy"></div>
       </article>
     </div>
     <div class="cells g3">

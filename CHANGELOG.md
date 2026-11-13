@@ -1,5 +1,33 @@
 # What's new
 
+## 0.14.0 · 13 November 2026
+
+### Highlights
+- **Boards: design with your agent, on one canvas.** A board is a canvas of artboards made of real HTML and CSS, in **My designs › Boards**. Draw frames, rectangles and text (**F**, **R**, **T**), lay them out with flex, resize, line them up and export them, as in Figma. Every layer is code you can ship.
+- **Agents design while you watch.** With Screenshotter's board tools, your agent writes screens onto a board and changes them; each change lands live, the artboard it's on is marked **Agent**, and every one is a step you can undo.
+- **Comments that reach your agents.** Pin a comment to a layer, or drag one over an area, and tag an agent with **@**: it gets the message and answers on the board. Comments read as Markdown, and only you resolve them.
+- **Components and tokens.** Make a frame a component (⌥⌘K) and place copies that follow it, each keeping its own changes. Name colours and sizes as tokens, pick them in any colour field, and rename one everywhere at once.
+- **Vectors in parts.** An SVG comes in with a layer for each of its parts, to pick, move and restyle one at a time; its own style sheet is written onto its parts.
+- **Everything Screenshotter has, on a board.** Shapes, stickers, illustrations, your pictures, backdrops and **devices**: any artboard or screenshot in Apple's own device frame.
+- **Preview** (⌥⌘P) opens a frame as a live web page in your browser that updates as the board changes; a desktop-size frame fills the window.
+- **The scratchpad**: one board that's always there, a page per try. Tell an agent to "use my scratchpad" and it adds a page for the job.
+- **Video, the Figma way.** Drop in an MP4, MOV or WebM: the canvas shows its first frame, the video plays when you press play, and Preview plays it as the page would.
+- **Scale** (**K**): the handles scale a layer with everything in it, type, padding, corners, borders and shadows, in proportion. Its panel scales by a percentage or to a width or height, from any of nine points.
+- **⌘\\ hides both panels** on a board, for room to work.
+
+### Fixes
+- **Recordings are safer.** One that stops by itself (a display unplugged) is noticed and kept, with a note saying why. Quitting while recording saves the recording first. A full disk or a failed write stops the recording and keeps what was recorded. Stopping during the countdown cleans everything up. An export that stalls gives up with an error instead of waiting forever.
+- Bringing in big files no longer freezes the window, and files that can't be added are named in a notice. A second copy of the app brings the open one forward.
+- A slider's number box reads what you type in the units it shows (120 is 120%). Escape in a number field calls off what you typed; Enter keeps it once.
+- Undoing a new shape and then pressing Delete no longer fails.
+- A drag ends when the mouse button is let go outside the window, and Escape calls a drag off.
+- Space and Tab work on buttons that have the focus; pan mode no longer sticks after switching apps.
+- Enter that confirms Japanese, Chinese or Korean input no longer ends the edit.
+- A set's screens never show another screen's layout; one that can't be drawn says so.
+- Colours keep their transparency, ⌘B across lines keeps the line breaks, popovers follow the panel when it scrolls, and menus work with the arrow keys.
+- An agent's newer save of the design you have open is no longer written over, and a large design saves when the window closes.
+- Agents search Unsplash with the key saved in Settings.
+
 ## 0.13.0 · 7 November 2026
 
 ### Highlights
