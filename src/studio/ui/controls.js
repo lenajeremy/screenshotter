@@ -75,10 +75,62 @@ export function Slider({ value, min, max, step = 0.01, onChange, fallback, forma
     </div>
     <input class="val" value=${text} onFocus=${(e) => e.target.select()}
       onChange=${(e) => {
-        const n = parseFloat(e.target.value);
-        onChange(Number.isFinite(n) ? clamp(n, min, max) : undefined);
+        const v = sliderValue(e.target.value, { min, max, step, format });
+        // Words that aren't a value put back what was there; a value shows as the slider shows it.
+        e.target.value = String(v === null ? text : format ? format(v) : Math.round(v * 100) / 100);
+        if (v !== null) onChange(v);
       }} />
   </div>`;
+}
+
+/**
+ * A slider's typed value, in the units its box shows ("120%" or just 120 for a brightness shown as
+ * 120% is 1.2). `format` can scale, round, add a unit or show a word at one end ("Straight",
+ * "Off"), so it isn't undone by hand: the value is the slider's step whose shown number is nearest
+ * the typed one (on a tie, the roundest), or the step shown as the typed word. null when nothing
+ * typed reads as a value.
+ */
+export function sliderValue(typed, { min, max, step = 0.01, format }) {
+  const t = String(typed ?? "").trim().replace(/−/g, "-").replace(",", ".");
+  const numberIn = (s) => {
+    const m = /[-+]?(\d+\.?\d*|\.\d+)/.exec(String(s));
+    return m ? Number(m[0]) : NaN;
+  };
+  const n = numberIn(t);
+  if (!t) return null;
+  if (!format) return Number.isFinite(n) ? clamp(n, min, max) : null;
+  // Every value the slider can take (in at most a few thousand steps), with the number it shows.
+  const k = Math.max(step, (max - min) / 4000);
+  const vals = [min];
+  for (let i = Math.ceil(min / k - 1e-9); i * k < max - 1e-9; i++) if (i * k > min + 1e-9) vals.push(Number((i * k).toFixed(6)));
+  vals.push(max);
+  const shown = vals.map((v) => String(format(v)));
+  if (!Number.isFinite(n)) {
+    const word = t.toLowerCase().replace(/\s+/g, "");
+    const i = shown.findIndex((s) => s.toLowerCase().replace(/\s+/g, "") === word);
+    return i < 0 ? null : vals[i];
+  }
+  const nums = shown.map(numberIn);
+  // A step shown as a word ("Straight") stands for the number a straight line through the ends gives it.
+  const ends = nums.map((x, i) => i).filter((i) => Number.isFinite(nums[i]));
+  if (ends.length >= 2) {
+    const [a, b] = [ends[0], ends[ends.length - 1]];
+    const slope = (nums[b] - nums[a]) / (vals[b] - vals[a] || 1);
+    nums.forEach((x, i) => Number.isFinite(x) || (nums[i] = nums[a] + (vals[i] - vals[a]) * slope));
+  }
+  let best = Infinity;
+  let hits = [];
+  nums.forEach((x, i) => {
+    const d = Math.abs(x - n);
+    if (!Number.isFinite(d) || d > best + 1e-9) return;
+    if (d < best - 1e-9) hits = [];
+    best = Math.min(best, d);
+    hits.push(vals[i]);
+  });
+  if (!hits.length) return null;
+  const decimals = (v) => (String(v).split(".")[1] ?? "").length;
+  const mid = (hits[0] + hits[hits.length - 1]) / 2;
+  return hits.sort((a, b) => decimals(a) - decimals(b) || Math.abs(a - mid) - Math.abs(b - mid))[0];
 }
 
 // ---------------------------------------------------------------------------------------------

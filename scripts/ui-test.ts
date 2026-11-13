@@ -1106,6 +1106,29 @@ const CHECKS: Record<string, Check> = {
     const counts = await S(page, () => [...document.querySelectorAll(".ghost-wrap.set")].map((g) => g.querySelectorAll("img").length));
     return counts.length === 3 && counts.every((c) => c > 0) ? "ok" : `pictures on the other screens: ${counts}`;
   },
+  async "typing in a slider's box uses the units it shows, and words that aren't a value keep it"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", texts: [{ text: "Hello", x: 0.5, y: 0.2, size: 0.05 }] }), selected: "text-1", rightOpen: true });
+    await page.waitForTimeout(1500);
+    const field = page.locator(".panel.right .row", { has: page.locator("label", { hasText: /^Size$/ }) }).locator("input.val").first();
+    const size = () => S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      return { size: st.S.scene.texts?.[0]?.size as number, h: st.S.layout.canvas.height as number };
+    });
+    // Shown in pixels: 100 is 100 px, not the most the slider goes to.
+    await field.fill("100");
+    await field.press("Enter");
+    await page.waitForTimeout(500);
+    const a = await size();
+    const shown = await field.inputValue();
+    // Words that aren't a size leave it as it was.
+    await field.fill("bigger");
+    await field.press("Enter");
+    await page.waitForTimeout(500);
+    const b = await size();
+    const back = await field.inputValue();
+    const px = Math.round(a.size * a.h);
+    return Math.abs(px - 100) <= 2 && shown === `${px} px` && b.size === a.size && back === shown ? "ok" : `typing 100 made it ${px} px (box "${shown}"); "bigger" left ${Math.round(b.size * b.h)} px (box "${back}")`;
+  },
   async "after undoing an added shape nothing stays selected, and Delete on a stale selection is safe"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone() });
     await page.waitForTimeout(1000);
