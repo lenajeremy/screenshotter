@@ -1,7 +1,7 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { createContext } from "preact";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Dropdown, accentEditHtml, accentFromEdit, html, toggleAccentIn } from "./controls.js";
+import { Dropdown, accentEditHtml, accentFromEdit, followDrag, html, keysForCanvas, toggleAccentIn } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, followVideo, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
@@ -781,15 +781,13 @@ export function CanvasView() {
       setReorder({ from: i, to });
     };
     const up = () => {
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
       setReorder(null);
       if (to === null) return goToShot(i);
       const dest = to > i ? to - 1 : to;
       if (dest !== i) moveShotTo(i, dest);
     };
-    addEventListener("pointermove", move);
-    addEventListener("pointerup", up);
+    // Escape leaves the screens where they were.
+    followDrag({ move, done: up, cancel: () => setReorder(null) });
   };
   canvasApi.zoomBy = (f) => zoomAt(cam.current.scale * f);
   canvasApi.zoomTo = (z) => zoomAt(z);
@@ -843,20 +841,24 @@ export function CanvasView() {
     };
   }, []);
 
-  // Space to pan.
+  // Space to pan, unless a control has the keyboard (then Space presses it). Switching away to
+  // another app lets go of it, as its keyup goes there.
   useEffect(() => {
     const down = (e) => {
-      if (e.code === "Space" && !e.repeat && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName) && !document.activeElement?.isContentEditable) {
+      if (e.code === "Space" && !e.repeat && keysForCanvas()) {
         e.preventDefault();
         setSpace(true);
       }
     };
     const up = (e) => e.code === "Space" && setSpace(false);
+    const away = () => setSpace(false);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", away);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", away);
     };
   }, []);
 
@@ -900,13 +902,8 @@ export function CanvasView() {
     const z = scale;
     vp.current.classList.add("panning");
     const move = (e) => setView({ zoom: z, x: x0 + e.clientX - sx, y: y0 + e.clientY - sy });
-    const up = () => {
-      vp.current?.classList.remove("panning");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    const up = () => vp.current?.classList.remove("panning");
+    followDrag({ move, done: up });
   };
 
   const onPointerDown = (ev) => {
@@ -1072,8 +1069,6 @@ export function CanvasView() {
       setLive({ e: cur, mode });
     };
     const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       setGuides([]);
       if (moved) {
         pending.current = cur;
@@ -1083,8 +1078,12 @@ export function CanvasView() {
       }
       setLive(null);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    // Escape puts it back where it was; nothing is written.
+    const cancel = () => {
+      setGuides([]);
+      setLive(null);
+    };
+    followDrag({ move, done: up, cancel });
   };
 
   const onDblClick = (ev) => {

@@ -1150,6 +1150,94 @@ const CHECKS: Record<string, Check> = {
     const devices = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.length);
     return String(r.picked).startsWith("shape-") && r.after === null && r.shapes === 0 && devices === 1 ? "ok" : `added ${r.picked}, after undo selected ${r.after} with ${r.shapes} shapes, ${devices} devices left`;
   },
+  async "Escape mid-drag puts a device back, Delete waits for the drag, and a lost mouse-up ends it"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", devices: [{ screenshot: shot, x: 0.5, y: 0.55, height: 0.6, anchor: "center" }] }) });
+    await page.waitForTimeout(1500);
+    const xs = () => S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.map((d: { x: number }) => d.x) as number[]);
+    const board = (await page.locator(".stage .artboard").first().boundingBox())!;
+    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+    const [sx, sy] = [dev.x + dev.width / 2, dev.y + dev.height / 2];
+    const x0 = (await xs())[0];
+    // Escape: nothing is written, and the device stays selected.
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    await page.mouse.move(sx + 60, sy, { steps: 6 });
+    await page.keyboard.press("Escape");
+    await page.mouse.move(sx + 120, sy, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    const esc = await xs();
+    const sel = await S(page, async () => (await import("/ui/store.js" as string)).S.selected);
+    if (esc[0] !== x0 || sel !== "device-1") return `after Escape the device is at ${esc[0]} (was ${x0}), selected ${sel}`;
+    // Delete mid-drag: ignored; the device lands where it's let go.
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    await page.mouse.move(sx + 60, sy, { steps: 6 });
+    await page.keyboard.press("Delete");
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    const del = await xs();
+    if (del.length !== 1 || del[0] <= x0) return `Delete mid-drag left ${del.length} device(s), at ${del}`;
+    // The window loses focus mid-drag (⌘Tab), so the mouse-up never comes: the drag ends there.
+    const d2 = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+    const [tx, ty] = [d2.x + d2.width / 2, d2.y + d2.height / 2];
+    await page.mouse.move(tx, ty);
+    await page.mouse.down();
+    await page.mouse.move(tx - 40, ty, { steps: 5 });
+    await S(page, () => window.dispatchEvent(new Event("blur")));
+    await page.mouse.move(tx - 160, ty, { steps: 5 });
+    await page.waitForTimeout(300);
+    const lost = await xs();
+    await page.mouse.up();
+    const by = (lost[0] - del[0]) * board.width;
+    return by < -15 && by > -90 ? "ok" : `after a lost mouse-up the device moved ${Math.round(by)} px (by 40 when the window lost focus, 160 by the end)`;
+  },
+  async "Space and Tab are the canvas's only while no control has the keyboard"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
+    await page.waitForTimeout(1500);
+    const st = () => S(page, async () => {
+      const s = (await import("/ui/store.js" as string)).S;
+      return { sel: s.selected as string | null, ids: s.layout.entities.map((e: { id: string }) => e.id) as string[], space: Boolean(document.querySelector(".viewport.space")), zoom: document.querySelector(".zoom-ctl .pct")?.textContent ?? "" };
+    });
+    // Nothing focused: Tab steps through the canvas's items, and past the last one lets go of them.
+    await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Tab");
+    const first = await st();
+    for (let i = 1; i < first.ids.length; i++) await page.keyboard.press("Tab");
+    const last = await st();
+    await page.keyboard.press("Tab");
+    const out = await st();
+    if (first.sel !== first.ids[0] || last.sel !== first.ids[first.ids.length - 1] || out.sel !== null) return `Tab selected ${first.sel}, then ${last.sel}, then ${out.sel} (items ${first.ids})`;
+    // A button with the keyboard keeps Space (it presses it, rather than panning) and Tab (focus moves on).
+    await S(page, async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      (await import("/ui/store.js" as string)).set({ selected: "device-1" });
+    });
+    await page.keyboard.press("Shift");
+    await page.focus('.zoom-ctl button[title^="Zoom in"]');
+    const visible = await S(page, () => document.activeElement!.matches(":focus-visible"));
+    const z0 = await st();
+    await page.keyboard.down("Space");
+    const held = await st();
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(200);
+    const z1 = await st();
+    await page.keyboard.press("Tab");
+    const tabbed = await st();
+    if (!visible) return "the zoom button, focused after a key, isn't :focus-visible";
+    if (held.space || z1.zoom === z0.zoom) return `with the zoom button focused, Space ${held.space ? "panned" : "didn't pan"} and the zoom went ${z0.zoom} → ${z1.zoom}`;
+    if (tabbed.sel !== "device-1") return `with a button focused, Tab changed the selection to ${tabbed.sel}`;
+    // Nothing focused again: Space pans, and switching to another app mid-pan lets go of it.
+    await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.down("Space");
+    await page.waitForTimeout(100);
+    const panning = await st();
+    await S(page, () => window.dispatchEvent(new Event("blur")));
+    await page.waitForTimeout(100);
+    const after = await st();
+    await page.keyboard.up("Space");
+    return panning.space && !after.space ? "ok" : `Space with nothing focused: pan ${panning.space}; after the window lost focus: still ${after.space}`;
+  },
 };
 
 const engines = { chromium, webkit } as const;

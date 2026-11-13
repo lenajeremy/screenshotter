@@ -40,6 +40,67 @@ export function Seg({ value, options, onChange, class: cls = "" }) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Drags
+
+/**
+ * Follow a drag from a pointerdown until it ends, on the window so it carries on outside the
+ * element. Letting go calls `done`; so does a drag that's lost (the pointer cancelled, the window
+ * losing focus mid-drag with ⌘Tab, or a move with the button already up), so nothing is left
+ * following the pointer. Escape calls `cancel` instead, to put things back as they were. Other keys
+ * wait until it's over: Delete mid-drag would take away the very thing being dragged.
+ */
+export function followDrag({ move, done, cancel }) {
+  let over = false;
+  const stop = () => {
+    over = true;
+    removeEventListener("pointermove", onMove);
+    removeEventListener("pointerup", onUp);
+    removeEventListener("pointercancel", onUp);
+    removeEventListener("blur", onUp);
+    removeEventListener("keydown", onKey, true);
+  };
+  const end = (fn, e) => {
+    if (over) return;
+    stop();
+    fn?.(e);
+  };
+  const onUp = (e) => end(done, e);
+  const onMove = (e) => {
+    // A mouse moving with no button down was let go of somewhere we didn't hear about.
+    if (e.pointerType === "mouse" && e.buttons === 0) return end(done, e);
+    move?.(e);
+  };
+  const onKey = (e) => {
+    if (["Shift", "Alt", "Meta", "Control"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === "Escape") end(cancel ?? done, e);
+  };
+  addEventListener("pointermove", onMove);
+  addEventListener("pointerup", onUp);
+  addEventListener("pointercancel", onUp);
+  addEventListener("blur", onUp);
+  addEventListener("keydown", onKey, true);
+  return stop;
+}
+
+/**
+ * Whether keys like Space and Tab are the canvas's: only while no control has the keyboard. A
+ * button, field or menu reached with the keyboard keeps them (Space presses it, Tab moves on); one
+ * that only has focus because it was clicked (Chrome leaves it there) doesn't.
+ */
+export function keysForCanvas() {
+  const a = document.activeElement;
+  if (!a || a === document.body || a === document.documentElement) return true;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable) return false;
+  try {
+    return !a.matches(":focus-visible");
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Slider (value may be undefined = "auto"; double-click resets)
 
 export function Slider({ value, min, max, step = 0.01, onChange, fallback, format, centered = false, reset }) {
@@ -57,16 +118,24 @@ export function Slider({ value, min, max, step = 0.01, onChange, fallback, forma
     return snap(min + clamp((ev.clientX - r.left) / r.width, 0, 1) * (max - min));
   };
   const down = (ev) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
-    ref.current.setPointerCapture(ev.pointerId);
+    const was = value;
     setActive(true);
     onChange(at(ev), true);
+    followDrag({
+      move: (e) => onChange(at(e), true),
+      done: () => setActive(false),
+      // Escape puts it back as it was before the drag.
+      cancel: () => {
+        setActive(false);
+        onChange(was, true);
+      },
+    });
   };
-  const move = (ev) => active && onChange(at(ev), true);
-  const up = () => setActive(false);
   const text = format ? format(shown) : String(Math.round(shown * 100) / 100);
   return html`<div class="slider ${value === undefined ? "unset" : ""}">
-    <div class="track ${active ? "active" : ""} ${centered ? "centered" : ""}" ref=${ref} onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
+    <div class="track ${active ? "active" : ""} ${centered ? "centered" : ""}" ref=${ref} onPointerDown=${down}
       onDblClick=${() => onChange(reset !== undefined ? reset : undefined)}>
       <div class="rail-line"></div>
       ${centered && html`<div class="tick" style=${{ left: zero * 100 + "%" }}></div>`}
@@ -148,22 +217,28 @@ export function Num({ label, value, onChange, step = 1, min = -Infinity, max = I
     if (Number.isFinite(n)) onChange(clamp(n / scale, min, max));
   };
   const scrub = (ev) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
     const start = ev.clientX;
+    const was = value;
     const v0 = value ?? 0;
+    let moved = false;
     document.body.classList.add("scrubbing");
-    const move = (e) => {
-      const dx = e.clientX - start;
-      const s = e.shiftKey ? step * 10 : e.altKey ? step / 10 : step;
-      onChange(clamp(v0 + (Math.round(dx / 2) * s) / scale, min, max), true);
-    };
-    const up = () => {
-      document.body.classList.remove("scrubbing");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    const end = () => document.body.classList.remove("scrubbing");
+    followDrag({
+      move: (e) => {
+        const dx = e.clientX - start;
+        const s = e.shiftKey ? step * 10 : e.altKey ? step / 10 : step;
+        moved = true;
+        onChange(clamp(v0 + (Math.round(dx / 2) * s) / scale, min, max), true);
+      },
+      done: end,
+      // Escape puts the value back as it was before the scrub.
+      cancel: () => {
+        end();
+        if (moved) onChange(was, true);
+      },
+    });
   };
   return html`<div class="num ${value === undefined ? "auto" : ""}" title=${title}>
     <span class="scrub" onPointerDown=${scrub}>${label}</span>
@@ -572,17 +647,21 @@ export function ColorPicker({ value: given, onChange, tokens, onMakeToken }) {
     }
   };
   const drag = (el, fn) => (ev) => {
+    if (ev.button !== 0) return;
     ev.preventDefault();
     const r = el.current.getBoundingClientRect();
     const go = (e) => fn(clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1));
+    // Escape puts back the colour it had before the drag.
+    const [hsv0, given0] = [hsv, given];
     go(ev);
-    const move = (e) => go(e);
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    followDrag({
+      move: go,
+      cancel: () => {
+        setHsv(hsv0);
+        setText(given0 ?? "");
+        onChange(given0, true);
+      },
+    });
   };
   const pick = async () => {
     setPicking(true);

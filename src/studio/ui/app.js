@@ -1,7 +1,7 @@
 // Screenshotter Studio — app shell.
 import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Dropdown, Popover, Seg, Slider, Switch, TextField, html } from "./controls.js";
+import { Dropdown, Popover, Seg, Slider, Switch, TextField, html, keysForCanvas } from "./controls.js";
 import { Icon } from "./icons.js";
 import { BoardApp, boardCommand } from "./board.js";
 import { openBoard } from "./board-state.js";
@@ -1726,7 +1726,8 @@ window.addEventListener("keydown", (e) => {
   if (mod) return;
   // Animate: Space plays, ⌫ deletes the selected animation, Esc lets go of it.
   if (S.timelineOpen) {
-    if (e.key === " ") return e.preventDefault(), play();
+    // Unless a button has the keyboard: then Space presses it.
+    if (e.key === " " && keysForCanvas()) return e.preventDefault(), play();
     if (S.animSel !== null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteAnimation(S.animSel);
     if (S.animSel !== null && e.key === "Escape") return set({ animSel: null });
     if (S.footageSel != null && (e.key === "Backspace" || e.key === "Delete")) return e.preventDefault(), deleteFootagePart(S.footageSel);
@@ -1749,7 +1750,8 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
       return goToShot(Math.max(0, Math.min(S.shots.length - 1, S.shot + (e.key === "ArrowLeft" ? -1 : 1))));
     }
-    if (e.key === "Tab" && S.layout?.entities.length) {
+    // Tab goes through the canvas's items, while no control has the keyboard.
+    if (e.key === "Tab" && S.layout?.entities.length && keysForCanvas()) {
       e.preventDefault();
       set({ selected: S.layout.entities[0].id });
     }
@@ -1763,11 +1765,13 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "[" || e.key === "]") return e.preventDefault(), nudgeSelected(0, 0, 0, (e.key === "[" ? -1 : 1) * (e.shiftKey ? 15 : 1));
   if (e.key === "Backspace" || e.key === "Delete") return e.preventDefault(), deleteEntity(S.selected);
   if (e.key === "Enter" && (S.selected === "caption" || S.selected.startsWith("text-"))) return e.preventDefault(), canvasApi.editText(S.selected);
-  if (e.key === "Tab") {
-    e.preventDefault();
+  if (e.key === "Tab" && keysForCanvas()) {
     const ids = S.layout?.entities.map((x) => x.id) ?? [];
-    const i = ids.indexOf(S.selected);
-    set({ selected: ids[(i + (e.shiftKey ? -1 : 1) + ids.length) % ids.length] });
+    const next = ids.indexOf(S.selected) + (e.shiftKey ? -1 : 1);
+    // Past the last item (or before the first) the canvas lets go, and Tab moves on into the controls.
+    if (next < 0 || next >= ids.length) return set({ selected: null });
+    e.preventDefault();
+    set({ selected: ids[next] });
   }
 });
 
