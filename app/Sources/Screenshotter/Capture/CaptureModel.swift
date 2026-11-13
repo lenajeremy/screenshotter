@@ -241,10 +241,10 @@ struct CaptureFiles {
         return support.appendingPathComponent("posters", isDirectory: true).appendingPathComponent(beside.lastPathComponent)
     }
 
-    /// Clears out the out-of-the-way files nothing uses once the capture's corner card has gone:
-    /// clipboard-only screenshots, and the posters and parts of recordings saved outside the
-    /// library (the video itself is where you saved it). Only ones over a week old, in the
-    /// background. Library recordings' parts stay: designs made from them use them.
+    /// Clears out clipboard-only screenshots (and their notes) once they're over a week old, in the
+    /// background: the picture went to the clipboard, and its file only backed the corner card.
+    /// Posters and parts of recordings stay, wherever the recording was saved: a design made from
+    /// one refers to them by path.
     static func tidy() {
         let root = support
         DispatchQueue.global(qos: .utility).async {
@@ -256,9 +256,9 @@ struct CaptureFiles {
             func items(_ dir: URL) -> [URL] {
                 (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
             }
-            for url in items(root) where url.pathExtension.lowercased() == "png" && old(url) { try? fm.removeItem(at: url) }
-            for folder in ["posters", "parts"] {
-                for url in items(root.appendingPathComponent(folder, isDirectory: true)) where old(url) { try? fm.removeItem(at: url) }
+            for url in items(root) where url.pathExtension.lowercased() == "png" && old(url) {
+                try? fm.removeItem(at: url)
+                try? fm.removeItem(at: URL(fileURLWithPath: url.path + ".json"))
             }
         }
     }
