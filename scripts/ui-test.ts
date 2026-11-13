@@ -632,6 +632,26 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(200);
     return hidden === "false/false" && (await panels()) === "true/true" ? "ok" : `⌘\\ gave ${hidden}, then ${await panels()}`;
   },
+  async "a number field: Escape calls off what's typed, Enter keeps it once"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select(id), phone);
+    await page.waitForTimeout(300);
+    const field = page.locator(".bd-right .bd-size-field .num input").first();
+    const past = () => S(page, async () => (await import("/ui/board-state.js" as string)).B.past.length);
+    await field.click();
+    await field.fill("123");
+    await field.press("Escape");
+    await page.waitForTimeout(500);
+    if (boards.getBoard(t.id).nodes[phone].style.width !== "390px") return `Escape saved it: ${boards.getBoard(t.id).nodes[phone].style.width}`;
+    const before = await past();
+    await field.click();
+    await field.fill("300");
+    await field.press("Enter");
+    await page.waitForTimeout(500);
+    const steps = (await past()) - before;
+    return boards.getBoard(t.id).nodes[phone].style.width === "300px" && steps === 1 ? "ok" : `Enter: width ${boards.getBoard(t.id).nodes[phone].style.width}, ${steps} undo steps`;
+  },
   async "on a board, a save the engine misses is tried again, and one it refuses leaves undo"(page) {
     const t = await openTestBoard(page);
     const phone = t.byName("Phone");
