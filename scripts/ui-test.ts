@@ -1263,6 +1263,21 @@ const CHECKS: Record<string, Check> = {
     });
     return still && r.texts === "Second" && r.sel === null ? "ok" : `editing after a composing Enter: ${still}; texts "${r.texts}", selected ${r.sel}`;
   },
+  async "the set row never draws another design's screens, and says when it can't draw one"(page) {
+    const a = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `A${i}` });
+    await setDesign(page, { shots: [0, 1, 2].map((i) => ({ scene: a(i) })), shot: 0, groups: null, scene: a(0), leftOpen: false });
+    await page.waitForTimeout(2200);
+    const drawn = await S(page, () => document.querySelectorAll(".ghost-wrap.set img").length);
+    // The next design's other screens can't be laid out (the engine is away for them).
+    await page.route("**/api/layout", (route) => (/"B[12]"/.test(route.request().postData() ?? "") ? route.abort() : route.continue()));
+    const b = (i: number) => ({ devices: [{ screenshot: unused }], background: "cream-grain", canvas: "1:1", layout: "custom", headline: `B${i}` });
+    await setDesign(page, { shots: [0, 1, 2].map((i) => ({ scene: b(i) })), shot: 0, groups: null, scene: b(0) });
+    await page.waitForTimeout(2200);
+    const r = await S(page, () => ({ stale: [...document.querySelectorAll<HTMLImageElement>(".ghost-wrap.set img")].filter((i) => i.src.includes("phone.png")).length, tiles: document.querySelectorAll(".set-unshown").length }));
+    await page.unroute("**/api/layout");
+    if (!drawn) return "the first design's other screens weren't drawn";
+    return !r.stale && r.tiles === 2 ? "ok" : `${r.stale} pictures of the first design's screens in the row, ${r.tiles} "couldn't show" tiles`;
+  },
 };
 
 const engines = { chromium, webkit } as const;

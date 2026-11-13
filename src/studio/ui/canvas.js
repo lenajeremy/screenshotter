@@ -529,12 +529,21 @@ function TextEnt({ e, H, editing, onDone }) {
 
 // Each shot's layout from the engine, from the store's cache (by its contents). While a changed
 // screen's new layout comes, the row keeps drawing the last one it had for that screen, rather
-// than leaving a gap that flashes back.
+// than leaving a gap that flashes back. "That screen" is its place in this design at this size
+// showing the same screenshots: another design's, another size's, or a screen that moved into its
+// place never stands in for it. A screen that can't be laid out (`failed`) gets a tile saying so.
 const asking = new Set();
+const failed = new Set();
 const lastShown = new Map();
+let lastShownFor = null;
 function useShotLayouts(on) {
   const s = useStore();
   const [, bump] = useState(0);
+  const design = `${s.sceneId}|${s.group}`;
+  if (design !== lastShownFor) {
+    lastShownFor = design;
+    lastShown.clear();
+  }
   useEffect(() => {
     if (!on) return;
     let alive = true;
@@ -546,22 +555,29 @@ function useShotLayouts(on) {
       api("/api/layout", x.scene)
         .then((l) => {
           rememberLayout(x.scene, l);
-          if (alive) bump((n) => n + 1);
+          failed.delete(key);
         })
-        .catch(() => undefined)
-        .finally(() => asking.delete(key));
+        .catch(() => failed.add(key))
+        .finally(() => {
+          asking.delete(key);
+          if (alive) bump((n) => n + 1);
+        });
     });
     return () => {
       alive = false;
     };
   }, [on, s.shots, s.shot]);
   return (scene, i) => {
+    const id = `${design}|${i}|${(scene.devices ?? []).map((d) => d.screenshot ?? "").join(",")}`;
     const l = knownLayout(scene);
     if (l) {
-      lastShown.set(i, l);
+      lastShown.delete(id);
+      lastShown.set(id, l);
+      if (lastShown.size > 60) lastShown.delete(lastShown.keys().next().value);
       return l;
     }
-    return lastShown.get(i) ?? null;
+    if (failed.has(JSON.stringify(scene))) return "failed";
+    return lastShown.get(id) ?? null;
   };
 }
 
@@ -870,11 +886,14 @@ export function CanvasView() {
   const layoutOf = useShotLayouts(multi || setMode);
   const world = useRef();
   const ghosts = new Map();
+  // Screens of the set the engine couldn't lay out: a tile in their place, to click and open.
+  const unshown = [];
   if ((multi || setMode) && layout) {
     s.shots.forEach((x, i) => {
       if (i === s.shot) return;
       const l = layoutOf(x.scene, i);
-      if (l) ghosts.set(i, { scene: x.scene, layout: l });
+      if (l === "failed") unshown.push(i);
+      else if (l) ghosts.set(i, { scene: x.scene, layout: l });
     });
   }
   const ghostsRef = useRef(ghosts);
@@ -1213,6 +1232,11 @@ export function CanvasView() {
       ${multi && html`<div class="join-matte" style=${{ width: W + "px", height: H + "px" }}></div>`}
       ${multi && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`g${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} />`)}
       ${setMode && [...ghosts.entries()].map(([i, g]) => html`<${ShotGhost} key=${`s${i}`} index=${i} scene=${g.scene} layout=${g.layout} W=${W} H=${H} x=${(i - s.shot) * (W + G)} inSet=${true} quiet=${quiet && !reorder} dragging=${reorder?.from === i} dropping=${dropOver === i} onGrab=${(ev) => dragScreen(ev, i)} />`)}
+      ${setMode &&
+      unshown.map(
+        (i) => html`<div key=${`u${i}`} class="set-unshown" data-shot=${i} style=${{ left: (i - s.shot) * (W + G) + "px", width: W + "px", height: H + "px" }} title=${`${screenName(i)}: click to edit it`}
+          onPointerDown=${(ev) => dragScreen(ev, i)}><span>Couldn't show this screen here</span><small>Click to open it</small></div>`,
+      )}
       ${setMode && s.shots.map((x, i) => html`<${SetLabel} key=${`l${i}`} i=${i} x=${(i - s.shot) * (W + G)} w=${W} on=${i === s.shot} dragging=${reorder?.from === i} renaming=${renaming === i} onDone=${() => setRenaming(null)} onGrab=${(ev) => dragScreen(ev, i)} />`)}
       ${setMode && reorder && html`<div class="set-drop" style=${{ left: (reorder.to - s.shot) * (W + G) - G / 2 + "px", height: H + "px" }}></div>`}
       ${setMode && html`<button class="set-add" style=${{ left: (s.shots.length - s.shot) * (W + G) + "px", width: W * SET_ADD + "px", height: H + "px" }} title="Add a screen at the end: a copy of the last one"
