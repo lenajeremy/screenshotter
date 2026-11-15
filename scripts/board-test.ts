@@ -365,6 +365,12 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   const inFlex = m.maskOps(pb, F1, "alpha");
   const fg = applyOps(pb, inFlex.ops).board;
   check(Boolean(inFlex.group) && fg.nodes[inFlex.group!].parent === named(pb, "R") && fg.nodes[inFlex.group!].style.position === "relative" && fg.nodes[F1].style.position === "absolute" && fg.nodes[F1].mask === "alpha" && !m.inFlow(fg, F1), "a mask in a flex frame goes in a mask group of its own, which is an item of the flex layout");
+  const gridded = fresh(`<div data-name="G" style="display:grid;grid-template-columns:100px 100px;width:200px;height:100px"><div data-name="A1" style="height:100px;background:#eee"></div><div data-name="Spot" style="grid-column:2;grid-row:1;justify-self:center;width:80px;height:80px;border-radius:50%;background:#000"></div></div>`);
+  const spot = named(gridded.board, "Spot");
+  const inGrid = m.maskOps(gridded.board, spot, "alpha", { [spot]: { x: 110, y: 0, width: 80, height: 80 } });
+  const gg = applyOps(gridded.board, inGrid.ops).board;
+  const cell = gg.nodes[inGrid.group!].style;
+  check(cell.gridColumn === "2" && cell.gridRow === "1" && cell.justifySelf === "center" && cell.width === "80px" && !gg.nodes[spot].style.gridColumn && gg.nodes[spot].style.left === "0px", "in a grid, the mask group takes the mask's cell and alignment; the mask, inside it, is placed by hand");
   // Duplicates, scaling, components.
   const dup = m.copyTree(put.board, S1, plain.root);
   check(dup.nodes[dup.id].mask === "vector", "a duplicate of a mask is a mask");

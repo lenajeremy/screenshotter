@@ -2710,6 +2710,9 @@ function maskRefusal(board: Board, id: string): string | undefined {
   return undefined;
 }
 
+/** Where a flex or grid layout puts an item: its cell, alignment, order, margins and flex sizing. */
+const LAYOUT_PLACE = ["gridArea", "gridRow", "gridColumn", "gridRowStart", "gridRowEnd", "gridColumnStart", "gridColumnEnd", "justifySelf", "alignSelf", "placeSelf", "order", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "flex", "flexGrow", "flexShrink", "flexBasis"];
+
 /** A layer's box in its frame (left, top, width, height) as its CSS gives it, in px where it can tell. */
 function boxFromStyle(n: BoardNode): Box {
   return { x: pxValue(n.style.left) ?? 0, y: pxValue(n.style.top) ?? 0, width: pxValue(n.style.width) ?? 100, height: pxValue(n.style.height) ?? 100 };
@@ -2755,13 +2758,17 @@ export function maskGroupOps(board: Board, ids: string[], type: MaskType, boxes:
   const p = parent ? board.nodes[parent] : null;
   const flowing = Boolean(p && (isFlex(p) || isGrid(p)) && inFlow(board, mask));
   const size = { width: `${round(mb.width)}px`, height: `${round(mb.height)}px` };
-  const style: Style = flowing ? { position: "relative", ...size, flexShrink: "0" } : parent ? { position: "absolute", left: `${round(mb.x)}px`, top: `${round(mb.y)}px`, ...size } : { left: `${round(mb.x)}px`, top: `${round(mb.y)}px`, ...size };
+  // In a layout, the group takes the mask's place in it: its grid cell, its alignment, its order.
+  const placed: Style = {};
+  if (flowing) for (const k of LAYOUT_PLACE) if (board.nodes[mask].style[k] !== undefined) placed[k] = board.nodes[mask].style[k];
+  const style: Style = flowing ? { position: "relative", flexShrink: "0", ...placed, ...size } : parent ? { position: "absolute", left: `${round(mb.x)}px`, top: `${round(mb.y)}px`, ...size } : { left: `${round(mb.x)}px`, top: `${round(mb.y)}px`, ...size };
   const page = parent ? undefined : pageOf(board, mask)?.id;
   const ops: Op[] = [{ op: "add", nodes: { [gid]: { id: gid, type: "frame", name: "Mask group", parent, style, children: [] } }, ids: [gid], parent, page, index: sibs.indexOf(mask) }];
   ordered.forEach((x, k) => {
     const b = box(x);
     ops.push({ op: "move", id: x, parent: gid, index: k });
-    ops.push({ op: "set", id: x, style: { position: "absolute", left: `${round(b.x - mb.x)}px`, top: `${round(b.y - mb.y)}px`, right: null, bottom: null, inset: null, margin: null, flexGrow: null, flexBasis: null, alignSelf: null, ...(x === mask ? size : {}) } });
+    const unplace = Object.fromEntries(LAYOUT_PLACE.map((k) => [k, null]));
+    ops.push({ op: "set", id: x, style: { ...unplace, position: "absolute", left: `${round(b.x - mb.x)}px`, top: `${round(b.y - mb.y)}px`, right: null, bottom: null, inset: null, ...(x === mask ? size : {}) } });
   });
   ops.push({ op: "set", id: mask, mask: type });
   return { ops, group: gid };
