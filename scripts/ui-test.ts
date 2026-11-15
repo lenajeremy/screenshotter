@@ -1758,9 +1758,13 @@ const CHECKS: Record<string, Check> = {
       await page.mouse.move(dev.x + dev.width / 2, dev.y + dev.height / 2);
       await page.waitForTimeout(150);
     });
-    const box = await S(page, () => Boolean(document.querySelector(".stage .hover-box")));
     if (draws.App || draws.Topbar || draws.Rail || draws.LeftPanel || draws.Inspector || !draws.CanvasView) return `the pointer drew ${JSON.stringify(draws)}`;
-    return box ? "ok" : "no outline round the item under the pointer";
+    const shown = await S(page, async ({ x, y }: { x: number; y: number }) => {
+      for (let i = 0; i < 20 && !document.querySelector(".stage .hover-box"); i++) await new Promise((r) => setTimeout(r, 50));
+      const hover = (await import("/ui/store.js" as string)).S.hover;
+      return { box: Boolean(document.querySelector(".stage .hover-box")), hover, under: document.elementFromPoint(x, y)?.className };
+    }, { x: dev.x + dev.width / 2, y: dev.y + dev.height / 2 });
+    return shown.box && shown.hover === "device-1" ? "ok" : `the pointer over the device shows ${JSON.stringify(shown)}`;
   },
   async "on the timeline, a fast scrub and a fast bar drag end where they're let go"(page) {
     await page.evaluate("globalThis.__name = (f) => f");
