@@ -1444,7 +1444,20 @@ const CHECKS: Record<string, Check> = {
     const back = `${nodeOf(t, shape).mask} ${(await look([[380, 380], [250, 200]])).join()}`;
     if (removed !== "none red" || back !== "alpha white,red") return `removing the mask: ${removed} (none red); undone: ${back} (alpha white,red)`;
     // Its outline shows over the selected layer it masks.
-    return (await page.locator(".bd-mask-line").count()) === 1 ? "ok" : "no mask outline over the selected masked layer";
+    if ((await page.locator(".bd-mask-line").count()) !== 1) return "no mask outline over the selected masked layer";
+    // The panel's + uses a layer as a mask too; the layer menu offers it.
+    await panel.locator("[data-mask-add]").click();
+    await page.waitForTimeout(400);
+    const viaPanel = nodeOf(t, photo).mask;
+    await page.locator(".bd-stage").hover({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(300);
+    await sel(page, [shape]);
+    await page.locator(`.bd-row[data-lid="${shape}"]`).click({ button: "right" });
+    await page.waitForTimeout(300);
+    const menu = await page.locator(".ctx-item", { hasText: "Remove mask" }).count();
+    await page.keyboard.press("Escape");
+    return viaPanel === "alpha" && menu === 1 && !nodeOf(t, photo).mask ? "ok" : `the panel's + made ${viaPanel}; the layer menu has Remove mask ${menu} time(s); undone: ${nodeOf(t, photo).mask ?? "none"}`;
   },
   async "on a board, Mask with selection makes a mask group; gradient, text and vector masks look the same on the canvas and in an export; duplicates and copies keep them"(page) {
     const red = (x: number, w = 200, h = 200) => `<div data-name="Red ${x}" style="position:absolute;left:${x}px;top:0;width:${w}px;height:${h}px;background:rgb(255,0,0)"></div>`;
@@ -1499,6 +1512,16 @@ const CHECKS: Record<string, Check> = {
     if (canvas.join() !== want) return `the canvas shows ${canvas.join()} (${want})`;
     if (exported.join() !== want) return `the export shows ${exported.join()} (${want})`;
     if (word < 0.15 || word > 0.7 || Math.abs(word - wordExport) > 0.06) return `the letter shows ${Math.round(word * 100)}% of its box on the canvas, ${Math.round(wordExport * 100)}% in the export`;
+    // And in Preview, a web page of its own in this browser.
+    const preview = await page.context().browser()!.newPage();
+    await preview.setViewportSize({ width: 900, height: 700 });
+    await preview.goto(`${BASE}board/preview?board=${encodeURIComponent(t.id)}&node=${encodeURIComponent(poster)}`, { waitUntil: "networkidle" });
+    await preview.waitForTimeout(400);
+    const pb = (await preview.locator("#bd-frame > *").first().boundingBox())!;
+    const pf = decodePng(await preview.screenshot());
+    const previewed = points.map(([x, y]) => colorName(pixelAt(pf, pb.x + x, pb.y + y), true));
+    await preview.close();
+    if (previewed.join() !== want) return `Preview shows ${previewed.join()} (${want})`;
     // Duplicated, a mask group is still masked; copied and pasted too.
     const scopes = await page.locator(".bd-world [data-mask-scope]").count();
     await sel(page, [groups[2]]);
