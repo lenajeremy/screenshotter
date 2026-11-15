@@ -128,7 +128,8 @@ function useFonts(board, page) {
       l.onload = () => document.fonts.ready.then(notify);
       document.head.appendChild(l);
     }
-  });
+    // Looked for again only when the layers change: not at every frame of a pan or a pinch.
+  }, [board?.nodes, board?.tokens, page]);
 }
 
 function svgMarkup(svg, overflow) {
