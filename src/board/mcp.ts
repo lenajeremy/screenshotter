@@ -48,7 +48,7 @@ import { deviceImage } from "./device.js";
 import { builtinSvg, stickerNames, artNames } from "../render/images.js";
 import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
-import { htmlToNodes, type BoardNode } from "./core.js";
+import { htmlToNodes, normalizeGridStyle, type BoardNode } from "./core.js";
 import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photos.js";
 import { adoptCssPictures, adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
 import { addVideoStills } from "./video.js";
@@ -68,7 +68,7 @@ async function guard(fn: () => Promise<Content>): Promise<CallToolResult> {
 
 export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's built): a board is a design made of real HTML and CSS, on pages of artboards, that the person watches you build live in the Studio and can edit after you. Use it to show a screen, a flow or a component before writing the code.
 - board_create (or board_list to find one), then board_write_html to add an artboard: one top-level element with an explicit width and height (e.g. 390×844 for a phone screen, 1440×900 for desktop; height "fit-content" to grow with its content), styled inline. Then add to it piece by piece: target the artboard (or a frame in it) and write one visual group per call (a header, a card, a row), so the person sees it come together.
-- Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox (display:flex, flex-direction, gap, padding, align-items); elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
+- Only inline styles count (style="…"): no classes, no <style> blocks, no scripts. Lay out with flexbox for one direction (a row of buttons, a stack of sections: display:flex, flex-direction, gap, padding, align-items) and CSS grid for two (cards in rows and columns, galleries, dashboards, bento layouts, a sidebar beside the main column, a form's labels and fields lined up): display:grid with grid-template-columns (repeat(3, 1fr); 240px 1fr; repeat(auto-fill, minmax(200px, 1fr)) for cards that wrap), gap, and on a child grid-column / grid-row (span 2, 1 / -1, 2 / span 3) or grid-template-areas with grid-area names. Grids are first-class: the person edits their tracks, gaps and cells in the panel and on the canvas, and board_read's tree describes them; shorthands (grid, grid-template, grid-area with slashes, place-*) are kept as their longhands. Elements that flow as blocks become flex columns. Words go in text elements (p, h1–h6, span); <img src> takes a file path or URL; inline <svg> for icons.
 - The scratchpad: the person keeps one board, "scratchpad", for trying things out. When they say to use their scratchpad (or it's a quick experiment, not a design to keep), call board_create with scratchpad: true: it adds a page named for the try to the scratchpad instead of making a board. Pass that page's id as \`page\` when you write artboards.
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens, scale: a layer bigger or smaller with its type and spacing) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
@@ -314,7 +314,10 @@ export function registerBoardTools(server: McpServer) {
         let out = ids.map((id) => treeText(b, id, a.depth ?? 4)).join("\n\n") || "The page is empty.";
         if (a.measure && ids.length) {
           const { boxes } = await drawLayers(b, ids, { scale: 0.25 });
-          out = out.replace(/#([a-z0-9]+) /g, (m, id: string) => (boxes[id] ? `${m}[${boxes[id].x},${boxes[id].y} ${boxes[id].width}×${boxes[id].height}] ` : m));
+          // A grid also says the tracks it was drawn with, in px.
+          const drawn = (v: string | undefined) => (v ?? "").replace(/\[[^\]]*\]\s*/g, "").replace(/(\d+(?:\.\d+)?)px/g, (_, n: string) => String(Math.round(Number(n) * 10) / 10)).trim();
+          const tracks = (id: string) => (boxes[id].columns ? ` · drawn columns ${drawn(boxes[id].columns)} rows ${drawn(boxes[id].rows) || "none"}` : "");
+          out = out.replace(/#([a-z0-9]+) /g, (m, id: string) => (boxes[id] ? `${m}[${boxes[id].x},${boxes[id].y} ${boxes[id].width}×${boxes[id].height}${tracks(id)}] ` : m));
         }
         return [text(out)];
       }),
@@ -445,7 +448,8 @@ export function registerBoardTools(server: McpServer) {
             case "style":
               for (const id of c.ids) need(id);
               for (const id of c.ids) {
-                const style = styleOf(c.style);
+                // Grid shorthands as longhands (one side of a line keeps the other side the layer has).
+                const style = normalizeGridStyle(styleOf(c.style), b.nodes[id].style);
                 // url(unsplash:…) becomes a photo the layer's shape (each layer its own size).
                 const n = b.nodes[id];
                 const box = { width: pxValue(style.width ?? n.style.width) ?? 1200, height: pxValue(style.height ?? n.style.height) ?? 800 };
@@ -594,7 +598,7 @@ export function registerBoardTools(server: McpServer) {
               if (!b.pages.some((p) => p.id === pid)) throw new Error(`There's no page ${pid} on this board.`);
               const spot = c.x !== undefined || c.y !== undefined ? { left: c.x ?? 0, top: c.y ?? 0 } : freeSpot(b, pid, c.width);
               const id = newId();
-              const style = { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", overflow: "hidden", ...Object.fromEntries(Object.entries(styleOf(c.style ?? {})).filter(([, v]) => v !== null)), width: `${c.width}px`, height: c.height === "fit-content" ? "fit-content" : `${c.height}px`, left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` } as Record<string, string>;
+              const style = { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", overflow: "hidden", ...Object.fromEntries(Object.entries(normalizeGridStyle(styleOf(c.style ?? {}))).filter(([, v]) => v !== null)), width: `${c.width}px`, height: c.height === "fit-content" ? "fit-content" : `${c.height}px`, left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` } as Record<string, string>;
               ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, ids: [id], parent: null, page: pid });
               touched.push(id);
               results.push({ artboard: id, name: c.name, at: [spot.left, spot.top] });

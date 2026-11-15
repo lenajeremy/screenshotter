@@ -17,6 +17,9 @@ export interface Box {
   y: number;
   width: number;
   height: number;
+  /** A grid's tracks as drawn, in px (grid-template-columns and -rows as the browser worked them out). */
+  columns?: string;
+  rows?: string;
 }
 
 const srcUrl = (src: string) => (/^(https?:|data:|blob:|file:)/i.test(src) ? src : pathToFileURL(src).href);
@@ -96,12 +99,15 @@ export async function drawArtboard(board: Board, rootId: string, ids: string[], 
     await settle();
     const measure = () =>
       page.evaluate(() => {
-        const out: Record<string, { x: number; y: number; width: number; height: number }> = {};
+        const out: Record<string, { x: number; y: number; width: number; height: number; columns?: string; rows?: string }> = {};
         const root = document.querySelector("#bd-root > [data-id]") as HTMLElement | null;
         const o = root?.getBoundingClientRect() ?? { left: 0, top: 0 };
         for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-id]"))) {
           const r = el.getBoundingClientRect();
           out[el.dataset.id!] = { x: Math.round((r.left - o.left) * 100) / 100, y: Math.round((r.top - o.top) * 100) / 100, width: Math.round(r.width * 100) / 100, height: Math.round(r.height * 100) / 100 };
+          // A grid's tracks as drawn (px), for agents measuring one.
+          const cs = getComputedStyle(el);
+          if (/grid/.test(cs.display)) Object.assign(out[el.dataset.id!], { columns: cs.gridTemplateColumns, rows: cs.gridTemplateRows });
         }
         return out;
       });

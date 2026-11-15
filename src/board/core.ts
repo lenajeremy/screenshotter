@@ -147,7 +147,7 @@ export function pxValue(v: string | number | undefined | null): number | undefin
 }
 
 /** Properties whose bare numbers are CSS numbers, not pixels. */
-const UNITLESS = new Set(["opacity", "zIndex", "fontWeight", "lineHeight", "flexGrow", "flexShrink", "flex", "order", "aspectRatio", "scale", "zoom", "gridRow", "gridColumn", "columnCount", "orphans", "widows", "fillOpacity", "strokeOpacity", "stopOpacity"]);
+const UNITLESS = new Set(["opacity", "zIndex", "fontWeight", "lineHeight", "flexGrow", "flexShrink", "flex", "order", "aspectRatio", "scale", "zoom", "gridRow", "gridColumn", "gridRowStart", "gridRowEnd", "gridColumnStart", "gridColumnEnd", "gridArea", "columnCount", "orphans", "widows", "fillOpacity", "strokeOpacity", "stopOpacity"]);
 
 /** A value as CSS: numbers become px except where CSS takes a bare number. */
 export function cssValue(prop: string, v: string | number): string {
@@ -890,7 +890,7 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
     }
     if (el.tag === "br" || el.tag === "wbr") return undefined;
     if (el.attrs.class) classes++;
-    const own = parseStyle(el.attrs.style);
+    const own = gridLonghands(parseStyle(el.attrs.style));
     if (own.display === "none") return undefined;
     // Something that sat in a line (inline, inline-block) keeps its own width when its parent becomes a column.
     const inlineLevel = INLINE.has(el.tag) ? !own.display || own.display.startsWith("inline") : (own.display ?? "").startsWith("inline");
@@ -1776,7 +1776,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 }
 
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
-const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate"];
+const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate", "gridColumn", "gridRow", "gridArea", "justifySelf"];
 
 const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name"] as const;
 
@@ -2096,6 +2096,12 @@ export function sizeWord(board: Board, id: string, axis: "width" | "height"): st
     if (main && (pxValue(s.flexGrow) ?? 0) > 0) return "fill";
     if (!main && !v && (s.alignSelf === "stretch" || (!s.alignSelf && (p.style.alignItems ?? "stretch") === "stretch")) && n.type !== "image" && n.type !== "video") return "fill";
   }
+  if (p && isGrid(p) && !v && n.style.position !== "absolute" && n.style.position !== "fixed" && n.type !== "image" && n.type !== "video") {
+    // In a grid a layer without a size of its own stretches across its cell, unless told otherwise.
+    const own = axis === "width" ? s.justifySelf : s.alignSelf;
+    const self = !own || own === "auto" ? (axis === "width" ? p.style.justifyItems : p.style.alignItems) : own;
+    if (!self || self === "normal" || self === "stretch") return "fill";
+  }
   if (!v || v === "auto" || v === "fit-content" || v === "max-content") return (n.type === "image" || n.type === "video") && !v ? "auto" : "fit";
   if (v === "100%") return "fill";
   const px = pxValue(v);
@@ -2122,7 +2128,8 @@ function describe(board: Board, id: string): string {
   const bits: string[] = [n.type, JSON.stringify(n.name), `#${id}`, size];
   if (n.parent === null) bits.push(`at ${pxValue(s.left) ?? 0},${pxValue(s.top) ?? 0}`);
   if (isFlex(n)) bits.push(`flex ${(s.flexDirection ?? "row").startsWith("column") ? "column" : "row"}${s.gap ? ` gap ${s.gap}` : ""}`);
-  else if (isGrid(n)) bits.push("grid");
+  else if (isGrid(n)) bits.push(gridSummary(s));
+  if (n.parent && isGrid(board.nodes[n.parent]) && s.position !== "absolute" && cellSummary(s)) bits.push(cellSummary(s));
   if (s.position === "absolute") bits.push(`absolute ${s.left ?? "?"},${s.top ?? "?"}`);
   if (n.type === "text") {
     const words = plainText(n.text);
@@ -2176,4 +2183,631 @@ export function defaultRecipients(board: Board, artboard: string | undefined, me
 
 export function emptyBoard(id: string, name: string, now: string): Board {
   return { id, name, rev: 0, pages: [{ id: newId(), name: "Page 1", children: [] }], nodes: {}, tokens: [], createdAt: now, updatedAt: now };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Grids: a frame laid out by CSS grid, edited as a design tool edits one. Its tracks (columns and
+// rows) are read from grid-template-columns and -rows as written (fr, px, auto, min-content,
+// max-content, minmax(), fit-content(), %, repeat(), line names) into a list to change, and written
+// back as CSS a person would write. Shorthands (grid, grid-template, grid-area with slashes,
+// place-*) come in as their longhands, so the panel and agents see one way of saying each thing.
+
+/** One track of a grid: its size as CSS ("1fr", "240px", "minmax(120px, 1fr)") and the names of the line before it. */
+export interface Track {
+  size: string;
+  names?: string[];
+  /** repeat(auto-fill, …) or repeat(auto-fit, …): as many of `size` as fit the frame. */
+  auto?: "auto-fill" | "auto-fit";
+}
+export interface TrackList {
+  tracks: Track[];
+  /** Names of the line after the last track. */
+  end?: string[];
+  /** A list that can't be edited track by track (subgrid, masonry, one var() for the lot): kept as written. */
+  raw?: string;
+}
+export type TrackKind = "fr" | "px" | "auto" | "min-content" | "max-content" | "minmax" | "fit-content" | "percent" | "other";
+
+/** CSS split at the top level on whitespace (or `sep`), keeping (…), […] and quotes whole. */
+export function splitTop(text: string, sep: "space" | "," | "/" = "space"): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote = "";
+  let cur = "";
+  for (const c of text) {
+    if (quote) {
+      cur += c;
+      if (c === quote) quote = "";
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    const cut = depth === 0 && (sep === "space" ? /\s/.test(c) : c === sep);
+    if (cut) {
+      if (cur.trim()) out.push(cur.trim());
+      else if (sep !== "space") out.push("");
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  if (cur.trim() || (sep !== "space" && out.length)) out.push(cur.trim());
+  return out;
+}
+
+/** grid-template-columns (or -rows) as a list of tracks. repeat(n, …) is spelt out; repeat(auto-fill, …) is one track that repeats. */
+export function parseTracks(value: string | null | undefined): TrackList {
+  const text = (value ?? "").trim();
+  if (!text || text === "none" || text === "initial" || text === "unset") return { tracks: [] };
+  if (/^(subgrid|masonry|inherit|revert)\b/i.test(text) || /^var\([^)]*\)$/.test(text)) return { tracks: [], raw: text };
+  const tracks: Track[] = [];
+  let names: string[] | undefined;
+  const push = (size: string, auto?: Track["auto"]) => {
+    tracks.push({ size, ...(names?.length ? { names } : {}), ...(auto ? { auto } : {}) });
+    names = undefined;
+  };
+  for (const part of splitTop(text)) {
+    if (part.startsWith("[")) {
+      names = [...(names ?? []), ...part.slice(1, -1).trim().split(/\s+/).filter(Boolean)];
+      continue;
+    }
+    const rep = /^repeat\(([\s\S]*)\)$/i.exec(part);
+    if (rep) {
+      const [count, ...rest] = splitTop(rep[1], ",");
+      const inner = rest.join(",").trim();
+      const c = (count ?? "").trim().toLowerCase();
+      if (c === "auto-fill" || c === "auto-fit") {
+        push(inner, c);
+        continue;
+      }
+      const n = Number(c);
+      const list = parseTracks(inner);
+      if (!Number.isInteger(n) || n < 1 || list.raw || !list.tracks.length || n * list.tracks.length > 1000) return { tracks: [], raw: text };
+      for (let i = 0; i < n; i++) {
+        for (const t of list.tracks) {
+          if (t.names) names = [...(names ?? []), ...t.names];
+          push(t.size);
+        }
+        if (list.end) names = [...(names ?? []), ...list.end];
+      }
+      continue;
+    }
+    push(part);
+  }
+  return { tracks, ...(names?.length ? { end: names } : {}) };
+}
+
+/** A list of tracks as CSS: repeat(3, 1fr) for a run of three or more alike (or every track alike), else spelt out. */
+export function tracksCss(list: TrackList): string | null {
+  if (list.raw) return list.raw;
+  const t = list.tracks;
+  if (!t.length) return null;
+  const plain = (x: Track) => !x.names?.length && !x.auto;
+  if (t.length > 1 && !list.end?.length && t.every((x) => plain(x) && x.size === t[0].size)) return `repeat(${t.length}, ${t[0].size})`;
+  const bits: string[] = [];
+  for (let i = 0; i < t.length; ) {
+    const x = t[i];
+    let j = i + 1;
+    while (plain(x) && j < t.length && plain(t[j]) && t[j].size === x.size) j++;
+    if (x.names?.length) bits.push(`[${x.names.join(" ")}]`);
+    if (j - i >= 3) bits.push(`repeat(${j - i}, ${x.size})`);
+    else for (let k = i; k < j; k++) bits.push(t[k].auto ? `repeat(${t[k].auto}, ${t[k].size})` : t[k].size);
+    i = j;
+  }
+  if (list.end?.length) bits.push(`[${list.end.join(" ")}]`);
+  return bits.join(" ");
+}
+
+export function trackKind(size: string): TrackKind {
+  const s = size.trim().toLowerCase();
+  if (/^\d*\.?\d+fr$/.test(s)) return "fr";
+  if (pxValue(s) !== undefined) return "px";
+  if (s === "auto") return "auto";
+  if (s === "min-content" || s === "max-content") return s;
+  if (/^minmax\(/.test(s)) return "minmax";
+  if (/^fit-content\(/.test(s)) return "fit-content";
+  if (/^\d*\.?\d+%$/.test(s)) return "percent";
+  return "other";
+}
+
+/** The two sides of minmax(a, b) (or the limit of fit-content(x) as [x]), else null. */
+export function trackArgs(size: string): string[] | null {
+  const m = /^(minmax|fit-content)\(([\s\S]*)\)$/i.exec(size.trim());
+  return m ? splitTop(m[2], ",").map((x) => x.trim()) : null;
+}
+
+/** A track's size, short, as the panel and the canvas show it: "1fr", "240", "Auto", "120–1fr", "≤ 320". */
+export function trackLabel(t: Track | string): string {
+  const size = typeof t === "string" ? t : t.size;
+  const short = (v: string) => (pxValue(v) !== undefined ? String(round(pxValue(v)!, 1)) : v === "auto" ? "Auto" : v === "min-content" ? "Min" : v === "max-content" ? "Max" : v);
+  if (typeof t !== "string" && t.auto) {
+    const a = trackArgs(t.size);
+    return `${t.auto === "auto-fit" ? "Fit" : "Fill"} ≥ ${short(a?.[0] ?? t.size)}`;
+  }
+  const kind = trackKind(size);
+  if (kind === "minmax") {
+    const [a, b] = trackArgs(size) ?? [];
+    return `${short(a ?? "?")}–${short(b ?? "?")}`;
+  }
+  if (kind === "fit-content") return `≤ ${short(trackArgs(size)?.[0] ?? "?")}`;
+  return short(size.trim());
+}
+
+/** grid-template-areas as rows of cell names ("." for none), or null when there are none. */
+export function parseAreas(value: string | null | undefined): string[][] | null {
+  const rows = [...(value ?? "").matchAll(/"([^"]*)"|'([^']*)'/g)].map((m) => (m[1] ?? m[2]).trim().split(/\s+/).filter(Boolean).map((c) => (/^\.+$/.test(c) ? "." : c)));
+  return rows.length ? rows : null;
+}
+
+/** Rows of cell names as grid-template-areas, or null when every cell is empty. */
+export function areasCss(rows: string[][] | null): string | null {
+  if (!rows?.length || !rows.some((r) => r.some((c) => c && c !== "."))) return null;
+  const w = Math.max(...rows.map((r) => r.length));
+  return rows.map((r) => `"${Array.from({ length: w }, (_, i) => (r[i] && /^[A-Za-z_][\w-]*$/.test(r[i]) ? r[i] : ".")).join(" ")}"`).join(" ");
+}
+
+/** Where each named area is (lines from 1), and whether it's a rectangle (CSS ignores the whole list when one isn't). */
+export function areaRects(rows: string[][] | null): Record<string, { column: number; row: number; columnSpan: number; rowSpan: number; ok: boolean }> {
+  const cells: Record<string, [number, number][]> = {};
+  (rows ?? []).forEach((r, y) => r.forEach((c, x) => c !== "." && (cells[c] ??= []).push([x, y])));
+  const out: Record<string, { column: number; row: number; columnSpan: number; rowSpan: number; ok: boolean }> = {};
+  for (const [name, list] of Object.entries(cells)) {
+    const xs = list.map((c) => c[0]);
+    const ys = list.map((c) => c[1]);
+    const x0 = Math.min(...xs);
+    const y0 = Math.min(...ys);
+    const w = Math.max(...xs) - x0 + 1;
+    const h = Math.max(...ys) - y0 + 1;
+    out[name] = { column: x0 + 1, row: y0 + 1, columnSpan: w, rowSpan: h, ok: list.length === w * h };
+  }
+  return out;
+}
+
+/** Whether CSS will use these areas: every row as long as the others, every name a rectangle. */
+export function areasValid(rows: string[][] | null): boolean {
+  if (!rows?.length) return true;
+  return rows.every((r) => r.length === rows[0].length) && Object.values(areaRects(rows)).every((a) => a.ok);
+}
+
+/** A grid's gaps between rows and between columns, as written ("" when none). */
+export function gapsOf(style: Style): { row: string; column: string } {
+  const g = splitTop(style.gap ?? style.gridGap ?? "");
+  return { row: style.rowGap ?? style.gridRowGap ?? g[0] ?? "", column: style.columnGap ?? style.gridColumnGap ?? g[1] ?? g[0] ?? "" };
+}
+
+/** CSS for a grid's gaps: one gap when they're alike, "row column" when not. */
+export function gapCss(row: string, column: string): Record<string, string | null> {
+  const r = row.trim();
+  const c = column.trim();
+  const none = (v: string) => !v || pxValue(v) === 0;
+  return { gap: none(r) && none(c) ? null : r === c ? r : `${r || "0px"} ${c || "0px"}`, rowGap: null, columnGap: null, gridGap: null, gridRowGap: null, gridColumnGap: null };
+}
+
+/** Where a layer sits in its grid on one axis: grid-column or grid-row read as a start line, a span and an end line. */
+export interface Placement {
+  start?: number | string;
+  span?: number;
+  end?: number | string;
+}
+
+export function parsePlacement(value: string | null | undefined): Placement {
+  const text = (value ?? "").trim();
+  if (!text || text === "auto") return {};
+  const [a = "", b = ""] = text.split("/").map((x) => x.trim());
+  const side = (x: string): { line?: number | string; span?: number } => {
+    if (!x || x === "auto") return {};
+    const m = /^span\s+(\d+)$/i.exec(x) ?? /^(\d+)\s+span$/i.exec(x);
+    if (m) return { span: Math.max(1, Number(m[1])) };
+    if (/^span\s+/i.test(x)) return { span: 1 };
+    return /^-?\d+$/.test(x) ? { line: Number(x) } : { line: x };
+  };
+  const A = side(a);
+  const Z = side(b);
+  const out: Placement = {};
+  if (A.line !== undefined) out.start = A.line;
+  if (Z.line !== undefined) out.end = Z.line;
+  const span = Z.span ?? A.span;
+  if (span) out.span = span;
+  return out;
+}
+
+/** A placement as grid-column or grid-row: "2", "span 2", "2 / span 3", "1 / -1"; null when it flows on its own. */
+export function placementCss(p: Placement): string | null {
+  const span = p.span && p.span > 1 ? p.span : undefined;
+  if (p.start === undefined || p.start === "") {
+    if (p.end !== undefined && p.end !== "") return `${span ? `span ${span}` : "auto"} / ${p.end}`;
+    return span ? `span ${span}` : null;
+  }
+  if (p.end !== undefined && p.end !== "") return `${p.start} / ${p.end}`;
+  return span ? `${p.start} / span ${span}` : String(p.start);
+}
+
+/** How many tracks a placement covers, when that can be told without drawing it. */
+export function placementSpan(p: Placement): number {
+  if (p.span) return p.span;
+  if (typeof p.start === "number" && typeof p.end === "number" && p.start > 0 && p.end > p.start) return p.end - p.start;
+  return 1;
+}
+
+/** A frame's own grid properties, and its layers' (where they sit in it), for taking them off. */
+export const GRID_FRAME_KEYS = ["gridTemplateColumns", "gridTemplateRows", "gridTemplateAreas", "gridTemplate", "grid", "gridAutoFlow", "gridAutoRows", "gridAutoColumns", "justifyItems", "alignContent", "placeItems", "placeContent", "rowGap", "columnGap", "gridGap", "gridRowGap", "gridColumnGap"];
+export const GRID_CHILD_KEYS = ["gridColumn", "gridRow", "gridArea", "gridColumnStart", "gridColumnEnd", "gridRowStart", "gridRowEnd", "justifySelf", "placeSelf"];
+
+/** grid-template's parts: rows (with areas, when it has strings) and columns. */
+function templateParts(value: string): { rows: string | null; columns: string | null; areas: string | null } {
+  const v = value.trim();
+  if (!v || v === "none") return { rows: null, columns: null, areas: null };
+  const [rowsPart, colsPart = ""] = splitTop(v, "/");
+  if (!/["']/.test(rowsPart)) return { rows: rowsPart.trim() || null, columns: colsPart.trim() || null, areas: null };
+  // "a a" 100px "b b" 1fr: each string a row of areas, the size after it that row's.
+  const areas: string[] = [];
+  const rows: string[] = [];
+  let names: string[] = [];
+  let open = false;
+  for (const part of splitTop(rowsPart)) {
+    if (/^["']/.test(part)) {
+      if (open) rows.push("auto");
+      areas.push(part);
+      if (names.length) rows.push(`[${names.join(" ")}]`);
+      names = [];
+      open = true;
+    } else if (part.startsWith("[")) {
+      if (open) names.push(part.slice(1, -1).trim());
+      else rows.push(part);
+    } else if (open) {
+      rows.push(part);
+      open = false;
+    }
+  }
+  if (open) rows.push("auto");
+  if (names.length) rows.push(`[${names.join(" ")}]`);
+  return { rows: rows.join(" ") || null, columns: colsPart.trim() || null, areas: areas.join(" ") || null };
+}
+
+/**
+ * CSS with grid shorthands written as their longhands: grid and grid-template as columns, rows,
+ * areas and flow; grid-gap as gap; grid-area with slashes and the start/end longhands as
+ * grid-row and grid-column; place-items, place-content and place-self as their two halves. Works on
+ * a whole style or on a change to one (null removes, and a shorthand resets what it covers);
+ * `base` is the layer's style as it is, for a change to one side of a line.
+ */
+export function normalizeGridStyle(style: Record<string, string | null>, base: Style = {}): Record<string, string | null> {
+  const out: Record<string, string | null> = { ...style };
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(style, k);
+  const take = (k: string) => {
+    const v = out[k];
+    delete out[k];
+    return v === null || v === undefined ? null : String(v).trim();
+  };
+  if (has("grid")) {
+    const v = take("grid");
+    out.grid = null;
+    Object.assign(out, { gridTemplateRows: null, gridTemplateColumns: null, gridTemplateAreas: null, gridAutoFlow: null, gridAutoRows: null, gridAutoColumns: null });
+    if (v && v !== "none") {
+      const [a, b = ""] = splitTop(v, "/");
+      const flowIn = (s: string) => /\bauto-flow\b/.test(s);
+      if (flowIn(a)) {
+        // auto-flow [dense] <auto-rows> / <columns>
+        const dense = /\bdense\b/.test(a);
+        const sizes = a.replace(/\bauto-flow\b|\bdense\b/g, "").trim();
+        Object.assign(out, { gridAutoFlow: dense ? "row dense" : null, gridAutoRows: sizes || null, gridTemplateColumns: b.trim() || null });
+      } else if (flowIn(b)) {
+        // <rows> / auto-flow [dense] <auto-columns>
+        const dense = /\bdense\b/.test(b);
+        const sizes = b.replace(/\bauto-flow\b|\bdense\b/g, "").trim();
+        Object.assign(out, { gridAutoFlow: dense ? "column dense" : "column", gridAutoColumns: sizes || null, gridTemplateRows: a.trim() || null });
+      } else {
+        const t = templateParts(v);
+        Object.assign(out, { gridTemplateRows: t.rows, gridTemplateColumns: t.columns, gridTemplateAreas: t.areas });
+      }
+    }
+  }
+  if (has("gridTemplate")) {
+    const v = take("gridTemplate");
+    out.gridTemplate = null;
+    const t = templateParts(v ?? "");
+    Object.assign(out, { gridTemplateRows: t.rows, gridTemplateColumns: t.columns, gridTemplateAreas: t.areas });
+  }
+  if (has("gridGap")) {
+    const v = take("gridGap");
+    out.gridGap = null;
+    if (v || !has("gap")) out.gap = v;
+  }
+  for (const [old, now] of [["gridRowGap", "rowGap"], ["gridColumnGap", "columnGap"]] as const) {
+    if (!has(old)) continue;
+    const v = take(old);
+    out[old] = null;
+    if (v || !has(now)) out[now] = v;
+  }
+  for (const [short, a, b] of [["placeItems", "alignItems", "justifyItems"], ["placeContent", "alignContent", "justifyContent"], ["placeSelf", "alignSelf", "justifySelf"]] as const) {
+    if (!has(short)) continue;
+    const parts = splitTop(take(short) ?? "");
+    out[short] = null;
+    out[a] = parts[0] ?? null;
+    out[b] = parts[1] ?? parts[0] ?? null;
+  }
+  if (has("gridArea") && /\//.test(String(style.gridArea ?? ""))) {
+    const [rs = "auto", cs = "auto", re, ce] = splitTop(take("gridArea") ?? "", "/").map((x) => x.trim() || "auto");
+    out.gridArea = null;
+    const named = (x: string) => !/^(-?\d+|auto|span\b.*)$/i.test(x);
+    const line = (s: string, e: string | undefined) => {
+      const p = parsePlacement(`${s} / ${e ?? (named(s) ? s : "auto")}`);
+      // One track ("1 / 2") reads as its line alone.
+      return placementCss(typeof p.start === "number" && typeof p.end === "number" && p.start > 0 && p.end === p.start + 1 ? { start: p.start } : p);
+    };
+    out.gridRow = line(rs, re);
+    out.gridColumn = line(cs, ce);
+  }
+  for (const axis of ["Row", "Column"] as const) {
+    const sk = `grid${axis}Start`;
+    const ek = `grid${axis}End`;
+    if (!has(sk) && !has(ek)) continue;
+    const was = parsePlacement(style[`grid${axis}`] ?? base[`grid${axis}`] ?? `${base[sk] ?? "auto"} / ${base[ek] ?? "auto"}`);
+    // A span belongs to the side without a line ("span 2" alone is the start's).
+    const wasText = (p: Placement, which: "start" | "end") => (which === "start" ? (p.start !== undefined ? String(p.start) : p.span ? `span ${p.span}` : "auto") : p.end !== undefined ? String(p.end) : p.span && p.start !== undefined ? `span ${p.span}` : "auto");
+    const s = has(sk) ? take(sk) ?? "auto" : wasText(was, "start");
+    const e = has(ek) ? take(ek) ?? "auto" : wasText(was, "end");
+    out[sk] = null;
+    out[ek] = null;
+    out[`grid${axis}`] = placementCss(parsePlacement(`${s} / ${e}`));
+  }
+  // A bare number for a line is a line, not px.
+  for (const k of ["gridRow", "gridColumn"]) if (typeof out[k] === "string" && /^-?\d+px$/.test(out[k]!)) out[k] = out[k]!.replace(/px$/, "");
+  return out;
+}
+
+/** A whole style with its grid shorthands as longhands (and nothing removed left in). */
+export function gridLonghands(style: Style): Style {
+  if (!Object.keys(style).some((k) => k === "grid" || k.startsWith("gridTemplate") || /^grid(Row|Column)?Gap$|^grid(Row|Column)(Start|End)$|^place(Items|Content|Self)$/.test(k) || (k === "gridArea" && /\//.test(style[k])))) return style;
+  const out: Style = {};
+  for (const [k, v] of Object.entries(normalizeGridStyle(style))) if (v !== null && v !== undefined && v !== "") out[k] = v;
+  return out;
+}
+
+/** Everything about a grid frame's layout, read from its CSS (shorthands too). */
+export interface GridModel {
+  columns: TrackList;
+  rows: TrackList;
+  areas: string[][] | null;
+  flow: "row" | "column";
+  dense: boolean;
+  autoRows: string;
+  autoColumns: string;
+  rowGap: string;
+  columnGap: string;
+}
+
+export function gridOf(style: Style): GridModel {
+  const s = gridLonghands(style);
+  const flow = (s.gridAutoFlow ?? "").toLowerCase();
+  const gaps = gapsOf(s);
+  return {
+    columns: parseTracks(s.gridTemplateColumns),
+    rows: parseTracks(s.gridTemplateRows),
+    areas: parseAreas(s.gridTemplateAreas),
+    flow: /\bcolumn\b/.test(flow) ? "column" : "row",
+    dense: /\bdense\b/.test(flow),
+    autoRows: s.gridAutoRows ?? "",
+    autoColumns: s.gridAutoColumns ?? "",
+    rowGap: gaps.row,
+    columnGap: gaps.column,
+  };
+}
+
+/**
+ * The CSS that changes a grid frame's layout: what's given is written as longhands (a default as
+ * none), and any shorthand the frame has is taken off (with what it said kept as longhands).
+ */
+export function gridPatch(style: Style, change: Partial<GridModel>): Record<string, string | null> {
+  const now = gridOf(style);
+  const m = { ...now, ...change };
+  const patch: Record<string, string | null> = {};
+  const longs = gridLonghands(style);
+  // A shorthand on the frame goes: what it said stays, as longhands.
+  if (longs !== style) {
+    for (const k of Object.keys(style)) if (!(k in longs)) patch[k] = null;
+    for (const [k, v] of Object.entries(longs)) if (style[k] !== v) patch[k] = v;
+  }
+  if ("columns" in change) patch.gridTemplateColumns = tracksCss(m.columns);
+  if ("rows" in change) patch.gridTemplateRows = tracksCss(m.rows);
+  if ("areas" in change) patch.gridTemplateAreas = areasCss(m.areas);
+  if ("flow" in change || "dense" in change) patch.gridAutoFlow = m.flow === "row" && !m.dense ? null : `${m.flow}${m.dense ? " dense" : ""}`;
+  if ("autoRows" in change) patch.gridAutoRows = m.autoRows.trim() || null;
+  if ("autoColumns" in change) patch.gridAutoColumns = m.autoColumns.trim() || null;
+  if ("rowGap" in change || "columnGap" in change) Object.assign(patch, gapCss(m.rowGap, m.columnGap));
+  return patch;
+}
+
+/** A grid in words, for agents: "grid 3×2 · columns repeat(3, 1fr) · rows auto auto · gap 16px". */
+export function gridSummary(style: Style): string {
+  const g = gridOf(style);
+  const count = (l: TrackList, word: string) => (l.raw ? `${word}s as written` : l.tracks.some((t) => t.auto) ? `as many ${word}s as fit` : `${l.tracks.length || 1} ${word}${l.tracks.length === 1 || !l.tracks.length ? "" : "s"}`);
+  const bits = [`grid ${count(g.columns, "column")}${g.rows.tracks.length || g.rows.raw ? ` × ${count(g.rows, "row")}` : ""}`];
+  bits.push(`columns ${tracksCss(g.columns) ?? "none (one, auto)"}`);
+  if (g.rows.tracks.length || g.rows.raw) bits.push(`rows ${tracksCss(g.rows)}`);
+  if (g.areas) bits.push(`areas ${areasCss(g.areas)}${areasValid(g.areas) ? "" : " (not rectangles: CSS ignores them)"}`);
+  if (g.rowGap || g.columnGap) bits.push(`gap ${g.rowGap === g.columnGap ? g.rowGap : `${g.rowGap || 0} ${g.columnGap || 0}`}`);
+  if (g.flow === "column" || g.dense) bits.push(`flow ${g.flow}${g.dense ? " dense" : ""}`);
+  if (g.autoRows) bits.push(`new rows ${g.autoRows}`);
+  if (g.autoColumns) bits.push(`new columns ${g.autoColumns}`);
+  for (const k of ["justifyItems", "alignItems", "justifyContent", "alignContent"]) if (style[k]) bits.push(`${kebab(k)} ${style[k]}`);
+  return bits.join(" · ");
+}
+
+/** Where a layer sits in its grid, in words: "cell column 2 / span 2, row 1", "area header". */
+export function cellSummary(style: Style): string {
+  const s = gridLonghands(style);
+  const bits: string[] = [];
+  if (s.gridArea) bits.push(`area ${s.gridArea}`);
+  else {
+    const c = placementCss(parsePlacement(s.gridColumn));
+    const r = placementCss(parsePlacement(s.gridRow));
+    if (c || r) bits.push(`cell${c ? ` column ${c}` : ""}${c && r ? "," : ""}${r ? ` row ${r}` : ""}`);
+  }
+  if (s.justifySelf) bits.push(`justify-self ${s.justifySelf}`);
+  if (s.alignSelf) bits.push(`align-self ${s.alignSelf}`);
+  return bits.join(" ");
+}
+
+/** A cell (or block of cells) of a grid, lines counted from 1. */
+export interface GridCell {
+  column: number;
+  row: number;
+  columnSpan: number;
+  rowSpan: number;
+}
+
+/**
+ * Where CSS's auto-placement puts items (row flow, `columns` wide, sparse): each item's cell, given
+ * its spans. Used to tell whether a layout needs its items placed by hand.
+ */
+export function autoPlace(spans: Array<{ columnSpan: number; rowSpan: number }>, columns: number): GridCell[] {
+  const taken = new Set<string>();
+  const free = (c: number, r: number, cs: number, rs: number) => {
+    if (c + cs - 1 > columns) return false;
+    for (let y = r; y < r + rs; y++) for (let x = c; x < c + cs; x++) if (taken.has(`${x},${y}`)) return false;
+    return true;
+  };
+  let col = 1;
+  let row = 1;
+  return spans.map(({ columnSpan, rowSpan }) => {
+    const cs = Math.min(Math.max(1, columnSpan), columns);
+    for (let guard = 0; guard < 100000; guard++) {
+      if (free(col, row, cs, rowSpan)) break;
+      col++;
+      if (col + cs - 1 > columns) {
+        col = 1;
+        row++;
+      }
+    }
+    for (let y = row; y < row + rowSpan; y++) for (let x = col; x < col + cs; x++) taken.add(`${x},${y}`);
+    const cell = { column: col, row, columnSpan: cs, rowSpan };
+    col += cs;
+    if (col > columns) {
+      col = 1;
+      row++;
+    }
+    return cell;
+  });
+}
+
+/** What a set of layers laid out by position would be as a grid: tracks, gaps, reading order and cells. */
+export interface GridPlan {
+  columns: string[];
+  rows: string[];
+  columnGap: number;
+  rowGap: number;
+  /** The layers in reading order (left to right, top to bottom). */
+  order: string[];
+  cells: Record<string, GridCell>;
+  /** Whether items must be placed by hand (auto-placement in reading order wouldn't put them there). */
+  explicit: boolean;
+}
+
+/** Positions close together (within `tol`) as one, each cluster's smallest value. */
+function clusters(values: number[], tol: number): number[] {
+  const out: number[] = [];
+  for (const v of [...values].sort((a, b) => a - b)) if (!out.length || v - out[out.length - 1] > tol) out.push(v);
+  return out;
+}
+const median = (xs: number[]) => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor((s.length - 1) / 2)];
+};
+
+/**
+ * A grid that keeps layers where they are: columns start where layers' left edges line up, rows
+ * where their tops do; a layer reaching across several takes them (a bento's tall card spans two
+ * rows). Equal columns become 1fr each; unequal ones keep their widths. Boxes are in the frame's
+ * own coordinates.
+ */
+export function planGrid(items: Array<{ id: string; box: Box }>): GridPlan {
+  const list = items.filter((i) => i.box && Number.isFinite(i.box.x) && Number.isFinite(i.box.y));
+  if (!list.length) return { columns: ["1fr"], rows: [], columnGap: 0, rowGap: 0, order: [], cells: {}, explicit: false };
+  const tol = Math.max(4, Math.min(24, median(list.map((i) => Math.min(i.box.width, i.box.height))) * 0.2));
+  const lefts = clusters(list.map((i) => i.box.x), tol);
+  const tops = clusters(list.map((i) => i.box.y), tol);
+  const index = (lines: number[], v: number) => {
+    let k = 0;
+    for (let j = 0; j < lines.length; j++) if (v >= lines[j] - tol) k = j;
+    return k;
+  };
+  const cells: Record<string, GridCell> = {};
+  for (const { id, box } of list) {
+    const c = index(lefts, box.x);
+    const r = index(tops, box.y);
+    const c2 = Math.max(c, index(lefts, box.x + box.width - tol - 1));
+    const r2 = Math.max(r, index(tops, box.y + box.height - tol - 1));
+    cells[id] = { column: c + 1, row: r + 1, columnSpan: c2 - c + 1, rowSpan: r2 - r + 1 };
+  }
+  const order = list
+    .slice()
+    .sort((a, b) => cells[a.id].row - cells[b.id].row || cells[a.id].column - cells[b.id].column || a.box.x - b.box.x)
+    .map((i) => i.id);
+  const byId = Object.fromEntries(list.map((i) => [i.id, i.box]));
+  // Gaps: from the end of what fills one track to the start of the next.
+  const gapsBetween = (lines: number[], start: (b: Box) => number, size: (b: Box) => number, cell: (c: GridCell) => [number, number]) =>
+    lines.slice(1).flatMap((line, j) => {
+      const ends = list.filter((i) => cell(cells[i.id])[0] + cell(cells[i.id])[1] - 1 === j + 1).map((i) => start(i.box) + size(i.box));
+      return ends.length ? [Math.max(0, line - Math.max(...ends))] : [];
+    });
+  const columnGap = Math.round(median(gapsBetween(lefts, (b) => b.x, (b) => b.width, (c) => [c.column, c.columnSpan])));
+  const rowGap = Math.round(median(gapsBetween(tops, (b) => b.y, (b) => b.height, (c) => [c.row, c.rowSpan])));
+  const widths = lefts.map((left, j) => {
+    const own = list.filter((i) => cells[i.id].column === j + 1 && cells[i.id].columnSpan === 1).map((i) => i.box.width);
+    if (own.length) return Math.max(...own);
+    return j + 1 < lefts.length ? Math.max(1, lefts[j + 1] - columnGap - left) : Math.max(1, ...list.filter((i) => cells[i.id].column + cells[i.id].columnSpan - 1 === j + 1).map((i) => byId[i.id].x + byId[i.id].width - left));
+  });
+  const even = widths.every((w) => Math.abs(w - widths[0]) <= Math.max(2, widths[0] * 0.08));
+  const columns = even ? widths.map(() => "1fr") : widths.map((w) => `${Math.round(w)}px`);
+  const rows = tops.map(() => "auto");
+  const spans = order.map((id) => cells[id]);
+  const auto = autoPlace(spans, lefts.length);
+  const explicit = auto.some((c, k) => c.column !== spans[k].column || c.row !== spans[k].row);
+  return { columns, rows, columnGap, rowGap, order, cells, explicit };
+}
+
+/** flex-start → start and the like: what a flex alignment is called in a grid. */
+export const gridAlign = (v: string | undefined) => (v === "flex-start" ? "start" : v === "flex-end" ? "end" : v);
+
+/**
+ * The CSS that makes a flex frame a grid that looks the same: a row becomes a column per layer (a
+ * layer that grows takes fr, the rest auto), a column a row per layer; alignment and gaps carry
+ * over. Null for a flex frame that wraps: plan that from where its layers are (planGrid).
+ */
+export function flexToGrid(board: Board, id: string): { frame: Record<string, string | null>; children: Record<string, Record<string, string | null>> } | null {
+  const n = board.nodes[id];
+  if (!n || !isFlex(n) || (n.style.flexWrap ?? "nowrap").startsWith("wrap")) return null;
+  const column = (n.style.flexDirection ?? "row").startsWith("column");
+  const kids = (n.children ?? []).filter((c) => board.nodes[c] && !board.nodes[c].hidden && board.nodes[c].style.position !== "absolute" && board.nodes[c].style.position !== "fixed");
+  const grow = (c: string) => pxValue(board.nodes[c].style.flexGrow) ?? (/^\s*\d/.test(board.nodes[c].style.flex ?? "") ? Number.parseFloat(board.nodes[c].style.flex!) : 0);
+  const tracks = kids.map((c) => (grow(c) > 0 ? `${round(grow(c), 2)}fr` : "auto"));
+  const stretchMain = tracks.some((t) => t.endsWith("fr"));
+  const justify = gridAlign(n.style.justifyContent) ?? "start";
+  const items = gridAlign(n.style.alignItems);
+  const frame: Record<string, string | null> = {
+    display: "grid",
+    flexDirection: null,
+    flexWrap: null,
+    gridTemplateColumns: column ? "1fr" : tracksCss({ tracks: tracks.map((size) => ({ size })) }) ?? null,
+    gridTemplateRows: column ? tracksCss({ tracks: tracks.map((size) => ({ size })) }) ?? null : null,
+    ...(column ? { alignContent: stretchMain ? null : justify === "normal" ? "start" : justify, justifyContent: null } : { justifyContent: stretchMain ? null : justify === "normal" ? "start" : justify }),
+    // The cross axis: a column's layers stretch across it (justify-items), a row's down it (align-items).
+    ...(column ? { justifyItems: items && items !== "stretch" ? items : null, alignItems: null } : { alignItems: items && items !== "stretch" ? items : null }),
+  };
+  const children: Record<string, Record<string, string | null>> = {};
+  for (const c of kids) {
+    const s = board.nodes[c].style;
+    const patch: Record<string, string | null> = { flexGrow: null, flexShrink: null, flexBasis: null, flex: null, order: null };
+    if (s.alignSelf) {
+      if (column) Object.assign(patch, { alignSelf: null, justifySelf: gridAlign(s.alignSelf) ?? null });
+      else patch.alignSelf = gridAlign(s.alignSelf) ?? null;
+    }
+    // A layer that grew along the row filled its share: in its fr track it does by stretching.
+    if (grow(c) > 0) patch[column ? "height" : "width"] = null;
+    children[c] = patch;
+  }
+  return { frame, children };
 }

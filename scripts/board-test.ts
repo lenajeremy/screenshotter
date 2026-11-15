@@ -291,6 +291,117 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
 }
 
 // ---------------------------------------------------------------------------------------------
+// Grids: tracks read and written as a person writes them, shorthands as longhands, a layout
+// turned into a grid where its layers are, and grids through scale, components and undo.
+{
+  const g = await import("../src/board/core.js");
+  const t3 = g.parseTracks("repeat(3, 1fr)");
+  check(t3.tracks.length === 3 && t3.tracks.every((t) => t.size === "1fr") && g.tracksCss(t3) === "repeat(3, 1fr)", "repeat(3, 1fr) is three tracks, and written back as it was");
+  const named = g.parseTracks("[full-start] 240px [main-start] repeat(2, minmax(100px, 1fr)) [main-end]");
+  check(named.tracks.length === 3 && named.tracks[0].names?.join() === "full-start" && named.tracks[1].names?.join() === "main-start" && named.tracks[2].size === "minmax(100px, 1fr)" && named.end?.join() === "main-end", "line names stay with their lines, and minmax() is one track");
+  check(g.tracksCss(named) === "[full-start] 240px [main-start] minmax(100px, 1fr) minmax(100px, 1fr) [main-end]", `named lines are written back (${g.tracksCss(named)})`);
+  const fill = g.parseTracks("repeat(auto-fill, minmax(200px, 1fr))");
+  check(fill.tracks.length === 1 && fill.tracks[0].auto === "auto-fill" && fill.tracks[0].size === "minmax(200px, 1fr)" && g.tracksCss(fill) === "repeat(auto-fill, minmax(200px, 1fr))" && g.trackLabel(fill.tracks[0]) === "Fill ≥ 200", "repeat(auto-fill, …) is one track that repeats as many times as fit");
+  check(g.tracksCss({ tracks: ["240px", "1fr", "1fr", "1fr"].map((size) => ({ size })) }) === "240px repeat(3, 1fr)" && g.tracksCss({ tracks: ["1fr", "2fr"].map((size) => ({ size })) }) === "1fr 2fr", "a run of three alike is repeat(), two different tracks are spelt out");
+  check(g.parseTracks("subgrid").raw === "subgrid" && g.tracksCss(g.parseTracks("subgrid")) === "subgrid", "what can't be edited track by track is kept as written");
+  check(["1fr", "240px", "auto", "min-content", "max-content", "minmax(1px, 2fr)", "fit-content(300px)", "25%", "calc(10px + 1em)"].map(g.trackKind).join() === "fr,px,auto,min-content,max-content,minmax,fit-content,percent,other", "every kind of track size is told apart");
+  check(["minmax(120px, 1fr)", "fit-content(320px)", "auto", "240px"].map((x) => g.trackLabel(x)).join("|") === "120–1fr|≤ 320|Auto|240", "track sizes read short");
+
+  // Shorthands come in as longhands.
+  const sh = g.normalizeGridStyle({ display: "grid", grid: "auto-flow dense 120px / repeat(3, 1fr)" });
+  check(sh.gridAutoFlow === "row dense" && sh.gridAutoRows === "120px" && sh.gridTemplateColumns === "repeat(3, 1fr)" && sh.grid === null, "grid: auto-flow dense 120px / … is its flow, new rows and columns");
+  const sh2 = g.normalizeGridStyle({ grid: "100px 1fr / auto-flow 200px" });
+  check(sh2.gridAutoFlow === "column" && sh2.gridAutoColumns === "200px" && sh2.gridTemplateRows === "100px 1fr", "grid: rows / auto-flow … flows by column");
+  const tpl = g.gridLonghands({ display: "grid", gridTemplate: `"head head" 80px "side main" 1fr / 240px 1fr` });
+  check(tpl.gridTemplateRows === "80px 1fr" && tpl.gridTemplateColumns === "240px 1fr" && tpl.gridTemplateAreas === `"head head" "side main"` && !("gridTemplate" in tpl), `grid-template with areas is its rows, columns and areas (${JSON.stringify(tpl)})`);
+  const area = g.normalizeGridStyle({ gridArea: "1 / 2 / 3 / 4", placeSelf: "center end", placeItems: "center" });
+  check(area.gridRow === "1 / 3" && area.gridColumn === "2 / 4" && area.alignSelf === "center" && area.justifySelf === "end" && area.alignItems === "center" && area.justifyItems === "center", "grid-area with slashes is its row and column, place-* its two halves");
+  check(g.normalizeGridStyle({ gridArea: "header" }).gridArea === "header", "a named grid-area stays");
+  const se = g.normalizeGridStyle({ gridColumnStart: "2" }, { gridColumn: "1 / span 3" });
+  check(se.gridColumn === "2 / span 3" && se.gridColumnStart === null, `a change to one side of a line keeps the other (${se.gridColumn})`);
+  check(g.normalizeGridStyle({ gridColumnStart: "2" }, { gridColumn: "span 3" }).gridColumn === "2", "a start line replaces a span written on the start side, as CSS has it");
+  check(g.normalizeGridStyle({ gridGap: "12px 20px" }).gap === "12px 20px", "grid-gap is gap");
+
+  // Lines, spans and gaps.
+  check(JSON.stringify(g.parsePlacement("2 / span 3")) === '{"start":2,"span":3}' && JSON.stringify(g.parsePlacement("span 2")) === '{"span":2}' && JSON.stringify(g.parsePlacement("1 / -1")) === '{"start":1,"end":-1}', "grid-column reads as a start, a span and an end");
+  check(g.placementCss({ start: 2, span: 3 }) === "2 / span 3" && g.placementCss({ span: 2 }) === "span 2" && g.placementCss({ start: 3 }) === "3" && g.placementCss({}) === null && g.placementSpan(g.parsePlacement("2 / 5")) === 3, "and is written back the same way");
+  check(JSON.stringify(g.gapsOf({ gap: "12px 20px" })) === '{"row":"12px","column":"20px"}' && JSON.stringify(g.gapsOf({ gap: "8px", columnGap: "4px" })) === '{"row":"8px","column":"4px"}', "gaps read from gap and its longhands");
+  check(g.gapCss("16px", "16px").gap === "16px" && g.gapCss("12px", "24px").gap === "12px 24px" && g.gapCss("0px", "").gap === null, "gaps write as one value when they're alike");
+
+  // Areas.
+  const rows = g.parseAreas(`"head head" "side main" ". foot"`)!;
+  const rects = g.areaRects(rows);
+  check(rows.length === 3 && rects.head.columnSpan === 2 && rects.main.column === 2 && rects.foot.row === 3 && g.areasValid(rows), "named areas are where they're written, each a rectangle");
+  check(!g.areasValid(g.parseAreas(`"a b" "b a"`)) && g.areasCss([["a", "."], [".", "."]]) === `"a ." ". ."` && g.areasCss([[".", "."]]) === null, "areas that aren't rectangles are told, and empty areas write nothing");
+
+  // A frame's grid changed through gridPatch: shorthands go, what they said stays.
+  const patched = g.gridPatch({ display: "grid", gridTemplate: "auto auto / 1fr 1fr" }, { columns: { tracks: [{ size: "1fr" }, { size: "2fr" }, { size: "1fr" }] } });
+  check(patched.gridTemplate === null && patched.gridTemplateRows === "auto auto" && patched.gridTemplateColumns === "1fr 2fr 1fr", `changing columns takes off grid-template and keeps its rows (${JSON.stringify(patched)})`);
+  const flowP = g.gridPatch({ display: "grid" }, { flow: "column", dense: true, rowGap: "8px", columnGap: "12px" });
+  check(flowP.gridAutoFlow === "column dense" && flowP.gap === "8px 12px", "flow and gaps are written as CSS has them");
+
+  // Laid out by position, then as a grid.
+  const box = (x: number, y: number, w: number, h: number) => ({ x, y, width: w, height: h });
+  const six = [0, 1, 2, 3, 4, 5].map((i) => ({ id: `c${i}`, box: box((i % 3) * 116, Math.floor(i / 3) * 124, 100, 100) })).reverse();
+  const plan = g.planGrid(six);
+  check(plan.columns.join() === "1fr,1fr,1fr" && plan.rows.length === 2 && plan.columnGap === 16 && plan.rowGap === 24 && plan.order.join() === "c0,c1,c2,c3,c4,c5" && !plan.explicit, `six cards in two rows become a 3×2 grid in reading order (${JSON.stringify(plan)})`);
+  const bento = g.planGrid([{ id: "big", box: box(0, 0, 200, 410) }, { id: "s1", box: box(210, 0, 120, 200) }, { id: "s2", box: box(210, 210, 120, 200) }]);
+  check(bento.cells.big.rowSpan === 2 && bento.cells.s2.column === 2 && bento.cells.s2.row === 2 && !bento.explicit && bento.columns.join() === "200px,120px", `a tall card beside two short ones spans two rows (${JSON.stringify(bento)})`);
+  const hole = g.planGrid([{ id: "a", box: box(0, 0, 100, 100) }, { id: "b", box: box(220, 0, 100, 100) }, { id: "c", box: box(110, 110, 100, 100) }]);
+  check(hole.explicit && hole.cells.b.column === 3 && hole.cells.c.column === 2, "layers that leave holes are placed by hand");
+  const ap = g.autoPlace([{ columnSpan: 2, rowSpan: 1 }, { columnSpan: 1, rowSpan: 1 }, { columnSpan: 2, rowSpan: 1 }], 3);
+  check(ap.map((c) => `${c.column},${c.row}`).join(" ") === "1,1 3,1 1,2", "auto-placement is CSS's: an item too wide for what's left goes to the next row");
+
+  // From flex.
+  const fb = emptyBoard("fg", "Flex to grid", new Date().toISOString());
+  const fmade = addHtmlOps(`<div data-name="Bar" style="display:flex;gap:12px;align-items:center;width:600px"><span>Logo</span><div data-name="Spacer" style="flex-grow:1;height:4px"></div><span style="align-self:flex-end">Menu</span></div>`, null, { page: fb.pages[0].id });
+  const fboard = applyOps(fb, fmade.ops).board;
+  const bar = fmade.roots[0];
+  const conv = g.flexToGrid(fboard, bar)!;
+  const spacer = Object.values(fboard.nodes).find((n) => n.name === "Spacer")!.id;
+  const menu = fboard.nodes[bar].children![2];
+  check(conv.frame.display === "grid" && conv.frame.gridTemplateColumns === "auto 1fr auto" && conv.frame.alignItems === "center" && conv.children[spacer].flexGrow === null && conv.children[menu].alignSelf === "end", `a flex row is a grid of a column per layer, the one that grew 1fr (${JSON.stringify(conv.frame)})`);
+  check(g.flexToGrid({ ...fboard, nodes: { ...fboard.nodes, [bar]: { ...fboard.nodes[bar], style: { ...fboard.nodes[bar].style, flexWrap: "wrap" } } } }, bar) === null, "a flex frame that wraps is planned from where its layers are");
+
+  // HTML in: grid as written, shorthands as longhands; read back in words.
+  const gh = htmlToNodes(`<div data-name="Cards" style="display:inline-grid;grid-template:auto / repeat(3, 1fr);gap:16px;place-items:start"><div data-name="Wide" style="grid-area:1 / 1 / 2 / 3;height:40px"></div><div data-name="One" style="height:40px"></div><p>Words</p></div>`);
+  const cards = gh.nodes[gh.roots[0]];
+  const wide = Object.values(gh.nodes).find((n) => n.name === "Wide")!;
+  check(cards.style.display === "grid" && cards.style.gridTemplateColumns === "repeat(3, 1fr)" && cards.style.gridTemplateRows === "auto" && !cards.style.gridTemplate && cards.style.justifyItems === "start" && cards.children!.length === 3, `a grid comes in as a grid frame, its shorthands as longhands (${JSON.stringify(cards.style)})`);
+  check(wide.style.gridColumn === "1 / 3" && wide.style.gridRow === "1" && !wide.style.gridArea, "a layer's grid-area becomes its row and column");
+  const hb = emptyBoard("gh", "Grid HTML", new Date().toISOString());
+  const hboard = applyOps(hb, addHtmlOps(`<div data-name="Cards" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;width:600px"><div data-name="Wide" style="grid-column:span 2;height:40px"></div><div data-name="One" style="height:40px;justify-self:center;width:80px"></div></div>`, null, { page: hb.pages[0].id }).ops).board;
+  const cardsId = Object.values(hboard.nodes).find((n) => n.name === "Cards")!.id;
+  const tree = treeText(hboard, cardsId);
+  check(/grid 3 columns · columns repeat\(3, 1fr\) · gap 16px/.test(tree) && /"Wide" #\w+ fill×40 .*cell column span 2/.test(tree) && /"One" #\w+ 80×40 .*justify-self center/.test(tree), `board_read's tree says the grid and where each layer sits:\n${tree}`);
+  const sw = await import("../src/board/core.js");
+  check(sw.sizeWord(hboard, Object.values(hboard.nodes).find((n) => n.name === "Wide")!.id, "width") === "fill", "a layer without a width fills its cell");
+  check(/grid-template-columns:repeat\(3, 1fr\)/.test(nodeHtml(hboard, cardsId)) && /grid-column:span 2/.test(nodeHtml(hboard, cardsId)), "HTML out keeps the grid as it is");
+
+  // Scale: gaps, padding and px tracks grow; fr, auto and spans don't change.
+  const sb = { ...hboard, nodes: { ...hboard.nodes, [cardsId]: { ...hboard.nodes[cardsId], style: { ...hboard.nodes[cardsId].style, gap: "16px 24px", padding: "20px", gridTemplateColumns: "240px repeat(2, minmax(100px, 1fr))", gridAutoRows: "minmax(80px, auto)" } } } };
+  const scaled = applyOps(sb, sw.scaleOps(sb, cardsId, 1.5)).board.nodes[cardsId].style;
+  const wideScaled = applyOps(sb, sw.scaleOps(sb, cardsId, 1.5)).board.nodes[Object.values(hboard.nodes).find((n) => n.name === "Wide")!.id].style;
+  check(scaled.gap === "24px 36px" && scaled.padding === "30px" && scaled.gridTemplateColumns === "360px repeat(2, minmax(150px, 1fr))" && scaled.gridAutoRows === "minmax(120px, auto)" && wideScaled.gridColumn === "span 2" && wideScaled.height === "60px", `the Scale tool scales a grid's gaps, padding and px tracks (${JSON.stringify(scaled)})`);
+
+  // Undo puts a grid back exactly.
+  const ch = applyOps(hboard, [{ op: "set", id: cardsId, style: g.gridPatch(hboard.nodes[cardsId].style, { columns: g.parseTracks("1fr 2fr"), rowGap: "4px", columnGap: "8px" }) }]);
+  const back = applyOps(ch.board, ch.inverse).board.nodes[cardsId].style;
+  check(ch.board.nodes[cardsId].style.gridTemplateColumns === "1fr 2fr" && JSON.stringify(back) === JSON.stringify(hboard.nodes[cardsId].style), "a change to a grid undoes exactly");
+
+  // Components: a grid component's copies follow its tracks; where a copy sits in a grid is its own.
+  let cb = applyOps(hboard, componentOps(hboard, cardsId)).board;
+  const holder = htmlToNodes(`<div data-name="Page" style="display:grid;grid-template-columns:1fr 1fr;width:900px"></div>`);
+  cb = applyOps(cb, [{ op: "add", nodes: holder.nodes, ids: holder.roots, parent: null, page: cb.pages[0].id }]).board;
+  const inst = instanceTree(cb, cardsId, holder.roots[0]);
+  inst.nodes[inst.id].style.gridColumn = "2";
+  cb = applyOps(cb, expandOps(cb, [{ op: "add", nodes: inst.nodes, ids: [inst.id], parent: holder.roots[0] }])).board;
+  const steps = expandOps(cb, [{ op: "set", id: cardsId, style: { gridTemplateColumns: "repeat(4, 1fr)", gridColumn: "1 / -1" } }]);
+  cb = applyOps(cb, steps).board;
+  check(cb.nodes[inst.id].style.gridTemplateColumns === "repeat(4, 1fr)" && cb.nodes[inst.id].style.gridColumn === "2", "a copy of a grid component follows its tracks, and keeps its own cell");
+}
+
+// ---------------------------------------------------------------------------------------------
 // The tools, through MCP
 
 const out = mkdtempSync(path.join(tmpdir(), "board-test-"));
@@ -750,6 +861,36 @@ await fake.close();
   const bg = await call("board_write_html", { board: rb, html: `<div data-name="Backdrop" style="width:300px;height:300px;background-image:url(${outside})"></div>` });
   const bgStyle = store.getBoard(rb).nodes[bg.json.created[0].id].style.backgroundImage ?? "";
   check(bgStyle.includes(path.join(".studio", "boards", "assets")) && !bgStyle.includes(outside), "a CSS picture from outside the library is copied into it");
+}
+// ---------------------------------------------------------------------------------------------
+// Grids through the tools: written with shorthands, stored as longhands, described, measured with
+// their tracks as drawn, changed one side of a line at a time, and drawn as the CSS says.
+{
+  const store = await import("../src/board/store.js");
+  const gb = (await call("board_create", { name: "Grid tools" })).json.id;
+  const w = await call("board_write_html", {
+    board: gb,
+    html: `<div data-name="Gallery" style="display:grid;grid-template:auto / repeat(3, 1fr);gap:16px;padding:20px;width:600px;background:#fff"><div data-name="Banner" style="grid-area:1 / 1 / 2 / -1;height:60px;background:#111"></div><div data-name="A" style="height:100px;background:#e33"></div><div data-name="B" style="height:100px;background:#3a3"></div><div data-name="C" style="height:100px;background:#33e"></div><div data-name="D" style="grid-column:2 / span 2;height:100px;background:#999"></div></div>`,
+  });
+  const art = w.json.created[0].id;
+  const by = (name: string) => Object.values(store.getBoard(gb).nodes).find((n) => n.name === name)!;
+  const gs = store.getBoard(gb).nodes[art].style;
+  check(gs.display === "grid" && gs.gridTemplateColumns === "repeat(3, 1fr)" && gs.gridTemplateRows === "auto" && !gs.gridTemplate && by("Banner").style.gridColumn === "1 / -1" && by("Banner").style.gridRow === "1", "board_write_html keeps a grid, its shorthands as longhands");
+  check(/grid 3 columns × 1 row · columns repeat\(3, 1fr\) · rows auto · gap 16px/.test(w.json.outline) && /"D" #\w+ fill×100 .*cell column 2 \/ span 2/.test(w.json.outline), `the outline says the grid and each layer's cell:\n${w.json.outline}`);
+  const m = await call("board_read", { board: gb, node: art, what: "tree", measure: true });
+  const at = (name: string) => new RegExp(`"${name}" #\\w+ \\[([\\d.]+),([\\d.]+) ([\\d.]+)×([\\d.]+)`).exec(m.text)?.slice(1).map(Number) ?? [];
+  // 600 wide, 20 padding: 560 inside, two 16px gaps, three 176px columns.
+  check(/drawn columns 176 176 176 rows 60 100 100/.test(m.text), `measuring a grid says its tracks as drawn:\n${m.text}`);
+  check(at("A").join() === "20,96,176,100" && at("C").join() === "404,96,176,100" && at("D").join() === "212,212,368,100" && at("Banner").join() === "20,20,560,60", `layers are drawn in their cells (${["A", "C", "D", "Banner"].map((n) => `${n} ${at(n).join(",")}`).join("; ")})`);
+  await call("board_edit", { board: gb, changes: [{ do: "style", ids: [art], style: { grid: "auto-flow dense 120px / 1fr 2fr" } }, { do: "style", ids: [by("D").id], style: { "grid-column-start": 1 } }, { do: "style", ids: [by("A").id], style: { "place-self": "center", gridRow: 3 } }] });
+  const g2 = store.getBoard(gb).nodes[art].style;
+  check(g2.gridTemplateColumns === "1fr 2fr" && g2.gridAutoFlow === "row dense" && g2.gridAutoRows === "120px" && !g2.gridTemplateRows && !g2.grid, `board_edit's grid shorthand becomes longhands and resets what it covers (${JSON.stringify(g2)})`);
+  check(by("D").style.gridColumn === "1 / span 2" && by("A").style.alignSelf === "center" && by("A").style.justifySelf === "center" && by("A").style.gridRow === "3", `one side of a line changes, keeping the span; place-self and a number line come in as CSS (${by("D").style.gridColumn}, ${by("A").style.gridRow})`);
+  const shot = await call("board_screenshot", { board: gb, nodes: [art] });
+  check(shot.images.length === 1 && pngSize(shot.images[0]).width >= 600, "a grid artboard draws");
+  await call("board_edit", { board: gb, changes: [{ do: "scale", ids: [art], by: 2 }] });
+  const g3 = store.getBoard(gb).nodes[art].style;
+  check(g3.gap === "32px" && g3.padding === "40px" && g3.gridAutoRows === "240px" && g3.gridTemplateColumns === "1fr 2fr" && g3.width === "1200px", `scale doubles a grid's gaps, padding and px tracks (${JSON.stringify(g3)})`);
 }
 console.log(`\nFiles in ${out}`);
 
