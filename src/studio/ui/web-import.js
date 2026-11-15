@@ -99,7 +99,7 @@ export function ImportWebsite() {
         <p class="note">It comes in as an artboard of layers you can change: its layout, words, pictures and fonts. ${m.board ? "It goes beside the artboards on this board." : "It gets a board of its own."}</p>
         <label class="wi-url ${busy ? "off" : ""}">
           <${Icon} n="globe" s=${15} />
-          <input ref=${field} class="input grow" type="url" inputmode="url" placeholder="example.com" spellcheck=${false} autocomplete="off" value=${url} disabled=${Boolean(busy)} onInput=${(e) => setUrl(e.target.value)} onKeyDown=${onKey} aria-label="Website address" />
+          <input ref=${field} autofocus class="input grow" type="url" inputmode="url" placeholder="example.com" spellcheck=${false} autocomplete="off" value=${url} disabled=${Boolean(busy)} onInput=${(e) => setUrl(e.target.value)} onKeyDown=${onKey} aria-label="Website address" />
         </label>
         <div class="row"><label>Read it at</label><${Seg} value=${width} options=${WIDTHS} onChange=${(v) => !busy && setWidth(v)} /></div>
         <div class="row"><label></label><${Switch} checked=${whole} onChange=${(v) => !busy && setWhole(v)} label="The whole page, not just the first screen" /></div>

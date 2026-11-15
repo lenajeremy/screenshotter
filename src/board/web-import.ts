@@ -199,10 +199,15 @@ function bestSrc(face: Face): string | null {
 
 const escText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const escAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+/** Colours as people write them: rgb(255, 255, 255) is #ffffff, and a solid rgba() is too. */
+const hexColours = (v: string) =>
+  v.replace(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*(1|0?\.\d+))?\)/g, (m, r: string, g: string, b: string, a?: string) =>
+    a !== undefined && a !== "1" ? m : `#${[r, g, b].map((x) => Number(x).toString(16).padStart(2, "0")).join("")}`,
+  );
 const styleText = (style: Record<string, string> = {}) =>
   Object.entries(style)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => `${k}:${v}`)
+    .map(([k, v]) => `${k}:${hexColours(v)}`)
     .join(";");
 
 /** A wrapper that does nothing (no box, no paint, one child) is left out, so the layers stay shallow. */

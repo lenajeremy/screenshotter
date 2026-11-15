@@ -277,6 +277,7 @@ const SCREENS: Array<[string, (page: Page) => Promise<unknown>]> = [
     await new Promise((r) => setTimeout(r, 50));
     st.set({ modal: { kind: "settings", tab: "photos" } });
   })],
+  ["import-website", (page) => S(page, async () => (await import("/ui/web-import.js" as string)).openImportWebsite({ url: "example.com" }))],
   ["help", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "help" } }))],
   ["whats-new", (page) => S(page, async () => (await import("/ui/app.js" as string)).openWhatsNew(true))],
   ["store-page", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }))],
@@ -812,6 +813,58 @@ const CHECKS: Record<string, Check> = {
     await page.click('.bd-left-tabs [data-tab="comments"]');
     const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
     return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
+  },
+  async "a website comes onto a new board from My designs, and a pasted address offers to bring one in"(page) {
+    const http = await import("node:http");
+    const site = http.createServer((_q, r) => {
+      r.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      r.end(`<!doctype html><html><head><title>Tiny site</title><meta name="viewport" content="width=device-width"></head><body style="margin:0;font-family:-apple-system,sans-serif"><header style="display:flex;justify-content:space-between;padding:20px 40px;background:#111;color:#fff"><b>Tiny</b><span>Menu</span></header><main style="padding:60px 40px"><h1 style="font-size:44px;margin:0">A tiny site</h1><p>Brought in by a test.</p></main></body></html>`);
+    });
+    await new Promise<void>((done) => site.listen(0, "127.0.0.1", done));
+    const siteUrl = `http://127.0.0.1:${(site.address() as import("node:net").AddressInfo).port}/`;
+    let answer = "";
+    page.on("response", (res) => {
+      if (res.url().includes("/api/board/import-website")) res.text().then((t) => (answer = `${res.status()} ${t.slice(0, 300)}`), () => undefined);
+    });
+    try {
+      await S(page, async () => (await import("/ui/scenes.js" as string)).openScenesPage());
+      await page.locator(".sp-start", { hasText: "Import a website" }).click();
+      await page.waitForSelector(".web-import input");
+      await page.locator(".web-import .wi-url input").fill(siteUrl);
+      await page.waitForTimeout(200);
+      await picture(page, "import-sheet");
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(() => document.querySelector(".web-import .wi-progress"), null, { timeout: 5000 }).catch(() => undefined);
+      const landed = await page.waitForFunction(() => (!document.querySelector(".web-import") && document.querySelector(".bd-world [data-bid]")) || document.querySelector(".toast.err"), null, { timeout: 90_000 }).then(() => true, () => false);
+      if (!landed || (await S(page, () => Boolean(document.querySelector(".toast.err"))))) return `the import didn't land: ${answer || (await toasts(page))}`;
+      await page.waitForTimeout(600);
+      await picture(page, "import-done");
+      const got = await S(page, async () => {
+        const m = await import("/ui/board-state.js" as string);
+        const b = m.B.board;
+        const art = b.nodes[m.B.sel[0]];
+        const words = Object.values(b.nodes as Record<string, { type: string; text?: string }>).filter((n) => n.type === "text").map((n) => (n.text ?? "").replace(/<[^>]+>/g, ""));
+        return { name: b.name, sel: m.B.sel.length, root: art && !art.parent, width: art?.style.width, words };
+      });
+      const toast = await toasts(page);
+      if (got.name !== "Tiny site" || got.sel !== 1 || !got.root || got.width !== "1440px") return `the board is ${JSON.stringify({ ...got, words: undefined })}`;
+      if (!got.words.includes("A tiny site") || !got.words.includes("Menu")) return `its words are ${got.words.join(" | ")}`;
+      if (!/Brought in Tiny site/.test(toast)) return `the toast says "${toast}"`;
+      // On a board, a pasted address is pasted as words and offers to bring the site in.
+      await S(page, async (u: string) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", u);
+        window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, "https://example.com/pricing");
+      const offer = await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Import this website\?/.test(t.textContent ?? "")), null, { timeout: 4000 }).then(() => true, () => false);
+      if (!offer) return "pasting an address didn't offer to import it";
+      await page.locator(".toast button", { hasText: "Import" }).first().click();
+      const filled = await page.waitForFunction(() => (document.querySelector(".web-import .wi-url input") as HTMLInputElement | null)?.value, null, { timeout: 4000 }).then((h) => h.jsonValue(), () => "");
+      await page.keyboard.press("Escape");
+      return filled === "https://example.com/pricing" ? "ok" : `the sheet opened with "${filled}"`;
+    } finally {
+      site.close();
+    }
   },
   async "the theme: picked in Settings, there from the first frame after a reload, and System follows the Mac"(page) {
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings" } }));
