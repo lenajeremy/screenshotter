@@ -1732,6 +1732,40 @@ const CHECKS: Record<string, Check> = {
     if (draws.App || draws.Topbar || draws.Rail || draws.LeftPanel || draws.Inspector || !draws.CanvasView) return `the pointer drew ${JSON.stringify(draws)}`;
     return box ? "ok" : "no outline round the item under the pointer";
   },
+  async "on the timeline, a fast scrub and a fast bar drag end where they're let go"(page) {
+    await page.evaluate("globalThis.__name = (f) => f");
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi", animations: [{ targets: "caption", at: 0.5, enter: "slide-up" }, { targets: "device-1", at: 1, enter: "zoom" }] }), timelineOpen: true });
+    await page.waitForSelector(".tl-ruler");
+    await page.waitForTimeout(1500);
+    const r = await S(page, async () => {
+      const tl = await import("/ui/timeline.js" as string);
+      const st = await import("/ui/store.js" as string);
+      const pe = (type: string, el: EventTarget, x: number, y: number) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: "mouse", button: 0, buttons: type === "pointerup" ? 0 : 1 }));
+      const ruler = document.querySelector(".tl-ruler")!;
+      const tracks = document.querySelector(".tl-tracks")!.getBoundingClientRect();
+      const y = ruler.getBoundingClientRect().top + 4;
+      const total = tl.videoLength() as number;
+      // Several moves within one frame, then let go: the playhead is where the pointer let go.
+      pe("pointerdown", ruler, tracks.left + tracks.width * 0.1, y);
+      for (const f of [0.3, 0.8, 0.5, 0.62]) pe("pointermove", document.body, tracks.left + tracks.width * f, y);
+      pe("pointerup", document.body, tracks.left + tracks.width * 0.62, y);
+      const scrub = { t: tl.playhead.t as number, want: total * 0.62 };
+      // A bar dragged the same way starts where it was let go.
+      const bar = [...document.querySelectorAll(".tl-bar")].find((b) => !b.classList.contains("ambient"))!;
+      const bb = bar.getBoundingClientRect();
+      const before = st.S.scene.animations.map((a: { at: number }) => a.at);
+      const pps = tracks.width / total;
+      pe("pointerdown", bar, bb.left + 4, bb.top + bb.height / 2);
+      for (const dx of [10, 140, 20, 70]) pe("pointermove", document.body, bb.left + 4 + dx, bb.top + bb.height / 2);
+      pe("pointerup", document.body, bb.left + 74, bb.top + bb.height / 2);
+      const after = st.S.scene.animations.map((a: { at: number }) => a.at);
+      return { scrub, before, after, want: 70 / pps };
+    });
+    if (Math.abs(r.scrub.t - r.scrub.want) > 0.02) return `the scrub let go at ${r.scrub.want.toFixed(2)} s, the playhead is at ${r.scrub.t.toFixed(2)} s`;
+    const moved = r.after.map((a: number, i: number) => a - r.before[i]).filter((d: number) => d);
+    if (moved.length !== 1 || Math.abs(moved[0] - r.want) > 0.051) return `the bar moved ${JSON.stringify(moved)} s, not ${r.want.toFixed(2)} s (from ${r.before} to ${r.after})`;
+    return "ok";
+  },
   async "polling the library for scenes, files and boards redraws nothing when nothing changed"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
     await page.waitForTimeout(1500);

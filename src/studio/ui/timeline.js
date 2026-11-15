@@ -3,7 +3,7 @@
 // the live preview: the canvas shows the design at the playhead, worked out by the same engine
 // the video renderer uses (/ui/animate.js).
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ColorButton, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html } from "./controls.js";
+import { ColorButton, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html, perFrame } from "./controls.js";
 import { openMenu } from "./menu.js";
 import { Icon } from "./icons.js";
 import { S, TRANSITION_NAMES, api, clamp, edit, entityLabel, persistPrefs, set, toast, useStore, hasDesign } from "./store.js";
@@ -313,8 +313,8 @@ const calloutRows = (e) => (S.scene.devices?.[e.index]?.highlights ?? []).map((_
 /** Whether a device's soft focus is animated (the canvas then takes it from --ablur). */
 export const blurAnimated = (id, scene = S.scene) => Boolean(S.timelineOpen && scene.animations?.some((a) => (a.to?.blur !== undefined || a.from?.blur !== undefined || a.enter === "blur" || a.exit === "blur") && targetsOf(a).includes(id)));
 
-function drawShape(el, spec, art) {
-  const r = renderShape(spec, art.offsetWidth, art.offsetHeight, { hit: 14 });
+function drawShape(el, spec, art, aw = art.offsetWidth, ah = art.offsetHeight) {
+  const r = renderShape(spec, aw, ah, { hit: 14 });
   Object.assign(el.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px", transform: r.rotate ? `rotate(${r.rotate}deg)` : "", filter: r.filter ?? "" });
   const svg = el.querySelector(".shape-svg");
   if (svg) svg.innerHTML = r.svg;
@@ -433,12 +433,17 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
   }
   const box = art.getBoundingClientRect();
   const camAll = ct;
+  // The artboard's size (it doesn't change as its items move).
+  const aw = art.offsetWidth;
+  const ah = art.offsetHeight;
+  // In three passes, so the canvas is laid out once a frame rather than once an item: each item
+  // put back as designed, then all of them measured, then each moved to where it is at `t`.
+  const moving = [];
   for (const el of art.querySelectorAll(":scope > .ent[data-id]")) {
     const e = layout.entities.find((x) => x.id === el.dataset.id);
     // A fixed device (a recording's webcam) stays out of the camera's moves.
     const pinned = e?.kind === "device" && shot.scene.devices?.[e.index]?.fixed;
     const ct = pinned ? null : camAll;
-    const through = (x, y) => (ct ? { x: (x - ct.fx) * ct.zoom + ct.fx + ct.tx, y: (y - ct.fy) * ct.zoom + ct.fy + ct.ty } : { x, y });
     let st = states.get(el.dataset.id) ?? (ct ? IDLE : undefined);
     const am = e?.kind === "device" && !pinned && !(held && targetsOf(held.clip).includes(e.id)) ? ambientAt(motion, e.index, t, W0, H0, D) : null;
     if (am) {
@@ -454,35 +459,49 @@ export function applyPreview(art, on, t, shot = { scene: S.scene, layout: S.layo
         el.style.translate = el.style.scale = el.style.rotate = el.style.opacity = "";
         for (const v of ["--acolor", "--arx", "--ary", "--amark"]) el.style.removeProperty(v);
         for (const u of el.querySelectorAll(".u")) u.style.translate = u.style.scale = u.style.rotate = u.style.opacity = u.style.filter = "";
-        if (e?.kind === "shape") drawShape(el, e.shape, art);
+        if (e?.kind === "shape") drawShape(el, e.shape, art, aw, ah);
       }
       continue;
     }
     el.dataset.anim = "1";
     el.style.translate = el.style.scale = el.style.rotate = "";
     if (e?.kind === "shape") {
-      drawShape(el, st.shape ?? e.shape, art);
-      if (ct) {
-        // The camera moves the drawn shape: its box's middle goes where the camera sends it.
-        const mx = (el.offsetLeft + el.offsetWidth / 2) / k;
-        const my = (el.offsetTop + el.offsetHeight / 2) / k;
-        const to = through(mx, my);
-        el.style.translate = `${(to.x - mx) * k}px ${(to.y - my) * k}px`;
-        el.style.scale = String(ct.zoom);
-      }
+      drawShape(el, st.shape ?? e.shape, art, aw, ah);
+      if (ct) moving.push({ el, st, ct, shape: true });
       continue;
     }
-    // Its words or letters untransformed, and a gradient accent's slices laid across them.
+    // Its words or letters untransformed.
     const pieces = el.querySelectorAll(".u");
-    if (pieces.length) {
-      pieces.forEach((u) => (u.style.translate = u.style.scale = u.style.rotate = ""));
-      paintPieces(el);
+    pieces.forEach((u) => (u.style.translate = u.style.scale = u.style.rotate = ""));
+    moving.push({ el, st, ct, pieces });
+  }
+  // A gradient accent's slices laid across its words or letters, then every item measured as designed.
+  for (const m of moving) if (m.pieces?.length) paintPieces(m.el);
+  for (const m of moving) {
+    const el = m.el;
+    if (m.shape) {
+      m.box = { left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight };
+      continue;
+    }
+    m.r = el.getBoundingClientRect();
+    m.origin = getComputedStyle(el).transformOrigin.split(" ").map(parseFloat);
+    m.left = el.offsetLeft;
+    m.top = el.offsetTop;
+  }
+  for (const { el, st, ct, shape, pieces, box: b, r, origin, left, top } of moving) {
+    const through = (x, y) => (ct ? { x: (x - ct.fx) * ct.zoom + ct.fx + ct.tx, y: (y - ct.fy) * ct.zoom + ct.fy + ct.ty } : { x, y });
+    if (shape) {
+      // The camera moves the drawn shape: its box's middle goes where the camera sends it.
+      const mx = (b.left + b.width / 2) / k;
+      const my = (b.top + b.height / 2) / k;
+      const to = through(mx, my);
+      el.style.translate = `${(to.x - mx) * k}px ${(to.y - my) * k}px`;
+      el.style.scale = String(ct.zoom);
+      continue;
     }
     // Where its visual middle sits from the point CSS scales and turns it about.
-    const r = el.getBoundingClientRect();
-    const origin = getComputedStyle(el).transformOrigin.split(" ").map(parseFloat);
-    const vx = r.left + r.width / 2 - (box.left + el.offsetLeft + (origin[0] || 0));
-    const vy = r.top + r.height / 2 - (box.top + el.offsetTop + (origin[1] || 0));
+    const vx = r.left + r.width / 2 - (box.left + left + (origin[0] || 0));
+    const vy = r.top + r.height / 2 - (box.top + top + (origin[1] || 0));
     // Its middle on the canvas, moved by its own animation and then by the camera.
     const mx = (r.left + r.width / 2 - box.left) / k;
     const my = (r.top + r.height / 2 - box.top) / k;
@@ -1059,10 +1078,13 @@ export function TimelineDock() {
     if (e.button !== 0) return;
     pause();
     goTo(timeAt(e.clientX));
-    const move = (m) => goTo(timeAt(m.clientX));
+    // Each moment shown redraws the canvas there: once a frame, at the pointer's latest place.
+    const follow = perFrame((x) => goTo(timeAt(x)));
+    const move = (m) => follow(m.clientX);
     const up = () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", up);
+      follow.flush();
     };
     addEventListener("pointermove", move);
     addEventListener("pointerup", up);
@@ -1077,18 +1099,23 @@ export function TimelineDock() {
     const at0 = a0.at;
     const dur0 = a0.duration ?? DEFAULT_DURATION;
     let moved = false;
-    const move = (m) => {
-      const dt = (m.clientX - x0) / pps;
-      if (!moved && Math.abs(m.clientX - x0) < 3) return;
-      moved = true;
+    // The design changes once a frame, to where the pointer is by then.
+    const apply = perFrame((x) => {
+      const dt = (x - x0) / pps;
       if (edge) update(i, (a) => (a.duration = clamp(snap(dur0 + dt), 0.05, 30)), "dur");
       else update(i, (a) => (a.at = clamp(snap(at0 + dt), 0, Math.max(120, len))), "at");
       // A Change stays shown as it ends while its bar moves.
       if (keyframe()) setPlayhead(Math.min(videoLength(), animationEnd(S.scene.animations[i])));
+    });
+    const move = (m) => {
+      if (!moved && Math.abs(m.clientX - x0) < 3) return;
+      moved = true;
+      apply(m.clientX);
     };
     const up = () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", up);
+      apply.flush();
     };
     addEventListener("pointermove", move);
     addEventListener("pointerup", up);
