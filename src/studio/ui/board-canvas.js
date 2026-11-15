@@ -3,6 +3,7 @@
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -152,6 +153,8 @@ class Layer extends Component {
     for (const [k, v] of Object.entries(n.style)) style[k] = v.includes("url(") ? mapCssUrls(v, srcUrl) : v;
     if (root) style.position = "absolute";
     const id = n.id;
+    // A mask isn't drawn (its look masks the layers above it), but it's still there to pick; its words show faintly while typed.
+    if (n.mask && maskActive(B.board, id)) style.opacity = editing === id ? "0.4" : "0";
     const attrs = { "data-bid": id, style };
     if (n.type === "text") {
       if (editing === id) return html`<${EditableText} id=${id} style=${style} />`;
@@ -176,8 +179,38 @@ class Layer extends Component {
       if (Tag !== "g") return html`<${Tag} ...${props} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></${Tag}>`;
       return html`<g ...${props}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</g>`;
     }
-    return html`<div ...${attrs}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</div>`;
+    return html`<div ...${attrs}>${layersOf(n, nodes, editing)}</div>`;
   }
+}
+
+/** A frame's layers: those a mask masks are drawn inside the elements that mask them, as exports draw them. */
+function layersOf(n, nodes, editing) {
+  const kids = n.children ?? [];
+  const one = (c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`;
+  if (!kids.some((c) => nodes[c]?.mask)) return kids.map(one);
+  return maskRuns(B.board, kids).flatMap((r) => (r.mask ? [one(r.mask), html`<${MaskScope} key=${"mask:" + r.mask} mask=${r.mask} ids=${r.ids} editing=${editing} />`] : r.ids.map(one)));
+}
+
+/**
+ * What a mask shows: its layers in an element over the frame (so they keep their places), inside one
+ * on the mask's box carrying its look as CSS (maskCss in the core). It draws again when a web font
+ * for a text mask arrives.
+ */
+function MaskScope({ mask, ids, editing }) {
+  const [, redraw] = useState(0);
+  useEffect(() => onMaskFonts(() => redraw((k) => k + 1)), []);
+  const nodes = B.board.nodes;
+  const kids = ids.map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`);
+  const css = ids.length && maskActive(B.board, mask) ? maskCss(B.board, mask, { src: srcUrl }) : null;
+  if (!css) return kids;
+  return html`<div data-mask-scope=${mask} style=${styleText(css.scope)}><div style=${styleText(css.box)}>${kids}</div></div>`;
+}
+
+/** Web fonts a text mask uses, fetched into its picture (an SVG drawn as an image can't load them itself). */
+function useMaskFonts(board) {
+  useEffect(() => {
+    if (board && Object.values(board.nodes).some((n) => n.mask && n.type === "text")) loadMaskFonts(board).catch(() => undefined);
+  }, [board?.nodes]);
 }
 
 /** A text layer being typed in: the browser edits it; the words go back on Escape or a click away. */
@@ -271,6 +304,7 @@ export function BoardCanvas() {
   const b = useBoard();
   const page = currentPage();
   useFonts(b.board, page);
+  useMaskFonts(b.board);
   useLayoutEffect(() => {
     canvasEl.current = ref.current;
   });
@@ -381,6 +415,7 @@ function Overlay() {
     })}
     ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
+    ${!busy && html`<${MaskLines} />`}
     ${box && !locked && !b.editing && !busy &&
     HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} style=${{ left: box.x + (h.includes("w") ? 0 : h.includes("e") ? box.width : box.width / 2) + "px", top: box.y + (h.includes("n") ? 0 : h.includes("s") ? box.height : box.height / 2) + "px" }}></div>`)}
     ${box && !b.editing && (!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}
@@ -458,6 +493,21 @@ function VideoBadge({ id, box }) {
       onPointerDown=${(e) => e.stopPropagation()} onDblClick=${(e) => e.stopPropagation()} onClick=${(e) => (e.stopPropagation(), toggleVideo(id))}>
       <${Icon} n=${playing ? "pause" : "play"} s=${big ? 18 : 12} />
     </button>`;
+}
+
+/** The outline of the mask over each selected (or hovered) layer it masks, as Figma shows it: what shows of them. */
+function MaskLines() {
+  const masks = new Set();
+  for (const id of [...B.sel, B.hover]) {
+    const m = id && !node(id)?.mask ? maskOf(B.board, id) : null;
+    if (m && !B.sel.includes(m) && maskActive(B.board, m)) masks.add(m);
+  }
+  return [...masks].map((m) => {
+    const r = screenBox(m);
+    // Its corners as drawn, at the zoom.
+    const radius = elOf(m) && node(m).type !== "text" ? getComputedStyle(elOf(m)).borderRadius.replace(/(-?[\d.]+)px/g, (_, v) => `${Number(v) * B.view.z}px`) : "";
+    return r && html`<div key=${"ml" + m} class="bd-mask-line" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px", borderRadius: radius }}></div>`;
+  });
 }
 
 const unionOf = (boxes) => {

@@ -35,6 +35,7 @@ import { noteStudioFolder } from "../util/studio.js";
 import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard, validBoardId, workingNow } from "../board/store.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers, previewDocument } from "../board/render.js";
+import { maskFontsFor } from "../board/render.js";
 import { VIDEO_EXT, videoStill } from "../board/video.js";
 import { mediaInfo } from "../util/media.js";
 import { deviceImage } from "../board/device.js";
@@ -681,6 +682,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     };
     if (!b.nodes[id]) return page(404, `<!doctype html><html><head><meta charset="utf-8"><title>Preview</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;font:14px system-ui;color:#666;background:#e9e9ec">That frame isn't on the board any more.</body></html>`);
     const src = (s: string) => (/^(https?:|data:|blob:)/i.test(s) ? s : `/file?path=${encodeURIComponent(s.replace(/^file:\/\//, ""))}`);
+    await maskFontsFor(b);
     return page(200, previewDocument(b, id, { width: Number(url.searchParams.get("w")) || undefined, src }));
   }
   if (req.method === "GET" && url.pathname === "/api/board/rev") return send(200, boardRev(url.searchParams.get("id")));

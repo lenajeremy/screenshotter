@@ -29,6 +29,9 @@ import {
   instanceTree,
   resetOps,
   uncomponentOps,
+  maskOps,
+  maskGroupOps,
+  inFlow,
   cssValue,
   freeSpot,
   newId,
@@ -75,6 +78,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
 - Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
+- Masks, as in Figma: a layer used as a mask isn't drawn; the layers above it in its frame (after it, up to the next mask) show only where it is. Write one with data-mask on the element, at the back, with the layers to mask after it: <div style="position:relative;width:320px;height:320px"><div data-mask style="position:absolute;left:0;top:0;width:320px;height:320px;border-radius:50%;background:#000"></div><img style="position:absolute;left:0;top:0;width:320px;height:320px;object-fit:cover" src="…"></div>. Any layer can be the mask: a frame (its corners and fills: a gradient to transparent fades what's above it), a picture (its see-through parts), an svg, or words (the photo shows through the letters). data-mask="vector" masks by its outline, data-mask="luminance" by its brightness (white shows, black hides); plain data-mask is alpha. A mask and what it masks are placed by hand (position:absolute, left, top, width, height): in a flex or grid frame they go in a frame of their own (a mask group), which is one item of the layout. board_edit mask makes one from existing layers (several ids: a new mask group, the one at the back masking the rest), changes its type, or removes it; board_read tree marks masks and what each masks; hiding a mask shows its layers whole.
 - Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
@@ -233,6 +237,12 @@ const ChangeSchema = z.discriminatedUnion("do", [
     after: z.string().optional(),
     x: z.number().optional(),
     y: z.number().optional(),
+  }),
+  z.object({
+    do: z.literal("mask"),
+    ids: z.array(z.string()).min(1).describe("One layer: it becomes a mask of the layers above it (after it) in its frame. Several side by side in one frame: they go into a new mask group, the one at the back masking the rest."),
+    type: z.enum(["alpha", "vector", "luminance"]).optional().describe("alpha (default): by its opacity, so a gradient to transparent fades what it masks; vector: by its outline; luminance: by its brightness (white shows, black hides)."),
+    remove: z.boolean().optional().describe("Make the masks ordinary layers again (what they hid shows)."),
   }),
   z.object({ do: z.literal("detach"), id: z.string().describe("A copy of a component, to make ordinary layers.") }),
   z.object({ do: z.literal("reset"), id: z.string().describe("A copy (or a layer in one) to make match its component again.") }),
@@ -409,6 +419,11 @@ export function registerBoardTools(server: McpServer) {
         const changed = changeBoard(b.id, ops, "agent");
         const after = changed.board;
         changeBoard(b.id, workingOps(after, made.roots, await whoAmI()), "agent");
+        for (const id of Object.keys(made.nodes)) {
+          const m = after.nodes[id];
+          if (m?.mask && !m.parent) made.warnings.push(`"${m.name}" has data-mask but sits on the page: a mask works inside a frame, at the back of the layers it masks.`);
+          else if (m?.mask && inFlow(after, id)) made.warnings.push(`The mask "${m.name}" (#${id}) is placed by its frame's flex or grid layout, so where it is can't be told from its CSS: give it position:absolute with left, top, width and height (and the layers it masks too), or board_edit mask it with them to make a mask group.`);
+        }
         const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), photos: photos.length ? [...new Set(photos)] : undefined, warnings: made.warnings.length ? made.warnings : undefined })];
         if (a.preview) {
           const root = rootOf(after, made.roots[0]);
@@ -424,7 +439,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again), mask (Figma's Use as mask: a layer masks the layers above it in its frame; several go into a mask group; remove undoes it). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -698,6 +713,22 @@ export function registerBoardTools(server: McpServer) {
               ops.push({ op: "add", nodes: { [id]: { id, type: "image", name: c.device ?? "Device", parent: where.parent, src: img.path, style } }, ids: [id], parent: where.parent, page: where.page, index: where.index });
               touched.push(id);
               results.push({ device: id, picture: img.path });
+              break;
+            }
+            case "mask": {
+              for (const id of c.ids) need(id);
+              if (c.remove) {
+                for (const id of c.ids) ops.push(...maskOps(b, id, null).ops);
+                results.push({ unmasked: c.ids.length });
+                break;
+              }
+              const made = c.ids.length > 1 ? maskGroupOps(b, c.ids, c.type ?? "alpha") : maskOps(b, c.ids[0], c.type ?? "alpha");
+              ops.push(...made.ops);
+              touched.push(...c.ids);
+              // The one at the back is the mask.
+              const order = siblingsOf(b, c.ids[0]);
+              const mask = c.ids.slice().sort((x, y) => order.indexOf(x) - order.indexOf(y))[0];
+              results.push({ mask, type: c.type ?? "alpha", ...(made.group ? { group: made.group } : {}) });
               break;
             }
             case "detach":

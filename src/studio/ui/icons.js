@@ -125,6 +125,7 @@ const P = {
   sides: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9h16M4 15h16M9 4v16M15 4v16" opacity=".4"/>',
   laptop: '<rect x="5" y="5" width="14" height="10" rx="1.5"/><path d="M2.5 18.5h19"/>',
   bolt: '<path d="M13 2.5L4.5 13.5H12l-1 8 8.5-11H12z"/>',
+  mask: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="12" cy="12" r="4.6"/><path d="M12 7.4a4.6 4.6 0 0 1 0 9.2z" fill="currentColor" stroke="none"/>',
 };
 
 export function Icon({ n, s = 16, w = 1.7, style, class: cls }) {

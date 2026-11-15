@@ -596,6 +596,7 @@ import WebKit
             action("Select All", #selector(NSText.selectAll(_:)), "a"),
             .separator(),
             item("Duplicate", "duplicate", "d"),
+            item("Use as Mask", "mask", "m", [.command, .control]),
         ])
         _ = submenu("View", [
             item("Timeline", "timeline", "t"),

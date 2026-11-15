@@ -5,6 +5,8 @@ import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instance
 import { B, CANVAS_ONLY, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, scalePlan, shiftSteps, toggleVideo, useVideo, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
+import { maskSelection, removeMask, setMaskType, useAsMask } from "./board.js";
+import { maskOf, maskedBy } from "./board-core.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
 import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html, normalizeColor, resolveVars, tokenColor, tokenRef } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -92,6 +94,7 @@ export function Inspector() {
       ${!many && n.shape && html`<${ShapeSection} />`}
       ${!many && n.type === "svg" && !n.shape && html`<${VectorSection} />`}
       <${LookSection} />
+      <${MaskSection} />
       ${!allText && n.type !== "image" && n.type !== "video" && n.type !== "svg" && html`<${FillSection} />`}
       ${n.type !== "svg" && html`<${LineSection} kind="border" />`}
       <${LineSection} kind="outline" />
@@ -567,6 +570,45 @@ function LookSection() {
         : html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${r.every((x) => x === r[0]) ? r[0] : undefined} placeholder="—" min=${0} onChange=${(v) => setStyle(radiusStyle([v ?? 0, v ?? 0, v ?? 0, v ?? 0]), "radius")} />`}
       <button class="icon-btn sm ${four ? "on" : ""}" title="Each corner" onClick=${() => setFour(!four)}><${Icon} n="corners" s=${14} /></button>
     </div>`}
+  <//>`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Mask, as Figma has it: a layer used as a mask shows the layers above it in its frame only where it
+// is, by its alpha, its outline (vector) or its brightness (luminance).
+
+const MASK_KINDS = [
+  { value: "alpha", label: "Alpha", title: "By its opacity: see-through parts of it (a gradient to transparent, a picture's clear parts) hide what's under them" },
+  { value: "vector", label: "Vector", title: "By its outline: everything inside its shape shows, however see-through it's painted" },
+  { value: "luminance", label: "Luminance", title: "By its brightness: white shows, black hides, greys show in part" },
+];
+
+function MaskSection() {
+  const list = ids();
+  const n = node(list[0]);
+  if (list.length > 1) {
+    if (!list.every((id) => node(id).parent === n.parent)) return null;
+    return html`<${Section} title="Mask" right=${html`<button class="icon-btn sm" data-mask-add title="Mask with selection (⌃⌘M): the layer at the back masks the rest" onClick=${() => maskSelection()}><${Icon} n="plus" s=${14} /></button>`} />`;
+  }
+  if (!n.parent) return null;
+  if (n.mask) {
+    const shows = maskedBy(B.board, n.id);
+    const count = `${shows.length} layer${shows.length === 1 ? "" : "s"}`;
+    const flowing = inFlow(B.board, n.id);
+    return html`<${Section} title="Mask" right=${html`
+        <button class="icon-btn sm" data-mask-eye title=${n.hidden ? "Turn the mask on" : "Turn the mask off: what it masks shows whole"} onClick=${() => commit([{ op: "set", id: n.id, hidden: n.hidden ? null : true }], { label: n.hidden ? "Mask on" : "Mask off" })}><${Icon} n=${n.hidden ? "eyeOff" : "eye"} s=${14} /></button>
+        <button class="icon-btn sm" data-mask-remove title="Remove mask (⌃⌘M): what it hid shows again" onClick=${() => removeMask(n.id)}><${Icon} n="minus" s=${14} /></button>`}>
+      <div class="bd-mask-kind"><${Seg} value=${n.mask} options=${MASK_KINDS} onChange=${(v) => setMaskType(n.id, v)} /></div>
+      <div class="bd-mask-what">
+        <span>${n.hidden ? `Off: the ${count} above it show whole.` : shows.length ? `Shows the ${count} above it only where it is.` : "Nothing above it to mask yet: put layers above it in its frame."}</span>
+        ${shows.length > 0 && html`<button class="btn sm ghost" onClick=${() => select(shows)}>Select</button>`}
+      </div>
+      ${flowing && html`<p class="bd-note">It's placed by its frame's layout, so the mask can't tell where it is. Tick Absolute position, or put it in a mask group (⌃⌘M on it and its layers).</p>`}
+    <//>`;
+  }
+  const by = maskOf(B.board, n.id);
+  return html`<${Section} title="Mask" right=${html`<button class="icon-btn sm" data-mask-add title="Use as mask (⌃⌘M): it shows the layers above it in its frame only where it is" onClick=${() => useAsMask(n.id)}><${Icon} n="plus" s=${14} /></button>`}>
+    ${by && html`<div class="bd-mask-what by"><${Icon} n="mask" s=${14} /><span>Masked by <b>${node(by)?.name}</b>${node(by)?.hidden ? " (off)" : ""}</span><button class="btn sm ghost" onClick=${() => select(by)}>Select mask</button></div>`}
   <//>`;
 }
 

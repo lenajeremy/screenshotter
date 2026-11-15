@@ -291,6 +291,109 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
 }
 
 // ---------------------------------------------------------------------------------------------
+// Masks, as Figma has them, in HTML and CSS
+{
+  const m = await import("../src/board/core.js");
+  const fresh = (htmlText: string) => {
+    const b = emptyBoard("masks", "Masks", new Date().toISOString());
+    const made = addHtmlOps(htmlText, null, { page: b.pages[0].id });
+    return { board: applyOps(b, made.ops).board, root: made.roots[0] };
+  };
+  const named = (b: Board, name: string) => Object.values(b.nodes).find((n) => n.name === name)!.id;
+  const CARD_M = `<div data-name="Card" style="position:relative;width:400px;height:400px;background:#fff"><div data-name="Below" style="position:absolute;left:0;top:0;width:40px;height:40px;background:#00f"></div><div data-name="Shape" data-mask style="position:absolute;left:100px;top:100px;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-name="Photo" style="position:absolute;left:0;top:0;width:400px;height:400px;background:#f00"></div><div data-name="Hole" data-mask="luminance" style="position:absolute;left:0;top:300px;width:100px;height:100px;background:linear-gradient(#fff, #000)"></div><div data-name="Over" style="position:absolute;left:0;top:300px;width:100px;height:100px;background:#0f0"></div></div>`;
+  const { board: mb, root } = fresh(CARD_M);
+  const [shape, photo, below, hole, over] = ["Shape", "Photo", "Below", "Hole", "Over"].map((x) => named(mb, x));
+  check(mb.nodes[shape].mask === "alpha" && mb.nodes[hole].mask === "luminance" && !mb.nodes[photo].mask, "data-mask makes a layer a mask (alpha unless it says luminance or vector)");
+  check(m.maskOf(mb, photo) === shape && m.maskOf(mb, over) === hole && !m.maskOf(mb, below) && !m.maskOf(mb, shape) && m.maskedBy(mb, shape).join() === photo, "a mask masks the layers above it in its frame, up to the next mask");
+  const out = nodeHtml(mb, root, { ids: true });
+  const scope = out.indexOf("data-mask-scope");
+  check(/data-mask="alpha" style="[^"]*visibility:hidden/.test(out) && scope > out.indexOf(`data-id="${shape}"`) && out.indexOf(`data-id="${photo}"`) > scope && out.indexOf(`data-id="${below}"`) < scope, "as HTML the mask is there but hidden, and what it masks is drawn inside the element that masks it; what's below isn't");
+  check((out.match(/data-mask-scope/g) ?? []).length === 2 && /mask-mode:luminance/.test(out) && /-webkit-mask-image:linear-gradient\(#fff, #000\)/.test(out), "each mask has its own; a luminance mask's fill is its mask image, by brightness");
+  const css = m.maskCss(mb, shape)!;
+  check(css.scope.position === "absolute" && css.scope.inset === "0" && css.box.marginLeft === "100px" && css.box.marginTop === "100px" && css.box.width === "200px" && css.box.height === "200px", "the element that masks sits on the mask's box, inside one over the whole frame");
+  check(css.box.clipPath === "inset(0 round 50%)" && css.box.webkitClipPath === css.box.clipPath && css.box.maskImage === "linear-gradient(#000, #000)" && css.box.webkitMaskImage === css.box.maskImage, "a frame's corners are a clip-path and its fill a mask image, with the -webkit- spellings too");
+  const back = htmlToNodes(out);
+  const rb = back.nodes[back.roots[0]];
+  const kids = rb.children!.map((c) => back.nodes[c]);
+  check(kids.map((k) => `${k.name}${k.mask ? `:${k.mask}` : ""}`).join() === "Below,Shape:alpha,Photo,Hole:luminance,Over" && !kids[1].style.visibility, "the HTML read back is the same layers: the mask a mask again, the elements that masked gone");
+  const off = applyOps(mb, [{ op: "set", id: shape, hidden: true }]).board;
+  check((nodeHtml(off, root).match(/data-mask-scope/g) ?? []).length === 1 && nodeHtml(off, root).indexOf(`data-id="${photo}"`) < nodeHtml(off, root).indexOf("data-mask-scope"), "a hidden mask masks nothing: its layers are drawn whole");
+  // Kinds of mask.
+  const kinds = fresh(
+    `<div data-name="K" style="position:relative;width:600px;height:200px"><img data-name="Pic" data-mask src="/x/star.png" style="position:absolute;left:0;top:0;width:200px;height:200px;object-fit:cover;opacity:0.5"><div data-name="A" style="position:absolute;left:0;top:0;width:200px;height:200px;background:red"></div><svg data-name="Vec" data-mask="vector" style="position:absolute;left:200px;top:0;width:200px;height:200px;color:var(--ink)" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="currentColor" fill-opacity="0.2"/></svg><div data-name="B" style="position:absolute;left:200px;top:0;width:200px;height:200px;background:red"></div><p data-name="Words" data-mask style="position:absolute;left:400px;top:0;width:200px;margin:0;font:700 60px/64px var(--face)">Big &amp; bold<br>words</p><div data-name="C" style="position:absolute;left:400px;top:0;width:200px;height:200px;background:red"></div><div data-name="Box" data-mask="vector" style="position:absolute;right:10px;bottom:10px;width:50px;height:50px;border-radius:8px 4px"></div><div data-name="D" style="position:absolute;left:0;top:0;width:600px;height:200px;background:red"></div></div>`,
+  );
+  const kb = { ...kinds.board, tokens: [{ name: "--ink", value: "#123456" }, { name: "--face", value: "Futura, sans-serif" }] };
+  const pic = m.maskCss(kb, named(kb, "Pic"), { src: (s) => `file://${s}` })!;
+  check(pic.box.maskImage === 'linear-gradient(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.5)), url("file:///x/star.png")' && pic.box.maskSize === "100% 100%, cover" && pic.box.maskComposite === "intersect, add" && pic.box.webkitMaskComposite === "source-in, source-over", "a picture masks by its alpha as object-fit places it, its opacity intersected over it");
+  const vec = decodeURIComponent(m.maskCss(kb, named(kb, "Vec"))!.box.maskImage);
+  check(vec.includes('<svg style="color:#123456"') && vec.includes('feFuncA type="linear" slope="255"') && vec.includes('width="100%" height="100%"'), "a vector mask is its SVG as a picture, its colour token filled in, every painted pixel made solid");
+  const words = decodeURIComponent(m.maskCss(kb, named(kb, "Words"))!.box.maskImage);
+  check(words.includes('<foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml"') && words.includes("font:700 60px/64px Futura, sans-serif") && words.includes("Big &amp; bold<br/>words</div>"), "words mask as their own HTML and CSS in an SVG picture, tokens filled in, as XHTML");
+  const box = m.maskCss(kb, named(kb, "Box"))!;
+  check(!box.box.maskImage && box.box.clipPath === "inset(0 round 8px 4px 8px 4px)" && box.box.marginLeft === "calc(100% - 10px - 50px)" && box.box.marginBottom === "10px" && box.scope.justifyContent === "flex-end", "a vector mask of a frame is its outline, placed from the right and bottom");
+  check(m.resolveTokens("var(--a, 3px) var(--b)", [{ name: "--b", value: "var(--a, 9px)" }]) === "3px 9px", "tokens resolve through fallbacks and other tokens");
+  // CSS masks it can say as a mask layer become one; others stay CSS.
+  const cssMask = htmlToNodes(`<div style="position:relative;width:200px;height:200px;mask-image:linear-gradient(#000, transparent)"><img src="/x/a.png" style="position:absolute;left:0;top:0;width:200px;height:200px"></div>`);
+  const cm = cssMask.nodes[cssMask.roots[0]];
+  const first = cssMask.nodes[cm.children![0]];
+  check(first.mask === "alpha" && first.style.backgroundImage === "linear-gradient(#000, transparent)" && !cm.style.maskImage && cm.children!.length === 2, "a CSS gradient mask over layers placed by hand becomes a mask layer under them");
+  const lum = htmlToNodes(`<div style="position:relative;width:200px;height:200px;-webkit-mask-image:url(/x/m.png);-webkit-mask-size:cover;mask-mode:luminance"><div style="position:absolute;left:0;top:0;width:200px;height:200px;background:red"></div></div>`);
+  const lm = lum.nodes[lum.nodes[lum.roots[0]].children![0]];
+  check(lm.type === "image" && lm.src === "/x/m.png" && lm.style.objectFit === "cover" && lm.mask === "luminance", "a CSS picture mask becomes a picture mask layer, sized as it was");
+  const flowing = htmlToNodes(`<div style="width:200px;mask-image:linear-gradient(#000, transparent)"><p>Words that flow</p></div>`);
+  check(flowing.nodes[flowing.roots[0]].style.maskImage === "linear-gradient(#000, transparent)" && !Object.values(flowing.nodes).some((n) => n.mask), "a CSS mask over flowing layers stays CSS (it draws as written)");
+  // Making and removing masks: one layer, several (a mask group), in a flex frame, and undo.
+  const plain = fresh(`<div data-name="P" style="position:relative;width:300px;height:300px"><div data-name="S" style="position:absolute;left:20px;top:30px;width:100px;height:80px;background:#000"></div><div data-name="T" style="position:absolute;left:50px;top:60px;width:200px;height:200px;background:red"></div><div data-name="R" style="display:flex;position:absolute;left:0;top:200px;width:300px;height:100px"><div data-name="F1" style="width:60px;height:60px;background:#000"></div><div data-name="F2" style="width:60px;height:60px"></div></div></div>`);
+  const pb = plain.board;
+  const [S1, T1, F1] = ["S", "T", "F1"].map((x) => named(pb, x));
+  const one = m.maskOps(pb, S1, "vector");
+  const put = applyOps(pb, one.ops);
+  check(put.board.nodes[S1].mask === "vector" && JSON.stringify(applyOps(put.board, put.inverse).board.nodes) === JSON.stringify(pb.nodes), "Use as mask makes a layer a mask, and undo puts it back exactly");
+  check(m.maskOps(put.board, S1, null).ops.length === 1 && !applyOps(put.board, m.maskOps(put.board, S1, null).ops).board.nodes[S1].mask, "a mask is made an ordinary layer again");
+  let refused = "";
+  try {
+    m.maskOps(pb, plain.root, "alpha");
+  } catch (e) {
+    refused = e instanceof OpError ? e.message : "";
+  }
+  check(/inside a frame/.test(refused), "a layer on the page can't be a mask on its own");
+  const grouped = m.maskGroupOps(pb, [T1, S1], "alpha");
+  const g = applyOps(pb, grouped.ops);
+  const gn = g.board.nodes[grouped.group];
+  check(gn.name === "Mask group" && gn.children!.join() === `${S1},${T1}` && gn.style.left === "20px" && gn.style.top === "30px" && gn.style.width === "100px" && g.board.nodes[T1].style.left === "30px" && g.board.nodes[S1].style.left === "0px" && g.board.nodes[S1].mask === "alpha", "Mask with selection makes a mask group on the mask's box, the one at the back the mask, the rest where they were");
+  check(JSON.stringify(applyOps(g.board, g.inverse).board.nodes) === JSON.stringify(pb.nodes), "and undo takes it all back");
+  const inFlex = m.maskOps(pb, F1, "alpha");
+  const fg = applyOps(pb, inFlex.ops).board;
+  check(Boolean(inFlex.group) && fg.nodes[inFlex.group!].parent === named(pb, "R") && fg.nodes[inFlex.group!].style.position === "relative" && fg.nodes[F1].style.position === "absolute" && fg.nodes[F1].mask === "alpha" && !m.inFlow(fg, F1), "a mask in a flex frame goes in a mask group of its own, which is an item of the flex layout");
+  // Duplicates, scaling, components.
+  const dup = m.copyTree(put.board, S1, plain.root);
+  check(dup.nodes[dup.id].mask === "vector", "a duplicate of a mask is a mask");
+  const scaled = applyOps(put.board, m.scaleOps(put.board, plain.root, 2)).board;
+  check(scaled.nodes[S1].style.width === "200px" && scaled.nodes[S1].style.left === "40px" && m.maskCss(scaled, S1)!.box.marginLeft === "40px", "scaling a frame scales its mask's box with everything else");
+  const comp = applyOps(put.board, componentOps(put.board, plain.root)).board;
+  const inst = instanceTree(comp, plain.root, null);
+  const withCopy = applyOps(comp, [{ op: "add", nodes: inst.nodes, ids: [inst.id], parent: null, page: comp.pages[0].id }]).board;
+  const copyOfS = Object.values(withCopy.nodes).find((n) => n.master === S1)!.id;
+  const changed = applyOps(withCopy, expandOps(withCopy, [{ op: "set", id: S1, mask: "luminance" }])).board;
+  check(withCopy.nodes[copyOfS].mask === "vector" && changed.nodes[copyOfS].mask === "luminance", "a component's copies follow its masks");
+  // A text mask's web font, fetched (here from a stand-in for Google Fonts) into the mask's picture,
+  // since an SVG drawn as an image can't load fonts itself.
+  {
+    const fb = fresh(`<div style="position:relative;width:300px;height:100px"><p data-name="Logo" data-mask style="position:absolute;left:0;top:0;margin:0;font-family:'Brand Sans',sans-serif;font-weight:700">Hi</p><div style="position:absolute;left:0;top:0;width:300px;height:100px;background:red"></div></div>`);
+    const asked: string[] = [];
+    const fakeFetch = async (url: string) => {
+      asked.push(url);
+      const css = "/* latin */ @font-face { font-family: 'Brand Sans'; font-weight: 700; src: url(https://fonts.gstatic.com/brand.woff2) format('woff2'); unicode-range: U+0000-00FF; } /* greek */ @font-face { font-family: 'Brand Sans'; src: url(https://fonts.gstatic.com/greek.woff2) format('woff2'); unicode-range: U+0370-03FF; }";
+      return { ok: true, text: async () => css, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    };
+    const added = await m.loadMaskFonts(fb.board, fakeFetch);
+    const svg = decodeURIComponent(m.maskCss(fb.board, named(fb.board, "Logo"))!.box.maskImage);
+    check(added && asked.some((u) => /family=Brand\+Sans:ital,wght@0,400;0,700;1,400;1,700/.test(u)) && asked.includes("https://fonts.gstatic.com/brand.woff2") && !asked.includes("https://fonts.gstatic.com/greek.woff2") && svg.includes("src:url(data:font/woff2;base64,AQID)"), "a text mask's web font is fetched (only the parts its words need) and put inside its picture");
+  }
+  check(/mask \(vector\) of 2 layers above it/.test(treeText(put.board, plain.root)) && new RegExp(`masked by #${S1}`).test(treeText(put.board, plain.root)), "the outline says what's a mask and what it masks");
+}
+
+// ---------------------------------------------------------------------------------------------
 // The tools, through MCP
 
 const out = mkdtempSync(path.join(tmpdir(), "board-test-"));
@@ -462,6 +565,54 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
   const art = await call("board_write_html", { board: "my scratchpad", page: two.json.page.id, html: '<div style="width:300px;height:200px;background:#eee"></div>' });
   const sp = (await call("board_read", { board: "Scratchpad" })).json;
   check(sp.pages.length === 2 && sp.pages[0].name === "Try buttons" && sp.pages[1].artboards.length === 1 && sp.pages[0].artboards.length === 0 && art.json.created?.length === 1, "the first try takes its empty first page; an artboard lands on the try's page; \"my scratchpad\" finds it");
+}
+
+// Masks, by agents: written as HTML (data-mask), made, changed and removed with board_edit, read
+// back, and drawn by the engine as the canvas draws them.
+{
+  const { decodePng, pixelAt } = await import("../src/util/png.js");
+  const mk = await call("board_create", { name: "Masks" });
+  const mbId = mk.json.id;
+  const art = (await call("board_write_html", { board: mbId, html: `<div data-name="Masked" style="position:relative;width:300px;height:300px;background:#fff"></div>` })).json.created[0].id;
+  const wrote = await call("board_write_html", { board: mbId, target: art, html: `<div data-name="Disc" data-mask style="position:absolute;left:50px;top:50px;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-name="Fill" style="position:absolute;left:0;top:0;width:300px;height:300px;background:#ff0000"></div>` });
+  const [disc, fill] = wrote.json.created.map((c: { id: string }) => c.id);
+  check(/mask \(alpha\) of 1 layer above it/.test(wrote.json.outline) && new RegExp(`masked by #${disc}`).test(wrote.json.outline), "an agent writes a mask with data-mask, and the outline says what it masks");
+  const red = (p: number[]) => p[0] > 200 && p[1] < 60 && p[2] < 60;
+  const white = (p: number[]) => p[0] > 230 && p[1] > 230 && p[2] > 230;
+  const look = async () => {
+    const shot = await call("board_screenshot", { board: mbId, nodes: [art], scale: 1 });
+    const f = decodePng(shot.images[0]);
+    return { centre: pixelAt(f, 150, 150), corner: pixelAt(f, 12, 12), edge: pixelAt(f, 150, 46) };
+  };
+  let seen = await look();
+  check(red(seen.centre) && white(seen.corner) && white(seen.edge), `board_screenshot draws the mask: the disc shows the fill, the rest is clipped (${seen.centre.join()} / ${seen.corner.join()})`);
+  const html = await call("board_read", { board: mbId, node: art, what: "html" });
+  check(/data-mask="alpha"/.test(html.text) && /data-mask-scope="/.test(html.text) && /mask-image/.test(html.text), "board_read html shows the mask and the element that masks");
+  await call("board_edit", { board: mbId, changes: [{ do: "mask", ids: [disc], type: "luminance" }] });
+  seen = await look();
+  check(white(seen.centre), "board_edit mask changes its type: a black luminance mask shows nothing");
+  await call("board_edit", { board: mbId, changes: [{ do: "mask", ids: [disc], remove: true }] });
+  seen = await look();
+  check(red(seen.corner), "board_edit mask with remove: what it hid shows again");
+  const grouped = await call("board_edit", { board: mbId, changes: [{ do: "mask", ids: [fill, disc], type: "alpha" }] });
+  const group = grouped.json.results[0].group;
+  const tree = await call("board_read", { board: mbId, node: art, what: "tree" });
+  check(grouped.json.results[0].mask === disc && /frame "Mask group"/.test(tree.text) && tree.text.indexOf(`#${group}`) >= 0 && /mask \(alpha\)/.test(tree.text), "board_edit mask with several layers makes a mask group, the one at the back the mask");
+  seen = await look();
+  check(red(seen.centre) && white(seen.corner), "and the mask group draws masked");
+  await call("board_edit", { board: mbId, changes: [{ do: "mask", ids: [art] }] }, true);
+  // A picture's clear parts mask too, its file loaded by the engine's browser.
+  const { encodePng } = await import("../src/util/png.js");
+  const halfPng = path.join(out, "half-clear.png");
+  const px = Buffer.alloc(40 * 40 * 4);
+  for (let i = 0; i < 40 * 40; i++) px.set([0, 0, 0, i % 40 < 20 ? 255 : 0], i * 4);
+  writeFileSync(halfPng, encodePng({ width: 40, height: 40, rgba: px }));
+  const picArt = (await call("board_write_html", { board: mbId, html: `<div data-name="Picture mask" style="position:relative;width:200px;height:200px;background:#fff"><img data-mask src="${halfPng}" style="position:absolute;left:0;top:0;width:200px;height:200px"><div style="position:absolute;left:0;top:0;width:200px;height:200px;background:#ff0000"></div></div>` })).json.created[0].id;
+  const picShot = decodePng((await call("board_screenshot", { board: mbId, nodes: [picArt], scale: 1 })).images[0]);
+  check(red(pixelAt(picShot, 50, 100)) && white(pixelAt(picShot, 150, 100)), "a picture used as a mask hides what it masks under its clear half, in board_screenshot");
+  const flex = (await call("board_write_html", { board: mbId, html: `<div data-name="Flexy" style="width:300px;height:300px;display:flex;flex-direction:column"></div>` })).json.created[0].id;
+  const warned = await call("board_write_html", { board: mbId, target: flex, html: `<div data-mask style="width:100px;height:100px;background:#000"></div><div style="width:100px;height:100px;background:red"></div>` });
+  check((warned.json.warnings ?? []).some((w: string) => /flex or grid layout/.test(w)), "a mask an agent leaves in a flex layout's flow comes with a warning of what to do");
 }
 
 // ---------------------------------------------------------------------------------------------

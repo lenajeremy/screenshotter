@@ -1,4 +1,4 @@
-import { crc32, deflateSync } from "node:zlib";
+import { crc32, deflateSync, inflateSync } from "node:zlib";
 
 /** A decoded image: width × height RGBA pixels, rows top to bottom. */
 export interface Frame {
@@ -87,6 +87,72 @@ export function encodePng(frame: Frame): Buffer {
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
+
+/**
+ * Decode an 8-bit, non-interlaced PNG (RGB, RGBA, grey or grey+alpha: what browsers' screenshots
+ * and encodePng write) into RGBA pixels. For tests that check what was drawn, pixel by pixel.
+ */
+export function decodePng(buf: Buffer): Frame {
+  let p = 8;
+  let width = 0;
+  let height = 0;
+  let type = 6;
+  const idat: Buffer[] = [];
+  while (p + 8 <= buf.length) {
+    const len = buf.readUInt32BE(p);
+    const kind = buf.toString("ascii", p + 4, p + 8);
+    const data = buf.subarray(p + 8, p + 8 + len);
+    if (kind === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      if (data[8] !== 8 || data[12] !== 0) throw new Error("Only 8-bit, non-interlaced PNGs are read here.");
+      type = data[9];
+    } else if (kind === "IDAT") idat.push(data);
+    else if (kind === "IEND") break;
+    p += 12 + len;
+  }
+  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 } as Record<number, number>)[type];
+  if (!channels) throw new Error(`PNG colour type ${type} isn't read here.`);
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels;
+  const rgba = Buffer.alloc(width * height * 4);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
+    for (let i = 0; i < stride; i++) {
+      const a = i >= channels ? line[i - channels] : 0;
+      const b = prev[i];
+      const c = i >= channels ? prev[i - channels] : 0;
+      let v = line[i];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const pp = a + b - c;
+        const pa = Math.abs(pp - a);
+        const pb = Math.abs(pp - b);
+        const pc = Math.abs(pp - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      line[i] = v & 0xff;
+    }
+    for (let x = 0; x < width; x++) {
+      const s = x * channels;
+      const o = (y * width + x) * 4;
+      if (channels >= 3) rgba.set([line[s], line[s + 1], line[s + 2], channels === 4 ? line[s + 3] : 255], o);
+      else rgba.set([line[s], line[s], line[s], channels === 2 ? line[s + 1] : 255], o);
+    }
+    prev = line;
+  }
+  return { width, height, rgba };
+}
+
+/** The RGBA of one pixel of a frame. */
+export const pixelAt = (f: Frame, x: number, y: number): [number, number, number, number] => {
+  const i = (Math.round(y) * f.width + Math.round(x)) * 4;
+  return [f.rgba[i], f.rgba[i + 1], f.rgba[i + 2], f.rgba[i + 3]];
+};
 
 /** Fraction of sampled pixels that differ noticeably between two frames (1 if sizes differ). */
 export function frameDifference(a: Frame, b: Frame, step = 5): number {
