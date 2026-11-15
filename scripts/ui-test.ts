@@ -1694,6 +1694,36 @@ const CHECKS: Record<string, Check> = {
     const width = Number(boards.getBoard(b.id).nodes[box].attrs!.width);
     return Math.abs(width - 30) < 0.6 ? "ok" : `typing W 60 after zooming made the rect ${width} wide in its own units, not 30`;
   },
+  async "on a board, scrubbing a number saves a few times a second, and what's saved is where it was let go"(page) {
+    await page.evaluate("globalThis.__name = (f) => f");
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    await sel(page, [phone]);
+    await page.waitForTimeout(400);
+    const saves: string[] = [];
+    const onReq = (r: import("playwright").Request) => r.url().includes("/api/board/ops") && saves.push(r.url());
+    page.on("request", onReq);
+    // Sixty steps of the pointer over about half a second, on the X field's letter.
+    const shown = await S(page, async () => {
+      const scrub = [...document.querySelectorAll(".bd-right .num")].find((n) => n.querySelector(".scrub")?.textContent === "X")!;
+      const label = scrub.querySelector(".scrub")!;
+      const r = label.getBoundingClientRect();
+      const pe = (type: string, el: EventTarget, x: number) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: r.top + 4, pointerType: "mouse", button: 0, buttons: type === "pointerup" ? 0 : 1 }));
+      pe("pointerdown", label, r.left + 4);
+      for (let i = 1; i <= 60; i++) {
+        pe("pointermove", document.body, r.left + 4 + i * 2);
+        await new Promise((f) => setTimeout(f, 8));
+      }
+      pe("pointerup", document.body, r.left + 4 + 120);
+      await new Promise((f) => setTimeout(f, 50));
+      return (scrub.querySelector("input") as HTMLInputElement).value;
+    });
+    await page.waitForTimeout(700);
+    page.off("request", onReq);
+    const saved = boards.getBoard(t.id).nodes[phone].style.left;
+    if (saved !== `${shown}px`) return `the panel shows X ${shown}, the board has ${saved}`;
+    return saves.length >= 1 && saves.length <= 12 ? "ok" : `scrubbing saved the board ${saves.length} times`;
+  },
   async "on the canvas, a burst of trackpad events in one frame all count, and screenshots load at the engine's sizes"(page) {
     await page.evaluate("globalThis.__name = (f) => f");
     await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });

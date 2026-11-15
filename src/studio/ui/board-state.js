@@ -162,7 +162,9 @@ export function commit(ops, { key = null, label } = {}) {
   B.board = res.board;
   keepSelection();
   notify();
-  send(ops);
+  // A run of changes to one thing (a number scrubbed, a colour dragged) is saved a few times a
+  // second, not at every step of the pointer.
+  send(ops, { gather: Boolean(key) });
   return true;
 }
 
@@ -221,13 +223,28 @@ function keepSelection() {
 let queue = [];
 let sending = false;
 let mineUntil = 0;
+/** A save held back for a moment while a run of changes goes on. */
+let gathering = 0;
+const GATHER_MS = 120;
 
-function send(ops) {
+function send(ops, { gather = false } = {}) {
   if (!B.id || !ops.length) return;
   const last = queue[queue.length - 1];
   // Never added to the one on its way: it may be sent again as it was.
   if (last && last.id === B.id && !last.out) last.ops.push(...ops);
   else queue.push({ id: B.id, ops: [...ops], tries: 0 });
+  // Scrubbing or dragging a colour changes the board at every event: the steps go out together,
+  // GATHER_MS after the first, rather than a save (a read and a write of the whole board by the
+  // engine) for each. Anything else goes at once, and takes what was gathered with it.
+  if (gather) {
+    gathering ||= setTimeout(() => {
+      gathering = 0;
+      flush();
+    }, GATHER_MS);
+    return;
+  }
+  clearTimeout(gathering);
+  gathering = 0;
   flush();
 }
 
@@ -281,7 +298,8 @@ async function flush() {
     }
   }
   sending = false;
-  if (queue.length) flush();
+  // What was gathered meanwhile waits for its moment; anything else goes now.
+  if (queue.length && !gathering) flush();
 }
 
 /**
