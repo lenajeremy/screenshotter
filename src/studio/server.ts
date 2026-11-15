@@ -32,7 +32,7 @@ import * as sim from "../simulator/simctl.js";
 import { run } from "../util/exec.js";
 import { ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { noteStudioFolder } from "../util/studio.js";
-import { changeBoard, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard } from "../board/store.js";
+import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard, validBoardId, workingNow } from "../board/store.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers, previewDocument } from "../board/render.js";
 import { VIDEO_EXT, videoStill } from "../board/video.js";
@@ -338,6 +338,35 @@ function restorePicture(p: unknown): void {
 }
 
 /** Recent files the studio can show: captures, uploads, renders. */
+/**
+ * What the Studio polls an open board for (every 0.7 s): its revision, who made it, the artboards
+ * agents are working on, and `talk`, which changes with the comments and the agents who worked
+ * there (so the Studio fetches those again). Kept while neither the board's file nor its comments'
+ * changed: reading and parsing a big board at every poll cost the engine far more than the answer.
+ */
+const revs = new Map<string, { key: string; rev: number; by?: string; updatedAt: string; working: Record<string, string> | undefined; talk: string }>();
+function boardRev(id: string | null) {
+  if (!validBoardId(id)) throw new Error("Unknown board");
+  const stamp = (f: string) => {
+    try {
+      const s = statSync(f);
+      return `${s.ino}:${s.size}:${s.mtimeMs}`;
+    } catch {
+      return "";
+    }
+  };
+  const key = `${stamp(boardFile(id))}|${stamp(commentsFile(id))}`;
+  let c = revs.get(id);
+  if (!c || c.key !== key || key.startsWith("|")) {
+    const b = getBoard(id);
+    const agents = Object.values(b.agents ?? {});
+    c = { key, rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: b.working, talk: `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}` };
+    revs.set(id, c);
+  }
+  // Who is at work is read against the clock each time: it lapses without the file changing.
+  return { rev: c.rev, by: c.by, updatedAt: c.updatedAt, working: workingNow(c.working), talk: c.talk };
+}
+
 function recentFiles(): Array<{ path: string; kind: string; mtime: number; scene?: { id: string; name: string } }> {
   const out: Array<{ path: string; kind: string; mtime: number; scene?: { id: string; name: string } }> = [];
   for (const kind of ["raw", "uploads", "mockups", "videos", "recordings"]) {
@@ -654,13 +683,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const src = (s: string) => (/^(https?:|data:|blob:)/i.test(s) ? s : `/file?path=${encodeURIComponent(s.replace(/^file:\/\//, ""))}`);
     return page(200, previewDocument(b, id, { width: Number(url.searchParams.get("w")) || undefined, src }));
   }
-  if (req.method === "GET" && url.pathname === "/api/board/rev") {
-    const b = getBoard(url.searchParams.get("id"));
-    // `talk` changes with the comments and the agents who worked here, so the Studio fetches those again.
-    const agents = Object.values(b.agents ?? {});
-    const talk = `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}`;
-    return send(200, { rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: summarizeBoard(b).working, talk });
-  }
+  if (req.method === "GET" && url.pathname === "/api/board/rev") return send(200, boardRev(url.searchParams.get("id")));
   if (req.method === "GET" && url.pathname === "/api/board/agents") {
     return send(200, await agentsNow(url.searchParams.get("id") ?? ""));
   }

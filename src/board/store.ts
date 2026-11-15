@@ -175,11 +175,15 @@ export function summarizeBoard(b: Board): BoardSummary {
     layers: Object.keys(b.nodes).length,
     thumb: existsSync(thumb) ? thumb : undefined,
     thumbAt: existsSync(thumb) ? statSync(thumb).mtimeMs : undefined,
-    working: Object.entries(b.working ?? {})
-      .filter(([, at]) => now - Date.parse(at) < WORKING_MS)
-      .map(([id]) => id),
+    working: workingNow(b.working, now),
   };
 }
+
+/** The artboards an agent said it's working on within the last minute. */
+export const workingNow = (working: Board["working"], now = Date.now()): string[] =>
+  Object.entries(working ?? {})
+    .filter(([, at]) => now - Date.parse(at) < WORKING_MS)
+    .map(([id]) => id);
 
 /** The person's scratchpad: one board that's always there for trying things out, a page per try. */
 export const SCRATCHPAD = "scratchpad";
