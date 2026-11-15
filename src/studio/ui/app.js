@@ -1,5 +1,6 @@
 // Screenshotter Studio — app shell.
 import { render } from "preact";
+import { ImportWebsite } from "./web-import.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, Slider, Switch, TextField, html, keysForCanvas } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -1542,6 +1543,7 @@ function App() {
       ${s.modal?.kind === "help" && html`<${Help} />`}
       ${s.modal?.kind === "whatsNew" && html`<${WhatsNew} />`}
       ${s.modal?.kind === "prompt" && html`<${Prompt} />`}
+      ${s.modal?.kind === "importWebsite" && html`<${ImportWebsite} />`}
       <${Toasts} />
       <${ContextMenu} />
     </div>`;
@@ -1565,6 +1567,7 @@ function App() {
     ${s.modal?.kind === "copyStyle" && html`<${CopyStyle} />`}
     ${s.modal?.kind === "storePage" && html`<${StorePage} />`}
     ${s.modal?.kind === "viewer" && html`<${Viewer} />`}
+    ${s.modal?.kind === "importWebsite" && html`<${ImportWebsite} />`}
     <${Toasts} />
     <${ContextMenu} />
     ${s.dropping && html`<div class="drop-veil"><div><${Icon} n="upload" s=${28} />${s.scenesPage ? "Drop to start a new design" : "Drop to add to the design"}</div></div>`}

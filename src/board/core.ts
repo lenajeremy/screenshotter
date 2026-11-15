@@ -83,6 +83,20 @@ export interface BoardToken {
   value: string;
 }
 
+/**
+ * A typeface the board carries itself (a website's own fonts, brought in with it): its file is in
+ * the library, so it draws the same on the canvas, in Preview and in exports, with no network.
+ */
+export interface BoardFont {
+  family: string;
+  /** "400", "700", "100 900" (a variable font's range)… */
+  weight?: string;
+  style?: string;
+  /** The font file (woff2, woff, ttf or otf), in the library. */
+  src: string;
+  unicodeRange?: string;
+}
+
 export interface Board {
   id: string;
   name: string;
@@ -99,6 +113,8 @@ export interface Board {
   working?: Record<string, string>;
   /** The agents that have worked on the board, by `BoardAgent.key`: who to tell about a comment. */
   agents?: Record<string, BoardAgent>;
+  /** Typefaces the board carries (see BoardFont). */
+  fonts?: BoardFont[];
 }
 
 /**
@@ -1249,6 +1265,25 @@ export function tokenCss(board: Board): string {
   return board.tokens.map((t) => `${t.name}:${t.value}`).join(";");
 }
 
+const fontKey = (f: BoardFont) => [f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.unicodeRange ?? ""].join("|");
+const FONT_FORMAT: Record<string, string> = { woff2: "woff2", woff: "woff", ttf: "truetype", otf: "opentype" };
+
+/** The board's own typefaces as @font-face rules, their files from `src` (a URL the page can load). */
+export function fontFaceCss(board: Board, src: (file: string) => string): string {
+  const q = (v: string) => `"${v.replace(/["\\\n]/g, "")}"`;
+  return (board.fonts ?? [])
+    .map((f) => {
+      const ext = /\.(\w+)(?:[?#]|$)/.exec(f.src)?.[1]?.toLowerCase() ?? "";
+      const format = FONT_FORMAT[ext] ? ` format("${FONT_FORMAT[ext]}")` : "";
+      const parts = [`font-family:${q(f.family)}`, `src:url(${q(src(f.src))})${format}`, `font-display:block`];
+      if (f.weight && /^[\d\s]+$|^(normal|bold)$/.test(f.weight)) parts.push(`font-weight:${f.weight}`);
+      if (f.style && /^(normal|italic|oblique)/.test(f.style)) parts.push(`font-style:${f.style}`);
+      if (f.unicodeRange && /^[U+0-9A-Fa-f?,\s-]+$/.test(f.unicodeRange)) parts.push(`unicode-range:${f.unicodeRange}`);
+      return `@font-face{${parts.join(";")}}`;
+    })
+    .join("");
+}
+
 /** The font families a set of layers uses (the first name of each font-family list). */
 export function fontFamilies(board: Board, ids: string[]): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
@@ -1284,10 +1319,15 @@ export const GENERIC_FONTS = new Set([
   "palatino", "baskerville", "didot", "american typewriter", "inherit", "initial",
 ]);
 
-/** Google Fonts stylesheets for families the Mac may not have. A family Google doesn't know just doesn't load. */
-export function fontLinks(families: Map<string, Set<string>>): string[] {
+/**
+ * Google Fonts stylesheets for families the Mac may not have. A family Google doesn't know just doesn't
+ * load. Families the board carries itself (`own`, from board.fonts) aren't asked for.
+ */
+export function fontLinks(families: Map<string, Set<string>>, own: BoardFont[] = []): string[] {
   const links: string[] = [];
+  const carried = new Set(own.map((f) => f.family.toLowerCase()));
   for (const [family, weights] of families) {
+    if (carried.has(family.toLowerCase())) continue;
     const name = encodeURIComponent(family).replace(/%20/g, "+");
     links.push(`https://fonts.googleapis.com/css2?family=${name}&display=block`);
     for (const w of weights) links.push(`https://fonts.googleapis.com/css2?family=${name}:wght@${w}&display=block`);
@@ -1424,6 +1464,8 @@ export type Op =
   | { op: "movePage"; id: string; index: number }
   /** Set a design token (null removes it). */
   | { op: "token"; name: string; value: string | null; index?: number }
+  /** Add a typeface to the board, or (remove) take it off. One per family, weight, style and range. */
+  | { op: "font"; font: BoardFont; remove?: boolean }
   | { op: "rename"; name: string }
   /** Mark artboards as being worked on by an agent (null clears them; no ids clears all). */
   | { op: "working"; ids?: string[]; at: string | null }
@@ -1630,6 +1672,24 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           if (i >= 0) board.tokens.splice(i, 1);
         } else if (i >= 0) board.tokens[i] = { name, value: op.value };
         else board.tokens.splice(op.index ?? board.tokens.length, 0, { name, value: op.value });
+        break;
+      }
+      case "font": {
+        const f = op.font;
+        if (!f?.family || !f.src) throw new OpError("A font needs a family and a file (src).");
+        const fonts = (board.fonts ??= []);
+        const same = (x: BoardFont) => fontKey(x) === fontKey(f);
+        const i = fonts.findIndex(same);
+        if (op.remove) {
+          if (i >= 0) {
+            undo.push({ op: "font", font: fonts[i] });
+            fonts.splice(i, 1);
+          }
+        } else if (i < 0) {
+          fonts.push({ ...f });
+          undo.push({ op: "font", font: f, remove: true });
+        }
+        if (!fonts.length) delete board.fonts;
         break;
       }
       case "rename":

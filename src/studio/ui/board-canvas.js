@@ -2,7 +2,7 @@
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -120,7 +120,18 @@ const loaded = new Set();
 function useFonts(board, page) {
   useEffect(() => {
     if (!board || !page) return;
-    for (const href of fontLinks(fontFamilies(board, page.children))) {
+    // The board's own typefaces (a website's, brought in with it), from the library.
+    const faces = fontFaceCss(board, srcUrl);
+    let own = document.getElementById("bd-fonts");
+    if (faces || own) {
+      own ??= Object.assign(document.createElement("style"), { id: "bd-fonts" });
+      if (!own.isConnected) document.head.appendChild(own);
+      if (own.textContent !== faces) {
+        own.textContent = faces;
+        document.fonts.ready.then(notify);
+      }
+    }
+    for (const href of fontLinks(fontFamilies(board, page.children), board.fonts)) {
       if (loaded.has(href)) continue;
       loaded.add(href);
       const l = document.createElement("link");
@@ -130,7 +141,7 @@ function useFonts(board, page) {
       document.head.appendChild(l);
     }
     // Looked for again only when the layers change: not at every frame of a pan or a pinch.
-  }, [board?.nodes, board?.tokens, page]);
+  }, [board?.nodes, board?.tokens, board?.fonts, page]);
 }
 
 function svgMarkup(svg, overflow) {

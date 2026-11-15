@@ -1,6 +1,7 @@
 // Scenes: every design saves itself as you work. The switcher by the scene name lists them in a
 // popover; the Scenes page (⇧⌘O) lists them all, full window, like a file browser.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { openImportWebsite } from "./web-import.js";
 import { Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, aiName, fileUrl, persistPrefs, refreshScenes, saveSceneNow, set, thumbUrl, useStore } from "./store.js";
@@ -389,7 +390,7 @@ export function ScenesPage() {
       <span class="spacer"></span>
       <div class="hstack" data-nodrag>
         ${shelf === "boards"
-          ? html`<button class="btn primary" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${14} w=${2.2} />New board</button>`
+          ? html`<button class="btn" onClick=${() => openImportWebsite()}><${Icon} n="globe" s=${14} />Import a website</button><button class="btn primary" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${14} w=${2.2} />New board</button>`
           : html`<button class="btn primary" onClick=${() => start("blank")}><${Icon} n="plus" s=${14} w=${2.2} />New design</button>`}
       </div>
     </header>
@@ -415,6 +416,10 @@ export function ScenesPage() {
           <button class="sp-start board" onClick=${() => newBoard("Untitled board")}>
             <span class="ico"><${Icon} n="frame" s=${18} /></span>
             <span class="txt"><b>New board</b><span>Design screens in HTML and CSS, or watch an agent do it</span></span>
+          </button>
+          <button class="sp-start board" onClick=${() => openImportWebsite()}>
+            <span class="ico"><${Icon} n="globe" s=${18} /></span>
+            <span class="txt"><b>Import a website</b><span>Bring a page onto a board as layers to change</span></span>
           </button>
         </div>
         <div class="sp-shelves" role="tablist">

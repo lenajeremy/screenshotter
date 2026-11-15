@@ -35,6 +35,7 @@ import { noteStudioFolder } from "../util/studio.js";
 import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard, validBoardId, workingNow } from "../board/store.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers, previewDocument } from "../board/render.js";
+import { importWebsite } from "../board/web-import.js";
 import { VIDEO_EXT, videoStill } from "../board/video.js";
 import { mediaInfo } from "../util/media.js";
 import { deviceImage } from "../board/device.js";
@@ -164,17 +165,17 @@ async function json<T>(req: http.IncomingMessage): Promise<T> {
 }
 
 /** Exports under way that the Studio asked to follow (`job` in the request): how far along each is. */
-const jobs = new Map<string, { started: number; fraction: number; at: number }>();
-function jobProgress(url: URL): ((f: number) => void) | undefined {
+const jobs = new Map<string, { started: number; fraction: number; at: number; step?: string }>();
+function jobProgress(url: URL): ((f: number, step?: string) => void) | undefined {
   const id = url.searchParams.get("job");
   if (!id || !/^[a-z0-9]{4,32}$/i.test(id)) return undefined;
   const now = Date.now();
   jobs.set(id, { started: now, fraction: 0, at: now });
   // Forgotten a while after they stop moving.
   for (const [k, j] of jobs) if (now - j.at > 10 * 60_000) jobs.delete(k);
-  return (f) => {
+  return (f, step) => {
     const j = jobs.get(id);
-    if (j) Object.assign(j, { fraction: Math.max(j.fraction, Math.min(1, f)), at: Date.now() });
+    if (j) Object.assign(j, { fraction: Math.max(j.fraction, Math.min(1, f)), at: Date.now(), ...(step ? { step } : {}) });
   };
 }
 
@@ -696,7 +697,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const j = jobs.get(url.searchParams.get("job") ?? "");
     if (!j) return send(200, { fraction: null });
     const elapsed = (Date.now() - j.started) / 1000;
-    return send(200, { fraction: j.fraction, elapsed, left: j.fraction > 0.02 && j.fraction < 1 ? (elapsed * (1 - j.fraction)) / j.fraction : null });
+    return send(200, { fraction: j.fraction, step: j.step, elapsed, left: j.fraction > 0.02 && j.fraction < 1 ? (elapsed * (1 - j.fraction)) / j.fraction : null });
   }
   if (req.method === "GET" && url.pathname === "/api/ai-status") return send(200, aiStatus());
   if (req.method === "GET" && url.pathname === "/docs") {
@@ -957,6 +958,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const changed = changeBoard(b.id, b.ops, "studio", b.base, { expand: false, reconcile: true });
       if (!b.ops.every((o) => o.op === "working" || o.op === "agent")) scheduleBoardThumb(b.id);
       return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale || Boolean(changed.repaired) });
+    }
+    case "/api/board/import-website": {
+      // A website onto a board (a new one, without `id`), as layers: it takes a while, so it says how far it's got.
+      const a = z.object({ id: z.string().optional(), url: z.string(), width: z.number().optional(), fullPage: z.boolean().optional(), page: z.string().optional() }).parse(await json(req));
+      const progress = jobProgress(url);
+      return send(200, await importWebsite(a.id || null, { url: a.url, width: a.width, fullPage: a.fullPage, page: a.page }, "studio", (f, step) => progress?.(f, step)));
     }
     case "/api/board/comment":
       return send(200, await commentRoute(await json(req)));

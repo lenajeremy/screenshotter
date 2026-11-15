@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { newPage } from "../render/browser.js";
-import { BOARD_CSS, fontFamilies, fontLinks, nodeHtml, pxValue, rootOf, styleText, tokenCss, type Board } from "./core.js";
+import { BOARD_CSS, fontFaceCss, fontFamilies, fontLinks, nodeHtml, pxValue, rootOf, styleText, tokenCss, type Board } from "./core.js";
 
 export interface Box {
   x: number;
@@ -26,11 +26,11 @@ const srcUrl = (src: string) => (/^(https?:|data:|blob:|file:)/i.test(src) ? src
 
 /** A page of HTML with one artboard at the top left, as the canvas draws it. */
 export function artboardDocument(board: Board, rootId: string): string {
-  const links = fontLinks(fontFamilies(board, [rootId]))
+  const links = fontLinks(fontFamilies(board, [rootId]), board.fonts)
     .map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
   const art = nodeHtml(board, rootId, { ids: true, src: srcUrl, still: true });
-  return `<!doctype html><html><head><meta charset="utf-8">${links}<style>${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">${links}<style>${fontFaceCss(board, srcUrl)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
 }
 
 /** What a layer takes from the layers around it, so a frame previewed by itself still looks as it does in place. */
@@ -52,14 +52,14 @@ export function previewDocument(board: Board, id: string, opts: { width?: number
     for (const k of INHERITED) if (p.style?.[k] && !(k in inherit)) inherit[k] = String(p.style[k]);
   const own = /^\s*[\d.]+px\s*$/.test(String(n.style?.width ?? "")) ? pxValue(n.style.width) : undefined;
   const w = Math.round(own ?? opts.width ?? 0) || undefined;
-  const links = fontLinks(fontFamilies(board, [rootOf(board, id)]))
+  const links = fontLinks(fontFamilies(board, [rootOf(board, id)]), board.fonts)
     .map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
   const body = nodeHtml(board, id, { src: opts.src });
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const page = (w ?? 0) >= PAGE_WIDTH;
   const css =
-    `${BOARD_CSS}:root{${tokenCss(board)}}html,body{margin:0}body{min-height:100vh;background:#e9e9ec;` +
+    `${fontFaceCss(board, opts.src)}${BOARD_CSS}:root{${tokenCss(board)}}html,body{margin:0}body{min-height:100vh;background:#e9e9ec;` +
     (page
       ? `}#bd-frame{width:100%;`
       : w

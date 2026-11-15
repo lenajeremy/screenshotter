@@ -53,6 +53,7 @@ import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photo
 import { adoptCssPictures, adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
 import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
+import { importWebsite } from "./web-import.js";
 import { describeAnchor, getComments, keysOf, reply, sentOnly, startThread, threadForAgent } from "./comments.js";
 
 type Content = CallToolResult["content"];
@@ -73,6 +74,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens, scale: a layer bigger or smaller with its type and spacing) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
+- An existing website: board_import_website brings a page onto a board as an artboard of ordinary layers (its layout, words, pictures and fonts, read as the browser draws it at the width you give), ready to change with board_edit like anything else. Use it to redesign or extend a real site from where it is, rather than rebuilding it by hand.
 - Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
 - Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
@@ -841,6 +843,30 @@ export function registerBoardTools(server: McpServer) {
           if (threads.length) out.push({ board: b.id, name: b.name, threads: threads.map((t) => threadForAgent(b, t, mine)) });
         }
         return [text(out.length ? out : a.all ? "No comments." : "No open comments for you (all: true lists everyone's).")];
+      }),
+  );
+
+  server.registerTool(
+    "board_import_website",
+    {
+      title: "Bring a website onto a board",
+      description:
+        "Open a website and put it on a board as an artboard of ordinary layers: its layout (flex, grid, positions), words, pictures, vectors and fonts, as the browser draws it at `width` (its breakpoints follow). The pictures and fonts are copied onto the Mac, so it keeps working offline. Then change it with board_edit, board_write_html and the rest like any artboard. Leave out `board` to make a new board named after the site. Takes 5–40 seconds.",
+      inputSchema: {
+        url: z.string().describe("The page's address, e.g. example.com or https://example.com/pricing."),
+        board: BoardRef.optional().describe("The board to put it on; left out, a new board named after the site."),
+        page: z.string().optional().describe("The page of the board to put it on (its id); default the first."),
+        width: z.number().int().min(320).max(2560).optional().describe("The window width to read it at: 1440 desktop (default), 834 tablet, 390 phone."),
+        fullPage: z.boolean().optional().describe("The whole page (default), or false for just the first screen."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = a.board ? findBoard(a.board) : null;
+        const me = await whoAmI();
+        const r = await importWebsite(b?.id ?? null, { url: a.url, width: a.width, fullPage: a.fullPage, page: a.page }, "agent");
+        changeBoard(r.board, workingOps(getBoard(r.board), [r.artboard], me), "agent");
+        return [text({ ...r, note: `It's on the board as the artboard ${r.artboard}. board_read it (tree) to find the layers, board_screenshot it to see it.` })];
       }),
   );
 
