@@ -2,7 +2,7 @@
 // type), the board's tokens when nothing is selected, and artboard sizes while drawing a frame.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, renameTokenOps, round, serializeSvg, sizeWord, styleText, subtree, vectorName, videoSettings } from "./board-core.js";
-import { B, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, scalePlan, shiftSteps, toggleVideo, useVideo, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
 import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
@@ -52,7 +52,7 @@ const px = (v) => pxValue(v);
 const isAbsolute = (n) => n.style.position === "absolute" || n.style.position === "fixed";
 
 export function Inspector() {
-  const b = useBoard();
+  const b = useBoard(CANVAS_ONLY);
   const list = ids();
   if (!list.length) return b.tool === "frame" ? html`<${FramePresets} />` : html`<${BoardPanel} />`;
   const n = node(list[0]);
@@ -148,7 +148,6 @@ function PartSection() {
   const list = partIds();
   const id = list[0];
   const n = node(id);
-  const z = B.view.z;
   const box = worldBox(id);
   const root = svgOf(id);
   const rb = root ? worldBox(root) : { x: 0, y: 0 };
@@ -160,7 +159,8 @@ function PartSection() {
     if (k === "x" || k === "y") return commit(shiftSteps(list, k === "x" ? v - at.x : 0, k === "y" ? v - at.y : 0), { key: `vpos:${k}:${list.join()}`, label: "Move" });
     const sp = vectorSpace(id);
     if (!sp) return;
-    const to = { ...sp.from, [k === "w" ? "width" : "height"]: Math.max(0.1, v) * z };
+    // The zoom as it is now (the panel doesn't redraw as the view moves).
+    const to = { ...sp.from, [k === "w" ? "width" : "height"]: Math.max(0.1, v) * B.view.z };
     commit([vectorStep(n, sp, to)], { key: `vsize:${k}:${id}`, label: "Resize" });
   };
   const stroke = shared((m) => attrOf(m, "stroke") ?? "");
@@ -354,7 +354,7 @@ function scaleTo(factor, live) {
 }
 
 function ScaleSection() {
-  const b = useBoard();
+  const b = useBoard(CANVAS_ONLY);
   const boxes = ids().map(worldBox).filter(Boolean);
   if (!boxes.length) return null;
   const x0 = Math.min(...boxes.map((r) => r.x));
@@ -1277,7 +1277,7 @@ function CssSection() {
 const MCP_COMMAND = "claude mcp add screenshotter --scope user -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp";
 
 function BoardPanel() {
-  const b = useBoard();
+  const b = useBoard(CANVAS_ONLY);
   const page = currentPage();
   const [adding, setAdding] = useState(false);
   const tokens = b.board.tokens;

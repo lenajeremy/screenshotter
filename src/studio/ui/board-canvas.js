@@ -3,7 +3,7 @@
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
-import { B, bset, commit, currentPage, node, notify, preview, select, useMeasure } from "./board-state.js";
+import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { fileUrl, toast } from "./store.js";
@@ -264,7 +264,8 @@ export async function finishText(id, el) {
 
 export function BoardCanvas() {
   const ref = useRef();
-  const b = B;
+  // The canvas follows everything, the view and the pointer included (the panels around it don't).
+  const b = useBoard();
   const page = currentPage();
   useFonts(b.board, page);
   useLayoutEffect(() => {

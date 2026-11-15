@@ -47,23 +47,45 @@ export const B = {
   talk: "",
 };
 
-const listeners = new Set();
+// Each component that draws from the board, and the keys of B it doesn't draw from (null: it
+// draws from all of them). A frame in which only those keys changed (the view while panning, the
+// layer under the pointer) leaves it alone: the panels don't redraw 60 times a second for nothing.
+const listeners = new Map();
 let frame = 0;
-export function notify() {
+/** What changed since the last frame: every key (a change made to B directly), or these keys. */
+let changedAll = false;
+const changed = new Set();
+/** Redraw at the next frame. `keys` names what changed; without it, anything may have. */
+export function notify(keys) {
+  if (keys) for (const k of keys) changed.add(k);
+  else changedAll = true;
   if (frame) return;
   frame = requestAnimationFrame(() => {
     frame = 0;
-    for (const l of listeners) l();
+    const all = changedAll;
+    const keys = [...changed];
+    changedAll = false;
+    changed.clear();
+    for (const [l, ignore] of listeners) if (all || !ignore || keys.some((k) => !ignore.has(k))) l();
   });
 }
 export function bset(patch) {
-  Object.assign(B, typeof patch === "function" ? patch(B) : patch);
-  notify();
+  const p = typeof patch === "function" ? patch(B) : patch;
+  Object.assign(B, p);
+  // bset({}) asks for a redraw of everything (something outside B changed).
+  const keys = Object.keys(p ?? {});
+  notify(keys.length ? keys : undefined);
 }
-export function useBoard() {
+/** The keys of B that (nearly) only the canvas draws from, changing many times a second as the pointer moves. */
+export const CANVAS_ONLY = ["view", "hover", "guides", "drop"];
+/**
+ * Redraw the calling component whenever the board changes, except for changes to only the keys it
+ * says it `ignore`s.
+ */
+export function useBoard(ignore) {
   const [, force] = useReducer((n) => n + 1, 0);
   useEffect(() => {
-    listeners.add(force);
+    listeners.set(force, ignore ? new Set(ignore) : null);
     return () => listeners.delete(force);
   }, []);
   return B;

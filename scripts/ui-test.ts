@@ -321,6 +321,32 @@ const styleOf = (t: { id: string }, id: string) => boards.getBoard(t.id).nodes[i
 const nodeOf = (t: { id: string }, id: string) => boards.getBoard(t.id).nodes[id];
 const sel = (page: Page, ids: string[]) => S(page, async (ids: string[]) => (await import("/ui/board-state.js" as string)).select(ids), ids);
 
+/** How many times each named component drew while `act` ran (and for two frames after). */
+async function drawsDuring(page: Page, names: string[], act: () => Promise<unknown>): Promise<Record<string, number>> {
+  await S(page, async (names: string[]) => {
+    const { options } = await import("/ui/vendor/preact.js" as string);
+    const w = window as unknown as { __draws: Record<string, number> | null; __drawHook?: boolean };
+    w.__draws = Object.fromEntries(names.map((n) => [n, 0]));
+    if (w.__drawHook) return;
+    w.__drawHook = true;
+    // Preact calls options.__r just before a component's render function runs.
+    const prev = options.__r;
+    options.__r = (v: { type: unknown }) => {
+      const n = typeof v.type === "function" ? (v.type as { name: string }).name : "";
+      if (w.__draws && n in w.__draws) w.__draws[n]++;
+      prev?.(v);
+    };
+  }, names);
+  await act();
+  return S(page, async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const w = window as unknown as { __draws: Record<string, number> | null };
+    const d = w.__draws!;
+    w.__draws = null;
+    return d;
+  });
+}
+
 const CHECKS: Record<string, Check> = {
   // From the 0.14 review of the board editor.
   async "board review: typing then clicking another layer row keeps the words"(page) {
@@ -1602,6 +1628,71 @@ const CHECKS: Record<string, Check> = {
     const moved = await state();
     const handed = moved.shot === 2 && moved.devices[1].length === 0 && moved.devices[2].length === 1 && Math.abs(moved.devices[2][0] - 0.5) < 0.15;
     return /Across 1 & 2/.test(label) && onSeam && handed ? "ok" : `label "${label}", across ${JSON.stringify(across)}, moved ${JSON.stringify(moved)}`;
+  },
+  // Smoothness: what moves with the pointer redraws, and nothing else does.
+  async "on a board, panning, pinching and the pointer redraw the canvas, not the panels"(page) {
+    const t = await openTestBoard(page);
+    await sel(page, [t.byName("Two")]);
+    await page.waitForTimeout(300);
+    const PANELS = ["BoardApp", "PagesList", "LayersList", "Inspector"];
+    // The pointer over another layer: its outline on the canvas and its row in the list draw
+    // again, nothing else.
+    const one = await boxOf(page, t.byName("One"));
+    const hovered = await drawsDuring(page, [...PANELS, "Row"], async () => {
+      await page.mouse.move(one.x + one.width / 2, one.y + one.height / 2);
+      await page.waitForTimeout(150);
+    });
+    const shown = await S(page, async () => {
+      const hover = (await import("/ui/board-state.js" as string)).B.hover as string | null;
+      return { hover, box: Boolean(document.querySelector(".bd-hover")), row: Boolean(hover && document.querySelector(`.bd-row.hover[data-lid="${hover}"]`)) };
+    });
+    if (hovered.BoardApp || hovered.PagesList || hovered.Inspector || !hovered.LayersList || hovered.Row !== 1) return `the pointer drew ${JSON.stringify(hovered)}`;
+    if (!shown.hover || !shown.box || !shown.row) return `hovering a layer shows ${JSON.stringify(shown)}`;
+    // Two-finger scrolls and pinches: the canvas and the zoom in the bar follow; the panels stay.
+    const moved = await drawsDuring(page, [...PANELS, "BoardCanvas", "BoardTopbar"], () =>
+      S(page, async () => {
+        const c = document.querySelector(".bd-canvas")!;
+        const r = c.getBoundingClientRect();
+        for (let i = 0; i < 6; i++) {
+          c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: r.left + 300, clientY: r.top + 300, deltaX: 8, deltaY: 5 }));
+          await new Promise((f) => requestAnimationFrame(f));
+          c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: r.left + 300, clientY: r.top + 300, ctrlKey: true, deltaY: -4 }));
+          await new Promise((f) => requestAnimationFrame(f));
+        }
+      }),
+    );
+    if (PANELS.some((n) => moved[n]) || !moved.BoardCanvas || !moved.BoardTopbar) return `panning and pinching drew ${JSON.stringify(moved)}`;
+    const zoom = await S(page, async () => ({ shown: document.querySelector(".bd-zoom")?.textContent?.trim(), z: (await import("/ui/board-state.js" as string)).B.view.z as number }));
+    if (zoom.shown !== `${Math.round(zoom.z * 100)}%`) return `the bar shows ${zoom.shown} at a zoom of ${zoom.z}`;
+    return "ok";
+  },
+  async "on a board, a vector part's size typed after zooming is in the board's units"(page) {
+    const b = boards.createBoard("Vector zoom test", "studio");
+    const made = boardCore.addHtmlOps(`<div data-name="Card" style="width:360px;height:240px;background:#fff;position:relative"><svg data-name="Art" style="position:absolute;left:20px;top:20px;width:320px;height:200px" viewBox="0 0 160 100"><rect data-name="Box" x="10" y="10" width="40" height="30" fill="#0a84ff"/></svg></div>`, null, { page: b.pages[0].id });
+    boards.changeBoard(b.id, made.ops, "studio");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+    await page.waitForSelector(".bd-world [data-bid]");
+    await page.waitForTimeout(900);
+    const box = Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === "Box")!.id;
+    await sel(page, [box]);
+    await page.waitForTimeout(300);
+    // Pinch: the panel isn't drawn again for it, so what it does must read the zoom as it is now.
+    await S(page, async () => {
+      const c = document.querySelector(".bd-canvas")!;
+      const r = c.getBoundingClientRect();
+      for (let i = 0; i < 5; i++) {
+        c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: r.left + 200, clientY: r.top + 200, ctrlKey: true, deltaY: -12 }));
+        await new Promise((f) => requestAnimationFrame(f));
+      }
+    });
+    await page.waitForTimeout(300);
+    const w = page.locator(".bd-right .num").filter({ has: page.locator(".scrub", { hasText: /^W$/ }) }).locator("input");
+    await w.fill("60");
+    await w.press("Enter");
+    await page.waitForTimeout(500);
+    // The svg is drawn at 2×: 60 on the board is 30 of its own units.
+    const width = Number(boards.getBoard(b.id).nodes[box].attrs!.width);
+    return Math.abs(width - 30) < 0.6 ? "ok" : `typing W 60 after zooming made the rect ${width} wide in its own units, not 30`;
   },
   async "the scratchpad comes first among the boards, and stays"(page) {
     boards.createBoard("A newer board", "studio");

@@ -1,8 +1,9 @@
 // The board editor: a design tool where agents and people work on the same HTML and CSS. Pages and
 // layers on the left, the canvas in the middle, the layer's CSS (in words) on the right.
+import { Component } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
-import { B, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AssetsPanel } from "./board-assets.js";
@@ -18,7 +19,9 @@ const mod = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
 // The shell
 
 export function BoardApp() {
-  const b = useBoard();
+  // The shell redraws for what it shows; the canvas, the zoom and the layer list follow the view
+  // and the pointer on their own.
+  const b = useBoard(CANVAS_ONLY);
   useEffect(() => {
     addEventListener("keydown", onKey);
     addEventListener("copy", onCopy);
@@ -57,7 +60,8 @@ const TOOLS = [
 ];
 
 function BoardTopbar() {
-  const b = useBoard();
+  // It shows the zoom, so it follows the view (not the pointer).
+  const b = useBoard(["hover", "guides", "drop"]);
   const exportBtn = useRef();
   const zoomBtn = useRef();
   const [exporting, setExporting] = useState(false);
@@ -149,7 +153,7 @@ function ExportPopover({ anchor, onClose }) {
 // Pages
 
 function PagesList() {
-  const b = useBoard();
+  const b = useBoard(CANVAS_ONLY);
   const [renaming, setRenaming] = useState(null);
   const add = () => {
     const id = newId();
@@ -217,14 +221,16 @@ export function layerIcon(n, b = B.board) {
 }
 
 function LayersList() {
-  const b = useBoard();
+  // Its rows show the layer under the pointer and where a dragged one would go, not the view.
+  const b = useBoard(["view", "guides"]);
   const page = currentPage();
   const ref = useRef();
   const rows = [];
+  const picked = new Set(b.sel);
   const walk = (id, depth) => {
     const n = b.board.nodes[id];
     if (!n) return;
-    rows.push({ id, depth, n });
+    rows.push({ id, depth, n, on: picked.has(id), open: b.open.has(id), hovered: b.hover === id, renaming: b.renaming === id });
     if (n.children?.length && b.open.has(id)) for (const c of n.children) walk(c, depth + 1);
   };
   for (const id of page?.children ?? []) walk(id, 0);
@@ -236,7 +242,7 @@ function LayersList() {
   return html`<section class="bd-layers" ref=${ref}>
     <div class="bd-head"><h3>Layers</h3></div>
     <div class="bd-rows" onPointerDown=${layerDown}>
-      ${rows.length ? rows.map((r) => html`<${LayerRow} key=${r.id} ...${r} />`) : html`<p class="bd-hint">Layers you draw, paste or an agent writes appear here.</p>`}
+      ${rows.length ? rows.map((r) => html`<${Row} key=${r.id} ...${r} />`) : html`<p class="bd-hint">Layers you draw, paste or an agent writes appear here.</p>`}
       ${b.drop?.layer && html`<div class="bd-row-drop ${b.drop.layer.inside ? "inside" : ""}" style=${{ top: b.drop.layer.y + "px", left: b.drop.layer.x + "px" }}></div>`}
     </div>
   </section>`;
@@ -245,9 +251,22 @@ function LayersList() {
 /** How far each level of the layer list steps in: the chevron (16) and the gap after it (4). */
 const INDENT = 20;
 
-function LayerRow({ id, depth, n }) {
-  const on = B.sel.includes(id);
-  const open = B.open.has(id);
+/**
+ * A row redraws only when what it shows changed: its layer (every change gives a layer a new
+ * object), its depth, or whether it's selected, open, under the pointer or being renamed. A list of
+ * hundreds of layers then costs next to nothing when the pointer moves or one layer is dragged.
+ */
+class Row extends Component {
+  shouldComponentUpdate(next) {
+    const p = this.props;
+    return next.n !== p.n || next.depth !== p.depth || next.on !== p.on || next.open !== p.open || next.hovered !== p.hovered || next.renaming !== p.renaming;
+  }
+  render(props) {
+    return LayerRow(props);
+  }
+}
+
+function LayerRow({ id, depth, n, on, open, hovered, renaming }) {
   const toggle = (e) => {
     e.stopPropagation();
     const o = new Set(B.open);
@@ -256,7 +275,7 @@ function LayerRow({ id, depth, n }) {
   };
   const name = n.type === "text" && /^Text$|^Text \d+$/.test(n.name) ? plainText(n.text).slice(0, 40) || n.name : n.name;
   // Each level steps in by the chevron and its gap, so a layer's chevron sits under its parent's icon.
-  return html`<div class="bd-row ${on ? "on" : ""} ${B.hover === id ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ paddingLeft: 6 + depth * INDENT + "px" }}
+  return html`<div class="bd-row ${on ? "on" : ""} ${hovered ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ paddingLeft: 6 + depth * INDENT + "px" }}
       onPointerEnter=${() => bset({ hover: id })} onPointerLeave=${() => B.hover === id && bset({ hover: null })}
       onDblClick=${(e) => (e.stopPropagation(), bset({ renaming: id }))}
       onContextMenu=${(e) => {
@@ -266,7 +285,7 @@ function LayerRow({ id, depth, n }) {
       }}>
     ${n.children?.length ? html`<button class="tw ${open ? "open" : ""}" onPointerDown=${(e) => e.stopPropagation()} onClick=${toggle} aria-label=${open ? "Close" : "Open"}><${Icon} n="right" s=${11} w=${2} /></button>` : html`<span class="tw"></span>`}
     <span class="ico"><${Icon} n=${layerIcon(n)} s=${14} /></span>
-    ${B.renaming === id
+    ${renaming
       ? html`<${NameInput} value=${n.name} onDone=${(v) => (bset({ renaming: null }), v && v !== n.name && commit([{ op: "set", id, name: v }], { label: "Rename" }))} />`
       : html`<span class="nm">${name}</span>`}
     <span class="acts">

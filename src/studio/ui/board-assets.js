@@ -4,7 +4,7 @@
 // onto the canvas.
 import { useEffect, useState } from "preact/hooks";
 import { htmlToNodes, instanceRootOf, newId, pxValue } from "./board-core.js";
-import { B, commit, currentPage, node, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, commit, currentPage, node, useBoard } from "./board-state.js";
 import { canvasEl, placeNew, toWorld, worldBox } from "./board-canvas.js";
 import { placeCopy } from "./board.js";
 import { Section, html } from "./controls.js";
@@ -170,7 +170,7 @@ function ShapeTile({ k, tint }) {
 }
 
 export function AssetsPanel() {
-  const b = useBoard();
+  const b = useBoard(CANVAS_ONLY);
   const s = useStore();
   const [tint, setTint] = useState(() => localStorage.getItem("board:tint") || "#ff3b30");
   const [pictures, setPictures] = useState([]);
