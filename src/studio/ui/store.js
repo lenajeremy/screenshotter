@@ -164,24 +164,45 @@ export const S = {
   future: [],
 };
 
-const listeners = new Set();
+// Each component that draws from the store, and the keys it doesn't draw from (null: none).
+const listeners = new Map();
 let frame = 0;
-function notify() {
+/** What changed since the last frame: anything (a change made to S directly), or these keys. */
+let changedAll = false;
+const changed = new Set();
+function notify(keys) {
+  if (keys) for (const k of keys) changed.add(k);
+  else changedAll = true;
   if (frame) return;
   frame = requestAnimationFrame(() => {
     frame = 0;
-    for (const l of listeners) l();
+    const all = changedAll;
+    const keys = [...changed];
+    changedAll = false;
+    changed.clear();
+    for (const [l, ignore] of listeners) if (all || !ignore || keys.some((k) => !ignore.has(k))) l();
   });
 }
 export function set(patch) {
-  Object.assign(S, typeof patch === "function" ? patch(S) : patch);
-  notify();
+  const p = typeof patch === "function" ? patch(S) : patch;
+  Object.assign(S, p);
+  // set({}) asks for a redraw of everything (something outside S changed).
+  const keys = Object.keys(p ?? {});
+  notify(keys.length ? keys : undefined);
 }
-/** Re-render the calling component whenever the store changes. */
-export function useStore() {
+/**
+ * What only the canvas draws: the item under the pointer. It changes as the pointer crosses the
+ * design, and the rest of the app (panels, timeline, library) needn't redraw for it.
+ */
+const POINTER_ONLY = new Set(["hover"]);
+/**
+ * Re-render the calling component whenever the store changes: anything but the pointer's item,
+ * unless `pointer` says it draws that too.
+ */
+export function useStore(pointer = false) {
   const [, force] = useReducer((n) => n + 1, 0);
   useEffect(() => {
-    listeners.add(force);
+    listeners.set(force, pointer ? null : POINTER_ONLY);
     return () => listeners.delete(force);
   }, []);
   return S;
@@ -582,9 +603,16 @@ export function saveSceneNow() {
 }
 /** A change to the scene is waiting to be saved. */
 export const savePending = () => Boolean(sceneTimer);
+/**
+ * Whether a list from the engine is the one the app already has. The app polls for the library's
+ * scenes, files and boards; when nothing changed it doesn't redraw for them (a redraw of the whole
+ * app every few seconds, mid-drag as often as not).
+ */
+export const sameList = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+
 export async function refreshScenes() {
   const scenes = await api("/api/scenes").catch(() => null);
-  if (scenes) set({ scenes: scenes.map((x) => ({ ...x, at: Date.now() })) });
+  if (scenes && !sameList(scenes, S.scenes.map(({ at, ...x }) => x))) set({ scenes: scenes.map((x) => ({ ...x, at: Date.now() })) });
   return S.scenes;
 }
 /**
@@ -659,7 +687,8 @@ export async function restore() {
 
 export async function refreshFiles() {
   const files = await api("/api/files");
-  set({ files, filesAt: Date.now() });
+  if (sameList(files, S.files)) S.filesAt = Date.now();
+  else set({ files, filesAt: Date.now() });
   return files;
 }
 

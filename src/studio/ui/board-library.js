@@ -4,14 +4,14 @@ import { useEffect, useState } from "preact/hooks";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
-import { api, fail, fileUrl, set, toast, useStore } from "./store.js";
+import { S, api, fail, fileUrl, sameList, set, toast, useStore } from "./store.js";
 import { confirmDialog } from "./actions.js";
 import { newBoard, openBoard } from "./board-state.js";
 import { when } from "./scenes.js";
 
 export async function refreshBoards() {
   const boards = await api("/api/boards").catch(() => null);
-  if (boards) set({ boards });
+  if (boards && !sameList(boards, S.boards)) set({ boards });
   return boards;
 }
 

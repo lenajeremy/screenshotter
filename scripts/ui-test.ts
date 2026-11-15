@@ -11,7 +11,7 @@
  *
  * Needs Playwright's browsers once: npx playwright install chromium webkit
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium, webkit, type Browser, type Page } from "playwright";
@@ -1693,6 +1693,40 @@ const CHECKS: Record<string, Check> = {
     // The svg is drawn at 2×: 60 on the board is 30 of its own units.
     const width = Number(boards.getBoard(b.id).nodes[box].attrs!.width);
     return Math.abs(width - 30) < 0.6 ? "ok" : `typing W 60 after zooming made the rect ${width} wide in its own units, not 30`;
+  },
+  async "on the canvas, the pointer over an item redraws the canvas, not the panels"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
+    await page.waitForTimeout(1500);
+    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
+    const draws = await drawsDuring(page, ["App", "Topbar", "Rail", "LeftPanel", "Inspector", "CanvasView"], async () => {
+      await page.mouse.move(dev.x + dev.width / 2, dev.y + dev.height / 2);
+      await page.waitForTimeout(150);
+    });
+    const box = await S(page, () => Boolean(document.querySelector(".stage .hover-box")));
+    if (draws.App || draws.Topbar || draws.Rail || draws.LeftPanel || draws.Inspector || !draws.CanvasView) return `the pointer drew ${JSON.stringify(draws)}`;
+    return box ? "ok" : "no outline round the item under the pointer";
+  },
+  async "polling the library for scenes, files and boards redraws nothing when nothing changed"(page) {
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
+    await page.waitForTimeout(1500);
+    const poll = () =>
+      S(page, async () => {
+        const st = await import("/ui/store.js" as string);
+        await st.refreshScenes();
+        await st.refreshFiles();
+        await (await import("/ui/board-library.js" as string)).refreshBoards();
+      });
+    await poll();
+    await page.waitForTimeout(300);
+    const draws = await drawsDuring(page, ["App"], poll);
+    if (draws.App) return `polling with nothing new redrew the app ${draws.App} times`;
+    // Something new does show.
+    const fresh = path.join(LIB, "raw", "poll-new.png");
+    mkdirSync(path.dirname(fresh), { recursive: true });
+    writeFileSync(fresh, readFileSync(unused));
+    const next = await drawsDuring(page, ["App"], poll);
+    rmSync(fresh, { force: true });
+    return next.App ? "ok" : "a new capture in the library didn't redraw the app";
   },
   async "the scratchpad comes first among the boards, and stays"(page) {
     boards.createBoard("A newer board", "studio");

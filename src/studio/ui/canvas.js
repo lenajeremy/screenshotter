@@ -699,7 +699,8 @@ function FinishedLook({ got, show }) {
 }
 
 export function CanvasView() {
-  const s = useStore();
+  // The canvas draws the item under the pointer (the rest of the app doesn't).
+  const s = useStore(true);
   const layout = s.layout;
   const vp = useRef();
   const art = useRef();
