@@ -61,7 +61,7 @@ const TOOLS = [
 
 function BoardTopbar() {
   // It shows the zoom, so it follows the view (not the pointer).
-  const b = useBoard(["hover", "guides", "drop"]);
+  const b = useBoard(["hover", "guides", "drop", "words"]);
   const exportBtn = useRef();
   const zoomBtn = useRef();
   const [exporting, setExporting] = useState(false);
@@ -222,7 +222,7 @@ export function layerIcon(n, b = B.board) {
 
 function LayersList() {
   // Its rows show the layer under the pointer and where a dragged one would go, not the view.
-  const b = useBoard(["view", "guides"]);
+  const b = useBoard(["view", "guides", "words"]);
   const page = currentPage();
   const ref = useRef();
   const rows = [];

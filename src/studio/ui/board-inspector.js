@@ -10,6 +10,9 @@ import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider,
 import { Icon } from "./icons.js";
 import { api, fail, fileUrl, toast } from "./store.js";
 
+/** What the panel doesn't draw from: the view and the pointer (it does show the words picked in a text). */
+const PANEL_SKIPS = CANVAS_ONLY.filter((k) => k !== "words");
+
 // "Make a token" in a colour picker adds the token and puts it in the field as one step of undo:
 // the token waits here for the field's own change, which comes straight after it.
 const pendingTokens = [];
@@ -52,7 +55,7 @@ const px = (v) => pxValue(v);
 const isAbsolute = (n) => n.style.position === "absolute" || n.style.position === "fixed";
 
 export function Inspector() {
-  const b = useBoard(CANVAS_ONLY);
+  const b = useBoard(PANEL_SKIPS);
   const list = ids();
   if (!list.length) return b.tool === "frame" ? html`<${FramePresets} />` : html`<${BoardPanel} />`;
   const n = node(list[0]);
@@ -354,7 +357,7 @@ function scaleTo(factor, live) {
 }
 
 function ScaleSection() {
-  const b = useBoard(CANVAS_ONLY);
+  const b = useBoard(PANEL_SKIPS);
   const boxes = ids().map(worldBox).filter(Boolean);
   if (!boxes.length) return null;
   const x0 = Math.min(...boxes.map((r) => r.x));
@@ -1277,7 +1280,7 @@ function CssSection() {
 const MCP_COMMAND = "claude mcp add screenshotter --scope user -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp";
 
 function BoardPanel() {
-  const b = useBoard(CANVAS_ONLY);
+  const b = useBoard(PANEL_SKIPS);
   const page = currentPage();
   const [adding, setAdding] = useState(false);
   const tokens = b.board.tokens;

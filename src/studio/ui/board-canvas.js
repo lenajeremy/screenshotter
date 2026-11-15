@@ -200,7 +200,9 @@ function EditableText({ id, style }) {
       const inside = r && ref.current?.contains(r.commonAncestorContainer);
       const was = Boolean(words.range && !words.range.collapsed);
       if (inside) words.range = r.cloneRange();
-      if (Boolean(words.range && !words.range.collapsed) !== was || inside) notify();
+      // The canvas (the text's box grows as it's typed) and the panel's bold and italic follow;
+      // the layer list and the rest of the editor don't, at every key and every pointer move.
+      if (Boolean(words.range && !words.range.collapsed) !== was || inside) notify(["words"]);
     };
     document.addEventListener("selectionchange", onSel);
     return () => {

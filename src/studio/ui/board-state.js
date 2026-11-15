@@ -76,8 +76,11 @@ export function bset(patch) {
   const keys = Object.keys(p ?? {});
   notify(keys.length ? keys : undefined);
 }
-/** The keys of B that (nearly) only the canvas draws from, changing many times a second as the pointer moves. */
-export const CANVAS_ONLY = ["view", "hover", "guides", "drop"];
+/**
+ * What (nearly) only the canvas draws from, changing many times a second as the pointer moves:
+ * keys of B, and "words", the words picked in a text being typed in (for the inspector).
+ */
+export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "words"];
 /**
  * Redraw the calling component whenever the board changes, except for changes to only the keys it
  * says it `ignore`s.

@@ -1666,6 +1666,29 @@ const CHECKS: Record<string, Check> = {
     if (zoom.shown !== `${Math.round(zoom.z * 100)}%`) return `the bar shows ${zoom.shown} at a zoom of ${zoom.z}`;
     return "ok";
   },
+  async "on a board, picking words in a text being typed in redraws the canvas and the panel, not the layer list"(page) {
+    const t = await openTestBoard(page);
+    const two = t.byName("Two");
+    await S(page, async (id: string) => (await import("/ui/board.js" as string)).startTextEdit(id), two);
+    await page.waitForTimeout(400);
+    const draws = await drawsDuring(page, ["BoardApp", "PagesList", "LayersList", "BoardTopbar", "Inspector", "BoardCanvas"], () =>
+      S(page, async (id: string) => {
+        const text = document.querySelector(`.bd-world [data-bid="${id}"]`)!.firstChild!;
+        for (let i = 1; i <= 2; i++) {
+          const r = document.createRange();
+          r.setStart(text, 0);
+          r.setEnd(text, i);
+          getSelection()!.removeAllRanges();
+          getSelection()!.addRange(r);
+          await new Promise((f) => setTimeout(f, 120));
+        }
+      }, two),
+    );
+    if (draws.BoardApp || draws.PagesList || draws.LayersList || draws.BoardTopbar || !draws.Inspector || !draws.BoardCanvas) return `picking words drew ${JSON.stringify(draws)}`;
+    // The panel's word buttons follow: picked words can be made bold.
+    const bold = await S(page, () => [...document.querySelectorAll(".bd-right .bd-word")].some((b) => !(b as HTMLButtonElement).disabled));
+    return bold ? "ok" : "with words picked, the panel's word buttons stay off";
+  },
   async "on a board, a vector part's size typed after zooming is in the board's units"(page) {
     const b = boards.createBoard("Vector zoom test", "studio");
     const made = boardCore.addHtmlOps(`<div data-name="Card" style="width:360px;height:240px;background:#fff;position:relative"><svg data-name="Art" style="position:absolute;left:20px;top:20px;width:320px;height:200px" viewBox="0 0 160 100"><rect data-name="Box" x="10" y="10" width="40" height="30" fill="#0a84ff"/></svg></div>`, null, { page: b.pages[0].id });
