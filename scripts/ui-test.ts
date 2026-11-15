@@ -1826,17 +1826,32 @@ const CHECKS: Record<string, Check> = {
   async "polling the library for scenes, files and boards redraws nothing when nothing changed"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
     await page.waitForTimeout(1500);
+    // One poll of each: which lists the store was given again though they hadn't changed.
     const poll = () =>
       S(page, async () => {
         const st = await import("/ui/store.js" as string);
+        const was = { scenes: st.S.scenes, files: st.S.files, boards: st.S.boards };
+        const text = JSON.stringify([was.scenes.map(({ at, ...x }: { at: number }) => x), was.files, was.boards]);
         await st.refreshScenes();
         await st.refreshFiles();
         await (await import("/ui/board-library.js" as string)).refreshBoards();
+        const same = JSON.stringify([st.S.scenes.map(({ at, ...x }: { at: number }) => x), st.S.files, st.S.boards]) === text;
+        return { same, replaced: Object.entries(was).filter(([k, v]) => st.S[k] !== v).map(([k]) => k) };
       });
     await poll();
     await page.waitForTimeout(300);
-    const draws = await drawsDuring(page, ["App"], poll);
-    if (draws.App) return `polling with nothing new redrew the app ${draws.App} times`;
+    // Nothing new: the lists are kept as they were, and the app isn't redrawn for them. (Other
+    // things can redraw it meanwhile, such as an engine drawing a board's thumbnail: tried thrice.)
+    let redrawn = 0;
+    for (let i = 0; i < 3; i++) {
+      let got: { same: boolean; replaced: string[] } | undefined;
+      const draws = await drawsDuring(page, ["App"], async () => (got = await poll()));
+      if (got!.same && got!.replaced.length) return `polling with nothing new replaced ${got!.replaced.join(", ")}`;
+      redrawn = draws.App;
+      if (!redrawn) break;
+      await page.waitForTimeout(500);
+    }
+    if (redrawn) return `polling with nothing new redrew the app ${redrawn} times, three times over`;
     // Something new does show.
     const fresh = path.join(LIB, "raw", "poll-new.png");
     mkdirSync(path.dirname(fresh), { recursive: true });
