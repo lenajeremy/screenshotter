@@ -125,6 +125,11 @@ const P = {
   sides: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9h16M4 15h16M9 4v16M15 4v16" opacity=".4"/>',
   laptop: '<rect x="5" y="5" width="14" height="10" rx="1.5"/><path d="M2.5 18.5h19"/>',
   bolt: '<path d="M13 2.5L4.5 13.5H12l-1 8 8.5-11H12z"/>',
+  // Grids: columns and rows of a grid frame, and the gaps between them.
+  gridCols: '<rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9.2 4v16M14.8 4v16"/>',
+  gridRows: '<rect x="4" y="3.5" width="16" height="17" rx="2.5"/><path d="M4 9.2h16M4 14.8h16"/>',
+  gapCols: '<rect x="3.5" y="5" width="6" height="14" rx="1.5"/><rect x="14.5" y="5" width="6" height="14" rx="1.5"/><path d="M12 9v6" stroke-dasharray="1.6 1.8"/>',
+  gapRows: '<rect x="5" y="3.5" width="14" height="6" rx="1.5"/><rect x="5" y="14.5" width="14" height="6" rx="1.5"/><path d="M9 12h6" stroke-dasharray="1.6 1.8"/>',
 };
 
 export function Icon({ n, s = 16, w = 1.7, style, class: cls }) {

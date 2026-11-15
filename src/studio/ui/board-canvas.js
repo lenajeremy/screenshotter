@@ -2,13 +2,14 @@
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
+import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
 
 export const canvasEl = { current: null };
 
@@ -379,6 +380,7 @@ function Overlay() {
         ${working && html`<span class="bd-agent"><i></i>Agent</span>`}<span class="t">${b.board.nodes[id].name}</span></div>
         ${working && html`<div class="bd-working" style=${{ left: r.x - 2 + "px", top: r.y - 2 + "px", width: r.width + 4 + "px", height: r.height + 4 + "px" }}></div>`}`;
     })}
+    <${GridOverlay} />
     ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
     ${box && !locked && !b.editing && !busy &&
@@ -937,6 +939,12 @@ function reorder(e, id) {
         if (f) frameId = f;
       }
       const frame = node(frameId);
+      // Over a grid: the cell under the pointer.
+      if (isGrid(frame)) {
+        const drop = gridDrop(frameId, ev.clientX, ev.clientY, id);
+        target = drop && { grid: drop };
+        return bset({ drop: drop ? { grid: frameId, cell: drop.rect, into: frameId !== n.parent ? frameId : null } : null });
+      }
       if (!isFlex(frame)) {
         target = { parent: frameId, at: toWorld(ev.clientX, ev.clientY) };
         return bset({ drop: { into: frameId } });
@@ -968,17 +976,18 @@ function reorder(e, id) {
       el?.classList.remove("bd-dragging");
       bset({ drop: null });
       if (!moved || !target) return;
+      if (target.grid) return commit(gridDropOps(target.grid, id), { label: "Move" });
       if (target.at) {
         // Into a frame laid out by hand: it sits where it was dropped.
         const fb = worldBox(target.parent);
         const me = worldBox(id);
         const ops = [{ op: "move", id, parent: target.parent }, { op: "set", id, style: { position: "absolute", left: `${Math.round(target.at.x - fb.x - me.width / 2)}px`, top: `${Math.round(target.at.y - fb.y - me.height / 2)}px` } }];
         if (!node(target.parent).style.position) ops.push({ op: "set", id: target.parent, style: { position: "relative" } });
-        return commit(ops, { label: "Move" });
+        return commit([...ops, ...leaveGridOps(id, target.parent)], { label: "Move" });
       }
       const was = (node(n.parent).children ?? []).indexOf(id);
       if (target.parent === n.parent && target.index === was) return;
-      commit([{ op: "move", id, parent: target.parent, index: target.index }], { label: "Move" });
+      commit([{ op: "move", id, parent: target.parent, index: target.index }, ...leaveGridOps(id, target.parent)], { label: "Move" });
     },
   });
 }
@@ -1020,6 +1029,8 @@ function resizeVector(e, id, h, keep = false) {
 function resize(e, id, h, keep = false) {
   e.stopPropagation();
   if (isVector(id)) return resizeVector(e, id, h, keep);
+  // In a grid: across its cells, a layer's span changes.
+  if (!keep && inGrid(id) && resizeInGrid(e, id, h)) return;
   const base = B.board;
   const n = node(id);
   const box0 = worldBox(id);
@@ -1289,7 +1300,13 @@ export function placeNew(layers, into, at, ev) {
   } else {
     const f = node(into);
     for (const id of tops) nodes[id] = { ...nodes[id], parent: into };
-    if (isFlex(f)) {
+    if (isGrid(f)) {
+      // In a grid: the cell under the point, for the first of them; the rest follow it.
+      const spot = gridAddPlace(into, ev);
+      for (const id of tops) intoGridStyle(nodes[id].style);
+      if (spot) patchStyle(nodes[tops[0]].style, spot.style);
+      ops.push({ op: "add", nodes, ids: tops, parent: into, index: spot?.reorder ? spot.index : undefined });
+    } else if (isFlex(f)) {
       // Where among its layers the point falls.
       const row = !(f.style.flexDirection ?? "row").startsWith("column");
       const c = canvasEl.current.getBoundingClientRect();

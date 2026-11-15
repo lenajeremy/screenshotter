@@ -9,6 +9,8 @@ import { styleWords, wordState, words } from "./board-canvas.js";
 import { ColorButton, ColorPicker, Dropdown, Num, Popover, Section, Seg, Slider, Switch, html, normalizeColor, resolveVars, tokenColor, tokenRef } from "./controls.js";
 import { Icon } from "./icons.js";
 import { api, fail, fileUrl, toast } from "./store.js";
+import { areaRects, areasValid, gridOf, gridPatch, isGrid, parsePlacement, parseTracks, placementCss, placementSpan, trackArgs, trackKind, trackLabel } from "./board-core.js";
+import { AXES as GRID_AXES, changeGrids, gridGeometry, inGrid, insertTrackOps, layoutOf, moveTrackOps, removeTrackOps, setLayout, trackCountOps, trackSizeOps } from "./board-grid.js";
 
 /** What the panel doesn't draw from: the view and the pointer (it does show the words picked in a text). */
 const PANEL_SKIPS = CANVAS_ONLY.filter((k) => k !== "words");
@@ -84,8 +86,9 @@ export function Inspector() {
       ${b.tool === "scale" && html`<${ScaleSection} />`}
       ${!many && html`<${ComponentSection} />`}
       <${LayoutSection} />
-      ${allFrames && html`<${FlexSection} />`}
+      ${allFrames && (list.every((id) => isGrid(node(id))) ? html`<${GridSection} />` : html`<${FlexSection} />`)}
       ${!many && n.parent && isFlex(node(n.parent)) && html`<${ChildSection} />`}
+      ${n.parent && isGrid(node(n.parent)) && list.every((id) => node(id).parent === n.parent) && html`<${GridChildSection} />`}
       ${allText && html`<${TypeSection} />`}
       ${!many && n.type === "image" && html`<${ImageSection} />`}
       ${!many && n.type === "video" && html`<${VideoSection} />`}
@@ -308,6 +311,8 @@ function sizeStyle(id, axis, mode, value) {
   else if (mode === "fill") {
     if (main) Object.assign(style, { flexGrow: "1", flexBasis: "0px", [axis]: null });
     else if (flexP) Object.assign(style, { alignSelf: "stretch", [axis]: null });
+    // In a grid: no size of its own, stretched across its cells.
+    else if (p && isGrid(p) && !isAbsolute(n)) Object.assign(style, { [axis]: null, [axis === "width" ? "justifySelf" : "alignSelf"]: stretched(p.style[axis === "width" ? "justifyItems" : "alignItems"]) ? null : "stretch" });
     else style[axis] = "100%";
   } else {
     const pb = p ? worldBox(p.id) : null;
@@ -492,8 +497,9 @@ function FlexSection() {
   const flex = isFlex(n);
   const grid = n.style.display === "grid";
   if (!flex) {
-    return html`<${Section} title="Flex" right=${!grid && html`<button class="icon-btn sm" title="Add flex (⇧A): lay its layers out in a row or column" onClick=${() => list.forEach((id) => setFlex(id, true))}><${Icon} n="plus" s=${14} /></button>`}>
-      <p class="bd-note">${grid ? "Laid out as a CSS grid: edit it under CSS." : "Its layers sit where you put them. Add flex to lay them out in a row or a column, with gaps and padding."}</p>
+    return html`<${Section} title="Auto layout" right=${!grid && html`<button class="icon-btn sm" title="Add flex (⇧A): lay its layers out in a row or column" onClick=${() => list.forEach((id) => setFlex(id, true))}><${Icon} n="plus" s=${14} /></button>`}>
+      <${LayoutKind} list=${list} />
+      <p class="bd-note">${grid ? "Laid out as a CSS grid: edit it under CSS." : "Its layers sit where you put them. Flex lays them out in a row or a column; a grid in rows and columns."}</p>
     <//>`;
   }
   const column = (n.style.flexDirection ?? "row").startsWith("column");
@@ -514,6 +520,7 @@ function FlexSection() {
     return !spread ? m === r && k === c : column ? alignIndex(items) === c : alignIndex(items) === r;
   };
   return html`<${Section} title="Flex" right=${html`<button class="icon-btn sm" title="Remove flex (⌥⇧A): keep each layer where it is" onClick=${() => list.forEach((id) => setFlex(id, false))}><${Icon} n="minus" s=${14} /></button>`}>
+    <${LayoutKind} list=${list} />
     <div class="bd-flex">
       <div class="bd-pad" role="group" aria-label="Alignment">
         ${[0, 1, 2].map((r) => [0, 1, 2].map((c) => html`<button class=${onCell(r, c) ? "on" : ""} title="Align" onClick=${() => set(cell(r, c))}><i></i></button>`))}
@@ -1407,3 +1414,387 @@ function FramePresets() {
 }
 
 export { styleText };
+
+// ---------------------------------------------------------------------------------------------
+// Grid: a frame's columns and rows (each track's size), gaps, padding, how its layers sit in their
+// cells, and its flow, new tracks and named areas; for a layer in a grid, the cells it takes and how
+// it sits in them. The canvas edits the same things (board-grid.js).
+
+const LAYOUTS = [
+  { value: "free", icon: "freeLayout", label: "Free", title: "Free: layers sit where you put them" },
+  { value: "flex", icon: "flexCol", label: "Flex", title: "Flex (⇧A): a row or a column" },
+  { value: "grid", icon: "grid", label: "Grid", title: "Grid (⇧G): rows and columns" },
+];
+
+/** Free, flex or grid: how the selected frames lay out their layers. */
+function LayoutKind({ list }) {
+  const kinds = list.map((id) => layoutOf(node(id)));
+  const v = kinds.every((k) => k === kinds[0]) ? kinds[0] : null;
+  return html`<${Seg} class="bd-kind" value=${v} options=${LAYOUTS} onChange=${(k) => setLayout(list, k)} />`;
+}
+
+const SPOTS = ["start", "center", "end"];
+/** Stretch, as a grid has it by default (normal) when nothing else is said. */
+const stretched = (v) => !v || v === "normal" || v === "stretch" || v === "auto";
+
+/**
+ * Nine spots for where layers sit in their cells: across (justify) and down (align). A layer that
+ * stretches across lights its whole row of spots as a bar, one that stretches down its column.
+ */
+function CellPad({ justify, align, onPick, label }) {
+  const sx = stretched(justify);
+  const sy = stretched(align);
+  return html`<div class="bd-pad bd-cellpad" role="group" aria-label=${label}>
+    ${[0, 1, 2].map((r) =>
+      [0, 1, 2].map((c) => {
+        const on = (sx || alignIndex(justify) === c) && (sy || alignIndex(align) === r);
+        return html`<button class="${on ? "on" : ""} ${on && sx ? "sx" : ""} ${on && sy ? "sy" : ""}" title=${`${SPOTS[r] === "start" ? "Top" : SPOTS[r] === "end" ? "Bottom" : "Middle"} ${SPOTS[c] === "start" ? "left" : SPOTS[c] === "end" ? "right" : "centre"}`}
+          onClick=${() => onPick(SPOTS[c], SPOTS[r])}><i></i></button>`;
+      }),
+    )}
+  </div>`;
+}
+
+/** A CSS value typed in (a track size, say): kept on Enter or leaving the field, if CSS takes it for `prop`. */
+function CssInput({ label, value, placeholder, prop, onChange, title }) {
+  const [draft, setDraft] = useState(null);
+  const done = (text) => {
+    setDraft(null);
+    const v = text.trim();
+    if (v === (value ?? "")) return;
+    if (v && globalThis.CSS?.supports && !CSS.supports(kebabProp(prop), v)) return toast({ kind: "info", title: `“${v}” isn't a size CSS knows here`, text: "Try 1fr, 240px, auto, min-content or minmax(120px, 1fr).", timeout: 3600 });
+    onChange(v);
+  };
+  return html`<label class="num bd-css-in" title=${title}>
+    <span class="scrub">${label}</span>
+    <input class="bd-mono" value=${draft ?? value ?? ""} placeholder=${placeholder} spellcheck=${false}
+      onInput=${(e) => setDraft(e.target.value)} onBlur=${(e) => draft !== null && done(e.target.value)}
+      onKeyDown=${(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") e.target.blur();
+        if (e.key === "Escape") (setDraft(null), requestAnimationFrame(() => e.target.blur()));
+      }} />
+  </label>`;
+}
+const kebabProp = (k) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+
+const TRACK_KINDS = [
+  { value: "fr", label: "Fill · fr" },
+  { value: "px", label: "Fixed · px" },
+  { value: "auto", label: "Hug · auto" },
+  { value: "min-content", label: "Min content" },
+  { value: "max-content", label: "Max content" },
+  { value: "minmax", label: "Range" },
+  { value: "fit-content", label: "Up to" },
+  { value: "percent", label: "Percent" },
+  { value: "other", label: "As written" },
+];
+
+/** One track's editor: its kind of size and the numbers for it, the CSS as written, and moving, adding and deleting. */
+function TrackEditor({ list, axis, i, onClose }) {
+  const id = list[0];
+  const g = gridOf(node(id).style);
+  const t = g[axis].tracks[i];
+  if (!t) return null;
+  const A = GRID_AXES[axis];
+  const geo = gridGeometry(id);
+  const drawnList = axis === "columns" ? geo?.cols : geo?.rows;
+  const drawn = drawnList?.[i]?.size;
+  const room = geo ? (axis === "columns" ? geo.content.width : geo.content.height) / geo.z : 0;
+  const keyed = (k) => `track:${axis}:${i}:${k}:${list.join()}`;
+  const apply = (size, k) => changeGrids(list, (x) => trackSizeOps(x, axis, i, size), { label: "Grid", key: k ? keyed(k) : null });
+  const run = (make, label) => {
+    changeGrids(list, make, { label });
+    onClose();
+  };
+  if (t.auto) {
+    const [min = "200px", max = "1fr"] = trackArgs(t.size) ?? [t.size];
+    return html`<div class="bd-track-edit">
+      <div class="hd"><b>${A.Word}s</b><span class="sub">${drawnList?.length ?? "?"} fit now</span></div>
+      <${Seg} value=${t.auto} options=${[{ value: "auto-fill", label: "Fill", title: "Keep empty tracks at the end" }, { value: "auto-fit", label: "Fit", title: "Let what's there stretch over the empty tracks" }]}
+        onChange=${(v) => changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { [axis]: { tracks: [{ ...t, auto: v }] } }) }], { label: "Grid" })} />
+      <div class="grid2">
+        <${Num} label="Min" title=${`Each ${A.word} at least`} value=${pxValue(min)} unit="px" min=${1} onChange=${(v) => v && apply(`minmax(${Math.round(v)}px, ${max})`, "min")} />
+        <${CssInput} label="Max" value=${max} prop="gridTemplateColumns" onChange=${(v) => apply(`minmax(${min}, ${v || "1fr"})`)} />
+      </div>
+      <p class="bd-note">As many ${A.word}s as fit, each at least ${trackLabel(min)} wide${axis === "rows" ? " (tall)" : ""}.</p>
+      <button class="btn sm ghost" onClick=${() => run((x) => trackCountOps(x, axis, drawnList?.length ?? 3), "Grid")}>A set number of ${A.word}s</button>
+    </div>`;
+  }
+  const kind = trackKind(t.size);
+  const to = (k) => {
+    const d = Math.max(1, Math.round(drawn ?? 120));
+    return { fr: "1fr", px: `${d}px`, auto: "auto", "min-content": "min-content", "max-content": "max-content", minmax: `minmax(${d}px, 1fr)`, "fit-content": `fit-content(${d}px)`, percent: `${round(room ? (d / room) * 100 : 25, 1)}%`, other: t.size }[k];
+  };
+  const args = trackArgs(t.size) ?? [];
+  return html`<div class="bd-track-edit">
+    <div class="hd"><b>${A.Word} ${i + 1}</b><span class="sub">${drawn !== undefined ? `${round(drawn, 1)} px drawn` : ""}</span>
+      <span class="spacer"></span><button class="icon-btn sm" title="Close" onClick=${onClose}><${Icon} n="x" s=${12} /></button></div>
+    <div class="grid2">
+      <${Dropdown} value=${kind} options=${TRACK_KINDS} onChange=${(k) => k !== kind && apply(to(k))} title="How its size is set" />
+      ${kind === "fr" && html`<${Num} label="fr" title="Its share of the room left" value=${parseFloat(t.size)} digits=${2} step=${0.25} min=${0.05} onChange=${(v) => v && apply(`${round(v, 2)}fr`, "fr")} />`}
+      ${kind === "px" && html`<${Num} label="px" title="Its size" value=${pxValue(t.size)} min=${0} onChange=${(v) => v !== undefined && apply(`${Math.round(v)}px`, "px")} />`}
+      ${kind === "percent" && html`<${Num} label="%" title="Its share of the frame" value=${parseFloat(t.size)} digits=${1} min=${0} max=${100} onChange=${(v) => v !== undefined && apply(`${round(v, 1)}%`, "pc")} />`}
+      ${kind === "fit-content" && html`<${Num} label="≤" title="At most" value=${pxValue(args[0])} unit="px" min=${0} onChange=${(v) => v !== undefined && apply(`fit-content(${Math.round(v)}px)`, "fit")} />`}
+      ${/^(auto|min-content|max-content)$/.test(kind) && html`<span class="bd-track-drawn">${drawn !== undefined ? `${round(drawn, 1)} px` : ""}</span>`}
+    </div>
+    ${kind === "minmax" && html`<div class="grid2">
+      <${CssInput} label="Least" value=${args[0]} prop="gridTemplateColumns" onChange=${(v) => apply(`minmax(${v || "0px"}, ${args[1] ?? "1fr"})`)} />
+      <${CssInput} label="Most" value=${args[1]} prop="gridTemplateColumns" onChange=${(v) => apply(`minmax(${args[0] ?? "0px"}, ${v || "1fr"})`)} />
+    </div>`}
+    <${CssInput} label="CSS" title="The track's size as written" value=${t.size} prop="gridTemplateColumns" onChange=${(v) => v && apply(v)} />
+    <div class="bd-track-acts">
+      <button class="icon-btn sm" title=${`Move ${A.before}`} disabled=${i === 0} onClick=${() => run((x) => moveTrackOps(x, axis, i, i - 1), `Move a ${A.word}`)}><${Icon} n=${axis === "columns" ? "left" : "up"} s=${13} /></button>
+      <button class="icon-btn sm" title=${`Move ${A.after}`} disabled=${i >= g[axis].tracks.length - 1} onClick=${() => run((x) => moveTrackOps(x, axis, i, i + 1), `Move a ${A.word}`)}><${Icon} n=${axis === "columns" ? "right" : "down"} s=${13} /></button>
+      <button class="btn sm ghost" title=${`Add a ${A.word} ${A.before} this one`} onClick=${() => run((x) => insertTrackOps(x, axis, i), `Add a ${A.word}`)}><${Icon} n="plus" s=${11} />${A.Before}</button>
+      <button class="btn sm ghost" title=${`Add a ${A.word} ${A.after} this one`} onClick=${() => run((x) => insertTrackOps(x, axis, i + 1), `Add a ${A.word}`)}><${Icon} n="plus" s=${11} />${A.After}</button>
+      <span class="spacer"></span>
+      <button class="icon-btn sm" title=${`Delete this ${A.word}`} disabled=${axis === "columns" && g[axis].tracks.length <= 1} onClick=${() => run((x) => removeTrackOps(x, axis, i), `Delete a ${A.word}`)}><${Icon} n="trash" s=${13} /></button>
+    </div>
+  </div>`;
+}
+
+/** A track as a small button showing its size; it opens the track's editor. */
+function TrackPill({ list, axis, i, t, drawn }) {
+  const ref = useRef();
+  const [open, setOpen] = useState(false);
+  const kind = t.auto ? "repeat" : trackKind(t.size);
+  return html`<button ref=${ref} class="bd-track k-${kind} ${open ? "open" : ""}" title=${`${GRID_AXES[axis].Word} ${i + 1}: ${t.auto ? `repeat(${t.auto}, ${t.size})` : t.size}${drawn !== undefined ? `, drawn ${round(drawn, 1)} px` : ""}`} onClick=${() => setOpen(!open)}>
+      ${trackLabel(t)}
+    </button>
+    ${open && html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${248} align="end"><${TrackEditor} list=${list} axis=${axis} i=${i} onClose=${() => setOpen(false)} /><//>`}`;
+}
+
+/** Rows (or columns) made as they're needed: their size, as one pill. */
+function ImplicitPill({ list, axis }) {
+  const ref = useRef();
+  const [open, setOpen] = useState(false);
+  const key = axis === "rows" ? "autoRows" : "autoColumns";
+  const g = gridOf(node(list[0]).style);
+  return html`<button ref=${ref} class="bd-track k-implicit ${open ? "open" : ""}" title=${`${GRID_AXES[axis].Word}s are made as they're needed, each ${g[key] || "auto"}`} onClick=${() => setOpen(!open)}>As needed · ${trackLabel(g[key] || "auto")}</button>
+    ${open && html`<${Popover} anchor=${ref.current} onClose=${() => setOpen(false)} width=${232} align="end"><div class="bd-track-edit">
+      <div class="hd"><b>New ${GRID_AXES[axis].word}s</b></div>
+      <${CssInput} label="Size" placeholder="auto" value=${g[key]} prop="gridAutoRows" onChange=${(v) => changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { [key]: v }) }], { label: "Grid" })} />
+      <p class="bd-note">${GRID_AXES[axis].Word}s come as layers need them. Give them a size here, or set a number of ${GRID_AXES[axis].word}s above.</p>
+    </div><//>`}`;
+}
+
+/** A grid's columns or rows: how many, and each track's size. */
+function TrackRow({ list, axis }) {
+  const id = list[0];
+  const g = gridOf(node(id).style);
+  const tl = g[axis];
+  const A = GRID_AXES[axis];
+  const geo = gridGeometry(id);
+  const drawn = axis === "columns" ? geo?.cols : geo?.rows;
+  const auto = tl.tracks.some((t) => t.auto);
+  const count = tl.raw || auto ? undefined : tl.tracks.length || undefined;
+  return html`<div class="bd-tracks" data-axis=${axis}>
+    <${Num} label=${html`<${Icon} n=${axis === "columns" ? "gridCols" : "gridRows"} s=${13} />`} title=${`${A.Word}s${auto ? ": as many as fit" : axis === "rows" && !tl.tracks.length ? ": made as they're needed" : ""}`}
+      value=${count} placeholder=${auto ? "fit" : "auto"} min=${axis === "columns" ? 1 : 0} max=${48}
+      onChange=${(v) => v !== undefined && changeGrids(list, (x) => trackCountOps(x, axis, v), { label: "Grid", key: `count:${axis}:${list.join()}` })} />
+    <div class="bd-track-list">
+      ${tl.raw
+        ? html`<code class="bd-track-raw" title="Written as CSS: change it under CSS">${tl.raw}</code>`
+        : tl.tracks.map((t, i) => html`<${TrackPill} key=${i} list=${list} axis=${axis} i=${i} t=${t} drawn=${drawn?.[i]?.size} />`)}
+      ${!tl.raw && !tl.tracks.length && html`<${ImplicitPill} list=${list} axis=${axis} />`}
+    </div>
+    <button class="icon-btn sm" title=${`Add a ${A.word}`} disabled=${Boolean(tl.raw)}
+      onClick=${() => changeGrids(list, (x) => (auto ? trackCountOps(x, axis, (drawn?.length ?? 1) + 1) : tl.tracks.length || axis === "columns" ? insertTrackOps(x, axis, gridOf(node(x).style)[axis].tracks.length) : trackCountOps(x, axis, (drawn?.length ?? 0) + 1)), { label: `Add a ${A.word}` })}><${Icon} n="plus" s=${13} /></button>
+  </div>`;
+}
+
+const GRID_PRESETS = [
+  { name: "2 columns", columns: "repeat(2, 1fr)", pic: "1fr 1fr", cells: 4 },
+  { name: "3 columns", columns: "repeat(3, 1fr)", pic: "1fr 1fr 1fr", cells: 6 },
+  { name: "4 columns", columns: "repeat(4, 1fr)", pic: "repeat(4, 1fr)", cells: 8 },
+  { name: "12 columns", columns: "repeat(12, 1fr)", pic: "repeat(12, 1fr)", cells: 12 },
+  { name: "Sidebar and main", columns: "240px 1fr", pic: "1fr 2.6fr", cells: 2 },
+  { name: "Main and aside", columns: "1fr 280px", pic: "2.6fr 1fr", cells: 2 },
+  { name: "Cards that wrap", hint: "As many as fit, each at least 200 px", columns: "repeat(auto-fill, minmax(200px, 1fr))", pic: "repeat(3, 1fr)", cells: 5 },
+  { name: "Bento", hint: "The first layer takes 2 × 2", columns: "repeat(4, 1fr)", rows: "repeat(2, 160px)", pic: "repeat(4, 1fr)", cells: 5, bento: true },
+];
+
+/** Columns × rows picked from a grid of squares (as Figma's grid picker), and the usual layouts, one click each. */
+function GridPresets({ list, onDone }) {
+  const [hover, setHover] = useState(null);
+  const pick = (cols, rows) => {
+    changeGrids(list, (x) => {
+      const fixed = pxValue(node(x).style.height) !== undefined;
+      return [{ op: "set", id: x, style: gridPatch(node(x).style, { columns: parseTracks(`repeat(${cols}, 1fr)`), rows: parseTracks(rows > 1 || fixed ? `repeat(${rows}, ${fixed ? "1fr" : "auto"})` : "") }) }];
+    }, { label: "Grid" });
+    onDone();
+  };
+  const preset = (p) => {
+    changeGrids(list, (x) => {
+      const ops = [{ op: "set", id: x, style: gridPatch(node(x).style, { columns: parseTracks(p.columns), rows: parseTracks(p.rows ?? "") }) }];
+      const first = (node(x).children ?? []).find((c) => node(c) && !node(c).hidden);
+      if (p.bento && first) ops.push({ op: "set", id: first, style: { gridColumn: "span 2", gridRow: "span 2", gridArea: null } });
+      return ops;
+    }, { label: p.name });
+    onDone();
+  };
+  return html`<div class="bd-grid-presets">
+    <div class="bd-grid-picker" onPointerLeave=${() => setHover(null)}>
+      ${Array.from({ length: 5 }, (_, r) =>
+        Array.from({ length: 8 }, (_, c) => html`<button class=${hover && c < hover[0] && r < hover[1] ? "on" : ""} aria-label=${`${c + 1} × ${r + 1}`}
+          onPointerEnter=${() => setHover([c + 1, r + 1])} onFocus=${() => setHover([c + 1, r + 1])} onClick=${() => pick(c + 1, r + 1)}></button>`),
+      )}
+    </div>
+    <div class="bd-grid-size">${hover ? `${hover[0]} columns × ${hover[1]} row${hover[1] === 1 ? "" : "s"}` : "Pick columns × rows"}</div>
+    <div class="bd-preset-list">
+      ${GRID_PRESETS.map((p) => html`<button class="bd-preset" title=${p.hint ?? p.columns} onClick=${() => preset(p)}>
+        <span class="pic" style=${{ gridTemplateColumns: p.pic }}>${Array.from({ length: p.cells }, (_, k) => html`<i key=${k} class=${p.bento && k === 0 ? "big" : ""}></i>`)}</span>
+        <span class="nm">${p.name}</span>
+      </button>`)}
+    </div>
+  </div>`;
+}
+
+const CONTENT = ["normal", "start", "center", "end", "space-between", "space-around", "space-evenly", "stretch"].map((v) => ({ value: v, label: v === "normal" ? "Normal" : v.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()) }));
+
+/** Name the cells of a grid to make areas (grid-template-areas); a layer then takes an area by name. */
+function AreasEditor({ list }) {
+  const id = list[0];
+  const g = gridOf(node(id).style);
+  const geo = gridGeometry(id);
+  const cols = Math.max(1, g.columns.tracks.some((t) => t.auto) || g.columns.raw ? geo?.cols.length ?? 1 : g.columns.tracks.length || 1);
+  const rows = Math.max(1, g.rows.tracks.length || geo?.rows.length || 1);
+  const now = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => g.areas?.[r]?.[c] ?? "."));
+  const [draft, setDraft] = useState(null);
+  const cells = draft ?? now;
+  const save = () => {
+    if (!draft) return;
+    const next = draft.map((r) => r.map((c) => c.trim().replace(/[^\w-]/g, "") || "."));
+    setDraft(null);
+    if (JSON.stringify(next) === JSON.stringify(now)) return;
+    changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { areas: next, ...(gridOf(node(x).style).rows.tracks.length ? {} : { rows: { tracks: next.map(() => ({ size: "auto" })) } }) }) }], { label: "Grid areas" });
+  };
+  return html`<div class="bd-areas" style=${{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+      ${cells.map((row, r) => row.map((name, c) => html`<input key=${`${r}:${c}`} class="bd-area-cell ${name !== "." ? "named" : ""}" value=${name === "." ? "" : name} placeholder="·" spellcheck=${false} aria-label=${`Area of row ${r + 1}, column ${c + 1}`}
+        onInput=${(e) => setDraft(cells.map((x, rr) => x.map((v, cc) => (rr === r && cc === c ? e.target.value : v))))}
+        onBlur=${save} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} />`))}
+    </div>
+    ${!areasValid(g.areas) && html`<p class="bd-note bd-warn">Each name has to make a rectangle (and every row as long as the others): CSS leaves the areas out until it does.</p>`}`;
+}
+
+function GridSection() {
+  const list = ids().filter((id) => isGrid(node(id)));
+  const id = list[0];
+  const n = node(id);
+  const g = gridOf(n.style);
+  const [four, setFour] = useState(false);
+  const [more, setMore] = useState(false);
+  const [presets, setPresets] = useState(false);
+  const presetBtn = useRef();
+  const pad = sides(n.style, "padding", PAD_KEYS);
+  const set = (style, key) => setStyle(style, key, list);
+  const gaps = (change, key) => changeGrids(list, (x) => {
+    const m = gridOf(node(x).style);
+    return [{ op: "set", id: x, style: gridPatch(node(x).style, { rowGap: m.rowGap, columnGap: m.columnGap, ...change }) }];
+  }, { label: "Gap", key: `${key}:${list.join()}` });
+  const stretchAll = stretched(n.style.justifyItems) && stretched(n.style.alignItems);
+  return html`<${Section} title="Grid" right=${html`<button class="icon-btn sm ${presets ? "on" : ""}" ref=${presetBtn} title="Columns × rows, and layouts to start from" onClick=${() => setPresets(!presets)}><${Icon} n="grid" s=${14} /></button>
+      <button class="icon-btn sm" title="Remove grid (⌥⇧G): keep each layer where it is" onClick=${() => setLayout(list, "free")}><${Icon} n="minus" s=${14} /></button>`}>
+    ${presets && html`<${Popover} anchor=${presetBtn.current} onClose=${() => setPresets(false)} width=${236} align="end"><${GridPresets} list=${list} onDone=${() => setPresets(false)} /><//>`}
+    <${LayoutKind} list=${list} />
+    <${TrackRow} list=${list} axis="columns" />
+    <${TrackRow} list=${list} axis="rows" />
+    <div class="bd-flex">
+      <${CellPad} label="Where layers sit in their cells" justify=${n.style.justifyItems} align=${n.style.alignItems} onPick=${(j, a) => set({ justifyItems: j, alignItems: a })} />
+      <div class="bd-flex-side">
+        <${Num} label=${html`<${Icon} n="gapCols" s=${13} />`} title="Gap between columns" value=${px(g.columnGap) ?? 0} min=${0} onChange=${(v) => gaps({ columnGap: v ? `${v}px` : "" }, "cgap")} />
+        <${Num} label=${html`<${Icon} n="gapRows" s=${13} />`} title="Gap between rows" value=${px(g.rowGap) ?? 0} min=${0} onChange=${(v) => gaps({ rowGap: v ? `${v}px` : "" }, "rgap")} />
+        <label class="bd-check" title="Layers without a size of their own fill their cells"><input type="checkbox" checked=${stretchAll} onChange=${(e) => set(e.target.checked ? { justifyItems: null, alignItems: null } : { justifyItems: "start", alignItems: "start" })} />Fill cells</label>
+      </div>
+    </div>
+    <div class="bd-pads ${four ? "four" : ""}">
+      ${four
+        ? ["Top", "Right", "Bottom", "Left"].map((s, i) => html`<${Num} label=${s[0]} title=${`${s} padding`} value=${pad[i]} min=${0} onChange=${(v) => set(padStyle(pad.map((x, j) => (j === i ? v ?? 0 : x))), `pad${i}`)} />`)
+        : html`<${Num} label=${html`<${Icon} n="flexRow" s=${12} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
+          <${Num} label=${html`<${Icon} n="flexCol" s=${12} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
+      <button class="icon-btn sm ${four ? "on" : ""}" title="Each side" onClick=${() => setFour(!four)}><${Icon} n="sides" s=${14} /></button>
+    </div>
+    <button class="bd-more ${more ? "open" : ""}" onClick=${() => setMore(!more)} aria-expanded=${more}><${Icon} n="right" s=${11} w=${2} />Flow, new tracks and areas</button>
+    ${more && html`<div class="bd-grid-more">
+      <div class="bd-grid-flow">
+        <${Seg} value=${g.flow} options=${[{ value: "row", icon: "flexRow", label: "Rows", title: "Layers fill each row, then the next" }, { value: "column", icon: "flexCol", label: "Columns", title: "Layers fill each column, then the next" }]}
+          onChange=${(v) => changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { flow: v }) }], { label: "Grid flow" })} />
+        <label class="bd-check" title="Fill holes left by bigger layers with later ones"><input type="checkbox" checked=${g.dense} onChange=${(e) => changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { dense: e.target.checked }) }], { label: "Grid flow" })} />Dense</label>
+      </div>
+      <div class="grid2">
+        <${CssInput} label="New rows" title="The size of rows made as they're needed (grid-auto-rows)" placeholder="auto" value=${g.autoRows} prop="gridAutoRows" onChange=${(v) => changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { autoRows: v }) }], { label: "Grid" })} />
+        <${CssInput} label="New cols" title="The size of columns made as they're needed (grid-auto-columns)" placeholder="auto" value=${g.autoColumns} prop="gridAutoColumns" onChange=${(v) => changeGrids(list, (x) => [{ op: "set", id: x, style: gridPatch(node(x).style, { autoColumns: v }) }], { label: "Grid" })} />
+      </div>
+      <div class="bd-grid-content">
+        <span>Columns in the frame</span><${Dropdown} value=${n.style.justifyContent ?? "normal"} options=${CONTENT} onChange=${(v) => set({ justifyContent: v === "normal" ? null : v })} />
+        <span>Rows in the frame</span><${Dropdown} value=${n.style.alignContent ?? "normal"} options=${CONTENT} onChange=${(v) => set({ alignContent: v === "normal" ? null : v })} />
+      </div>
+      <div class="bd-sub">Areas</div>
+      <${AreasEditor} key=${id} list=${list} />
+      <p class="bd-note">Name cells to make areas; a layer takes one under In the grid.</p>
+    </div>`}
+  <//>`;
+}
+
+/** For layers in a grid: the cells they take (start and span, or an area) and how they sit in them. */
+function GridChildSection() {
+  const list = ids().filter((id) => inGrid(id));
+  const all = ids();
+  const id = list[0] ?? all[0];
+  const n = node(id);
+  const p = node(n.parent);
+  if (!list.length) return html`<${Section} title="In the grid"><${ChildSection} /><//>`;
+  const pg = gridOf(p.style);
+  const geo = gridGeometry(p.id);
+  const columns = Math.max(1, geo?.explicitCols || pg.columns.tracks.length || 1);
+  const names = Object.keys(areaRects(pg.areas));
+  const one = list.length === 1;
+  const line = (key, patch) =>
+    commit(list.map((x) => ({ op: "set", id: x, style: { [key]: placementCss({ ...parsePlacement(node(x).style[key]), ...patch }), gridArea: null } })), { label: "Grid cell", key: `cell:${key}:${list.join()}` });
+  const lineRow = (key, word, across) => {
+    const pl = parsePlacement(n.style[key]);
+    if (typeof pl.start === "string" || typeof pl.end === "string") return html`<div class="bd-cell-line"><span class="lbl">${word}</span><code class="bd-track-raw">${n.style[key]}</code></div>`;
+    const whole = pl.end === -1;
+    return html`<div class="bd-cell-line">
+      <span class="lbl">${word}</span>
+      <${Num} label="At" title=${`The ${word.toLowerCase()} it starts in (empty: wherever there's room)`} value=${one && typeof pl.start === "number" ? pl.start : undefined} placeholder=${one ? "auto" : "—"} min=${1} max=${99}
+        onChange=${(v) => line(key, { start: v === undefined ? undefined : Math.round(v), ...(whole ? { end: -1 } : {}) })} />
+      ${whole
+        ? html`<span class="bd-cell-to" title="To the last line">to the end</span>`
+        : html`<${Num} label="Span" title=${`How many ${word.toLowerCase()}s it takes`} value=${one ? placementSpan(pl) : undefined} placeholder="—" min=${1} max=${key === "gridColumn" ? columns : 99}
+          onChange=${(v) => v && line(key, { span: Math.round(v), end: undefined })} />`}
+      <button class="icon-btn sm ${whole ? "on" : ""}" title=${whole ? "Back to one cell" : `Across the whole ${across}`}
+        onClick=${() => line(key, whole ? { start: pl.start === 1 ? undefined : pl.start, end: undefined, span: undefined } : { start: 1, end: -1, span: undefined })}><${Icon} n=${key === "gridColumn" ? "gapCols" : "gapRows"} s=${13} /></button>
+    </div>`;
+  };
+  const items = (k) => (stretched(p.style[k]) ? "stretch" : p.style[k]);
+  const js = n.style.justifySelf && n.style.justifySelf !== "auto" ? n.style.justifySelf : items("justifyItems");
+  const as = n.style.alignSelf && n.style.alignSelf !== "auto" ? n.style.alignSelf : items("alignItems");
+  const fills = list.every((x) => sizeWord(B.board, x, "width") === "fill" && sizeWord(B.board, x, "height") === "fill");
+  const fill = (on) =>
+    commit(
+      list.map((x) => {
+        const k = node(x);
+        const pp = node(k.parent).style;
+        if (on) return { op: "set", id: x, style: { width: null, height: null, justifySelf: stretched(pp.justifyItems) ? null : "stretch", alignSelf: stretched(pp.alignItems) ? null : "stretch" } };
+        const b = worldBox(x);
+        return { op: "set", id: x, style: { ...(b ? { width: `${Math.round(b.width)}px`, ...(k.type === "text" ? {} : { height: `${Math.round(b.height)}px` }) } : {}), justifySelf: "start", alignSelf: "start" } };
+      }),
+      { label: on ? "Fill the cell" : "Own size" },
+    );
+  const area = n.style.gridArea;
+  return html`<${Section} title="In the grid" right=${html`<button class="icon-btn sm" title="Back to wherever there's room, one cell, sitting as the grid says" onClick=${() => commit(list.map((x) => ({ op: "set", id: x, style: { gridColumn: null, gridRow: null, gridArea: null, justifySelf: null, alignSelf: null } })), { label: "Grid cell" })}><${Icon} n="refresh" s=${13} /></button>`}>
+    ${names.length > 0 && html`<div class="bd-cell-line"><span class="lbl">Area</span>
+      <${Dropdown} value=${one ? area ?? "" : null} placeholder="Mixed" options=${[{ value: "", label: "None" }, ...names.map((v) => ({ value: v, label: v }))]}
+        onChange=${(v) => commit(list.map((x) => ({ op: "set", id: x, style: v ? { gridArea: v, gridColumn: null, gridRow: null } : { gridArea: null } })), { label: "Grid area" })} /></div>`}
+    ${area && one ? html`<p class="bd-note">Placed by its area, ${area}.</p>` : html`${lineRow("gridColumn", "Column", "row")}${lineRow("gridRow", "Row", "column")}`}
+    <div class="bd-flex">
+      <${CellPad} label="Where it sits in its cell" justify=${js} align=${as} onPick=${(j, a) => setStyle({ justifySelf: j, alignSelf: a }, null, list)} />
+      <div class="bd-flex-side">
+        <label class="bd-check" title="No size of its own: as big as its cells"><input type="checkbox" checked=${fills} onChange=${(e) => fill(e.target.checked)} />Fill the cell</label>
+        ${one && html`<${ChildSection} />`}
+      </div>
+    </div>
+  <//>`;
+}

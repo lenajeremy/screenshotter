@@ -2,7 +2,7 @@
 // layers on the left, the canvas in the middle, the layer's CSS (in words) on the right.
 import { Component } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
+import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, isGrid, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { B, CANVAS_ONLY, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
@@ -11,6 +11,7 @@ import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
+import { gridShortcut, intoGridStyle, setLayout, wrapInGrid } from "./board-grid.js";
 import { S, api, fail, native, toast } from "./store.js";
 
 const mod = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
@@ -215,6 +216,7 @@ export function layerIcon(n, b = B.board) {
   if (n.type === "svg") return "vector";
   if (n.type === "vector") return { g: "layers", rect: "square", circle: "ellipse", ellipse: "ellipse", line: "line", polyline: "line", polygon: "triangle", path: "pen", text: "text", image: "image" }[n.tag] ?? "vector";
   if (!n.parent) return "frame";
+  if (isGrid(n)) return "grid";
   if (isFlex(n)) return (n.style.flexDirection ?? "row").startsWith("column") ? "flexCol" : "flexRow";
   void b;
   return (n.children ?? []).length ? "freeLayout" : "square";
@@ -403,6 +405,8 @@ export function duplicateSelection() {
     // A component's duplicate is a copy of it, which follows it.
     const clone = copyTree(B.board, id, n.parent);
     const c = clone.nodes[clone.id];
+    // A copy of a layer pinned to a grid cell takes the next free one, not the same.
+    if (n.parent && isGrid(node(n.parent)) && inFlow(B.board, id)) intoGridStyle(c.style);
     if (!n.parent) {
       // A copied artboard goes beside the original.
       const w = worldBox(id)?.width ?? pxValue(n.style.width) ?? 400;
@@ -508,7 +512,7 @@ export function ungroupSelection() {
     const n = node(id);
     const sibs = siblingsOf(B.board, id);
     let at = sibs.indexOf(id);
-    const flowing = n.parent && isFlex(node(n.parent));
+    const flowing = n.parent && (isFlex(node(n.parent)) || isGrid(node(n.parent)));
     const pb = n.parent ? worldBox(n.parent) : { x: 0, y: 0 };
     for (const c of n.children) {
       const cb = worldBox(c);
@@ -840,7 +844,8 @@ function pasteLayers(from) {
       const s = nodes[id].style;
       nodes[id].parent = t.into;
       if (vec) continue;
-      if (isFlex(f)) {
+      if (isGrid(f)) intoGridStyle(s);
+      else if (isFlex(f)) {
         delete s.left;
         delete s.top;
         if (s.position === "absolute") delete s.position;
@@ -1000,7 +1005,7 @@ export function placeCopy(main, { into } = {}) {
       return { left: p.x, top: p.y };
     })() : freeSpot(B.board, currentPage().id, 0);
     Object.assign(t.nodes[t.id].style, { left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` });
-  } else if (!isFlex(node(parent))) Object.assign(t.nodes[t.id].style, { position: "absolute", left: "16px", top: "16px" });
+  } else if (!isFlex(node(parent)) && !isGrid(node(parent))) Object.assign(t.nodes[t.id].style, { position: "absolute", left: "16px", top: "16px" });
   if (commit([{ op: "add", nodes: t.nodes, ids: [t.id], parent, page: parent ? undefined : currentPage().id, index }], { label: "Copy of a component" }) !== false) select(t.id);
 }
 
@@ -1059,12 +1064,14 @@ export function openLayerMenu(x, y, { stack = [] } = {}) {
     any && "-",
     one && { label: "Rename", icon: "text", kbd: "⌘R", run: () => bset({ renaming: one.id }) },
     any && !vectors && { label: "Wrap in flex frame", icon: "flexCol", kbd: "⇧A", run: () => wrapSelection() },
+    any && !vectors && { label: "Wrap in grid", icon: "grid", kbd: "⇧G", run: wrapInGrid },
     any && !vectors && { label: "Wrap in frame", icon: "frame", kbd: "⌥⌘G", run: () => wrapSelection({ free: true }) },
     vectors && { label: "Group", icon: "layers", kbd: "⌥⌘G", run: () => wrapSelection() },
     (frame || one?.tag === "g") && one.children?.length && { label: "Ungroup", icon: "layers", kbd: "⇧⌘G", run: ungroupSelection },
     one?.type === "svg" && one.svg && { label: "Split into layers", icon: "layers", run: () => splitVector(one.id) },
     one?.type === "svg" && !one.svg && { label: "Make one piece", icon: "vector", run: () => flattenVector(one.id) },
-    frame && (isFlex(one) ? { label: "Remove flex", icon: "freeLayout", kbd: "⌥⇧A", run: () => setFlex(one.id, false) } : { label: "Add flex", icon: "flexCol", kbd: "⇧A", run: () => setFlex(one.id, true) }),
+    frame && (isFlex(one) ? { label: "Remove flex", icon: "freeLayout", kbd: "⌥⇧A", run: () => setFlex(one.id, false) } : { label: "Add flex", icon: "flexCol", kbd: "⇧A", run: () => (isGrid(one) ? setLayout([one.id], "flex") : setFlex(one.id, true)) }),
+    frame && (isGrid(one) ? { label: "Remove grid", icon: "freeLayout", kbd: "⌥⇧G", run: () => setLayout([one.id], "free") } : { label: "Make a grid", icon: "grid", kbd: "⇧G", run: () => setLayout([one.id], "grid") }),
     any && "-",
     frame && !one.isComponent && !instanceRootOf(B.board, one.id) && { label: "Make a component", icon: "component", kbd: "⌥⌘K", run: makeComponent },
     one?.isComponent && { label: "Place a copy", icon: "instance", run: () => placeCopy(one.id) },
@@ -1136,9 +1143,12 @@ function onKey(e) {
   if (e.shiftKey && k === "a" && !e.altKey) {
     take();
     const one = B.sel.length === 1 ? node(B.sel[0]) : null;
-    return one?.type === "frame" && !isFlex(one) ? setFlex(one.id, true) : wrapSelection();
+    return one?.type === "frame" && !isFlex(one) ? (isGrid(one) ? setLayout([one.id], "flex") : setFlex(one.id, true)) : wrapSelection();
   }
-  if (e.shiftKey && e.altKey && (k === "a" || e.code === "KeyA")) return take(), B.sel.length === 1 && setFlex(B.sel[0], false);
+  if (e.shiftKey && e.altKey && (k === "a" || e.code === "KeyA")) return take(), B.sel.length === 1 && (isGrid(node(B.sel[0])) ? setLayout(B.sel.slice(0, 1), "free") : setFlex(B.sel[0], false));
+  // ⇧G makes a grid (of the frame, or round the selection); ⌥⇧G lays a grid's layers out by hand.
+  if (e.shiftKey && !e.altKey && (k === "g" || e.code === "KeyG")) return take(), gridShortcut();
+  if (e.shiftKey && e.altKey && e.code === "KeyG") return take(), B.sel.length === 1 && isGrid(node(B.sel[0])) && setLayout(B.sel.slice(0, 1), "free");
   if (k === "]") return take(), restack("front");
   if (k === "[") return take(), restack("back");
   if (TOOL_KEYS[k] && !e.altKey) return take(), bset({ tool: TOOL_KEYS[k] });

@@ -2659,10 +2659,10 @@ export interface GridCell {
 }
 
 /**
- * Where CSS's auto-placement puts items (row flow, `columns` wide, sparse): each item's cell, given
- * its spans. Used to tell whether a layout needs its items placed by hand.
+ * Where CSS's auto-placement puts items (row flow, `columns` wide, sparse or dense): each item's
+ * cell, given its spans. Used to tell whether a layout needs its items placed by hand.
  */
-export function autoPlace(spans: Array<{ columnSpan: number; rowSpan: number }>, columns: number): GridCell[] {
+export function autoPlace(spans: Array<{ columnSpan: number; rowSpan: number }>, columns: number, dense = false): GridCell[] {
   const taken = new Set<string>();
   const free = (c: number, r: number, cs: number, rs: number) => {
     if (c + cs - 1 > columns) return false;
@@ -2672,6 +2672,11 @@ export function autoPlace(spans: Array<{ columnSpan: number; rowSpan: number }>,
   let col = 1;
   let row = 1;
   return spans.map(({ columnSpan, rowSpan }) => {
+    // Dense: each item looks for room from the start again.
+    if (dense) {
+      col = 1;
+      row = 1;
+    }
     const cs = Math.min(Math.max(1, columnSpan), columns);
     for (let guard = 0; guard < 100000; guard++) {
       if (free(col, row, cs, rowSpan)) break;
@@ -2753,8 +2758,11 @@ export function planGrid(items: Array<{ id: string; box: Box }>): GridPlan {
       const ends = list.filter((i) => cell(cells[i.id])[0] + cell(cells[i.id])[1] - 1 === j + 1).map((i) => start(i.box) + size(i.box));
       return ends.length ? [Math.max(0, line - Math.max(...ends))] : [];
     });
-  const columnGap = Math.round(median(gapsBetween(lefts, (b) => b.x, (b) => b.width, (c) => [c.column, c.columnSpan])));
-  const rowGap = Math.round(median(gapsBetween(tops, (b) => b.y, (b) => b.height, (c) => [c.row, c.rowSpan])));
+  let columnGap = Math.round(median(gapsBetween(lefts, (b) => b.x, (b) => b.width, (c) => [c.column, c.columnSpan])));
+  let rowGap = Math.round(median(gapsBetween(tops, (b) => b.y, (b) => b.height, (c) => [c.row, c.rowSpan])));
+  // One column (or row) has no gap of its own across: it takes the other, so the CSS says one gap.
+  if (lefts.length === 1) columnGap = rowGap;
+  if (tops.length === 1) rowGap = columnGap;
   const widths = lefts.map((left, j) => {
     const own = list.filter((i) => cells[i.id].column === j + 1 && cells[i.id].columnSpan === 1).map((i) => i.box.width);
     if (own.length) return Math.max(...own);

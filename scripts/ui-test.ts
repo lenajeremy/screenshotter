@@ -306,6 +306,26 @@ async function openTestBoard(page: Page) {
   const byName = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
   return { id: b.id, byName };
 }
+/** A board with a desktop artboard holding a 3-column grid of six cards and a flex tray beside it, open on the page. */
+async function openGridBoard(page: Page) {
+  const card = (t: string, color: string) => `<div data-name="Card ${t}" style="height:90px;border-radius:12px;background:${color};display:flex;align-items:center;justify-content:center"><span style="font-size:15px;font-weight:600;color:#fff">${t}</span></div>`;
+  const b = boards.createBoard("Grid board", "studio");
+  const made = boardCore.addHtmlOps(
+    `<div data-name="Desk" style="width:900px;height:560px;background:#f6f5f2;font-family:Inter,sans-serif;padding:40px;display:flex;gap:32px;align-items:flex-start"><div data-name="Cards" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;width:540px;padding:16px;background:#fff;border-radius:16px">${["One", "Two", "Three", "Four", "Five", "Six"].map((t, i) => card(t, ["#1f6feb", "#8957e5", "#d1242f", "#1a7f37", "#bf8700", "#57606a"][i])).join("")}</div><div data-name="Tray" style="display:flex;flex-direction:column;gap:10px;width:200px"><div data-name="Chip" style="height:60px;border-radius:10px;background:#0a0a0a"></div></div></div>`,
+    null,
+    { page: b.pages[0].id },
+  );
+  boards.changeBoard(b.id, made.ops, "studio");
+  await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+  await page.waitForSelector(".bd-world [data-bid]");
+  await page.waitForTimeout(900);
+  const byName = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
+  return { id: b.id, byName };
+}
+/** The canvas's commit, for setting up a board as a person would have left it. */
+const commitOps = (page: Page, ops: unknown[]) => S(page, async (ops: unknown[]) => (await import("/ui/board-state.js" as string)).commit(ops, { label: "Test" }), ops);
+const childNames = (t: { id: string }, id: string) => (boards.getBoard(t.id).nodes[id].children ?? []).map((c) => boards.getBoard(t.id).nodes[c].name).join(",");
+
 const boardSel = (page: Page) => S(page, async () => {
   const m = await import("/ui/board-state.js" as string);
   return m.B.sel.map((id: string) => m.B.board.nodes[id].name).join(",");
@@ -2249,6 +2269,332 @@ const CHECKS: Record<string, Check> = {
       h4.remove();
       return bad.length ? bad.join("; ") : "ok";
     });
+  },
+  async "on a board, a grid shows its tracks, gaps and headers, and the Grid section, in both themes"(page) {
+    const t = await openGridBoard(page);
+    const problems: string[] = [];
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await sel(page, [t.byName("Cards")]);
+      await page.waitForTimeout(400);
+      const drawn = await S(page, () => ({ lines: document.querySelectorAll(".bd-grid-line").length, gaps: document.querySelectorAll(".bd-grid-gap").length, heads: document.querySelectorAll(".bd-grid-head.at-col").length, rows: document.querySelectorAll(".bd-grid-head.at-row").length, section: [...document.querySelectorAll(".bd-right .section-head h3")].map((h) => h.textContent).join(",") }));
+      if (drawn.heads !== 3 || drawn.rows !== 2 || drawn.gaps !== 3 || drawn.lines < 10) problems.push(`${theme}: drawn ${JSON.stringify(drawn)}`);
+      if (!/Grid/.test(drawn.section)) problems.push(`${theme}: the panel's sections are ${drawn.section}`);
+      // A cell hovered: its column's and row's sizes show.
+      const c = await boxOf(page, t.byName("Card Five"));
+      await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2);
+      await page.waitForTimeout(200);
+      const tags = await S(page, () => [...document.querySelectorAll(".bd-grid-head .tag")].map((x) => x.textContent).join("|"));
+      if (!/^1fr · \d+\|Auto · 90$/.test(tags)) problems.push(`${theme}: hovering a cell shows "${tags}"`);
+      await picture(page, `grid-${theme}-frame`);
+      for (const issue of await themeAudit(page)) problems.push(`${theme} grid: ${issue}`);
+      await page.click(".bd-more");
+      await page.locator(".bd-tracks[data-axis=columns] .bd-track").first().click();
+      await page.waitForTimeout(250);
+      await picture(page, `grid-${theme}-track`);
+      for (const issue of await themeAudit(page)) problems.push(`${theme} track editor: ${issue}`);
+      await page.keyboard.press("Escape");
+      await page.locator('.bd-right .section-head button[title^="Columns × rows"]').click();
+      await page.waitForTimeout(250);
+      await picture(page, `grid-${theme}-presets`);
+      for (const issue of await themeAudit(page)) problems.push(`${theme} presets: ${issue}`);
+      await page.keyboard.press("Escape");
+      await sel(page, [t.byName("Card Two")]);
+      await page.waitForTimeout(300);
+      await picture(page, `grid-${theme}-child`);
+      for (const issue of await themeAudit(page)) problems.push(`${theme} child: ${issue}`);
+      const marked = await S(page, () => document.querySelectorAll(".bd-grid-cell").length);
+      if (marked !== 1) problems.push(`${theme}: a layer in the grid marks ${marked} cells`);
+    }
+    await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
+    return problems.length ? problems.join("\n    ") : "ok";
+  },
+  async "on a board, a frame becomes a grid from the panel and with ⇧G, its layers staying put, and back by ⌥⇧G and undo"(page) {
+    const t = await openTestBoard(page);
+    const list = t.byName("List");
+    const rows = ["Row One", "Row Two", "Row Three"].map(t.byName);
+    const where = () => Promise.all(rows.map((r) => boxOf(page, r)));
+    const same = (a: { x: number; y: number; width: number; height: number }[], b: typeof a) => a.every((r, i) => Math.abs(r.x - b[i].x) <= 1 && Math.abs(r.y - b[i].y) <= 1 && Math.abs(r.width - b[i].width) <= 1 && Math.abs(r.height - b[i].height) <= 1);
+    const before = await where();
+    await sel(page, [list]);
+    await page.waitForTimeout(300);
+    await page.locator(".bd-right .bd-kind button", { hasText: "Grid" }).click();
+    await page.waitForTimeout(800);
+    const ls = styleOf(t, list);
+    if (ls.display !== "grid" || ls.gridTemplateColumns !== "1fr" || ls.gridTemplateRows !== "repeat(3, auto)" || ls.gap !== "10px") return `List became ${JSON.stringify(ls)}`;
+    if (!same(await where(), before)) return "the rows moved when their flex column became a grid";
+    const icon = await S(page, (id: string) => document.querySelector(`.bd-row[data-lid="${id}"] .ico svg`)?.innerHTML.includes("rect") ?? false, list);
+    const titles = await S(page, () => [...document.querySelectorAll(".bd-right .section-head h3")].map((h) => h.textContent).join(","));
+    if (!/Grid/.test(titles) || !icon) return `the panel shows ${titles}`;
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(800);
+    if (styleOf(t, list).display !== "flex" || styleOf(t, list).gridTemplateRows) return `undo left ${JSON.stringify(styleOf(t, list))}`;
+    // ⇧G round three rows: a grid that keeps them where they are.
+    await sel(page, rows);
+    await page.keyboard.press("Shift+G");
+    await page.waitForTimeout(900);
+    const wrap = nodeOf(t, rows[0]).parent!;
+    const ws = styleOf(t, wrap);
+    if (nodeOf(t, wrap).name !== "Grid" || ws.display !== "grid" || childNames(t, wrap) !== "Row One,Row Two,Row Three" || ws.gap !== "10px") return `⇧G made ${nodeOf(t, wrap).name}: ${JSON.stringify(ws)} holding ${childNames(t, wrap)}`;
+    if (!same(await where(), before)) return "the rows moved when wrapped in a grid";
+    // ⌥⇧G: by hand, where they are; ⇧G again: a grid from where they are.
+    await sel(page, [wrap]);
+    await page.keyboard.press("Alt+Shift+KeyG");
+    await page.waitForTimeout(900);
+    if (styleOf(t, wrap).display || styleOf(t, rows[1]).position !== "absolute") return `⌥⇧G left ${JSON.stringify(styleOf(t, wrap))}, a row ${JSON.stringify(styleOf(t, rows[1]))}`;
+    if (!same(await where(), before)) return "the rows moved when the grid was taken off";
+    await page.keyboard.press("Shift+G");
+    await page.waitForTimeout(900);
+    const again = styleOf(t, wrap);
+    if (again.display !== "grid" || styleOf(t, rows[1]).position || again.gap !== "10px") return `⇧G on a free frame made ${JSON.stringify(again)}`;
+    if (!same(await where(), before)) return "the rows moved when the free frame became a grid";
+    await picture(page, "grid-wrapped");
+    return "ok";
+  },
+  async "on a board, a grid's columns and rows are edited in the panel: count, a track's size, gaps, cells and presets"(page) {
+    const t = await openGridBoard(page);
+    const cards = t.byName("Cards");
+    const cols = () => styleOf(t, cards).gridTemplateColumns;
+    await sel(page, [cards]);
+    await page.waitForTimeout(400);
+    const count = page.locator(".bd-tracks[data-axis=columns] .num input");
+    await count.fill("4");
+    await count.press("Enter");
+    await page.waitForTimeout(500);
+    if (cols() !== "repeat(4, 1fr)") return `4 columns wrote ${cols()}`;
+    await page.locator(".bd-tracks[data-axis=columns] .bd-track").nth(1).click();
+    await page.locator(".bd-track-edit .dd-btn").click();
+    await page.locator(".pop .menu-item", { hasText: "Fixed · px" }).click();
+    await page.waitForTimeout(300);
+    const pxField = page.locator(".bd-track-edit .num", { hasText: "px" }).locator("input");
+    await pxField.fill("120");
+    await pxField.press("Enter");
+    await page.waitForTimeout(400);
+    if (cols() !== "1fr 120px 1fr 1fr") return `a fixed second column wrote ${cols()}`;
+    await page.locator('.bd-track-edit button[title="Move right"]').click();
+    await page.waitForTimeout(400);
+    if (cols() !== "1fr 1fr 120px 1fr") return `moving it right wrote ${cols()}`;
+    await page.locator(".bd-tracks[data-axis=columns] .bd-track").nth(2).click();
+    await page.locator('.bd-track-edit button[title="Delete this column"]').click();
+    await page.waitForTimeout(400);
+    if (cols() !== "repeat(3, 1fr)") return `deleting it wrote ${cols()}`;
+    const gap = page.locator('.bd-flex-side .num[title="Gap between columns"] input');
+    await gap.fill("24");
+    await gap.press("Enter");
+    await page.waitForTimeout(400);
+    if (styleOf(t, cards).gap !== "16px 24px") return `a 24px column gap wrote gap ${styleOf(t, cards).gap}`;
+    await page.locator(".bd-right .bd-cellpad button").nth(4).click();
+    await page.waitForTimeout(300);
+    if (styleOf(t, cards).justifyItems !== "center" || styleOf(t, cards).alignItems !== "center") return `centring in cells wrote ${styleOf(t, cards).justifyItems}/${styleOf(t, cards).alignItems}`;
+    await page.locator(".bd-right .bd-check", { hasText: "Fill cells" }).locator("input").check();
+    await page.waitForTimeout(300);
+    if (styleOf(t, cards).justifyItems || styleOf(t, cards).alignItems) return "Fill cells left an alignment";
+    // One click from the presets: a layout, then columns × rows from the picker.
+    await page.locator('.bd-right .section-head button[title^="Columns × rows"]').click();
+    await page.locator(".bd-preset", { hasText: "Sidebar and main" }).click();
+    await page.waitForTimeout(400);
+    if (cols() !== "240px 1fr") return `Sidebar and main wrote ${cols()}`;
+    await page.locator('.bd-right .section-head button[title^="Columns × rows"]').click();
+    await page.locator('.bd-grid-picker button[aria-label="4 × 2"]').click();
+    await page.waitForTimeout(400);
+    if (cols() !== "repeat(4, 1fr)" || styleOf(t, cards).gridTemplateRows !== "repeat(2, auto)") return `the picker's 4 × 2 wrote ${cols()} / ${styleOf(t, cards).gridTemplateRows}`;
+    await page.locator('.bd-right .section-head button[title^="Columns × rows"]').click();
+    await page.locator(".bd-preset", { hasText: "Cards that wrap" }).click();
+    await page.waitForTimeout(400);
+    if (cols() !== "repeat(auto-fill, minmax(200px, 1fr))") return `Cards that wrap wrote ${cols()}`;
+    const pill = await S(page, () => document.querySelector(".bd-tracks[data-axis=columns] .bd-track")?.textContent?.trim());
+    if (pill !== "Fill ≥ 200") return `the auto-fill column reads "${pill}"`;
+    const past = (await bstate(page)).past.split("|").filter((l) => l !== "Test");
+    if (past.length !== 11) return `${past.length} steps of undo: ${past.join(", ")}`;
+    // Flow and areas, under More.
+    await page.click(".bd-more");
+    await page.locator(".bd-grid-flow .seg button", { hasText: "Columns" }).click();
+    await page.locator(".bd-grid-flow .bd-check input").check();
+    await page.waitForTimeout(300);
+    if (styleOf(t, cards).gridAutoFlow !== "column dense") return `flow wrote ${styleOf(t, cards).gridAutoFlow}`;
+    await commitOps(page, [{ op: "set", id: cards, style: { gridTemplateColumns: "repeat(3, 1fr)", gridTemplateRows: "repeat(2, auto)", gridAutoFlow: null } }]);
+    await page.waitForTimeout(400);
+    const cell = page.locator(".bd-area-cell").first();
+    await cell.fill("hero");
+    await cell.press("Tab");
+    await page.locator(".bd-area-cell").nth(1).fill("hero");
+    await page.locator(".bd-area-cell").nth(1).press("Enter");
+    await page.waitForTimeout(400);
+    if (styleOf(t, cards).gridTemplateAreas !== `"hero hero ." ". . ."`) return `the areas wrote ${styleOf(t, cards).gridTemplateAreas}`;
+    await picture(page, "grid-panel-areas");
+    return "ok";
+  },
+  async "on a board, a grid's tracks change on the canvas: + adds one, lines drag, and a track's menu sets its size"(page) {
+    const t = await openGridBoard(page);
+    const cards = t.byName("Cards");
+    const cols = () => styleOf(t, cards).gridTemplateColumns;
+    await sel(page, [cards]);
+    await page.waitForTimeout(400);
+    await page.click(".bd-grid-add.at-col");
+    await page.waitForTimeout(500);
+    if (cols() !== "repeat(4, 1fr)") return `+ wrote ${cols()}`;
+    await page.click(".bd-grid-add.at-row");
+    await page.waitForTimeout(500);
+    if (styleOf(t, cards).gridTemplateRows !== "repeat(3, auto)") return `+ for rows wrote ${styleOf(t, cards).gridTemplateRows}`;
+    await commitOps(page, [{ op: "set", id: cards, style: { gridTemplateColumns: "120px 1fr 1fr", gridTemplateRows: null } }]);
+    await page.waitForTimeout(500);
+    const z = await S(page, async () => (await import("/ui/board-state.js" as string)).B.view.z);
+    const drag = async (i: number, dx: number) => {
+      const b = (await page.locator(".bd-grid-drag.v").nth(i).boundingBox())!;
+      await page.mouse.move(b.x + b.width / 2, b.y + 20);
+      await page.mouse.down();
+      for (let k = 1; k <= 8; k++) await page.mouse.move(b.x + b.width / 2 + (dx * k) / 8, b.y + 20);
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+    };
+    await drag(0, 40 * z);
+    if (cols() !== "160px 1fr 1fr") return `dragging the line after a 120px column 40px wrote ${cols()}`;
+    await drag(1, 30 * z);
+    const m = /^160px ([\d.]+)fr ([\d.]+)fr$/.exec(cols() ?? "");
+    if (!m || Math.abs(Number(m[1]) + Number(m[2]) - 2) > 0.02 || Number(m[1]) <= 1) return `dragging the line between two 1fr columns wrote ${cols()}`;
+    await page.locator(".bd-grid-head.at-col").nth(2).click();
+    await page.locator(".ctx-item", { hasText: "Fixed" }).click();
+    await page.waitForTimeout(400);
+    if (!/^160px [\d.]+fr \d+px$/.test(cols() ?? "")) return `Fixed from the third column's menu wrote ${cols()}`;
+    await page.locator(".bd-grid-head.at-col").nth(0).click();
+    await page.locator(".ctx-item", { hasText: "Add a column right" }).click();
+    await page.waitForTimeout(400);
+    if (!/^160px 160px [\d.]+fr \d+px$/.test(cols() ?? "")) return `Add a column right wrote ${cols()}`;
+    await page.locator(".bd-grid-head.at-col").nth(1).click();
+    await page.locator(".ctx-item", { hasText: "Delete column" }).click();
+    await page.waitForTimeout(400);
+    if (!/^160px [\d.]+fr \d+px$/.test(cols() ?? "")) return `Delete column wrote ${cols()}`;
+    await picture(page, "grid-canvas-tracks");
+    await page.keyboard.press("Meta+z");
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(500);
+    return /^160px [\d.]+fr \d+px$/.test(cols() ?? "") ? "ok" : `two undos left ${cols()}`;
+  },
+  async "on a board, a layer moves to another cell of its grid, its edge changes its span, and a layer from a flex frame lands in a cell"(page) {
+    const t = await openGridBoard(page);
+    const cards = t.byName("Cards");
+    const one = t.byName("Card One");
+    const geo = () => S(page, async (id: string) => {
+      const g = (await import("/ui/board-grid.js" as string)).gridGeometry(id);
+      const c = document.querySelector(".bd-canvas")!.getBoundingClientRect();
+      return { cols: g.cols.map((x: { a: number; b: number }) => (x.a + x.b) / 2 + c.left), rows: g.rows.map((x: { a: number; b: number }) => (x.a + x.b) / 2 + c.top) };
+    }, cards);
+    const dragTo = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      for (let k = 1; k <= 12; k++) await page.mouse.move(from.x + ((to.x - from.x) * k) / 12, from.y + ((to.y - from.y) * k) / 12);
+      await page.waitForTimeout(150);
+      const target = await S(page, () => document.querySelectorAll(".bd-grid-target").length);
+      await page.mouse.up();
+      await page.waitForTimeout(700);
+      return target;
+    };
+    await sel(page, [one]);
+    await page.waitForTimeout(300);
+    let g = await geo();
+    const a = await boxOf(page, one);
+    const shown = await dragTo({ x: a.x + 20, y: a.y + 20 }, { x: g.cols[1], y: g.rows[1] });
+    if (childNames(t, cards) !== "Card Two,Card Three,Card Four,Card Five,Card One,Card Six" || styleOf(t, one).gridColumn || !shown) return `dragging One to Five's cell (target shown: ${shown}) made ${childNames(t, cards)} (${styleOf(t, one).gridColumn})`;
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(600);
+    if (childNames(t, cards) !== "Card One,Card Two,Card Three,Card Four,Card Five,Card Six") return `undo made ${childNames(t, cards)}`;
+    // Its right edge dragged across the next column: it spans two.
+    await sel(page, [one]);
+    await page.waitForTimeout(300);
+    g = await geo();
+    const e = (await page.locator(".bd-handle.h-e").boundingBox())!;
+    await dragTo({ x: e.x + 4, y: e.y + 4 }, { x: g.cols[1] + 20, y: e.y + 4 });
+    if (styleOf(t, one).gridColumn !== "span 2") return `dragging One's edge across a column wrote ${styleOf(t, one).gridColumn}`;
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(500);
+    // Four columns leave two cells free: the chip from the tray goes to the first in order, then by hand to the last.
+    await commitOps(page, [{ op: "set", id: cards, style: { gridTemplateColumns: "repeat(4, 1fr)" } }]);
+    await page.waitForTimeout(500);
+    g = await geo();
+    const chip = t.byName("Chip");
+    await sel(page, [chip]);
+    await page.waitForTimeout(300);
+    const cb = await boxOf(page, chip);
+    await dragTo({ x: cb.x + 30, y: cb.y + 20 }, { x: g.cols[2], y: g.rows[1] });
+    if (nodeOf(t, chip).parent !== cards || childNames(t, cards).split(",").pop() !== "Chip" || styleOf(t, chip).gridColumn) return `the chip dropped on the next free cell: in ${nodeOf(t, nodeOf(t, chip).parent!).name}, ${childNames(t, cards)}, ${styleOf(t, chip).gridColumn}`;
+    await sel(page, [chip]);
+    await page.waitForTimeout(300);
+    const cb2 = await boxOf(page, chip);
+    await dragTo({ x: cb2.x + 20, y: cb2.y + 20 }, { x: g.cols[3], y: g.rows[1] });
+    if (styleOf(t, chip).gridColumn !== "4" || styleOf(t, chip).gridRow !== "2") return `the chip dragged to the last cell is at ${styleOf(t, chip).gridColumn} / ${styleOf(t, chip).gridRow}`;
+    const pinned = await boxOf(page, chip);
+    if (Math.abs(pinned.x + pinned.width / 2 - g.cols[3]) > 2) return "the chip isn't drawn in the last column";
+    await picture(page, "grid-dropped");
+    return "ok";
+  },
+  async "on a board, In the grid sets a layer's column, span, whole row, area and whether it fills its cell"(page) {
+    const t = await openGridBoard(page);
+    const cards = t.byName("Cards");
+    const two = t.byName("Card Two");
+    await sel(page, [two]);
+    await page.waitForTimeout(400);
+    const field = (row: number, label: string) => page.locator(".bd-cell-line").nth(row).locator(".num", { hasText: label }).locator("input");
+    await field(0, "At").fill("2");
+    await field(0, "At").press("Enter");
+    await field(0, "Span").fill("2");
+    await field(0, "Span").press("Enter");
+    await page.waitForTimeout(400);
+    if (styleOf(t, two).gridColumn !== "2 / span 2") return `column 2, span 2 wrote ${styleOf(t, two).gridColumn}`;
+    await page.locator('.bd-cell-line button[title="Across the whole row"]').click();
+    await page.waitForTimeout(400);
+    if (styleOf(t, two).gridColumn !== "1 / -1") return `across the whole row wrote ${styleOf(t, two).gridColumn}`;
+    // A card 90px tall doesn't fill its cell; ticked, it does; unticked, it keeps the size it had.
+    const fill = page.locator(".bd-right .bd-check", { hasText: "Fill the cell" }).locator("input");
+    if (await fill.isChecked()) return "a card with a height of its own reads as filling its cell";
+    await fill.check();
+    await page.waitForTimeout(400);
+    if (styleOf(t, two).height || styleOf(t, two).width || styleOf(t, two).justifySelf || !(await fill.isChecked())) return `filling the cell left ${JSON.stringify(styleOf(t, two))}`;
+    await fill.uncheck();
+    await page.waitForTimeout(400);
+    if (!/^\d+px$/.test(styleOf(t, two).width ?? "") || !/^\d+px$/.test(styleOf(t, two).height ?? "") || styleOf(t, two).justifySelf !== "start") return `its own size wrote ${JSON.stringify(styleOf(t, two))}`;
+    await commitOps(page, [{ op: "set", id: cards, style: { gridTemplateAreas: `"hero hero side" "a b side"` } }]);
+    await page.waitForTimeout(500);
+    await page.locator(".bd-cell-line", { hasText: "Area" }).locator(".dd-btn").click();
+    await page.locator(".pop .menu-item", { hasText: "side" }).click();
+    await page.waitForTimeout(400);
+    if (styleOf(t, two).gridArea !== "side" || styleOf(t, two).gridColumn) return `the area wrote ${JSON.stringify(styleOf(t, two))}`;
+    const labels = await S(page, () => [...document.querySelectorAll(".bd-grid-area")].map((x) => x.textContent).join(","));
+    if (labels !== "hero,side,a,b") return `the canvas names areas "${labels}"`;
+    await picture(page, "grid-child-area");
+    await page.locator('.bd-right .section-head button[title^="Back to wherever"]').click();
+    await page.waitForTimeout(400);
+    return styleOf(t, two).gridArea ? "Reset left its area" : "ok";
+  },
+  async "a grid draws the same on the canvas as in pictures of the board and in Preview"(page) {
+    const t = await openGridBoard(page);
+    const cards = t.byName("Cards");
+    const names = ["Card One", "Card Two", "Card Three", "Card Four", "Card Five", "Card Six"];
+    await commitOps(page, [
+      { op: "set", id: cards, style: { gridTemplateColumns: "120px repeat(2, minmax(80px, 1fr))", gridAutoRows: "minmax(70px, auto)", gap: "12px 20px", justifyItems: "center" } },
+      { op: "set", id: t.byName("Card One"), style: { gridColumn: "2 / span 2", width: "160px" } },
+      { op: "set", id: t.byName("Card Six"), style: { gridColumn: "1 / -1", justifySelf: "stretch" } },
+    ]);
+    await page.waitForTimeout(1200);
+    const desk = t.byName("Desk");
+    const ids = [cards, ...names.map(t.byName)];
+    const canvas = await S(page, async (args: { desk: string; ids: string[] }) => {
+      const m = await import("/ui/board-canvas.js" as string);
+      const d = m.worldBox(args.desk);
+      return Object.fromEntries(args.ids.map((id) => {
+        const b = m.worldBox(id);
+        return [id, [b.x - d.x, b.y - d.y, b.width, b.height]];
+      }));
+    }, { desk, ids });
+    const { drawLayers } = await import("../src/board/render.js");
+    const drawn = await drawLayers(boards.getBoard(t.id), [desk], { scale: 1 });
+    const off = ids.filter((id) => {
+      const d = drawn.boxes[id];
+      const c = canvas[id];
+      return !d || Math.abs(d.x - c[0]) > 1 || Math.abs(d.y - c[1]) > 1 || Math.abs(d.width - c[2]) > 1 || Math.abs(d.height - c[3]) > 1;
+    });
+    if (off.length) return `drawn differently: ${off.map((id) => `${nodeOf(t, id).name} canvas ${canvas[id].map(Math.round)} picture ${JSON.stringify(drawn.boxes[id])}`).join("; ")}`;
+    const html = await (await fetch(`${BASE}board/preview?board=${t.id}&node=${desk}`)).text();
+    return /grid-template-columns:120px repeat\(2, minmax\(80px, 1fr\)\)/.test(html) && /grid-column:1 \/ -1/.test(html) ? "ok" : "Preview's page doesn't carry the grid as written";
   },
 };
 
