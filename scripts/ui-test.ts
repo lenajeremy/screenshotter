@@ -45,6 +45,15 @@ const boards = await import("../src/board/store.js");
 const boardCore = await import("../src/board/core.js");
 const talk = await import("../src/board/comments.js");
 
+/** UI_SHOTS=<folder> keeps a picture of the window at the moments checks call `picture`, to look at. */
+async function picture(page: Page, name: string) {
+  const dir = process.env.UI_SHOTS;
+  if (!dir) return;
+  mkdirSync(dir, { recursive: true });
+  const engine = page.context().browser()?.browserType().name() ?? "browser";
+  await page.screenshot({ path: path.join(dir, `${engine}-${name}.png`) });
+}
+
 const shot = path.join(LIB, "phone.png");
 const ipad = path.join(LIB, "ipad.png");
 const unused = path.join(LIB, "images", "unused-pic.png");
@@ -527,14 +536,21 @@ const CHECKS: Record<string, Check> = {
     await page.mouse.click(r.x + r.width - 18, r.y + 8);
     await page.waitForSelector(".bd-thread textarea");
     if (await S(page, () => Boolean(document.querySelector(".bd-thread .bd-to")))) return "the comment box has a To row";
+    const sentBefore = agentman.sent.length;
     // Only a tagged agent gets it: @ and its name.
     await page.keyboard.type("@Des");
     await page.waitForSelector(".bd-picker button", { timeout: 6000 });
     await page.keyboard.press("Enter");
     await page.keyboard.type("make this row taller");
     await page.keyboard.press("Enter");
-    await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Design agent"), null, { timeout: 8000 }).catch(() => undefined);
+    // It waits on the board until it's sent from the bar.
+    await page.waitForSelector(".bd-sendbar .bd-sendbar-send", { timeout: 5000 });
+    if (agentman.sent.length !== sentBefore) return "the comment went to the agent before Send";
+    await page.click(".bd-sendbar .bd-sendbar-send");
+    await page.waitForFunction(() => !document.querySelector(".bd-sendbar") && !document.querySelector(".bd-pin.pending"), null, { timeout: 8000 }).catch(() => undefined);
     const thread = talk.getComments(t.id).threads[0];
+    await page.click(`.bd-pin[data-thread="${thread?.id}"]`).catch(() => undefined);
+    await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Design agent"), null, { timeout: 8000 }).catch(() => undefined);
     if (!thread || thread.anchor.layer !== row) return `the comment is on ${thread?.anchor.layer ? boards.getBoard(t.id).nodes[thread.anchor.layer]?.name : "nothing"}, not Row Two`;
     const sent = agentman.sent.find((s) => s.text.includes(thread.id));
     if (!sent || sent.sessionId !== AGENT || !sent.text.includes(`#${row}`) || !sent.text.includes("> @Design agent make this row taller")) return "Agentman wasn't handed the comment, with its layer, for the agent";
@@ -572,6 +588,64 @@ const CHECKS: Record<string, Check> = {
     const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
     return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
   },
+  async "on a board, comments wait until Send, then reach the agent as one list"(page) {
+    const t = await openTestBoard(page);
+    boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [t.byName("Phone")], at: new Date().toISOString() }], "agent");
+    await page.waitForTimeout(1200);
+    const before = agentman.sent.length;
+    await page.keyboard.press("c");
+    for (const [name, words] of [["Row One", "Row one is too tight"], ["Row Two", "Row two should be bold"]]) {
+      const r = await boxOf(page, t.byName(name));
+      await page.mouse.click(r.x + r.width - 18, r.y + 8);
+      await page.waitForSelector(".bd-thread textarea");
+      await page.keyboard.type(words);
+      await page.keyboard.press("Enter");
+      // The card closes, so the next click comments somewhere else.
+      await page.waitForFunction(() => !document.querySelector(".bd-thread"), null, { timeout: 4000 }).catch(() => undefined);
+    }
+    await page.waitForTimeout(300);
+    const bar = await S(page, () => ({ count: document.querySelector(".bd-sendbar-count")?.textContent ?? "", to: document.querySelector(".bd-sendbar-to .nm")?.textContent ?? "", pins: document.querySelectorAll(".bd-pin.pending").length }));
+    if (bar.count !== "2comments to send" || bar.to !== "Design agent" || bar.pins !== 2) return `the bar says ${JSON.stringify(bar)}`;
+    if (agentman.sent.length !== before) return "a comment went to the agent before Send";
+    // Look them over: the list, then one changed where it is.
+    await page.click(".bd-sendbar-count");
+    await page.waitForTimeout(250);
+    await picture(page, "comments-pending-list");
+    const rows = await S(page, () => [...document.querySelectorAll(".bd-sendbar-row .txt")].map((x) => x.textContent).join("|"));
+    if (rows !== "Row one is too tight|Row two should be bold") return `the list shows "${rows}"`;
+    await page.click(".bd-sendbar-row .go");
+    await page.waitForSelector(".bd-thread .bd-pending-tag");
+    await page.waitForTimeout(250);
+    await picture(page, "comments-pending-thread");
+    await page.click(".bd-thread .bd-msg.pending .bd-link");
+    await page.keyboard.press("Meta+a");
+    await page.keyboard.type("Row one needs 12px more padding");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(500);
+    const edited = talk.getComments(t.id).threads.flatMap((x) => x.messages).some((m) => m.pending && m.text === "Row one needs 12px more padding");
+    if (!edited) return "changing a comment that hasn't been sent didn't save";
+    await page.keyboard.press("Escape");
+    await page.click(".bd-sendbar-to");
+    await page.waitForTimeout(250);
+    await picture(page, "comments-send-to");
+    await page.click(".bd-sendbar-to");
+    await page.click(".bd-sendbar-send");
+    await page.waitForFunction(() => !document.querySelector(".bd-sendbar"), null, { timeout: 8000 }).catch(() => undefined);
+    await page.waitForTimeout(800);
+    const out = agentman.sent.slice(before);
+    if (out.length !== 1 || out[0].sessionId !== AGENT) return `Send handed Agentman ${out.length} messages`;
+    if (!/sent you 2 comments at once/.test(out[0].text) || !out[0].text.includes("> Row one needs 12px more padding") || !out[0].text.includes("> Row two should be bold") || !/\n2\. Comment /.test(out[0].text)) return "the message isn't the list of both comments";
+    const delivered = talk.getComments(t.id).threads.every((x) => x.messages.every((m) => !m.pending && m.delivery?.[AGENT]?.status === "delivered"));
+    if (!delivered) return "the comments don't say they were delivered";
+    // A reply waits in its thread too, with the thread left open.
+    const first = talk.getComments(t.id).threads[0];
+    await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), first.id);
+    await page.waitForSelector(".bd-thread textarea");
+    await page.keyboard.type("Also round the corners");
+    await page.keyboard.press("Enter");
+    const waiting = await page.waitForFunction(() => document.querySelector(".bd-thread .bd-msg.pending .txt")?.textContent === "Also round the corners" && document.querySelector(".bd-pin i.pending") && document.querySelector(".bd-sendbar-count")?.textContent === "1comment to send", null, { timeout: 5000 }).then(() => true, () => false);
+    return waiting && agentman.sent.length === before + 1 ? "ok" : "a reply didn't wait in its open thread to be sent";
+  },
   async "on a board, @ tags an agent in the words, even one from Agentman that hasn't worked here"(page) {
     const t = await openTestBoard(page);
     await page.keyboard.press("c");
@@ -593,8 +667,13 @@ const CHECKS: Record<string, Check> = {
     const typed = await S(page, () => (document.querySelector(".bd-thread textarea") as HTMLTextAreaElement).value);
     const button = await S(page, () => document.querySelector(".bd-compose .bd-send")?.getAttribute("aria-label") ?? "");
     const to = await S(page, () => document.querySelector(".bd-compose-row .to")?.textContent ?? "");
-    if (typed !== "Hey @Helper can you tidy this row?" || button !== "Send" || to !== "To Helper") return `the words are "${typed}", the button says "${button}", "${to}"`;
-    await page.keyboard.press("Enter");
+    if (typed !== "Hey @Helper can you tidy this row?" || button !== "Add comment" || to !== "To Helper") return `the words are "${typed}", the button says "${button}", "${to}"`;
+    // ⌘⏎ adds it and sends at once.
+    await page.keyboard.press("Meta+Enter");
+    const tidy = () => talk.getComments(t.id).threads.find((x) => x.messages.some((m) => m.text.includes("tidy this row") && m.delivery?.["codex:helper"]?.status === "delivered"));
+    for (let i = 0; i < 40 && !tidy(); i++) await page.waitForTimeout(200);
+    const tagged = tidy();
+    await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), tagged?.id ?? "");
     await page.waitForFunction(() => document.querySelector(".bd-thread .bd-sent")?.textContent?.startsWith("Sent to Helper"), null, { timeout: 8000 }).catch(() => undefined);
     const sent = agentman.sent.find((x) => x.sessionId === "codex:helper");
     const onBoard = boards.getBoard(t.id).agents?.["codex:helper"]?.name;
@@ -684,15 +763,15 @@ const CHECKS: Record<string, Check> = {
     await page.waitForSelector(".bd-thread textarea");
     const note = await S(page, () => document.querySelector(".bd-compose .bd-sent")?.textContent ?? "");
     await page.keyboard.type("Too much space between the rows");
+    const area = await S(page, () => Boolean(document.querySelector(".bd-carea")));
     await page.click(".bd-compose .bd-send");
     await page.waitForTimeout(500);
     const th = talk.getComments(t.id).threads[0];
     const layers = (th?.anchor.layers ?? []).map((id) => boards.getBoard(t.id).nodes[id]?.name).join();
     if (!th?.anchor.rect || th.anchor.artboard !== t.byName("Phone")) return "the region wasn't saved on the artboard";
     if (layers !== "List") return `the region covers ${layers || "nothing"}, not List`;
-    if (note || th.messages[0].to?.length) return "with no agent tagged, it should be just a comment";
-    const area = await S(page, () => Boolean(document.querySelector(".bd-carea")));
-    return area ? "ok" : "the region isn't outlined while its thread is open";
+    if (note || th.messages[0].to?.length || !th.messages[0].pending) return "with no agent tagged, it should wait to be sent, to no one in particular";
+    return area ? "ok" : "the region isn't outlined while the comment is written";
   },
   async "an agent's change to an open board shows up and undoes"(page) {
     const t = await openTestBoard(page);

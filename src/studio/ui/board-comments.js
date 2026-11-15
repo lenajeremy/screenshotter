@@ -1,8 +1,10 @@
 // Comments on a board: pins on the canvas, a thread by its pin, and the Comments tab. What the
-// person writes goes to the agents it names, through Agentman (the Studio server sends it); their
-// answers come back with the board's polling, as their changes to the design do.
+// person writes waits on the board (pending) until they send it all from the bar at the bottom:
+// then each agent gets one message with every comment for it, through Agentman (the Studio server
+// sends it), rather than one at a time while it works on the last. Their answers come back with
+// the board's polling, as their changes to the design do.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { plainText, rootOf, subtree } from "./board-core.js";
+import { defaultRecipients, plainText, rootOf, subtree } from "./board-core.js";
 import { B, bset, commentListeners, currentPage, loadComments, node } from "./board-state.js";
 import { canvasEl, centerOn, screenBox, worldBox } from "./board-canvas.js";
 import { Switch, html } from "./controls.js";
@@ -141,14 +143,16 @@ async function loadLive() {
  */
 function waitingOn(t) {
   if (t.resolved) return [];
+  // What's been said (not what the person hasn't sent yet).
+  const said = t.messages.filter((m) => !m.pending);
   // Each agent the person wrote to, if it hasn't answered since (another agent's answer doesn't count).
-  const keys = [...new Set(t.messages.filter((m) => m.by === "person").flatMap((m) => m.to ?? []))];
+  const keys = [...new Set(said.filter((m) => m.by === "person").flatMap((m) => m.to ?? []))];
   return keys
     .map((key) => {
       let ask = -1;
-      t.messages.forEach((m, i) => m.by === "person" && m.to?.includes(key) && (ask = i));
-      if (ask < 0 || t.messages.slice(ask + 1).some((m) => m.by === key)) return null;
-      const d = t.messages[ask].delivery?.[key];
+      said.forEach((m, i) => m.by === "person" && m.to?.includes(key) && (ask = i));
+      if (ask < 0 || said.slice(ask + 1).some((m) => m.by === key)) return null;
+      const d = said[ask].delivery?.[key];
       if (!d || (d.status !== "delivered" && d.status !== "queued")) return null;
       const age = Date.now() - Date.parse(d.at);
       const state = live.board === B.id ? live.states[key] : undefined;
@@ -342,20 +346,86 @@ async function post(body) {
   return r;
 }
 
-async function send(thread, text, to) {
+/**
+ * Keep a comment (or a reply) on the board, to go with the others when the person sends them. A
+ * new one's card closes, so the next click comments somewhere else; a reply stays in its thread.
+ */
+async function add(thread, text, to) {
   try {
     if (thread) {
-      await post({ do: "reply", comment: thread.id, text, to });
+      await post({ do: "reply", comment: thread.id, text, to, pending: true });
     } else {
       const d = B.draft;
       const anchor = d.rect ? { artboard: d.artboard, rect: d.rect, layers: d.layers } : { layer: d.layer, at: d.at };
-      const r = await post({ do: "new", anchor, text, to });
-      bset({ draft: null, thread: r.thread.id });
+      await post({ do: "new", anchor, text, to, pending: true });
+      bset({ draft: null, thread: null });
     }
     return true;
   } catch (e) {
     fail(e, "Couldn't save the comment");
     return false;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pending: what the person has written and not sent, and who it goes to
+
+/** The person's comments waiting to be sent, each with its thread, in the order they were written. */
+export const pendingList = () =>
+  B.comments.threads
+    .flatMap((t) => t.messages.filter((m) => m.pending).map((m) => ({ t, m })))
+    .sort((a, b) => a.m.createdAt.localeCompare(b.m.createdAt));
+const hasPending = (t) => t.messages.some((m) => m.pending);
+/** Only what the person hasn't sent: a new comment, not a reply. */
+const allPending = (t) => Boolean(t.messages[0]?.pending);
+const said = (t) => t.messages.filter((m) => !m.pending);
+/** The thread as it reads: what's been said, then what's waiting to be sent. */
+const inOrder = (t) => [...said(t), ...t.messages.filter((m) => m.pending)];
+
+/** Who the person picked to send untagged comments to (null: the usual ones), for this board. */
+const sendTo = { board: null, keys: null };
+/** The agents who'd get an untagged comment: who's in its thread, else who worked on its artboard. */
+function usualTo(list) {
+  // The board's agents as the comments know them (the design's copy hears of a new one later).
+  const board = { ...B.board, agents: B.comments.agents ?? B.board.agents };
+  const keys = list.filter(({ m }) => !m.to?.length).flatMap(({ t }) => defaultRecipients(board, t.anchor.artboard, said(t)));
+  return [...new Set(keys)];
+}
+function chosenTo(list) {
+  return sendTo.board === B.id && sendTo.keys ? sendTo.keys : usualTo(list);
+}
+/** Everyone a send reaches: who each comment tags, and the chosen agents for the rest. */
+function sendPlan(list = pendingList()) {
+  const untagged = list.some(({ m }) => !m.to?.length);
+  const to = chosenTo(list);
+  const tagged = list.flatMap(({ m }) => m.to ?? []);
+  return { untagged, to, everyone: [...new Set([...tagged, ...(untagged ? to : [])])], ready: list.length > 0 && (!untagged || to.length > 0) };
+}
+
+let sending = false;
+/** Send every pending comment: each agent gets one message with all of its. */
+export async function sendAll() {
+  const list = pendingList();
+  const plan = sendPlan(list);
+  if (!list.length || sending) return false;
+  if (!plan.ready) {
+    toast({ kind: "err", title: "Who should get them?", text: "Pick an agent in the bar at the bottom, or @ one in a comment." });
+    return false;
+  }
+  sending = true;
+  bset({});
+  try {
+    await post({ do: "send", to: plan.to });
+    const names = plan.everyone.map((k) => agentName(k));
+    toast({ kind: "ok", icon: "comment", title: `Sent ${list.length === 1 ? "your comment" : `${list.length} comments`} to ${names.join(", ")}`, text: names.length === 1 ? "As one message. Its answers show by each comment." : "Each agent gets one message with its comments." });
+    sendTo.keys = null;
+    return true;
+  } catch (e) {
+    fail(e, "Couldn't send the comments");
+    return false;
+  } finally {
+    sending = false;
+    bset({});
   }
 }
 
@@ -409,15 +479,106 @@ export function CommentLayer() {
     threads.map((t) => {
       const p = pinPoint(t.anchor);
       if (!p) return null;
-      return html`<button key=${t.id} class="bd-pin ${t.id === b.thread ? "on" : ""} ${t.resolved ? "done" : ""} ${busyOn(t) ? "busy" : ""}" data-thread=${t.id} style=${{ left: p.x + "px", top: p.y + "px" }}
-          title=${`${anchorLabel(t.anchor)}: ${t.messages[0]?.text.slice(0, 80) ?? ""}`}
+      const waiting = allPending(t);
+      return html`<button key=${t.id} class="bd-pin ${t.id === b.thread ? "on" : ""} ${t.resolved ? "done" : ""} ${waiting ? "pending" : ""} ${busyOn(t) ? "busy" : ""}" data-thread=${t.id} style=${{ left: p.x + "px", top: p.y + "px" }}
+          title=${`${waiting ? "Not sent yet · " : ""}${anchorLabel(t.anchor)}: ${t.messages[0]?.text.slice(0, 80) ?? ""}`}
           onPointerDown=${stop} onClick=${() => (b.thread === t.id ? closeThread() : openThread(t.id))}>
         ${t.resolved ? html`<${Icon} n="check" s=${11} w=${2.4} />` : t.messages.length}
-        ${!t.resolved && (unseen(t) ? html`<i class="new"></i>` : notSent(t) ? html`<i class="warn"></i>` : null)}
+        ${!t.resolved && (unseen(t) ? html`<i class="new"></i>` : notSent(t) ? html`<i class="warn"></i>` : !waiting && hasPending(t) ? html`<i class="pending"></i>` : null)}
       </button>`;
     })}
     ${draftAt && html`<div class="bd-pin on draft" style=${{ left: draftAt.x + "px", top: draftAt.y + "px" }}><${Icon} n="plus" s=${12} w=${2.2} /></div>`}
-    ${at && (open || b.draft) && html`<${ThreadCard} key=${open?.id ?? "draft"} t=${open} at=${at} />`}`;
+    ${at && (open || b.draft) && html`<${ThreadCard} key=${open?.id ?? "draft"} t=${open} at=${at} />`}
+    <${SendBar} />`;
+}
+
+/**
+ * The comments waiting to be sent, at the bottom of the canvas: how many (the list of them, to
+ * look over), who gets them, and Send.
+ */
+function SendBar() {
+  const list = pendingList();
+  const [open, setOpen] = useState(null);
+  const ref = useRef();
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => !ref.current?.contains(e.target) && setOpen(null);
+    const key = (e) => e.key === "Escape" && (e.stopPropagation(), setOpen(null));
+    addEventListener("pointerdown", away, true);
+    addEventListener("keydown", key, true);
+    return () => {
+      removeEventListener("pointerdown", away, true);
+      removeEventListener("keydown", key, true);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (open === "to") loadLive();
+  }, [open]);
+  if (!list.length) return null;
+  const plan = sendPlan(list);
+  const names = plan.everyone.map((k) => agentName(k));
+  const toLabel = names.length ? names.join(", ") : "Pick an agent";
+  const n = list.length;
+  return html`<div class="bd-sendbar" ref=${ref} onPointerDown=${stop} onWheel=${stop} onDblClick=${stop} onContextMenu=${stop} role="region" aria-label="Comments to send">
+    ${open === "list" && html`<${PendingPop} list=${list} close=${() => setOpen(null)} />`}
+    ${open === "to" && html`<${ToPop} list=${list} plan=${plan} />`}
+    <button class="bd-sendbar-count ${open === "list" ? "on" : ""}" onClick=${() => setOpen(open === "list" ? null : "list")} aria-expanded=${open === "list"} title="Look over what you've written">
+      <span class="n">${n}</span>${n === 1 ? "comment" : "comments"} to send<${Icon} n="down" s=${12} />
+    </button>
+    <span class="sep"></span>
+    <button class="bd-sendbar-to ${open === "to" ? "on" : ""} ${plan.ready ? "" : "need"}" onClick=${() => setOpen(open === "to" ? null : "to")} aria-expanded=${open === "to"} title=${plan.untagged ? "Who gets them" : "Each goes to the agent it tags"}>
+      <span class="lbl">To</span><span class="nm">${toLabel}</span><${Icon} n="down" s=${12} />
+    </button>
+    <button class="bd-sendbar-send" disabled=${!plan.ready || sending} onClick=${sendAll} title=${plan.ready ? `Send ${n === 1 ? "it" : `all ${n}`} to ${names.join(", ")}, as one message each (⌘⏎ in a comment)` : "Pick who gets them first"}>
+      ${sending ? html`<span class="spinner"></span>` : "Send"}
+    </button>
+  </div>`;
+}
+
+/** Everything waiting to be sent: where each is and what it says; open one, or drop it. */
+function PendingPop({ list, close }) {
+  return html`<div class="bd-sendbar-pop" role="list">
+    <p class="bd-sendbar-head">Not sent yet</p>
+    <div class="bd-sendbar-rows">
+      ${list.map(({ t, m }, i) => html`<div key=${m.id} class="bd-sendbar-row" role="listitem">
+        <button class="go" onClick=${() => (close(), openThread(t.id))} title="Show it on the board">
+          <span class="k">${i + 1}</span>
+          <span class="body">
+            <b>${anchorLabel(t.anchor)}${allPending(t) ? "" : html` <span class="re">· reply</span>`}</b>
+            <span class="txt">${plainWords(m.text)}</span>
+          </span>
+        </button>
+        <button class="icon-btn sm" title="Delete it" aria-label="Delete it" onClick=${() => post({ do: "delete", comment: t.id, message: m.id }).catch((e) => fail(e, "Couldn't delete the comment"))}><${Icon} n="trash" s=${13} /></button>
+      </div>`)}
+    </div>
+  </div>`;
+}
+
+/** Who gets the comments that don't tag anyone: the board's agents, and Agentman's others. */
+function ToPop({ list, plan }) {
+  const here = agents();
+  const others = live.others;
+  const artboards = new Set(list.map(({ t }) => t.anchor.artboard));
+  const toggle = (key) => {
+    const now = new Set(chosenTo(list));
+    now.has(key) ? now.delete(key) : now.add(key);
+    Object.assign(sendTo, { board: B.id, keys: [...now] });
+    bset({});
+  };
+  const row = (a, hint) => html`<button key=${a.key} role="menuitemcheckbox" aria-checked=${plan.to.includes(a.key)} class=${plan.to.includes(a.key) ? "on" : ""} onClick=${() => toggle(a.key)}>
+    <span class="box">${plan.to.includes(a.key) && html`<${Icon} n="check" s=${11} w=${2.6} />`}</span>
+    <span class="av agent">${(a.name.trim()[0] ?? "A").toUpperCase()}</span>
+    <span class="nm">${a.name}</span><span class="k">${hint}</span>
+  </button>`;
+  const tagged = [...new Set(list.flatMap(({ m }) => m.to ?? []))];
+  return html`<div class="bd-sendbar-pop bd-picker" role="menu">
+    ${plan.untagged
+      ? html`${here.map((a) => row(a, a.artboards.some((x) => artboards.has(x)) ? "worked here" : "on this board"))}
+        ${others.length > 0 && html`<p class="bd-picker-head">Other agents in Agentman</p>${others.map((o) => row(o, [kindName(o.kind), o.folder].filter(Boolean).join(" · ")))}`}
+        ${!here.length && !others.length && html`<p class="bd-sent">${live.agentman ? "No agents to send to. Start one in Agentman." : "No agent has worked on this board, and Agentman isn't running."}</p>`}`
+      : null}
+    ${tagged.length > 0 && html`<p class="bd-sendbar-note">${plan.untagged ? "Comments that @ an agent go to it." : `Each comment goes to the agent it tags: ${tagged.map((k) => agentName(k)).join(", ")}.`}</p>`}
+  </div>`;
 }
 
 /** A thread beside its pin: the messages, how each was sent, and a box to answer in. */
@@ -448,11 +609,11 @@ function ThreadCard({ t, at }) {
       ${t &&
       html`${t.resolved
           ? html`<button class="btn sm ghost bd-reopen" onClick=${() => resolve(t)}>Reopen</button>`
-          : html`<button class="icon-btn sm" title="Resolve" onClick=${() => resolve(t)}><${Icon} n="check" s=${14} /></button>`}
+          : !allPending(t) && html`<button class="icon-btn sm" title="Resolve" onClick=${() => resolve(t)}><${Icon} n="check" s=${14} /></button>`}
         <button class="icon-btn sm" title="Delete" onClick=${(e) => askDelete(t, e)}><${Icon} n="trash" s=${14} /></button>`}
       <button class="icon-btn sm" title="Close (Esc)" onClick=${closeThread}><${Icon} n="x" s=${14} /></button>
     </header>
-    ${t && html`<div class="bd-msgs">${t.messages.map((m) => html`<${Message} key=${m.id} t=${t} m=${m} />`)}${waitingOn(t).map((w) => html`<${Working} key=${w.key} w=${w} />`)}</div>`}
+    ${t && html`<div class="bd-msgs">${inOrder(t).map((m) => html`<${Message} key=${m.id} t=${t} m=${m} />`)}${waitingOn(t).map((w) => html`<${Working} key=${w.key} w=${w} />`)}</div>`}
     ${t?.resolved && html`<p class="bd-resolved">Resolved by ${t.resolved.by === "person" ? "you" : agentName(t.resolved.by)}, ${ago(t.resolved.at)}${ago(t.resolved.at) === "now" ? "" : " ago"}</p>`}
     <${Composer} t=${t} anchor=${anchor} />
   </div>`;
@@ -470,11 +631,67 @@ function Working({ w }) {
 }
 
 function Message({ t, m }) {
+  const [editing, setEditing] = useState(false);
+  if (m.pending) {
+    return html`<div class="bd-msg pending">
+      <div class="who"><span class="av">${initial(m)}</span><b>${authorOf(m)}</b><span class="bd-pending-tag">Not sent</span></div>
+      ${editing ? html`<${EditPending} t=${t} m=${m} done=${() => setEditing(false)} />` : html`<div class="txt bd-md">${markdown(m.text)}</div>`}
+      ${!editing &&
+      html`<p class="bd-sent">
+        ${m.to?.length ? `For ${m.to.map((k) => agentName(k)).join(", ")} · ` : ""}<button class="bd-link" onClick=${() => setEditing(true)}>Edit</button> · <button class="bd-link" onClick=${() => post({ do: "delete", comment: t.id, message: m.id }).then(() => t.messages[0] === m && bset({ thread: null })).catch((e) => fail(e, "Couldn't delete the comment"))}>Delete</button>
+      </p>`}
+    </div>`;
+  }
   return html`<div class="bd-msg">
     <div class="who"><span class="av ${m.by === "person" ? "" : "agent"}">${initial(m)}</span><b>${authorOf(m)}</b><span class="when">${ago(m.createdAt)}</span></div>
     <div class="txt bd-md">${markdown(m.text)}</div>
     ${(m.to ?? []).map((key) => html`<${DeliveryLine} key=${key} t=${t} m=${m} k=${key} />`)}
   </div>`;
+}
+
+/** A comment that hasn't been sent, changed where it is: ⏎ keeps it, Esc leaves it as it was. */
+function EditPending({ t, m, done }) {
+  const [text, setText] = useState(m.text);
+  const ref = useRef();
+  // Enter or Esc settles it; the blur that follows (or a click away) doesn't save it again.
+  const settled = useRef(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  });
+  useLayoutEffect(() => {
+    ref.current?.focus();
+    ref.current?.setSelectionRange(text.length, text.length);
+  }, []);
+  const save = async () => {
+    if (settled.current) return;
+    const words = text.trim();
+    if (!words) return;
+    settled.current = true;
+    if (words === m.text) return done();
+    try {
+      await post({ do: "edit", comment: t.id, message: m.id, text: words, to: mentioned(words) });
+      done();
+    } catch (e) {
+      settled.current = false;
+      fail(e, "Couldn't change the comment");
+    }
+  };
+  const onKey = (e) => {
+    e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      settled.current = true;
+      done();
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      save();
+    }
+  };
+  return html`<textarea ref=${ref} class="bd-edit-input" rows="1" value=${text} onInput=${(e) => setText(e.target.value)} onKeyDown=${onKey} onBlur=${save} aria-label="Change the comment"></textarea>`;
 }
 
 /** How sending a message to one agent went, in a few quiet words. */
@@ -551,15 +768,20 @@ function Composer({ t, anchor }) {
     const fromList = Object.entries(picked.current).filter(([name]) => lower.includes(`@${name}`)).map(([, key]) => key);
     return [...new Set([...mentioned(words), ...fromList])];
   };
-  const go = async () => {
+  /** Keep it with the other comments to send; with ⌘, send them all now. */
+  const go = async (andSend) => {
     const words = text.trim();
-    if (!words || busy) return;
+    if (!words || busy) {
+      if (andSend && !words) sendAll();
+      return;
+    }
     setBusy(true);
-    const ok = await send(t, words, tagged(words));
+    const ok = await add(t, words, tagged(words));
     setBusy(false);
     if (ok) {
       setText("");
       picked.current = {};
+      if (andSend) sendAll();
     }
   };
   const onInput = (e) => {
@@ -592,7 +814,7 @@ function Composer({ t, anchor }) {
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      go();
+      go(e.metaKey || e.ctrlKey);
     }
   };
   const asking = tagged(text);
@@ -614,10 +836,10 @@ function Composer({ t, anchor }) {
           onScroll=${(e) => mirror.current && (mirror.current.scrollTop = e.target.scrollTop)}></textarea>
         <div class="bd-compose-mirror" ref=${mirror} aria-hidden="true">${withMentions(text)}${"\u200b"}</div>
       </div>
-      ${asking.length > 0 && html`<div class="bd-compose-row"><span class="to" title=${`${asking.map((k) => agentName(k)).join(", ")} will get it, and answer here`}>To ${asking.map((k) => agentName(k)).join(", ")}</span></div>`}
-      <button class="bd-send ${text.trim() ? "ready" : ""}" disabled=${!text.trim() || busy} onClick=${go}
-        title=${`${asking.length ? `Send to ${asking.map((k) => agentName(k)).join(", ")}` : t ? "Reply" : "Comment"} (⏎ · ⇧⏎ for a new line)`} aria-label=${asking.length ? "Send" : t ? "Reply" : "Comment"}>
-        ${busy ? html`<span class="spin"></span>` : html`<${Icon} n="up" s=${14} w=${2.4} />`}
+      ${asking.length > 0 && html`<div class="bd-compose-row"><span class="to" title=${`${asking.map((k) => agentName(k)).join(", ")} will get it when you send, and answer here`}>To ${asking.map((k) => agentName(k)).join(", ")}</span></div>`}
+      <button class="bd-send ${text.trim() ? "ready" : ""}" disabled=${!text.trim() || busy} onClick=${(e) => go(e.metaKey || e.ctrlKey)}
+        title=${`Add it to the comments to send (⏎) · Add it and send them all (⌘⏎) · ⇧⏎ for a new line`} aria-label=${t ? "Add reply" : "Add comment"}>
+        ${busy ? html`<span class="spinner dark"></span>` : html`<${Icon} n="up" s=${14} w=${2.4} />`}
       </button>
     </div>
   </div>`;
@@ -642,17 +864,17 @@ export function CommentsPanel() {
             const last = t.messages[t.messages.length - 1];
             const replies = t.messages.length - 1;
             const busy = waitingOn(t).find((w) => w.doing === "working");
-            const state = t.resolved ? "Resolved" : notSent(t) ? "Not sent to everyone" : busy ? `${agentName(busy.key)} is working on it…` : unseen(t) ? `New from ${authorOf(last)}` : replies ? `${replies} repl${replies === 1 ? "y" : "ies"}` : "";
+            const state = allPending(t) ? "Not sent yet" : t.resolved ? "Resolved" : hasPending(t) ? "Reply not sent yet" : notSent(t) ? "Not sent to everyone" : busy ? `${agentName(busy.key)} is working on it…` : unseen(t) ? `New from ${authorOf(last)}` : replies ? `${replies} repl${replies === 1 ? "y" : "ies"}` : "";
             return html`<button key=${t.id} class="bd-crow ${b.thread === t.id ? "on" : ""} ${t.resolved ? "done" : ""}" data-thread=${t.id} onClick=${() => openThread(t.id)}>
               <span class="av ${first.by === "person" ? "" : "agent"}">${initial(first)}</span>
               <span class="body">
                 <span class="top"><b>${anchorLabel(t.anchor)}</b><span class="when">${ago(t.updatedAt)}</span></span>
                 <span class="txt">${plainWords(first.text)}</span>
-                ${(state || pageName(t.anchor.page)) && html`<span class="meta ${notSent(t) && !t.resolved ? "warn" : unseen(t) && !t.resolved ? "new" : ""}">${[pageName(t.anchor.page), state].filter(Boolean).join(" · ")}</span>`}
+                ${(state || pageName(t.anchor.page)) && html`<span class="meta ${hasPending(t) ? "pending" : notSent(t) && !t.resolved ? "warn" : unseen(t) && !t.resolved ? "new" : ""}">${[pageName(t.anchor.page), state].filter(Boolean).join(" · ")}</span>`}
               </span>
             </button>`;
           })
-        : html`<p class="bd-hint">${b.comments.threads.length ? "Every comment is resolved." : "No comments yet. Press C, then click a layer or drag over part of an artboard. A comment goes to the agents that worked there, through Agentman, and their answers show here."}</p>`}
+        : html`<p class="bd-hint">${b.comments.threads.length ? "Every comment is resolved." : "No comments yet. Press C, then click a layer or drag over part of an artboard. Your comments wait on the board until you send them all; then the agents that worked there get them as one list, through Agentman, and their answers show here."}</p>`}
     </div>
     ${list.length > 0 &&
     html`<div class="bd-cagents">

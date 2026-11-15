@@ -53,7 +53,7 @@ import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photo
 import { adoptCssPictures, adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
 import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
-import { describeAnchor, getComments, keysOf, reply, startThread, threadForAgent } from "./comments.js";
+import { describeAnchor, getComments, keysOf, reply, sentOnly, startThread, threadForAgent } from "./comments.js";
 
 type Content = CallToolResult["content"];
 const text = (value: unknown): Content[number] => ({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) });
@@ -78,7 +78,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
-- Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. Make the change it asks for with the tools above, then answer in its thread with board_comment; the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
+- Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. The person usually sends several at once, as one numbered list: make every change it asks for with the tools above, then answer each in its thread (board_comment's \`replies\` answers them all in one call); the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
 const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name; \"scratchpad\" is the person's scratchpad.");
 
@@ -833,7 +833,7 @@ export function registerBoardTools(server: McpServer) {
         const out = [];
         for (const b of boards) {
           const mine = keysOf(b, me);
-          const threads = getComments(b.id).threads.filter((t) => (a.resolved || !t.resolved) && (a.all || t.messages.some((m) => mine.has(m.by) || m.to?.some((k) => mine.has(k)))));
+          const threads = sentOnly(getComments(b.id)).threads.filter((t) => (a.resolved || !t.resolved) && (a.all || t.messages.some((m) => mine.has(m.by) || m.to?.some((k) => mine.has(k)))));
           if (threads.length) out.push({ board: b.id, name: b.name, threads: threads.map((t) => threadForAgent(b, t, mine)) });
         }
         return [text(out.length ? out : a.all ? "No comments." : "No open comments for you (all: true lists everyone's).")];
@@ -845,12 +845,17 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Answer a comment on a board",
       description:
-        "Reply in a comment's thread (the user sees it on the board in the Studio, by the comment), or start a thread of your own on a layer to point something out or ask about it. Only the user resolves comments. This only talks about the design: change it with board_edit or board_write_html first, then say what you did.",
+        "Reply in a comment's thread (the user sees it on the board in the Studio, by the comment), or start a thread of your own on a layer to point something out or ask about it. When the user sent several comments at once, `replies` answers them all in one call. Only the user resolves comments. This only talks about the design: change it with board_edit or board_write_html first, then say what you did.",
       inputSchema: {
         board: BoardRef,
         comment: z.string().optional().describe("The comment's id (from the message you got, or board_comments)."),
         reply: z.string().max(8000).optional().describe("What to say in the thread."),
         on: z.string().optional().describe("Instead of `comment`: a layer's id, to start a new thread on it (its words in `reply`)."),
+        replies: z
+          .array(z.object({ comment: z.string(), reply: z.string().max(8000) }))
+          .max(60)
+          .optional()
+          .describe("Instead of `comment` and `reply`: an answer for each of several comments (the user sent them together)."),
       },
     },
     (a) =>
@@ -860,6 +865,22 @@ export function registerBoardTools(server: McpServer) {
         // Whoever answers is one of the board's agents, so the person can write back to it.
         changeBoard(b.id, workingOps(b, [], me), "agent");
         const by = { by: me.key, name: me.name };
+        if (a.replies?.length) {
+          if (a.comment || a.on) throw new Error("Use `replies` on its own, or `comment` and `reply` for one comment.");
+          const done: string[] = [];
+          const failed: { comment: string; error: string }[] = [];
+          for (const r of a.replies) {
+            try {
+              if (!r.reply.trim()) throw new Error("Say something in its `reply`.");
+              reply(b.id, r.comment, { ...by, text: r.reply });
+              done.push(r.comment);
+            } catch (e) {
+              failed.push({ comment: r.comment, error: (e as Error).message });
+            }
+          }
+          if (!done.length) throw new Error(failed.map((f) => `${f.comment}: ${f.error}`).join(" "));
+          return [text({ answered: done, ...(failed.length ? { failed } : {}), note: "The user sees each answer by its comment in the Studio, and resolves it when they're happy." })];
+        }
         if (a.on) {
           if (!a.reply?.trim()) throw new Error("Say what the new comment is about in `reply`.");
           const made = startThread(b.id, { layer: a.on }, { ...by, text: a.reply });

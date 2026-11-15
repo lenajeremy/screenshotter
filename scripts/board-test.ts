@@ -635,6 +635,81 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
   talk.remove(board, region.thread.id);
   check(talk.getComments(board).threads.length === threadCount - 1, "deleting a comment deletes its thread");
   check(fake.sent.every((s) => s.sessionId === AGENT), "nothing went to an agent no one named");
+
+  // Sending several at once: comments wait on the board (pending) until the person sends them, then
+  // each agent gets one message with all of its, not one per comment while it works on the last.
+  {
+    const msgOf = (id: string) => talk.getComments(board).threads.flatMap((t) => t.messages).find((m) => m.id === id)!;
+    const sentBefore = fake.sent.length;
+    const p1 = talk.startThread(board, { layer: titleId }, { text: "Tighten the title", by: "person", to: [], pending: true });
+    const p2 = talk.startThread(board, { artboard: art, rect: { x: 0, y: 0, width: 100, height: 50 } }, { text: "Less space up here", by: "person", pending: true });
+    const p3 = talk.reply(board, cid, { text: "And make it navy", by: "person", pending: true });
+    check(p1.message.pending === true && !p1.message.delivery && !p2.message.to && p3.message.pending === true && fake.sent.length === sentBefore, "a pending comment is kept on the board and sent to no one yet");
+    check(talk.pendingOf(talk.getComments(board)).map((x) => x.message.id).join() === [p1.message.id, p2.message.id, p3.message.id].join(), "the pending comments are listed in the order they were written");
+    const seen = await call("board_comments", { all: true });
+    check(!seen.text.includes("Tighten the title") && !seen.text.includes("And make it navy") && seen.text.includes("Make the title bigger"), "agents don't see what the person hasn't sent");
+    // The agent answers the thread while the reply waits; the person changes a pending comment.
+    talk.reply(board, cid, { text: "Bolder now.", by: AGENT, name: "Design agent" });
+    talk.editPending(board, p1.thread.id, p1.message.id, "Tighten the title's letter spacing");
+    let sentAlready = "";
+    try {
+      talk.editPending(board, cid, first.message.id, "Changed");
+    } catch (e) {
+      sentAlready = (e as Error).message;
+    }
+    check(msgOf(p1.message.id).text === "Tighten the title's letter spacing" && /has been sent/.test(sentAlready), "a pending comment can be changed; a sent one can't");
+    const r = talk.sendPending(board, [AGENT]);
+    await talk.deliverBatch(board, r.batch);
+    const out1 = fake.sent.slice(sentBefore);
+    check(r.count === 3 && out1.length === 1 && out1[0].sessionId === AGENT, "sending them is one message to the agent, with all three");
+    const said = out1[0]?.text ?? "";
+    check(
+      said.startsWith("(From Screenshotter)") && said.includes("sent you 3 comments at once") && said.includes(`\n1. Comment ${p1.thread.id}, on the text`) && said.includes(`\n3. A reply on comment ${cid}`) && said.includes("> Tighten the title's letter spacing") && said.includes("- You: Bolder now.") && said.includes("x 0, y 0, 100×50"),
+      "it's a numbered list: each comment with where it is, and a reply with the thread before it",
+    );
+    check(/board_comment \{ board: "[a-z0-9]+", replies: \[\{ comment: "[a-z0-9]+", reply: "…" \}/.test(said), "and it says how to answer them all in one call");
+    const thread = talk.getComments(board).threads.find((t) => t.id === cid)!;
+    const last = thread.messages[thread.messages.length - 1];
+    check(last.id === p3.message.id && !last.pending && last.batch === r.batch && last.to?.join() === AGENT && last.delivery?.[AGENT].status === "delivered", "a reply that waited goes out after what was said meanwhile, marked delivered");
+    check(talk.pendingOf(talk.getComments(board)).length === 0 && msgOf(p2.message.id).delivery?.[AGENT].status === "delivered", "nothing is left waiting, and each comment says it was delivered");
+    const answered = await call("board_comment", { board, replies: [{ comment: p1.thread.id, reply: "Tightened to -0.02em." }, { comment: p2.thread.id, reply: "Halved the padding." }, { comment: "nope", reply: "?" }] });
+    const t1 = talk.getComments(board).threads.find((t) => t.id === p1.thread.id)!;
+    check(answered.json?.answered?.length === 2 && answered.json.failed?.[0]?.comment === "nope" && t1.messages[1]?.by === AGENT && t1.messages[1].text === "Tightened to -0.02em.", "board_comment's replies answers several comments in one call, and says which it couldn't");
+
+    // A comment that tags an agent goes to it; the rest go to who the person picked.
+    let nothing = "";
+    try {
+      talk.sendPending(board, [AGENT]);
+    } catch (e) {
+      nothing = (e as Error).message;
+    }
+    const lonely = talk.startThread(board, { layer: titleId }, { text: "Who gets this?", by: "person", pending: true });
+    let noOne = "";
+    try {
+      talk.sendPending(board, []);
+    } catch (e) {
+      noOne = (e as Error).message;
+    }
+    check(/nothing waiting/.test(nothing) && /Pick the agents/.test(noOne) && msgOf(lonely.message.id).pending === true, "with nothing waiting, or no one to send to, nothing is sent and the comments stay");
+    talk.remove(board, lonely.thread.id);
+
+    // Agentman isn't running: the whole send says so, and trying again sends it as one message.
+    process.env.SCREENSHOTTER_AGENTMAN_SOCKET = path.join(out, "no-agentman.sock");
+    const q1 = talk.reply(board, p1.thread.id, { text: "Also lighter", by: "person", pending: true });
+    const q2 = talk.reply(board, p2.thread.id, { text: "Even less", by: "person", pending: true });
+    const r2 = talk.sendPending(board, [AGENT]);
+    await talk.deliverBatch(board, r2.batch);
+    const bothFailed = [q1, q2].every((q) => msgOf(q.message.id).delivery?.[AGENT].status === "failed");
+    process.env.SCREENSHOTTER_AGENTMAN_SOCKET = socket;
+    const n0 = fake.sent.length;
+    const again = talk.markBatchSending(board, r2.batch, [AGENT]);
+    await talk.deliverBatch(board, r2.batch, { agents: [AGENT], messages: again });
+    const retried = fake.sent.slice(n0);
+    check(
+      bothFailed && again.length === 2 && retried.length === 1 && retried[0].text.includes("> Also lighter") && retried[0].text.includes("> Even less") && [q1, q2].every((q) => msgOf(q.message.id).delivery?.[AGENT].status === "delivered"),
+      "a send that didn't reach the agent goes again as one message, and both comments say delivered",
+    );
+  }
 }
 await fake.close();
 

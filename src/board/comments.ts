@@ -3,9 +3,11 @@
  * and the agents that worked on it. They live beside the board (comments/<id>.json), not in it, so
  * undoing the design never touches them, and they're written under their own lock, as the board is.
  *
- * What the person writes goes to the agents it names through Agentman (it lands in each agent's own
- * chat, so the agent's answer shows in Agentman too). Agents answer with board_comment, which adds
- * to the thread here, and the Studio picks it up as it does an agent's change to the design.
+ * What the person writes waits on the board (pending) until they send it, with everything else
+ * they wrote, as one list: each agent gets one message through Agentman with every comment for it
+ * (it lands in the agent's own chat, so its answer shows in Agentman too), not one message per
+ * comment while it's busy with the last. Agents answer with board_comment, which adds to the
+ * thread here, and the Studio picks it up as it does an agent's change to the design.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -48,10 +50,14 @@ export interface CommentMessage {
   name?: string;
   text: string;
   createdAt: string;
-  /** The agents told about it, by key. */
+  /** The agents told about it, by key (while it's pending: the ones it tags, if any). */
   to?: string[];
   /** How telling each of them went. */
   delivery?: Record<string, Delivery>;
+  /** The person's, written but not sent yet: it goes out with the others when they send them. */
+  pending?: boolean;
+  /** The send it went out in, with the person's other comments. */
+  batch?: string;
 }
 
 export interface CommentThread {
@@ -188,25 +194,35 @@ export interface Post {
   name?: string;
   /** Agents to tell (keys); left out, the comment goes to the usual ones (see defaultRecipients). */
   to?: string[];
+  /** The person's comment waits to be sent with the others (sendPending); `to` is then only who it tags. */
+  pending?: boolean;
 }
+
+const known = (board: Board, keys: string[] | undefined) => [...new Set(keys ?? [])].filter((k) => board.agents?.[k]);
 
 function message(board: Board, p: Post): CommentMessage {
   const at = now();
-  const to = p.by === "person" ? [...new Set(p.to ?? [])].filter((k) => board.agents?.[k]) : [];
+  const person = p.by === "person";
+  const to = person ? known(board, p.to) : [];
+  const pending = person && p.pending;
   return {
     id: newId(10),
     by: p.by,
     ...(p.name ? { name: p.name.slice(0, 80) } : {}),
     text: cleanText(p.text),
     createdAt: at,
-    ...(to.length ? { to, delivery: Object.fromEntries(to.map((k) => [k, { status: "sending" as const, at }])) } : {}),
+    ...(to.length ? { to } : {}),
+    ...(pending ? { pending: true } : to.length ? { delivery: Object.fromEntries(to.map((k) => [k, { status: "sending" as const, at }])) } : {}),
   };
 }
+
+/** Who a comment goes to: whoever it names; else (sent now, not pending) the usual ones. */
+const recipients = (board: Board, p: Post, artboard: string, before?: CommentMessage[]) => (p.pending ? p.to : (p.to ?? defaultRecipients(board, artboard, before)));
 
 export function startThread(boardId: string, anchor: AnchorInput, p: Post) {
   const board = getBoard(boardId);
   const a = anchorFor(board, anchor);
-  const m = message(board, { ...p, to: p.to ?? defaultRecipients(board, a.artboard) });
+  const m = message(board, { ...p, to: recipients(board, p, a.artboard) });
   const at = m.createdAt;
   const thread: CommentThread = { id: newId(10), anchor: a, messages: [m], createdAt: at, updatedAt: at };
   const { comments } = changeComments(boardId, (c) => c.threads.push(thread));
@@ -216,7 +232,7 @@ export function startThread(boardId: string, anchor: AnchorInput, p: Post) {
 export function reply(boardId: string, threadId: string, p: Post) {
   const board = getBoard(boardId);
   const before = threadIn(read(boardId), threadId);
-  const m = message(board, { ...p, to: p.to ?? defaultRecipients(board, before.anchor.artboard, before.messages) });
+  const m = message(board, { ...p, to: recipients(board, p, before.anchor.artboard, before.messages.filter((x) => !x.pending)) });
   const { comments, result } = changeComments(boardId, (c) => {
     const t = threadIn(c, threadId);
     t.messages.push(m);
@@ -298,6 +314,91 @@ export function remove(boardId: string, threadId: string, messageId?: string) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Pending: what the person has written and not sent yet
+
+/** The person's comments waiting to be sent, thread by thread, oldest first. */
+export function pendingOf(c: BoardComments): Array<{ thread: CommentThread; message: CommentMessage }> {
+  return c.threads
+    .flatMap((thread) => thread.messages.filter((m) => m.pending).map((message) => ({ thread, message })))
+    .sort((a, b) => a.message.createdAt.localeCompare(b.message.createdAt));
+}
+
+/** The comments as agents see them: without what the person hasn't sent yet. */
+export function sentOnly(c: BoardComments): BoardComments {
+  return { ...c, threads: c.threads.map((t) => ({ ...t, messages: t.messages.filter((m) => !m.pending) })).filter((t) => t.messages.length) };
+}
+
+/** Change a comment that hasn't been sent: its words, and who it tags (`to`, when given). */
+export function editPending(boardId: string, threadId: string, messageId: string, text: string, to?: string[]) {
+  const board = getBoard(boardId);
+  const words = cleanText(text);
+  const keys = to && known(board, to);
+  const { comments, result } = changeComments(boardId, (c) => {
+    const t = threadIn(c, threadId);
+    const m = t.messages.find((x) => x.id === messageId);
+    if (!m) throw new Error("That comment isn't there any more.");
+    if (!m.pending) throw new Error("That comment has been sent, so it can't be changed.");
+    m.text = words;
+    if (keys?.length) m.to = keys;
+    else if (keys) delete m.to;
+    return t;
+  });
+  return { thread: result, rev: comments.rev };
+}
+
+/**
+ * Send everything the person has written: each comment to the agents it tags, the rest to `to`.
+ * They go out together (one `batch`), at the end of their threads, after anything said while they
+ * waited; deliverBatch then tells each agent once, with the whole list.
+ */
+export function sendPending(boardId: string, to: string[]) {
+  const board = getBoard(boardId);
+  const others = known(board, to);
+  const batch = newId(10);
+  const { comments, result } = changeComments(boardId, (c) => {
+    const at = now();
+    // Each goes out at the time of sending, a millisecond apart in the order they were written, so
+    // the agent reads them in that order.
+    const order = new Map(pendingOf(c).map((x, i) => [x.message.id, i]));
+    const base = Date.parse(at);
+    const sent: CommentMessage[] = [];
+    for (const t of c.threads) {
+      const waiting = t.messages.filter((m) => m.pending);
+      if (!waiting.length) continue;
+      t.messages = [...t.messages.filter((m) => !m.pending), ...waiting];
+      for (const m of waiting) {
+        const keys = known(board, m.to).length ? known(board, m.to) : others;
+        if (!keys.length) throw new Error(Object.keys(board.agents ?? {}).length ? "Pick the agents to send them to." : "No agent has worked on this board yet: pick one in Agentman to send them to.");
+        delete m.pending;
+        Object.assign(m, { createdAt: new Date(base + (order.get(m.id) ?? 0)).toISOString(), batch, to: keys, delivery: Object.fromEntries(keys.map((k) => [k, { status: "sending" as const, at }])) });
+        sent.push(m);
+      }
+      t.updatedAt = at;
+      delete t.resolved;
+    }
+    if (!sent.length) throw new Error("There's nothing waiting to be sent.");
+    return { count: sent.length, agents: [...new Set(sent.flatMap((m) => m.to ?? []))] };
+  });
+  return { batch, rev: comments.rev, ...result };
+}
+
+/** Mark what an agent didn't get from a send as being sent again; the messages' ids, for deliverBatch. */
+export function markBatchSending(boardId: string, batch: string, keys: string[]): string[] {
+  return changeComments(boardId, (c) => {
+    const ids: string[] = [];
+    for (const t of c.threads)
+      for (const m of t.messages) {
+        if (m.batch !== batch) continue;
+        const again = keys.filter((k) => m.to?.includes(k) && !["delivered", "queued"].includes(m.delivery?.[k]?.status ?? ""));
+        if (!again.length) continue;
+        m.delivery = { ...(m.delivery ?? {}), ...Object.fromEntries(again.map((k) => [k, { status: "sending" as const, at: now() }])) };
+        ids.push(m.id);
+      }
+    return ids;
+  }).result;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Telling agents
 
 const quote = (text: string) =>
@@ -328,7 +429,7 @@ export function messageFor(board: Board, thread: CommentThread, m: CommentMessag
     quote(m.text),
     "",
   ];
-  const earlier = thread.messages.slice(0, thread.messages.findIndex((x) => x.id === m.id)).slice(-4);
+  const earlier = thread.messages.slice(0, thread.messages.findIndex((x) => x.id === m.id)).filter((x) => !x.pending).slice(-4);
   if (earlier.length) {
     lines.push("The thread before this:", ...earlier.map((x) => `- ${authorFor(board, x, to)}: ${short(x.text)}`), "");
   }
@@ -336,6 +437,42 @@ export function messageFor(board: Board, thread: CommentThread, m: CommentMessag
     `It's on ${describeAnchor(board, thread.anchor)}.`,
     "",
     `Answer in the thread with Screenshotter's MCP tool board_comment { board: "${board.id}", comment: "${thread.id}", reply: "…" }; the user sees your reply on the board in the Studio. If the comment asks for a change, make it on the board (board_read, board_edit, board_write_html), look at it with board_screenshot, then reply saying what you changed. The user resolves the comment when they're happy with it.`,
+  );
+  return lines.join("\n");
+}
+
+/**
+ * One message with everything the person sent an agent together: each comment (or reply) with
+ * where it is and the thread before it, numbered, and how to answer them all.
+ */
+export function batchMessageFor(board: Board, items: Array<{ thread: CommentThread; message: CommentMessage }>, to: string): string {
+  const groups = new Map<string, { thread: CommentThread; messages: CommentMessage[] }>();
+  for (const i of items) {
+    const g = groups.get(i.thread.id) ?? groups.set(i.thread.id, { thread: i.thread, messages: [] }).get(i.thread.id)!;
+    g.messages.push(i.message);
+  }
+  const list = [...groups.values()];
+  const n = list.length;
+  const lines = [
+    `(From Screenshotter) The user went over the board "${board.name}" (id ${board.id}) and sent you ${n === 1 ? "this, all at once" : `${n} comments at once`}. Work through ${n === 1 ? "it" : "all of them"}, then answer each in its own thread.`,
+    "",
+  ];
+  const indent = (text: string) => text.split("\n").map((l) => `   ${l}`);
+  list.forEach(({ thread, messages }, k) => {
+    const at = thread.messages.findIndex((x) => x.id === messages[0].id);
+    const first = at === 0;
+    lines.push(`${k + 1}. ${first ? "Comment" : "A reply on comment"} ${thread.id}, on ${describeAnchor(board, thread.anchor)}.`);
+    const earlier = thread.messages.slice(0, Math.max(0, at)).filter((x) => !x.pending).slice(-4);
+    if (earlier.length) lines.push("   The thread before it:", ...earlier.map((x) => `   - ${authorFor(board, x, to)}: ${short(x.text)}`), "   The user now says:");
+    messages.forEach((m, j) => lines.push(...(j ? ["   >"] : []), ...indent(quote(m.text))));
+    lines.push("");
+  });
+  const replies = list
+    .slice(0, 2)
+    .map(({ thread }) => `{ comment: "${thread.id}", reply: "…" }`)
+    .join(", ");
+  lines.push(
+    `For each: make the change on the board (board_read, board_edit, board_write_html; one board_edit can carry many changes), look at it with board_screenshot, then say what you changed in its thread. One call answers them all: Screenshotter's MCP tool board_comment { board: "${board.id}", replies: [${replies}${n > 2 ? ", …" : ""}] }. The user sees each answer by its comment in the Studio, and resolves it when they're happy.`,
   );
   return lines.join("\n");
 }
@@ -401,6 +538,55 @@ export async function deliver(boardId: string, threadId: string, messageId: stri
       const t = c.threads.find((x) => x.id === threadId);
       const mm = t?.messages.find((x) => x.id === messageId);
       if (mm) mm.delivery = { ...(mm.delivery ?? {}), ...results };
+    });
+  } catch {
+    // The board went while it was being sent.
+  }
+}
+
+/**
+ * Tell each agent in a send about everything in it for them, in one message (only `agents`, and
+ * only the `messages` given, to try again), and keep how it went with each comment.
+ */
+export async function deliverBatch(boardId: string, batch: string, only?: { agents?: string[]; messages?: string[] }): Promise<void> {
+  const items = read(boardId)
+    .threads.flatMap((thread) => thread.messages.filter((m) => m.batch === batch && m.by === "person" && (!only?.messages || only.messages.includes(m.id))).map((message) => ({ thread, message })))
+    .sort((a, b) => a.message.createdAt.localeCompare(b.message.createdAt));
+  const keys = [...new Set(items.flatMap((i) => i.message.to ?? []))].filter((k) => !only?.agents || only.agents.includes(k));
+  if (!keys.length) return;
+  // By message, then agent.
+  const results: Record<string, Record<string, Delivery>> = {};
+  const note = (key: string, d: Delivery) => {
+    for (const i of items) if (i.message.to?.includes(key)) (results[i.message.id] ??= {})[key] ??= d;
+  };
+  try {
+    const board = getBoard(boardId);
+    let sessions: AgentmanSession[] | null = null;
+    let down: string | null = null;
+    try {
+      sessions = await listSessions();
+    } catch (e) {
+      down = (e as Error).message;
+    }
+    for (const key of keys) {
+      const mine = items.filter((i) => i.message.to?.includes(key));
+      const s = sessionFor(board.agents?.[key], sessions, down);
+      if (!s.session) {
+        note(key, { status: "failed", error: s.error, at: now() });
+        continue;
+      }
+      const text = mine.length === 1 ? messageFor(board, mine[0].thread, mine[0].message, key) : batchMessageFor(board, mine, key);
+      const sent = await sendToAgent(s.session, text, `screenshotter-${batch}-${key}`);
+      note(key, { status: sent.status, ...(sent.error ? { error: friendly(sent.error) } : {}), at: now(), session: s.session, ...(s.guess ? { guess: true } : {}) });
+    }
+  } catch (e) {
+    // Never left "sending": whoever wasn't reached is marked so, with why.
+    for (const key of keys) note(key, { status: "failed", error: (e as Error).message, at: now() });
+  }
+  try {
+    changeComments(boardId, (c) => {
+      for (const t of c.threads)
+        for (const m of t.messages) if (results[m.id]) m.delivery = { ...(m.delivery ?? {}), ...results[m.id] };
     });
   } catch {
     // The board went while it was being sent.

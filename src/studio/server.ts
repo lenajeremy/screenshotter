@@ -39,7 +39,7 @@ import { VIDEO_EXT, videoStill } from "../board/video.js";
 import { mediaInfo } from "../util/media.js";
 import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
-import { agentsNow, bringIn, deliver, getComments, markSending, remove, reply, setResolved, startThread, type AnchorInput } from "../board/comments.js";
+import { agentsNow, bringIn, deliver, deliverBatch, editPending, getComments, markBatchSending, markSending, remove, reply, sendPending, setResolved, startThread, type AnchorInput } from "../board/comments.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
 import { RECIPES, buildRecipe } from "../design/recipes.js";
@@ -441,41 +441,58 @@ const CaptureSimSchema = z.object({
 });
 
 const CommentSchema = z.discriminatedUnion("do", [
-  z.object({ do: z.literal("new"), id: z.string(), anchor: z.custom<AnchorInput>((v) => typeof v === "object" && v !== null), text: z.string(), to: z.array(z.string()).optional() }),
-  z.object({ do: z.literal("reply"), id: z.string(), comment: z.string(), text: z.string(), to: z.array(z.string()).optional() }),
+  z.object({ do: z.literal("new"), id: z.string(), anchor: z.custom<AnchorInput>((v) => typeof v === "object" && v !== null), text: z.string(), to: z.array(z.string()).optional(), pending: z.boolean().optional() }),
+  z.object({ do: z.literal("reply"), id: z.string(), comment: z.string(), text: z.string(), to: z.array(z.string()).optional(), pending: z.boolean().optional() }),
+  z.object({ do: z.literal("edit"), id: z.string(), comment: z.string(), message: z.string(), text: z.string(), to: z.array(z.string()).optional() }),
+  z.object({ do: z.literal("send"), id: z.string(), to: z.array(z.string()) }),
   z.object({ do: z.literal("resolve"), id: z.string(), comment: z.string(), resolved: z.boolean() }),
   z.object({ do: z.literal("delete"), id: z.string(), comment: z.string(), message: z.string().optional() }),
   z.object({ do: z.literal("retry"), id: z.string(), comment: z.string(), message: z.string(), agents: z.array(z.string()).min(1) }),
 ]);
 
 /**
- * The person's comments on a board. Each is saved before anything is sent; the agents it names are
- * told through Agentman once the answer has gone back, and how that went is kept with the comment
- * (the Studio's polling shows it).
+ * The person's comments on a board. Each is saved before anything is sent: pending ones wait until
+ * the person sends them all (`send`), then each agent is told once, with its whole list, through
+ * Agentman, once the answer has gone back; how that went is kept with each comment (the Studio's
+ * polling shows it).
  */
 async function commentRoute(body: unknown) {
   const a = CommentSchema.parse(body);
   const tell = (thread: string, message: string, only?: string[]) => void deliver(a.id, thread, message, only);
   // An agent tagged who hasn't worked here joins the board first, so the comment can reach it.
-  if ((a.do === "new" || a.do === "reply") && a.to?.length) await bringIn(a.id, a.to);
+  if (a.do !== "resolve" && a.do !== "delete" && a.do !== "retry" && a.to?.length) await bringIn(a.id, a.to);
   switch (a.do) {
     case "new": {
-      const r = startThread(a.id, a.anchor, { text: a.text, by: "person", to: a.to });
-      tell(r.thread.id, r.message.id);
+      const r = startThread(a.id, a.anchor, { text: a.text, by: "person", to: a.to, pending: a.pending });
+      if (!a.pending) tell(r.thread.id, r.message.id);
       return { thread: r.thread, rev: r.rev };
     }
     case "reply": {
-      const r = reply(a.id, a.comment, { text: a.text, by: "person", to: a.to });
-      tell(r.thread.id, r.message.id);
+      const r = reply(a.id, a.comment, { text: a.text, by: "person", to: a.to, pending: a.pending });
+      if (!a.pending) tell(r.thread.id, r.message.id);
       return { thread: r.thread, rev: r.rev };
+    }
+    case "edit":
+      return editPending(a.id, a.comment, a.message, a.text, a.to);
+    case "send": {
+      const r = sendPending(a.id, a.to);
+      void deliverBatch(a.id, r.batch);
+      return r;
     }
     case "resolve":
       return setResolved(a.id, a.comment, a.resolved, "person");
     case "delete":
       return remove(a.id, a.comment, a.message);
     case "retry": {
-      const keys = markSending(a.id, a.comment, a.message, a.agents);
-      tell(a.comment, a.message, keys);
+      // Sent with others: whatever of that send didn't reach the agent goes again, together.
+      const batch = getComments(a.id).threads.find((t) => t.id === a.comment)?.messages.find((m) => m.id === a.message)?.batch;
+      if (batch) {
+        const messages = markBatchSending(a.id, batch, a.agents);
+        if (messages.length) void deliverBatch(a.id, batch, { agents: a.agents, messages });
+      } else {
+        const keys = markSending(a.id, a.comment, a.message, a.agents);
+        tell(a.comment, a.message, keys);
+      }
       return { rev: getComments(a.id).rev };
     }
   }
