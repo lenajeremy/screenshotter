@@ -1306,7 +1306,7 @@ function BoardPanel() {
       <//>
       <${Section} title="Shortcuts" collapsible open=${false} id="board-keys">
         <dl class="bd-keys">
-          ${[["V K F R T H", "Move, scale, frame, rectangle, text, pan"], ["⇧A", "Wrap in a flex frame (or add flex)"], ["⌥⌘G", "Wrap in a frame"], ["⇧⌘G", "Ungroup"], ["Esc / Enter", "Select the parent / the children"], ["Double-click", "The deepest layer under the pointer (and into its words)"], ["⌘ held", "Point at the deepest layer; click to select it"], ["Right-click", "Select layer…: any layer under the pointer"], ["⌘\\", "Hide or show both panels"], ["⇧0 ⇧1 ⇧2", "100%, fit, zoom to selection"], ["⌥⌘C / ⌥⌘V", "Copy / paste styles"]].map(
+          ${[["V K F R T H", "Move, scale, frame, rectangle, text, pan"], ["⇧A", "Wrap in a flex frame (or add flex)"], ["⇧G", "Wrap in a grid (or make the frame one)"], ["⌥⌘G", "Wrap in a frame"], ["⇧⌘G", "Ungroup"], ["Esc / Enter", "Select the parent / the children"], ["Double-click", "The deepest layer under the pointer (and into its words)"], ["⌘ held", "Point at the deepest layer; click to select it"], ["Right-click", "Select layer…: any layer under the pointer"], ["⌘\\", "Hide or show both panels"], ["⇧0 ⇧1 ⇧2", "100%, fit, zoom to selection"], ["⌥⌘C / ⌥⌘V", "Copy / paste styles"]].map(
             ([k, d]) => html`<dt>${k}</dt><dd>${d}</dd>`,
           )}
         </dl>

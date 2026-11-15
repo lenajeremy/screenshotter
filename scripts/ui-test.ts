@@ -2305,6 +2305,23 @@ const CHECKS: Record<string, Check> = {
       for (const issue of await themeAudit(page)) problems.push(`${theme} child: ${issue}`);
       const marked = await S(page, () => document.querySelectorAll(".bd-grid-cell").length);
       if (marked !== 1) problems.push(`${theme}: a layer in the grid marks ${marked} cells`);
+      // Far out, the lines stay and the small things go; close in, everything stays one pixel thin.
+      await sel(page, [t.byName("Cards")]);
+      for (const [z, name] of [[0.12, "far"], [4, "close"]] as const) {
+        await S(page, async (args: { z: number; id: string }) => {
+          const c = await import("/ui/board-canvas.js" as string);
+          c.zoomTo(args.z);
+          await new Promise((r) => setTimeout(r, 50));
+          const b = c.worldBox(args.id);
+          const st = await import("/ui/board-state.js" as string);
+          const r = document.querySelector(".bd-canvas")!.getBoundingClientRect();
+          st.bset({ view: { z: args.z, x: r.width / 2 - (b.x + b.width / 2) * args.z, y: r.height / 2 - (b.y + b.height / 2) * args.z } });
+        }, { z, id: t.byName("Cards") });
+        await page.waitForTimeout(350);
+        await picture(page, `grid-${theme}-${name}`);
+        const seen = await S(page, () => ({ lines: document.querySelectorAll(".bd-grid-line").length, drags: document.querySelectorAll(".bd-grid-drag").length, heads: document.querySelectorAll(".bd-grid-head, .bd-grid-add").length, thick: [...document.querySelectorAll(".bd-grid-line.v")].some((l) => Math.abs(l.getBoundingClientRect().width - 1) > 0.6) }));
+        if (!seen.lines || seen.thick || (name === "far" && (seen.drags || seen.heads)) || (name === "close" && !seen.drags)) problems.push(`${theme} ${name}: ${JSON.stringify(seen)}`);
+      }
     }
     await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
     return problems.length ? problems.join("\n    ") : "ok";
@@ -2595,6 +2612,76 @@ const CHECKS: Record<string, Check> = {
     if (off.length) return `drawn differently: ${off.map((id) => `${nodeOf(t, id).name} canvas ${canvas[id].map(Math.round)} picture ${JSON.stringify(drawn.boxes[id])}`).join("; ")}`;
     const html = await (await fetch(`${BASE}board/preview?board=${t.id}&node=${desk}`)).text();
     return /grid-template-columns:120px repeat\(2, minmax\(80px, 1fr\)\)/.test(html) && /grid-column:1 \/ -1/.test(html) ? "ok" : "Preview's page doesn't carry the grid as written";
+  },
+  async "on a board, a grid keeps its layout through duplicate, copy and paste, and components, and ⇧G makes an empty frame 2 × 2"(page) {
+    const t = await openGridBoard(page);
+    const cards = t.byName("Cards");
+    const two = t.byName("Card Two");
+    await commitOps(page, [{ op: "set", id: two, style: { gridColumn: "2 / span 2", gridRow: "2" } }]);
+    await page.waitForTimeout(500);
+    // ⌘D on a layer pinned to a cell: the copy keeps its span and takes the next free cell.
+    await sel(page, [two]);
+    await page.keyboard.press("Meta+d");
+    await page.waitForTimeout(700);
+    const dup = Object.values(boards.getBoard(t.id).nodes).find((n) => n.name === "Card Two" && n.id !== two)!;
+    if (dup?.parent !== cards || dup.style.gridColumn !== "span 2" || dup.style.gridRow) return `the duplicate is ${JSON.stringify(dup?.style)} in ${dup?.parent}`;
+    const copyIn = async () => S(page, () => {
+      const dt = new DataTransfer();
+      window.dispatchEvent(new ClipboardEvent("copy", { clipboardData: dt, bubbles: true }));
+      (window as unknown as { __dt: DataTransfer }).__dt = dt;
+    });
+    const pasteIn = () => S(page, () => window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: (window as unknown as { __dt: DataTransfer }).__dt, bubbles: true })));
+    // The pinned layer copied into the grid goes into the order, keeping its span.
+    await sel(page, [two]);
+    await copyIn();
+    await sel(page, [cards]);
+    await pasteIn();
+    await page.waitForTimeout(800);
+    const pastedCard = boards.getBoard(t.id).nodes[boards.getBoard(t.id).nodes[cards].children!.slice(-1)[0]];
+    if (pastedCard.name !== "Card Two" || pastedCard.style.gridColumn !== "span 2" || pastedCard.style.gridRow) return `pasted into the grid: ${pastedCard.name} ${JSON.stringify(pastedCard.style)}`;
+    // The whole grid copied onto the page: its tracks, gaps and its layers' cells come too.
+    await sel(page, [cards]);
+    await copyIn();
+    await sel(page, []);
+    await pasteIn();
+    await page.waitForTimeout(900);
+    const page0 = boards.getBoard(t.id).pages[0].children;
+    const pasted = boards.getBoard(t.id).nodes[page0[page0.length - 1]];
+    const pastedTwo = pasted.children!.map((c) => boards.getBoard(t.id).nodes[c]).find((n) => n.name === "Card Two")!;
+    if (pasted.style.gridTemplateColumns !== "repeat(3, 1fr)" || pasted.style.gap !== "16px" || pastedTwo.style.gridColumn !== "2 / span 2") return `the pasted grid: ${JSON.stringify(pasted.style)}, its Card Two ${JSON.stringify(pastedTwo?.style)}`;
+    // A grid component: its copy follows its columns; a card in the copy keeps its own span.
+    await sel(page, [cards]);
+    await page.keyboard.press("Meta+Alt+k");
+    await page.waitForTimeout(300);
+    await S(page, async (id: string) => (await import("/ui/board.js" as string)).placeCopy(id), cards);
+    await page.waitForTimeout(800);
+    const inst = Object.values(boards.getBoard(t.id).nodes).find((n) => n.instanceOf === cards)!;
+    if (!inst || inst.style.gridTemplateColumns !== "repeat(3, 1fr)") return `the copy of the grid component: ${JSON.stringify(inst?.style)}`;
+    await sel(page, [cards]);
+    await page.waitForTimeout(300);
+    const count = page.locator(".bd-tracks[data-axis=columns] .num input");
+    await count.fill("2");
+    await count.press("Enter");
+    await page.waitForTimeout(800);
+    if (boards.getBoard(t.id).nodes[inst.id].style.gridTemplateColumns !== "repeat(2, 1fr)") return `the copy didn't follow its component's columns: ${boards.getBoard(t.id).nodes[inst.id].style.gridTemplateColumns}`;
+    const instOne = Object.values(boards.getBoard(t.id).nodes).find((n) => n.parent === inst.id && n.name === "Card One")!;
+    await sel(page, [instOne.id]);
+    await page.waitForTimeout(400);
+    const span = page.locator(".bd-cell-line").first().locator(".num", { hasText: "Span" }).locator("input");
+    await span.fill("2");
+    await span.press("Enter");
+    await page.waitForTimeout(800);
+    const one = boards.getBoard(t.id).nodes[t.byName("Card One")];
+    const mine = boards.getBoard(t.id).nodes[instOne.id];
+    if (mine.style.gridColumn !== "span 2" || one.style.gridColumn || !mine.overrides?.includes("style.gridColumn")) return `a card in the copy spanning two: ${mine.style.gridColumn}, the component's ${one.style.gridColumn}, overrides ${mine.overrides}`;
+    // ⇧G on an empty frame: 2 × 2.
+    await commitOps(page, [{ op: "add", nodes: { emptyf1: { id: "emptyf1", type: "frame", name: "Empty", parent: null, style: { width: "200px", height: "200px", left: "0px", top: "700px", backgroundColor: "#fff" }, children: [] } }, ids: ["emptyf1"], parent: null, page: boards.getBoard(t.id).pages[0].id }]);
+    await page.waitForTimeout(500);
+    await sel(page, ["emptyf1"]);
+    await page.keyboard.press("Shift+G");
+    await page.waitForTimeout(700);
+    const e = boards.getBoard(t.id).nodes.emptyf1.style;
+    return e.display === "grid" && e.gridTemplateColumns === "repeat(2, 1fr)" && e.gridTemplateRows === "repeat(2, 1fr)" ? "ok" : `⇧G on an empty frame made ${JSON.stringify(e)}`;
   },
 };
 

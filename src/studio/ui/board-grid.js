@@ -76,6 +76,8 @@ export function toGridOps(id) {
       return b && { id: c, box: { ...b, x: b.x - o.x, y: b.y - o.y } };
     })
     .filter(Boolean);
+  // An empty frame starts as 2 × 2 (rows share its height when it has one).
+  if (!items.length) return [{ op: "set", id, style: { display: "grid", flexDirection: null, flexWrap: null, gridTemplateColumns: "repeat(2, 1fr)", gridTemplateRows: `repeat(2, ${newTrackSize(id, "rows")})`, ...(n.style.gap ? {} : { gap: "16px" }) } }];
   const plan = planGrid(items);
   const fixed = plan.columns.some((t) => t.endsWith("px"));
   const style = {
@@ -172,7 +174,7 @@ export function setLayout(ids, kind) {
 export function gridShortcut() {
   const s = sel();
   const one = s.length === 1 ? node(s[0]) : null;
-  if (one?.type === "frame" && !isGrid(one) && one.children?.length) return setLayout([one.id], "grid");
+  if (one?.type === "frame" && !isGrid(one)) return setLayout([one.id], "grid");
   if (one && isGrid(one)) return;
   wrapInGrid();
 }
@@ -833,6 +835,8 @@ export function GridOverlay() {
   const target = d?.cell ?? (d?.cellOf && node(d.cellOf) ? cellRect(geo, childCell(d.cellOf, geo)) : null);
   const areas = Object.entries(areaRects(geo.model.areas));
   const roomy = Math.min(...cols.map((t) => t.b - t.a), ...rows.map((t) => t.b - t.a)) >= 14;
+  // Far out, a grid is small on screen: only its lines show, so headers and buttons don't crowd it.
+  const headed = geo.box.width >= 110 && geo.box.height >= 56 && Math.min(...cols.map((t) => t.b - t.a), ...rows.map((t) => t.b - t.a)) >= 6;
   // Headers sit outside the frame: above its columns (above an artboard's name), left of its rows.
   const headTop = geo.box.y - (n.parent ? 14 : 36);
   const headLeft = geo.box.x - 14;
@@ -852,14 +856,14 @@ export function GridOverlay() {
       const r = cellRect(geo, a);
       return html`<div key=${"a" + name} class="bd-grid-area ${a.ok ? "" : "bad"}" style=${{ left: r.x + 3 + "px", top: r.y + 3 + "px", maxWidth: Math.max(0, r.width - 6) + "px" }}>${name}</div>`;
     })}
-    ${!busy && (editing || hotCol >= 0) && cols.map((t, i) => html`<div key=${"hc" + i} data-track=${i} data-axis="columns" class="bd-grid-head at-col ${i === hotCol ? "hot" : ""} ${i >= geo.explicitCols ? "implicit" : ""} ${editing ? "live" : ""}"
+    ${!busy && headed && (editing || hotCol >= 0) && cols.map((t, i) => html`<div key=${"hc" + i} data-track=${i} data-axis="columns" class="bd-grid-head at-col ${i === hotCol ? "hot" : ""} ${i >= geo.explicitCols ? "implicit" : ""} ${editing ? "live" : ""}"
         style=${{ left: t.a + "px", top: headTop + "px", width: Math.max(2, t.b - t.a) + "px" }}
         title=${editing ? `Column ${i + 1}: click for its size and more` : ""}
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${(e) => editing && trackMenu(e.clientX, e.clientY, id, "columns", i)}>
         ${i === hotCol && html`<span class="tag">${label("columns", i)}</span>`}
       </div>`)}
-    ${!busy && (editing || hotRow >= 0) && rows.map((t, i) => html`<div key=${"hr" + i} data-track=${i} data-axis="rows" class="bd-grid-head at-row ${i === hotRow ? "hot" : ""} ${i >= geo.explicitRows ? "implicit" : ""} ${editing ? "live" : ""}"
+    ${!busy && headed && (editing || hotRow >= 0) && rows.map((t, i) => html`<div key=${"hr" + i} data-track=${i} data-axis="rows" class="bd-grid-head at-row ${i === hotRow ? "hot" : ""} ${i >= geo.explicitRows ? "implicit" : ""} ${editing ? "live" : ""}"
         style=${{ top: t.a + "px", left: headLeft + "px", height: Math.max(2, t.b - t.a) + "px" }}
         title=${editing ? `Row ${i + 1}: click for its size and more` : ""}
         onPointerDown=${(e) => e.stopPropagation()}
@@ -872,7 +876,7 @@ export function GridOverlay() {
     ${editing && roomy && rows.slice(0, -1).map((t, i) => i + 1 < geo.explicitRows && html`<div key=${"lr" + i} class="bd-grid-drag h" title="Drag to resize the rows either side"
         style=${{ top: (t.b + rows[i + 1].a) / 2 + "px", left: content.x + "px", width: Math.max(0, colsRight(geo) - content.x) + "px" }}
         onPointerDown=${(e) => dragLine(e, id, "rows", i)}></div>`)}
-    ${editing && html`<button class="bd-grid-add at-col" title="Add a column" aria-label="Add a column" style=${{ left: Math.max(colsRight(geo), geo.box.x + geo.box.width) + 6 + "px", top: headTop - 5 + "px" }}
+    ${editing && headed && html`<button class="bd-grid-add at-col" title="Add a column" aria-label="Add a column" style=${{ left: Math.max(colsRight(geo), geo.box.x + geo.box.width) + 6 + "px", top: headTop - 5 + "px" }}
         onPointerDown=${(e) => e.stopPropagation()}
         onClick=${() => commit(geo.model.columns.tracks.some((t) => t.auto) ? trackCountOps(id, "columns", cols.length + 1) : insertTrackOps(id, "columns", geo.model.columns.tracks.length), { label: "Add a column" })}><${Icon} n="plus" s=${11} w=${2.2} /></button>
       <button class="bd-grid-add at-row" title="Add a row" aria-label="Add a row" style=${{ top: Math.max(rowsBottom(geo), geo.box.y + geo.box.height) + 6 + "px", left: headLeft - 5 + "px" }}
