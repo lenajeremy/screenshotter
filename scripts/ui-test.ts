@@ -2542,6 +2542,16 @@ const CHECKS: Record<string, Check> = {
     const pinned = await boxOf(page, chip);
     if (Math.abs(pinned.x + pinned.width / 2 - g.cols[3]) > 2) return "the chip isn't drawn in the last column";
     await picture(page, "grid-dropped");
+    // A rectangle drawn in the free cell goes into it.
+    await page.keyboard.press("r");
+    await page.mouse.move(g.cols[2] - 10, g.rows[1] - 10);
+    await page.mouse.down();
+    await page.mouse.move(g.cols[2] + 5, g.rows[1] + 5, { steps: 4 });
+    await page.mouse.move(g.cols[2] + 10, g.rows[1] + 10, { steps: 2 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const rect = Object.values(boards.getBoard(t.id).nodes).find((n) => /^Rectangle/.test(n.name));
+    if (rect?.parent !== cards || rect.style.gridColumn !== "3" || rect.style.gridRow !== "2" || rect.style.position) return `a rectangle drawn in the free cell: ${rect ? `in ${nodeOf(t, rect.parent!).name}, ${JSON.stringify(rect.style)}` : "none"}`;
     return "ok";
   },
   async "on a board, In the grid sets a layer's column, span, whole row, area and whether it fills its cell"(page) {

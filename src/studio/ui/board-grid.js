@@ -740,7 +740,7 @@ export function trackMenu(x, y, gridId, axis, i) {
   }
   const t = list[i];
   const kind = trackKind(t.size);
-  const size = (s, label = "Grid") => run(trackSizeOps(gridId, axis, i, s), label);
+  const size = (s, label = "Grid") => s !== t.size && run(trackSizeOps(gridId, axis, i, s), label);
   openMenu(x, y, [
     { label: `Fill${kind === "fr" ? ` · ${t.size}` : " (1fr)"}`, icon: kind === "fr" ? "check" : undefined, run: () => kind !== "fr" && size("1fr") },
     { label: `Fixed${drawn ? ` · ${Math.round(drawn)} px` : ""}`, icon: kind === "px" ? "check" : undefined, run: () => drawn && size(px(drawn)) },
