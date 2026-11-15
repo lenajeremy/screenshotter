@@ -140,6 +140,18 @@ export interface BoardAgent {
   lastAt: string;
   /** The artboards it wrote to. */
   artboards: string[];
+  /**
+   * What it did last, for its cursor on the canvas: the layers it touched (or looked at), what it
+   * was doing, and when.
+   */
+  last?: AgentTouch;
+}
+
+/** An agent's latest move on a board: changing layers, writing new ones, bringing in a site, or looking. */
+export interface AgentTouch {
+  at: string;
+  ids: string[];
+  doing: "edit" | "write" | "import" | "look" | "read";
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1470,7 +1482,7 @@ export type Op =
   /** Mark artboards as being worked on by an agent (null clears them; no ids clears all). */
   | { op: "working"; ids?: string[]; at: string | null }
   /** Remember an agent that worked on the board (and on which artboards). */
-  | { op: "agent"; agent: Omit<BoardAgent, "firstAt" | "lastAt" | "artboards">; artboards?: string[]; at: string }
+  | { op: "agent"; agent: Omit<BoardAgent, "firstAt" | "lastAt" | "artboards" | "last">; artboards?: string[]; at: string; touch?: Omit<AgentTouch, "at"> }
   /** The whole design at once (how the Studio undoes a change an agent made). */
   | { op: "replace"; pages: BoardPage[]; nodes: Record<string, BoardNode>; tokens: BoardToken[]; name?: string };
 
@@ -1712,6 +1724,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
         const was = all[op.agent.key];
         const artboards = [...new Set([...(was?.artboards ?? []), ...(op.artboards ?? [])])];
         all[op.agent.key] = { ...was, ...op.agent, firstAt: was?.firstAt ?? op.at, lastAt: op.at, artboards };
+        if (op.touch) all[op.agent.key].last = { at: op.at, ids: op.touch.ids.filter((id) => board.nodes[id]).slice(0, 40), doing: op.touch.doing };
         board.agents = all;
         break;
       }
