@@ -115,6 +115,185 @@ const undoToast = (page: Page) => S(page, () => ([...document.querySelectorAll("
 
 const phone = (extra: Record<string, unknown> = {}) => ({ devices: [{ screenshot: shot }], background: "cream-grain", ...extra });
 
+/**
+ * What's wrong with the colours of the screen showing: words that don't stand out from what's
+ * behind them (4.5:1, or 3:1 for large words; what can't be used yet is let off, as WCAG does),
+ * and big surfaces still in the other theme's colours (a dark panel left in light mode, or a white
+ * one in dark). The design being made (artboards, a board's layers, thumbnails, words on photos)
+ * isn't the app's and is left out.
+ */
+const themeAudit = async (page: Page) => {
+  // tsx names inner functions with a helper the page doesn't have.
+  await page.evaluate("globalThis.__name = globalThis.__name || ((f) => f)");
+  return S(page, () => {
+    const theme = document.documentElement.dataset.theme;
+    const DESIGN = ".artboard, .bd-world, .bd-card .art, .sp-thumb, .sp-mini, .shot, .look, .image-tile, .scene-thumb, .tl-clip, .clip-frames, .bezel-set, .sticker-grid, .recipe-img, .set-template, .frame-opt, .shape-prev, .work-shot, .stp-shot, .bd-asset, .bd-swatch, .chip-color, .swatch, .cp-sv, .cp-hue, .cp-presets, .tint, .bd-tints, iframe, video, canvas, img, svg";
+    const rgba = (c: string): number[] | null => {
+      const m = /rgba?\(([^)]+)\)/.exec(c);
+      if (!m) return null;
+      const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+      return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+    };
+    const over = (top: number[], under: number[]) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+    const lum = (c: number[]) => {
+      const ch = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+    };
+    const ratio = (a: number[], b: number[]) => {
+      const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+      return (x + 0.05) / (y + 0.05);
+    };
+    const probe = document.createElement("i");
+    probe.style.color = "var(--text-off)";
+    document.body.append(probe);
+    const off = getComputedStyle(probe).color;
+    probe.style.color = "var(--win)";
+    const page0 = rgba(getComputedStyle(probe).color)!;
+    probe.remove();
+    /** What's behind an element: its own and its holders' backgrounds, laid over each other (null over a picture). */
+    const behind = (el: Element | null): number[] | null => {
+      const layers: number[][] = [];
+      for (let e = el; e; e = e.parentElement) {
+        const cs = getComputedStyle(e);
+        const bg = rgba(cs.backgroundColor);
+        if (bg && bg[3] > 0) layers.push(bg);
+        if (bg && bg[3] >= 0.99) break;
+        if (cs.backgroundImage !== "none" && !/gradient/.test(cs.backgroundImage)) return null;
+      }
+      return layers.reverse().reduce((under, top) => over(top, under), page0);
+    };
+    const opacity = (el: Element) => {
+      let o = 1;
+      for (let e: Element | null = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+      return o;
+    };
+    const name = (el: Element) => {
+      const bits: string[] = [];
+      for (let e: Element | null = el; e && bits.length < 3 && e !== document.body; e = e.parentElement) bits.unshift(e.tagName.toLowerCase() + (e.classList.length ? "." + [...e.classList].slice(0, 2).join(".") : ""));
+      return bits.join(" > ");
+    };
+    const issues: string[] = [];
+    const seen = new Set<string>();
+    const note = (key: string, line: string) => {
+      if (seen.has(key) || issues.length >= 40) return;
+      seen.add(key);
+      issues.push(line);
+    };
+    for (const el of document.querySelectorAll("body *")) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === "hidden" || cs.display === "none") continue;
+      if (el.closest(DESIGN)) continue;
+      // Words.
+      const words = [...el.childNodes].filter((n) => n.nodeType === 3 && n.textContent!.trim()).map((n) => n.textContent!.trim()).join(" ");
+      if (words && !el.closest(":disabled, [aria-disabled='true']") && cs.color !== off) {
+        const o = opacity(el);
+        const bg = behind(el);
+        const fg = rgba(cs.color);
+        if (bg && fg && o > 0.05) {
+          const k = ratio(over([fg[0], fg[1], fg[2], fg[3] * o], bg), bg);
+          const size = parseFloat(cs.fontSize);
+          const need = size >= 18.5 || (size >= 14 && Number(cs.fontWeight) >= 600) ? 3 : 4.5;
+          if (k < need) note(`${name(el)}|${cs.color}`, `"${words.slice(0, 30)}" ${k.toFixed(2)}:1 (${name(el)})`);
+        }
+      }
+      // Surfaces in the other theme's colours.
+      const bg = rgba(cs.backgroundColor);
+      if (bg && bg[3] >= 0.6 && r.width * r.height >= 4000 && !el.closest(".store-page, .btn.primary, .bd-sendbar-send, .tl-play")) {
+        const L = lum(bg);
+        if (theme === "light" ? L < 0.1 : L > 0.7) note(`surface ${name(el)}`, `a ${theme === "light" ? "dark" : "light"} surface ${cs.backgroundColor} (${name(el)}, ${Math.round(r.width)}×${Math.round(r.height)})`);
+      }
+    }
+    return issues;
+  });
+};
+
+/** Every screen of the app, one at a time, for the theme check: each a name and how to get there. */
+const SCREENS: Array<[string, (page: Page) => Promise<unknown>]> = [
+  ["welcome", (page) => setDesign(page, { shots: null, groups: null, sceneId: null, scene: { devices: [], background: "meadow-motion" }, starting: false })],
+  ["start-picker", (page) => setDesign(page, { shots: null, groups: null, sceneId: null, scene: phone(), starting: true })],
+  ["confirm", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ starting: false, modal: { kind: "confirm", title: "Delete this design?", text: "It goes to the Bin, with its screenshots.", confirm: "Delete", danger: true } }))],
+  ["editor", (page) => setDesign(page, { modal: null, shots: null, groups: null, sceneId: null, sceneName: "Theme check", scene: phone({ headline: "Say what it **does**" }), leftTab: "captures", leftOpen: true, rightOpen: true, selected: null })],
+  ["editor-device", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "device-1" }))],
+  ["editor-caption", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "caption" }))],
+  ["colour-picker", async (page) => {
+    await page.locator(".panel.right .color-btn").first().click();
+    await page.waitForTimeout(200);
+  }],
+  ["dropdown", async (page) => {
+    await page.keyboard.press("Escape");
+    await page.locator(".panel.right .dd-btn").first().click();
+    await page.waitForTimeout(200);
+  }],
+  ["designs-tab", async (page) => {
+    await page.keyboard.press("Escape");
+    await S(page, async () => (await import("/ui/store.js" as string)).set({ leftTab: "designs", selected: null }));
+  }],
+  ["json", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ jsonOpen: true }))],
+  ["backgrounds-tab", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ jsonOpen: false, leftTab: "backgrounds" }))],
+  ["elements-tab", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ leftTab: "elements" }))],
+  ["images-tab", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ leftTab: "images" }))],
+  ["export", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ exportOpen: true }))],
+  ["timeline", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ exportOpen: false, timelineOpen: true }))],
+  ["ask-ai", (page) => S(page, async () => {
+    const st = await import("/ui/store.js" as string);
+    st.set({ timelineOpen: false, ai: { ...st.S.ai, open: true, docked: true, thread: [{ role: "user", text: "Make the headline bigger" }, { role: "assistant", text: "Done: the headline is **bigger** now." }] } });
+  })],
+  ["ask-ai-floating", (page) => S(page, async () => {
+    const st = await import("/ui/store.js" as string);
+    st.set({ ai: { ...st.S.ai, docked: false } });
+  })],
+  ["menu", (page) => S(page, async () => {
+    const st = await import("/ui/store.js" as string);
+    st.set({ ai: { ...st.S.ai, open: false, docked: true } });
+    (await import("/ui/menu.js" as string)).openMenu(400, 300, [{ label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => undefined }, "-", { label: "Delete", icon: "trash", danger: true, run: () => undefined }]);
+  })],
+  ["toasts", (page) => S(page, async () => {
+    const st = await import("/ui/store.js" as string);
+    st.set({ menu: null });
+    st.toast({ kind: "ok", title: "Exported 3 screenshots", text: "In Pictures/Screenshotter", timeout: 0 });
+    st.toast({ kind: "err", title: "Couldn't export", text: "The disk is full", timeout: 0 });
+  })],
+  ["settings", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ toasts: [], modal: { kind: "settings" } }))],
+  ["settings-ai", (page) => S(page, async () => {
+    // The sheet takes its tab as it opens.
+    const st = await import("/ui/store.js" as string);
+    st.set({ modal: null });
+    await new Promise((r) => setTimeout(r, 50));
+    st.set({ modal: { kind: "settings", tab: "ai" } });
+  })],
+  ["settings-devices", (page) => S(page, async () => {
+    // The sheet takes its tab as it opens.
+    const st = await import("/ui/store.js" as string);
+    st.set({ modal: null });
+    await new Promise((r) => setTimeout(r, 50));
+    st.set({ modal: { kind: "settings", tab: "art" } });
+  })],
+  ["settings-photos", (page) => S(page, async () => {
+    // The sheet takes its tab as it opens.
+    const st = await import("/ui/store.js" as string);
+    st.set({ modal: null });
+    await new Promise((r) => setTimeout(r, 50));
+    st.set({ modal: { kind: "settings", tab: "photos" } });
+  })],
+  ["help", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "help" } }))],
+  ["whats-new", (page) => S(page, async () => (await import("/ui/app.js" as string)).openWhatsNew(true))],
+  ["store-page", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }))],
+  ["my-designs", (page) => S(page, async () => {
+    const st = await import("/ui/store.js" as string);
+    st.set({ modal: null, libraryShelf: "designs" });
+    (await import("/ui/scenes.js" as string)).openScenesPage();
+  })],
+  ["boards-library", (page) => S(page, async () => {
+    const st = await import("/ui/store.js" as string);
+    st.set({ scenesPage: false });
+    await new Promise((r) => setTimeout(r, 100));
+    st.set({ libraryShelf: "boards" });
+    (await import("/ui/scenes.js" as string)).openScenesPage();
+  })],
+];
+
 /** A board with one phone artboard (a column of three rows and a button), open on the page. */
 async function openTestBoard(page: Page) {
   const row = (t: string) => `<div data-name="Row ${t}" style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:14px;background:#fff"><div style="width:36px;height:36px;border-radius:10px;background:#eee"></div><span style="font-size:16px;font-weight:600">${t}</span></div>`;
@@ -587,6 +766,72 @@ const CHECKS: Record<string, Check> = {
     await page.click('.bd-left-tabs [data-tab="comments"]');
     const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
     return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
+  },
+  async "the theme: picked in Settings, there from the first frame after a reload, and System follows the Mac"(page) {
+    await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings" } }));
+    const appearance = page.locator(".sheet .card", { hasText: "Appearance" });
+    await appearance.locator("button", { hasText: "Light" }).click();
+    const picked = await S(page, () => document.documentElement.dataset.theme);
+    const bg = await S(page, () => getComputedStyle(document.body).backgroundColor);
+    // Saved (after the half-second the app waits), and written on the page the server sends.
+    await page.waitForTimeout(900);
+    const served = /data-theme-pref="(\w+)"/.exec(await (await fetch(BASE)).text())?.[1];
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const first = await S(page, () => document.documentElement.dataset.theme);
+    await page.waitForSelector(".topbar, .app, .app-board", { timeout: 15000 });
+    // System: whatever the Mac is, as it changes.
+    await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.waitForTimeout(200);
+    const sysLight = await S(page, () => document.documentElement.dataset.theme);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForTimeout(200);
+    const sysDark = await S(page, () => document.documentElement.dataset.theme);
+    await page.waitForTimeout(900);
+    const servedAfter = /data-theme-pref="(\w+)"/.exec(await (await fetch(BASE)).text())?.[1];
+    const got = { picked, bg, served, first, sysLight, sysDark, servedAfter };
+    return picked === "light" && bg === "rgb(231, 231, 234)" && served === "light" && first === "light" && sysLight === "light" && sysDark === "dark" && servedAfter === "system" ? "ok" : JSON.stringify(got);
+  },
+  async "light and dark: on every screen the words read, and nothing is left in the other theme's colours"(page) {
+    const problems: string[] = [];
+    for (const theme of ["light", "dark"]) {
+      await S(page, async (t: string) => (await import("/ui/store.js" as string)).setTheme(t), theme);
+      await S(page, async () => {
+        const st = await import("/ui/store.js" as string);
+        st.set({ scenesPage: false, modal: null, toasts: [], menu: null, boardId: null });
+      });
+      await page.waitForTimeout(300);
+      const look = async (screen: string) => {
+        await page.waitForTimeout(450);
+        await picture(page, `theme-${theme}-${screen}`);
+        for (const issue of await themeAudit(page)) problems.push(`${theme} ${screen}: ${issue}`);
+      };
+      for (const [screen, go] of SCREENS) {
+        await go(page);
+        await look(screen);
+      }
+      // A board: its editor, a layer picked, the comments, a thread and the bar that sends them.
+      await S(page, async () => (await import("/ui/scenes.js" as string)).closeScenesPage?.());
+      const t = await openTestBoard(page);
+      boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [t.byName("Phone")], at: new Date().toISOString() }], "agent");
+      talk.startThread(t.id, { layer: t.byName("Row One") }, { text: "Row one is too tight", by: "person", pending: true });
+      const sent = talk.startThread(t.id, { layer: t.byName("Row Two") }, { text: "@Design agent make this bold", by: "person", to: [AGENT] });
+      talk.reply(t.id, sent.thread.id, { text: "Done: **bold** now.", by: AGENT, name: "Design agent" });
+      await page.waitForTimeout(1200);
+      await look("board");
+      await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select([id]), t.byName("Row One"));
+      await look("board-layer");
+      await page.click('.bd-left-tabs [data-tab="assets"]').catch(() => undefined);
+      await look("board-assets");
+      await page.click('.bd-left-tabs [data-tab="comments"]').catch(() => undefined);
+      await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), sent.thread.id);
+      await look("board-comments");
+      await page.click(".bd-sendbar-count").catch(() => undefined);
+      await look("board-send");
+      await S(page, async () => (await import("/ui/board-state.js" as string)).closeBoard());
+    }
+    await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
+    return problems.length ? `${problems.length} problems:\n    ${problems.join("\n    ")}` : "ok";
   },
   async "on a board, comments wait until Send, then reach the agent as one list"(page) {
     const t = await openTestBoard(page);
@@ -1768,7 +2013,8 @@ try {
       // UI_ONLY="some words" runs just the checks whose titles match.
       if (process.env.UI_ONLY && !new RegExp(process.env.UI_ONLY, "i").test(title)) continue;
       const problems: string[] = [];
-      const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
+      // Dark, as the checks were written; the theme check goes through light and dark itself.
+      const page = await browser.newPage({ viewport: { width: 1500, height: 950 }, colorScheme: "dark" });
       page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
       // The backdrop's still is drawn on demand and may be refused for an unknown look: not a fault.
       // A refusal a check fakes on purpose (x-test-refusal) isn't one either.

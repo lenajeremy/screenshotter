@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
+<script>
+  // The theme before anything draws: the saved choice (the server writes it on <html>), else the Mac's.
+  (function () {
+    var d = document.documentElement;
+    var pref = d.getAttribute("data-theme-pref") || "system";
+    var light = pref === "light" || (pref === "system" && matchMedia("(prefers-color-scheme: light)").matches);
+    d.setAttribute("data-theme", light ? "light" : "dark");
+  })();
+</script>
 <title>Screenshotter</title>
 <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/styles.css">

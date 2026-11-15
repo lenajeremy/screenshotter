@@ -6,7 +6,7 @@ import { Icon } from "./icons.js";
 import { BoardApp, boardCommand, importToBoard } from "./board.js";
 import { openBoard, saved as boardSaved } from "./board-state.js";
 import { refreshBoards } from "./board-library.js";
-import { IMAGE_PROVIDERS, S, STORE_GAP, hasDesign, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
+import { IMAGE_PROVIDERS, S, STORE_GAP, setTheme, themeNow, hasDesign, pictureUrl, aiEngine, aiName, aiVia, api, base, dismiss, edit, entityLabel, fail, fileUrl, flushPersist, isVideo, native, persist, persistPrefs, redo, refreshFiles, refreshScenes, restore, saveSceneNow, scheduleLayout, set, setScene, thumbUrl, toast, touch, undo, useStore } from "./store.js";
 import {
   answerPrompt,
   applyRecipe,
@@ -910,7 +910,7 @@ function Settings() {
       <div class="settings-tabs"><${Seg} value=${tab} options=${TABS} onChange=${setTab} /></div>
       <div class="sheet-body">
         ${tab === "ai" && html`<div class="card">
-          <h4><${Icon} n="spark" s=${15} style=${{ color: "var(--lime)" }} />Ask AI
+          <h4><${Icon} n="spark" s=${15} style=${{ color: "var(--accent)" }} />Ask AI
             <span class="grow"></span>
             ${engine === "codex"
               ? ai?.codex
@@ -948,6 +948,11 @@ function Settings() {
         </div>
         <${HouseStyle} />`}
         ${tab === "general" && html`<div class="card">
+          <h4><${Icon} n=${themeNow() === "light" ? "sun" : "moon"} s=${15} />Appearance</h4>
+          <div class="row"><label>Theme</label><${Seg} value=${s.theme ?? "system"} options=${[{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} onChange=${setTheme} /></div>
+          <div class="note">System follows your Mac, light or dark, as it changes.</div>
+        </div>
+        <div class="card">
           <h4><${Icon} n="folder" s=${15} />Output folder</h4>
           <div class="hstack"><span class="mono grow" style=${{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-2)" }}>${shortPath(s.opts?.outputRoot)}</span>
             <button class="btn sm" onClick=${() => reveal(s.opts.outputRoot)}>Show</button>
@@ -1248,7 +1253,7 @@ function Confirm() {
       <div class="sheet-head"><h2>${m.title}</h2></div>
       <div class="sheet-body"><div class="note" style=${{ fontSize: "13px" }}>${m.text}</div></div>
       <div class="sheet-foot"><button class="btn" onClick=${() => answerConfirm(false)}>${m.cancel ?? "Cancel"}</button>
-        <button class="btn ${m.danger ? "" : "primary"}" style=${m.danger ? { background: "var(--danger)", color: "#fff" } : null} autoFocus onClick=${() => answerConfirm(true)}>${m.confirm ?? "OK"}</button></div>
+        <button class="btn ${m.danger ? "" : "primary"}" style=${m.danger ? { background: "var(--danger-strong)", color: "#fff" } : null} autoFocus onClick=${() => answerConfirm(true)}>${m.confirm ?? "OK"}</button></div>
     </div>
   </div>`;
 }

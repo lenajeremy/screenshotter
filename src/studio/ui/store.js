@@ -42,12 +42,35 @@ export const native = handler
 if (native) document.documentElement.classList.add("native");
 
 // ---------------------------------------------------------------------------------------------
+// Light or dark: the person's choice, or the Mac's ("system", following it as it changes)
+
+const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+/** The theme showing now, "light" or "dark". */
+export const themeNow = () => document.documentElement.dataset.theme === "light" ? "light" : "dark";
+export function applyTheme(pref = S.theme) {
+  const light = pref === "light" || (pref !== "dark" && !darkQuery.matches);
+  document.documentElement.dataset.theme = light ? "light" : "dark";
+  document.documentElement.dataset.themePref = pref;
+}
+darkQuery.addEventListener?.("change", () => applyTheme());
+/** Choose the theme: "system", "light" or "dark". The app's window follows it too. */
+export function setTheme(pref) {
+  const theme = pref === "light" || pref === "dark" ? pref : "system";
+  set({ theme });
+  applyTheme(theme);
+  native?.call("setTheme", { theme }).catch(() => undefined);
+  persistPrefs();
+}
+
+// ---------------------------------------------------------------------------------------------
 // State
 
 export const DEFAULT_SCENE = { devices: [], background: "meadow-motion" };
 
 export const S = {
   ready: false,
+  /** "system" (the Mac's appearance), "light" or "dark". */
+  theme: "system",
   bootError: null,
   opts: null,
   scene: DEFAULT_SCENE,
@@ -354,7 +377,7 @@ const snapshot = () => ({
   shot: S.shot,
   groups: S.groups,
   group: S.group,
-  ui: { leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiPanel: S.ai.docked ? "docked" : "floating", layoutV: 3 },
+  ui: { theme: S.theme, leftTab: S.leftTab, leftOpen: S.leftOpen, exportOpts: S.exportOpts, capture: { ...S.capture, more: false }, aiModel: S.ai.model, aiEngine: S.ai.engine, aiPreview: S.ai.preview, imageQuality: S.ai.imageQuality, aiThread: S.ai.thread.slice(-60), aiHistory: S.ai.history.slice(-20), touched: S.touched, scenesPrefs: S.scenesPrefs, rightOpen: S.rightOpen, leftW: S.leftW, rightW: S.rightW, tlH: S.tlH, aiPanel: S.ai.docked ? "docked" : "floating", layoutV: 3 },
 });
 export function persist() {
   syncSpans();
@@ -624,7 +647,9 @@ export async function restore() {
     docked: ui.aiPanel !== "floating", history: ui.aiHistory ?? [], thread: Array.isArray(ui.aiThread) ? ui.aiThread : [] };
   if (ui.touched) patch.touched = { ...S.touched, ...ui.touched };
   if (ui.scenesPrefs) patch.scenesPrefs = { ...S.scenesPrefs, ...ui.scenesPrefs };
+  patch.theme = ui.theme === "light" || ui.theme === "dark" ? ui.theme : "system";
   set(patch);
+  applyTheme(patch.theme);
   // A set saved before its spans were kept in step (or by an agent) gets them now.
   syncSpans();
 }

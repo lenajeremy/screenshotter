@@ -486,7 +486,7 @@ export function Dropdown({ value, options, onChange, placeholder = "Choose…", 
           lastGroup = o.group;
           return html`${g}<button class="menu-item ${i === active ? "active" : ""}" onMouseEnter=${() => setActive(i)} onClick=${() => pick(o)}>
             <span class="check">${o.value === value ? html`<${Icon} n="check" s=${13} w=${2.2} />` : null}</span>
-            ${o.swatch && html`<span class="chip-color" style=${{ width: "14px", height: "14px", borderRadius: "4px", background: o.swatch, boxShadow: "inset 0 0 0 1px rgba(255,255,255,.2)" }}></span>`}
+            ${o.swatch && html`<span class="chip-color" style=${{ width: "14px", height: "14px", borderRadius: "4px", background: o.swatch, boxShadow: "inset 0 0 0 1px rgb(var(--ink) / 0.2)" }}></span>`}
             <span style=${o.font ? { fontFamily: o.font } : null}>${o.label}</span>
             ${o.hint && html`<span class="muted">${o.hint}</span>`}
           </button>`;
@@ -1030,7 +1030,7 @@ function plainWords(fragment) {
 
 
 /** How accent words look while being typed in a panel (the design's own colour shows on the canvas). */
-const ACCENT_MARK = "color: var(--lime); font-weight: 650";
+const ACCENT_MARK = "color: var(--accent); font-weight: 650";
 
 /**
  * Words that can carry **accent** words, shown as they look: accent words marked, no stars to see.

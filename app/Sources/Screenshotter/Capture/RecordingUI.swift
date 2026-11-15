@@ -25,6 +25,8 @@ import SwiftUI
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
+        // Capture overlays stay dark whatever the Studio's theme, as macOS's own screenshot bar does.
+        appearance = NSAppearance(named: .darkAqua)
         hasShadow = true
         level = .statusBar
         isFloatingPanel = true
@@ -170,6 +172,8 @@ import SwiftUI
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
+        // Capture overlays stay dark whatever the Studio's theme, as macOS's own screenshot bar does.
+        appearance = NSAppearance(named: .darkAqua)
         hasShadow = true
         level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         isFloatingPanel = true
@@ -506,6 +510,8 @@ struct HUDSwitch: ToggleStyle {
         super.init(contentRect: CGRect(origin: .zero, size: full), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
+        // Capture overlays stay dark whatever the Studio's theme, as macOS's own screenshot bar does.
+        appearance = NSAppearance(named: .darkAqua)
         hasShadow = true
         level = .statusBar
         hidesOnDeactivate = false
@@ -743,6 +749,8 @@ struct DiscardButton: View {
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
+        // Capture overlays stay dark whatever the Studio's theme, as macOS's own screenshot bar does.
+        appearance = NSAppearance(named: .darkAqua)
         hasShadow = true
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]

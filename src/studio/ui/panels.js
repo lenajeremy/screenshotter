@@ -98,7 +98,7 @@ function SimulatorForm() {
     </div>`}
     <div class="grid2" style=${{ gridTemplateColumns: "1fr auto" }}>
       <button class="btn ${capturePrimary(s)}" disabled=${Boolean(s.busy)} onClick=${captureSimulator}><${Icon} n="camera" s=${15} />Capture</button>
-      <button class="btn" disabled=${Boolean(s.busy)} title="Record 6 seconds of the screen" onClick=${() => recordSimulator(6)}><${Icon} n="record" s=${14} style=${{ color: "#ff5d5d" }} />Record</button>
+      <button class="btn" disabled=${Boolean(s.busy)} title="Record 6 seconds of the screen" onClick=${() => recordSimulator(6)}><${Icon} n="record" s=${14} style=${{ color: "var(--danger)" }} />Record</button>
     </div>
   </div>`;
 }

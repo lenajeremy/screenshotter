@@ -511,7 +511,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
 
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(readFileSync(path.join(uiDir(), "index.html")));
+    // The saved theme goes on the page itself, so the first frame is already the right colours.
+    const theme = (loadState() as { ui?: { theme?: unknown } })?.ui?.theme;
+    const pref = theme === "light" || theme === "dark" ? theme : "system";
+    res.end(readFileSync(path.join(uiDir(), "index.html"), "utf8").replace('<html lang="en">', `<html lang="en" data-theme-pref="${pref}">`));
     return;
   }
   // The canvas draws shapes with the engine's own code: its compiled module (from the build when

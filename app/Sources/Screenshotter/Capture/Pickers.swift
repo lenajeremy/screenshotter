@@ -116,6 +116,8 @@ final class PickerWindow: NSPanel {
         hidesOnDeactivate = false
         isOpaque = false
         backgroundColor = .clear
+        // Capture overlays stay dark whatever the Studio's theme, as macOS's own screenshot bar does.
+        appearance = NSAppearance(named: .darkAqua)
         level = .screenSaver
         hasShadow = false
         ignoresMouseEvents = false

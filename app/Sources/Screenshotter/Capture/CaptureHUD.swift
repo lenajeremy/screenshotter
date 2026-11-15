@@ -36,6 +36,8 @@ import SwiftUI
         super.init(contentRect: CGRect(x: 0, y: 0, width: 320, height: 260), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
+        // Capture overlays stay dark whatever the Studio's theme, as macOS's own screenshot bar does.
+        appearance = NSAppearance(named: .darkAqua)
         hasShadow = true
         level = .floating
         hidesOnDeactivate = false

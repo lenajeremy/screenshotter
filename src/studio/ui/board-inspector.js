@@ -700,7 +700,8 @@ function asKind(f, kind) {
 
 // Each fill, shadow and filter is one short row; its details open in a popover.
 
-const CHECK = "repeating-conic-gradient(#2a2a2f 0 25%, #1c1c20 0 50%) 0 0 / 10px 10px";
+// The squares behind a see-through colour, in the theme's greys (styles.css).
+const CHECK = "var(--check-sm)";
 
 /** A row that opens its editor in a popover: a swatch, a summary, and a remove button. */
 function PopRow({ swatch, label, sub, onRemove, children, width = 264, removeTitle = "Remove", title = "Edit" }) {

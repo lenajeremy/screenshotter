@@ -23,7 +23,8 @@ import WebKit
     // MARK: Launch
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        // The Studio window follows the theme chosen in Settings (or the Mac's); the capture
+        // overlays keep their own dark look.
         buildMenu()
 
         let config = WKWebViewConfiguration()
@@ -282,6 +283,11 @@ import WebKit
         switch cmd {
         case "dragRegions":
             web.dragRegions = DragRegions(regions: DragRegions.from(body["regions"]), holes: DragRegions.from(body["holes"]))
+            replyHandler(true, nil)
+        case "setTheme":
+            let theme = body["theme"] as? String ?? "system"
+            UserDefaults.standard.set(theme, forKey: "theme")
+            for case let w as StudioWindow in NSApp.windows { w.applyTheme(theme) }
             replyHandler(true, nil)
         case "getSettings":
             replyHandler([

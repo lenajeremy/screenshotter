@@ -139,7 +139,8 @@ final class StudioWebView: WKWebView, NSDraggingSource {
     }
 }
 
-/// The main window: dark, no visible title bar, traffic lights centred in the web UI's top bar.
+/// The main window: no visible title bar, traffic lights centred in the web UI's top bar; light or
+/// dark as the person chose in Settings, else as the Mac is.
 final class StudioWindow: NSWindow {
     static let topBarHeight: CGFloat = 52
 
@@ -156,14 +157,25 @@ final class StudioWindow: NSWindow {
         titlebarAppearsTransparent = true
         titleVisibility = .hidden
         title = "Screenshotter"
-        backgroundColor = NSColor(red: 0.043, green: 0.043, blue: 0.051, alpha: 1)
-        appearance = NSAppearance(named: .darkAqua)
+        // The web UI's window colour (--win) in each theme, so a resize or a reload never flashes the other.
+        backgroundColor = NSColor(name: nil) { look in
+            look.bestMatch(from: [.darkAqua, .aqua]) == .aqua
+                ? NSColor(red: 0.906, green: 0.906, blue: 0.918, alpha: 1)
+                : NSColor(red: 0.043, green: 0.043, blue: 0.051, alpha: 1)
+        }
+        applyTheme(UserDefaults.standard.string(forKey: "theme"))
         minSize = NSSize(width: 1040, height: 660)
         isReleasedWhenClosed = false
         tabbingMode = .disallowed
         collectionBehavior.insert(.fullScreenPrimary)
         setFrameAutosaveName("StudioWindow")
         if !setFrameUsingName("StudioWindow") { center() }
+    }
+
+    /// "light" or "dark" fixes the window's look; anything else follows the Mac. The web view inside
+    /// takes it from the window, so its prefers-color-scheme matches.
+    func applyTheme(_ theme: String?) {
+        appearance = theme == "light" ? NSAppearance(named: .aqua) : theme == "dark" ? NSAppearance(named: .darkAqua) : nil
     }
 
     /// Move the close/minimise/zoom buttons down so they sit in the middle of the 52pt top bar.
