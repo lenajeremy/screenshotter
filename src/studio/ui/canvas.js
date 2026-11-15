@@ -1,7 +1,7 @@
 // The layout canvas: shows where things go (no effects), lets you drag, resize, rotate and retype.
 import { createContext } from "preact";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Dropdown, accentEditHtml, accentFromEdit, followDrag, html, keysForCanvas, toggleAccentIn } from "./controls.js";
+import { Dropdown, accentEditHtml, accentFromEdit, followDrag, html, keysForCanvas, perFrame, toggleAccentIn } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { MotionPathOverlay, Viewfinder, afterEntity, applyPreview, blurAnimated, commitKeyframe, followVideo, joinStyles, manyShots, offVideo, onPlayhead, onVideoTime, playhead, shotsAt, video, videoPlan } from "./timeline.js";
@@ -273,6 +273,13 @@ function place(e, W, H) {
   };
 }
 
+/**
+ * The width to ask for a device's screenshot at: the engine makes thumbnails in steps of 40 px, so
+ * asking in the same steps gets the very same picture, and zooming asks again (and decodes again)
+ * only when it crosses a step rather than at every frame of a pinch.
+ */
+const thumbEdge = (px) => Math.round(Math.min(900, Math.max(240, Math.round(px))) / 40) * 40;
+
 function DeviceEnt({ e, W, H }) {
   const s = e.screen ?? { x: 0, y: 0, width: 1, height: 1, radius: 0.1 };
   const bw = e.width * W;
@@ -318,7 +325,7 @@ function DeviceEnt({ e, W, H }) {
   return html`<div class="body" style=${{ background: e.bezel || band ? "transparent" : body, borderRadius: s.radius * bw + "px", filter, WebkitMaskImage: mask || undefined, maskImage: mask || undefined, transform: tilt, boxShadow: e.bezel || dev.shadow === "none" ? "none" : undefined }}>
     ${band && html`<div style=${stub(true)}></div><div style=${stub(false)}></div><div style=${caseBox}></div>`}
     ${menuStrip && html`<div style=${menuStrip}></div>`}
-    <img draggable=${false} src=${thumbUrl(e.screenshot, Math.min(900, Math.max(240, Math.round(bw * s.width * 2))))} style=${screen} />
+    <img draggable=${false} src=${thumbUrl(e.screenshot, thumbEdge(bw * s.width * 2))} style=${screen} />
     ${dev.video && !ghost && S.stillPick?.id !== e.id && (S.timelineOpen
       ? // In Animate, the recording follows the playhead (and plays its sound with the timeline).
         html`<video key=${dev.video + "#follow"} data-follow data-master=${e.index === 0 && scene.recording ? "1" : undefined} src=${fileUrl(dev.video)} playsinline preload="auto" onLoadedMetadata=${(ev) => followVideo(ev.currentTarget)} style=${{ ...screen, objectFit: "cover" }}></video>`
@@ -733,6 +740,7 @@ export function CanvasView() {
     if (was === s.shot || view.zoom === null || !setModeRef.current) return;
     const c = cam.current;
     const step = c.W0 * c.scale * (1 + SET_GAP);
+    if (want.current) want.current = { ...want.current, x: want.current.x + (s.shot - was) * step };
     setView((v) => ({ ...v, x: v.x + (s.shot - was) * step }));
   }, [s.shot]);
   const setModeRef = useRef(false);
@@ -764,26 +772,49 @@ export function CanvasView() {
   const oy = view.zoom === null ? TOP + (size.h - TOP - bottom - H) / 2 : view.y;
 
   // The view as it is right now. Trackpad events arrive faster than the canvas re-renders, so
-  // each one builds on the last one's result rather than on the last render.
+  // each one builds on the last one's result rather than on the last render. The view they ask for
+  // is drawn once a frame (`want` until then): the whole canvas lays out again at each zoom, and
+  // doing that for every event, two or three a frame, made pinching and panning stutter.
   const cam = useRef();
-  cam.current = { scale, ox, oy, W0, H0, size, ready: !!layout };
+  const want = useRef(null);
+  cam.current = { scale, ox, oy, W0, H0, size, ready: !!layout, ...(want.current && { scale: want.current.zoom, ox: want.current.x, oy: want.current.y }) };
   setModeRef.current = setMode;
+  const showWanted = useMemo(
+    () =>
+      perFrame(() => {
+        const v = want.current;
+        want.current = null;
+        if (v) setView(v);
+      }),
+    [],
+  );
+  useEffect(() => () => showWanted.cancel(), []);
   const moveTo = (zoom, x, y) => {
+    want.current = { zoom, x, y };
     cam.current = { ...cam.current, scale: zoom, ox: x, oy: y };
-    setView({ zoom, x, y });
+    showWanted();
   };
-  const zoomAt = (next, cx, cy) => {
+  /** Show a view straight away (a command, not a gesture), dropping one a gesture was about to show. */
+  const jumpTo = (v) => {
+    want.current = null;
+    showWanted.cancel();
+    if (v.zoom !== null) cam.current = { ...cam.current, scale: v.zoom, ox: v.x, oy: v.y };
+    setView(v);
+  };
+  const zoomAt = (next, cx, cy, now = false) => {
     const c = cam.current;
     cx ??= c.size.w / 2;
     cy ??= c.size.h / 2;
     next = clamp(next, 0.02, 4);
     const fx = (cx - c.ox) / (c.W0 * c.scale);
     const fy = (cy - c.oy) / (c.H0 * c.scale);
-    moveTo(next, cx - fx * c.W0 * next, cy - fy * c.H0 * next);
+    const [x, y] = [cx - fx * c.W0 * next, cy - fy * c.H0 * next];
+    if (now) jumpTo({ zoom: next, x, y });
+    else moveTo(next, x, y);
   };
-  canvasApi.fit = () => setView({ zoom: null, x: 0, y: 0 });
-  canvasApi.fitSet = () => (setFit("set"), setView({ zoom: null, x: 0, y: 0 }));
-  canvasApi.fitScreen = () => (setFit("screen"), setView({ zoom: null, x: 0, y: 0 }));
+  canvasApi.fit = () => jumpTo({ zoom: null, x: 0, y: 0 });
+  canvasApi.fitSet = () => (setFit("set"), jumpTo({ zoom: null, x: 0, y: 0 }));
+  canvasApi.fitScreen = () => (setFit("screen"), jumpTo({ zoom: null, x: 0, y: 0 }));
   canvasApi.rename = (i) => setRenaming(i);
   /**
    * Press on a screen of the set (its label, or the screen itself if it isn't the one being edited):
@@ -811,8 +842,8 @@ export function CanvasView() {
     // Escape leaves the screens where they were.
     followDrag({ move, done: up, cancel: () => setReorder(null) });
   };
-  canvasApi.zoomBy = (f) => zoomAt(cam.current.scale * f);
-  canvasApi.zoomTo = (z) => zoomAt(z);
+  canvasApi.zoomBy = (f) => zoomAt(cam.current.scale * f, undefined, undefined, true);
+  canvasApi.zoomTo = (z) => zoomAt(z, undefined, undefined, true);
   canvasApi.editText = (id, part) => setEditing({ id, part: part ?? (id === "caption" ? "headline" : "text") });
   canvasApi.scale = scale;
   canvasApi.finishNow = () => setKick((n) => n + 1);
@@ -922,11 +953,9 @@ export function CanvasView() {
     ev.preventDefault();
     const sx = ev.clientX;
     const sy = ev.clientY;
-    const x0 = ox;
-    const y0 = oy;
-    const z = scale;
+    const { ox: x0, oy: y0, scale: z } = cam.current;
     vp.current.classList.add("panning");
-    const move = (e) => setView({ zoom: z, x: x0 + e.clientX - sx, y: y0 + e.clientY - sy });
+    const move = (e) => moveTo(z, x0 + e.clientX - sx, y0 + e.clientY - sy);
     const up = () => vp.current?.classList.remove("panning");
     followDrag({ move, done: up });
   };
@@ -992,6 +1021,11 @@ export function CanvasView() {
       for (const v of vals) for (const t of list) if (Math.abs(t - v) < tol && (!best || Math.abs(t - v) < Math.abs(best.d))) best = { d: t - v, at: t };
       return best;
     };
+    // Where it is goes with every event; the canvas draws it once a frame.
+    const show = perFrame((g, e) => {
+      setGuides(g);
+      setLive({ e, mode });
+    });
     const move = (e) => {
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
@@ -1090,10 +1124,10 @@ export function CanvasView() {
         cur.rotate = ang;
         if (sh0) cur = withShape(e0, (sh) => (sh.rotate = ang), W0, H0);
       }
-      setGuides(g);
-      setLive({ e: cur, mode });
+      show(g, cur);
     };
     const up = () => {
+      show.cancel();
       setGuides([]);
       if (moved) {
         pending.current = cur;
@@ -1105,6 +1139,7 @@ export function CanvasView() {
     };
     // Escape puts it back where it was; nothing is written.
     const cancel = () => {
+      show.cancel();
       setGuides([]);
       setLive(null);
     };

@@ -43,6 +43,37 @@ export function Seg({ value, options, onChange, class: cls = "" }) {
 // Drags
 
 /**
+ * `fn` at most once an animation frame, with the arguments of the last call. A trackpad or mouse
+ * can send events faster than the screen redraws (and WebKit doesn't line them up with frames):
+ * the work of showing each one is done once, for the latest. `flush()` runs a waiting call now,
+ * `cancel()` drops it.
+ */
+export function perFrame(fn) {
+  let id = 0;
+  let last = null;
+  const run = () => {
+    id = 0;
+    const a = last;
+    last = null;
+    if (a) fn(...a);
+  };
+  const call = (...args) => {
+    last = args;
+    if (!id) id = requestAnimationFrame(run);
+  };
+  call.flush = () => {
+    cancelAnimationFrame(id);
+    run();
+  };
+  call.cancel = () => {
+    cancelAnimationFrame(id);
+    id = 0;
+    last = null;
+  };
+  return call;
+}
+
+/**
  * Follow a drag from a pointerdown until it ends, on the window so it carries on outside the
  * element. Letting go calls `done`; so does a drag that's lost (the pointer cancelled, the window
  * losing focus mid-drag with ⌘Tab, or a move with the button already up), so nothing is left

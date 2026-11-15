@@ -1694,6 +1694,32 @@ const CHECKS: Record<string, Check> = {
     const width = Number(boards.getBoard(b.id).nodes[box].attrs!.width);
     return Math.abs(width - 30) < 0.6 ? "ok" : `typing W 60 after zooming made the rect ${width} wide in its own units, not 30`;
   },
+  async "on the canvas, a burst of trackpad events in one frame all count, and screenshots load at the engine's sizes"(page) {
+    await page.evaluate("globalThis.__name = (f) => f");
+    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
+    await page.waitForTimeout(1500);
+    const r = await S(page, async () => {
+      const { canvasApi } = await import("/ui/canvas.js" as string);
+      const vp = document.querySelector(".stage .viewport")!;
+      const b = vp.getBoundingClientRect();
+      const frames = () => new Promise((f) => requestAnimationFrame(() => requestAnimationFrame(f)));
+      const worldX = () => new DOMMatrix(getComputedStyle(document.querySelector(".stage .world")!).transform).m41;
+      const s0 = canvasApi.scale as number;
+      // Five pinch steps and four scrolls, each burst within one frame.
+      for (let i = 0; i < 5; i++) vp.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, ctrlKey: true, deltaY: -10 }));
+      await frames();
+      const s1 = canvasApi.scale as number;
+      const x1 = worldX();
+      for (let i = 0; i < 4; i++) vp.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: b.left + 10, clientY: b.top + 10, deltaX: 10 }));
+      await frames();
+      const widths = [...document.querySelectorAll(".stage .artboard .ent-device img")].map((i) => Number(new URL((i as HTMLImageElement).src).searchParams.get("w"))).filter(Boolean);
+      return { want: s0 * Math.exp(0.012 * 10 * 5), s1, dx: worldX() - x1, widths };
+    });
+    if (Math.abs(r.s1 - r.want) > r.want * 1e-6) return `five pinch steps zoomed to ${r.s1}, not ${r.want}`;
+    if (Math.abs(r.dx + 40) > 0.01) return `four scrolls of 10 px moved the design ${r.dx} px`;
+    if (!r.widths.length || r.widths.some((w) => w % 40)) return `the screenshot was asked for at ${r.widths.join(", ")} px wide (the engine makes them in steps of 40)`;
+    return "ok";
+  },
   async "on the canvas, the pointer over an item redraws the canvas, not the panels"(page) {
     await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
     await page.waitForTimeout(1500);
