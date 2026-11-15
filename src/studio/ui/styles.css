@@ -1792,7 +1792,9 @@ li.done .work-shot .scan { display: none; }
 .bd-size-field { display: flex; gap: 4px; min-width: 0; }
 .bd-size-field .num { flex: 1; }
 .bd-size-field .num { min-width: 0; }
-.bd-mode { height: 30px; min-width: 0; width: 58px; flex: none; padding: 0 4px 0 8px; gap: 2px; font-size: 11.5px; }
+/* W and H give their number the room for four digits (a 1440 artboard), the mode its word. */
+.bd-size-field .num .scrub { min-width: 0; padding: 0 2px 0 8px; }
+.bd-mode { height: 30px; min-width: 0; width: 52px; flex: none; padding: 0 3px 0 7px; gap: 1px; font-size: 11.5px; }
 .bd-mode .label { text-overflow: clip; }
 .bd-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); cursor: default; white-space: nowrap; }
 .bd-check input { accent-color: #d4d4d8; margin: 0; }
