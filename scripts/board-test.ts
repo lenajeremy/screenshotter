@@ -389,6 +389,12 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
     const added = await m.loadMaskFonts(fb.board, fakeFetch);
     const svg = decodeURIComponent(m.maskCss(fb.board, named(fb.board, "Logo"))!.box.maskImage);
     check(added && asked.some((u) => /family=Brand\+Sans:ital,wght@0,400;0,700;1,400;1,700/.test(u)) && asked.includes("https://fonts.gstatic.com/brand.woff2") && !asked.includes("https://fonts.gstatic.com/greek.woff2") && svg.includes("src:url(data:font/woff2;base64,AQID)"), "a text mask's web font is fetched (only the parts its words need) and put inside its picture");
+    // Type written with the font shorthand: its family and weight count, and a size of the layer's own wins over one it inherits.
+    const sh = fresh(`<div style="position:relative;width:300px;height:100px;font:500 14px/1.2 -apple-system, sans-serif"><p data-name="Big" data-mask style="position:absolute;left:0;top:0;margin:0;font:900 90px/1 'Other Face', Helvetica">Go</p><p data-name="Small" data-mask style="position:absolute;left:0;top:0;margin:0;font-size:20px">Go</p><div style="position:absolute"></div></div>`);
+    const asked2: string[] = [];
+    await m.loadMaskFonts(sh.board, async (u: string) => (asked2.push(u), { ok: false, text: async () => "", arrayBuffer: async () => new ArrayBuffer(0) }));
+    const small = decodeURIComponent(m.maskCss(sh.board, named(sh.board, "Small"))!.box.maskImage);
+    check(asked2.length === 1 && /family=Other\+Face:ital,wght@0,400;0,900/.test(asked2[0]) && /font:500 14px\/1\.2 system-ui, sans-serif;font-size:20px/.test(small), "a text mask's type in the font shorthand: its family and weight are fetched, and its own size wins over the inherited shorthand");
   }
   check(/mask \(vector\) of 2 layers above it/.test(treeText(put.board, plain.root)) && new RegExp(`masked by #${S1}`).test(treeText(put.board, plain.root)), "the outline says what's a mask and what it masks");
 }

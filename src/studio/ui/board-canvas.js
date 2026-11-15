@@ -4,6 +4,7 @@ import { Component } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
+import { CANVAS_ONLY } from "./board-state.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -199,6 +200,8 @@ function layersOf(n, nodes, editing) {
 function MaskScope({ mask, ids, editing }) {
   const [, redraw] = useState(0);
   useEffect(() => onMaskFonts(() => redraw((k) => k + 1)), []);
+  // A token a vector or text mask uses is drawn into its picture: a change to the tokens draws it again.
+  useBoard(CANVAS_ONLY);
   const nodes = B.board.nodes;
   const kids = ids.map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`);
   const css = ids.length && maskActive(B.board, mask) ? maskCss(B.board, mask, { src: srcUrl }) : null;

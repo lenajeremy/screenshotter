@@ -2466,6 +2466,10 @@ const familyNames = (list: string | undefined) =>
     .map((f) => f.trim().replace(/^["']|["']$/g, ""))
     .filter(Boolean);
 
+/** The font family a style gives: its own, or the one in its `font` shorthand (after the size). */
+const familyOf = (s: Style | undefined): string | undefined =>
+  s?.fontFamily ?? (s?.font ? /(?:^|\s)(?:[\d.]+(?:px|pt|r?em|%|v[wh]|ex|ch|cm|mm|in|pc|q)|(?:xx?-|x?x?-)?(?:small|large)|medium|smaller|larger)(?:\s*\/\s*\S+)?\s+(.+)$/i.exec(s.font)?.[1] : undefined);
+
 /** A text layer's words as XHTML (what an SVG's foreignObject takes). */
 function xhtml(nodes: HNode[]): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2485,22 +2489,33 @@ function xhtml(nodes: HNode[]): string {
 /** A text layer drawn as an SVG picture of its words, as the canvas lays them out. */
 function textMaskSvg(board: Board, id: string, type: MaskType): string {
   const n = board.nodes[id];
-  const style: Style = { margin: "0", fontFamily: "Inter, system-ui, sans-serif", fontSize: "16px", color: "#000" };
+  const style: Style = {};
+  // Later wins, as in CSS: a property set again goes to the end (after a shorthand set before it).
+  const put = (from: Style, keep: (k: string) => boolean = () => true) => {
+    for (const [k, v] of Object.entries(from))
+      if (keep(k)) {
+        delete style[k];
+        style[k] = v;
+      }
+  };
+  put({ margin: "0", fontFamily: "Inter, system-ui, sans-serif", fontSize: "16px", color: "#000" });
   const up: Style = {};
   for (const a of ancestors(board, id)) {
     const s = board.nodes[a]?.style ?? {};
+    // A `font` shorthand counts when nothing nearer set the type (it would undo what did).
+    if (s.font && !["font", "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight"].some((k) => up[k] !== undefined)) up.font = s.font;
     for (const k of TEXT_INHERITED) if (s[k] !== undefined && up[k] === undefined) up[k] = s[k];
   }
-  Object.assign(style, up);
-  for (const [k, v] of Object.entries(n.style)) if (!MASK_PLACEMENT.test(k)) style[k] = v;
+  put(up);
+  put(n.style, (k) => !MASK_PLACEMENT.test(k));
   const width = n.style.width && !NO_SIZE.test(n.style.width.trim());
   const height = n.style.height && !NO_SIZE.test(n.style.height.trim());
-  Object.assign(style, { boxSizing: "border-box", width: width ? "100%" : "max-content", maxWidth: "100%", ...(height ? { height: "100%" } : {}) });
-  if (type === "vector") Object.assign(style, { color: "#000", webkitTextFillColor: "#000", background: "none", backgroundImage: "none", textShadow: "none", filter: "none" });
+  put({ boxSizing: "border-box", width: width ? "100%" : "max-content", maxWidth: "100%", ...(height ? { height: "100%" } : {}) });
+  if (type === "vector") put({ color: "#000", webkitTextFillColor: "#000", background: "none", backgroundImage: "none", textShadow: "none", filter: "none" });
   for (const [k, v] of Object.entries(style)) style[k] = resolveTokens(v, board.tokens);
   // A picture can't reach the system's UI font by these names.
-  style.fontFamily = style.fontFamily.replace(/-apple-system|BlinkMacSystemFont/gi, "system-ui");
-  const families = new Set(familyNames(style.fontFamily).map((f) => f.toLowerCase()));
+  for (const k of ["fontFamily", "font"]) if (style[k]) style[k] = style[k].replace(/-apple-system|BlinkMacSystemFont/gi, "system-ui");
+  const families = new Set(familyNames(familyOf(n.style) ? resolveTokens(familyOf(n.style)!, board.tokens) : style.fontFamily).map((f) => f.toLowerCase()));
   for (const m of (n.text ?? "").matchAll(/font-family:\s*([^;"]+)/gi)) for (const f of familyNames(resolveTokens(m[1], board.tokens))) families.add(f.toLowerCase());
   const faces = [...families].map((f) => MASK_FONTS.get(f) ?? "").join("");
   const words = xhtml(parseHtml(resolveTokens(n.text ?? "", board.tokens)).children);
@@ -2713,9 +2728,9 @@ export function maskOps(board: Board, id: string, type: MaskType | null, boxes: 
   const n = board.nodes[id];
   if (inFlow(board, id)) return maskGroupOps(board, [id], type, boxes);
   const ops: Op[] = [{ op: "set", id, mask: type }];
-  // Its box must be in its CSS: where the layout put it, it says now.
+  // Its box must be in its CSS: one the flow placed (in a frame laid out by hand) is placed where it is now.
   const b = boxes[id];
-  if (b && (n.style.position !== "absolute" || pxValue(n.style.left) === undefined || pxValue(n.style.top) === undefined)) ops.push({ op: "set", id, style: { position: "absolute", left: `${round(b.x)}px`, top: `${round(b.y)}px` } });
+  if (b && n.style.position !== "absolute" && n.style.position !== "fixed") ops.push({ op: "set", id, style: { position: "absolute", left: `${round(b.x)}px`, top: `${round(b.y)}px` } });
   return { ops };
 }
 
@@ -2782,10 +2797,10 @@ export async function loadMaskFonts(board: Board, fetcher: Fetcher = globalThis.
   const want = new Map<string, { weights: Set<string>; chars: Set<number> }>();
   for (const n of Object.values(board.nodes)) {
     if (n.type !== "text" || !n.mask || !n.parent) continue;
-    let family = n.style.fontFamily;
-    let weight = n.style.fontWeight;
+    let family = familyOf(n.style);
+    let weight = n.style.fontWeight ?? (n.style.font ? /\b(bold|[1-9]00)\b/i.exec(n.style.font)?.[1] : undefined);
     for (const a of ancestors(board, n.id)) {
-      family ??= board.nodes[a]?.style.fontFamily;
+      family ??= familyOf(board.nodes[a]?.style);
       weight ??= board.nodes[a]?.style.fontWeight;
     }
     const words = plainText(n.text);
