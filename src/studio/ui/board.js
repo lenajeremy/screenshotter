@@ -1,6 +1,7 @@
 // The board editor: a design tool where agents and people work on the same HTML and CSS. Pages and
 // layers on the left, the canvas in the middle, the layer's CSS (in words) on the right.
 import { Component } from "preact";
+import { looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, isGrid, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { B, CANVAS_ONLY, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
@@ -784,6 +785,8 @@ function onPaste(e) {
       return;
     }
   }
+  // A web address: pasted as words, as always, with the offer to bring the site itself in.
+  if (looksLikeUrl(plain)) toast({ kind: "info", icon: "globe", title: "Import this website?", text: `Bring ${plain.trim().replace(/^https?:\/\//, "").slice(0, 60)} in as layers to change.`, timeout: 9000, actions: [{ label: "Import", run: () => openImportWebsite({ board: B.id, url: plain.trim() }) }] });
   if (plain.trim()) {
     const id = newId();
     const text = plain.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>");
@@ -1058,6 +1061,7 @@ export function openLayerMenu(x, y, { stack = [] } = {}) {
     stack.length > 1 && "-",
     any && { label: "Copy", icon: "copy", kbd: "⌘C", run: () => document.execCommand("copy") },
     { label: "Paste", icon: "paste", kbd: "⌘V", run: () => navigator.clipboard?.readText?.().then((t) => t && onPaste({ preventDefault() {}, clipboardData: { files: [], getData: (k) => (k === "text/plain" ? t : "") } })).catch(() => toast({ kind: "info", title: "Press ⌘V to paste", timeout: 2400 })) },
+    !any && { label: "Import a website…", icon: "globe", run: () => openImportWebsite({ board: B.id }) },
     any && { label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: duplicateSelection },
     any && { label: "Copy as HTML", icon: "code", run: () => copyHtml(outermost()) },
     any && { label: "Preview in browser", icon: "play", kbd: "⌥⌘P", run: () => previewFrame() },

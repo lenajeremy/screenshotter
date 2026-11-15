@@ -892,6 +892,130 @@ await fake.close();
   const g3 = store.getBoard(gb).nodes[art].style;
   check(g3.gap === "32px" && g3.padding === "40px" && g3.gridAutoRows === "240px" && g3.gridTemplateColumns === "1fr 2fr" && g3.width === "1200px", `scale doubles a grid's gaps, padding and px tracks (${JSON.stringify(g3)})`);
 }
+// A website brought onto a board: a page served here with the awkward parts in it, read at 1200
+// wide, and checked layer by layer and against the page itself.
+{
+  const http = await import("node:http");
+  const { existsSync, readdirSync } = await import("node:fs");
+  const { encodePng } = await import("../src/util/png.js");
+  const { importWebsite, privateHost, websiteUrl } = await import("../src/board/web-import.js");
+  const { drawLayers } = await import("../src/board/render.js");
+  const { newPage } = await import("../src/render/browser.js");
+  const store = await import("../src/board/store.js");
+  const supp = "/System/Library/Fonts/Supplemental";
+  const fontFile = path.join(supp, readdirSync(supp).find((f) => /^Courier New\.ttf$|^Andale Mono\.ttf$/.test(f)) ?? readdirSync(supp).find((f) => f.endsWith(".ttf"))!);
+  const rgba = Buffer.alloc(64 * 64 * 4);
+  for (let i = 0; i < rgba.length; i += 4) rgba.set([42, 157, 143, 255], i);
+  const png = encodePng({ width: 64, height: 64, rgba });
+  // Somewhere else on this Mac that the page asks for: it must never be reached.
+  let elsewhere = 0;
+  const other = http.createServer((_q, r) => (elsewhere++, r.end("no")));
+  await new Promise<void>((done) => other.listen(0, "127.0.0.1", done));
+  const otherPort = (other.address() as import("node:net").AddressInfo).port;
+  const page = `<!doctype html><html><head><title>Fixture shop</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+    @font-face { font-family: "Fixture Sans"; src: url(/font.ttf) format("truetype"); font-weight: 400; }
+    body { margin: 0; font-family: "Fixture Sans", sans-serif; color: #222; background: #fafaf7; }
+    .top { position: fixed; top: 0; left: 0; right: 0; height: 56px; background: #111; color: #fff; display: flex; align-items: center; padding: 0 24px; z-index: 5; }
+    .skip { position: absolute; top: -100px; left: 0; }
+    .hero { margin-top: 56px; min-height: 420px; display: flex; flex-direction: column; justify-content: center; padding: 0 48px; background: linear-gradient(135deg, #ffd6a5, #fdffb6); }
+    .hero h1 { font-size: 48px; margin: 0; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 40px 48px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,.08); padding: 20px; }
+    .card::before { content: "★"; color: #e76f51; }
+    .pic { height: 140px; background: url(/pic.png) center / cover; border-radius: 10px; }
+    .c { fill: #2a9d8f; }
+    .hidden { display: none; }
+    .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .reveal { opacity: 0; transform: translateY(20px); font-size: 20px; padding: 0 48px; }
+  </style></head><body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="top"><span>Fixture</span></header>
+    <section class="hero"><h1>Hello from the fixture</h1><p>Words <b>bold</b> and <a href="/about">a link</a>.</p></section>
+    <div class="cards">
+      <div class="card"><div class="pic"></div><h3>One</h3><img src="/pic.png" width="40" height="40" alt="Logo"></div>
+      <div class="card"><h3>Two</h3><svg viewBox="0 0 10 10" width="24" height="24"><circle class="c" cx="5" cy="5" r="4"/></svg></div>
+      <div class="card"><h3>Three</h3><canvas width="60" height="30"></canvas></div>
+    </div>
+    <p class="hidden">Never shown</p><span class="sr">Screen reader only</span><p class="reveal">Revealed later</p>
+    <img src="http://127.0.0.1:${otherPort}/x.png" alt="Elsewhere" width="10" height="10">
+    <script>const c = document.querySelector("canvas").getContext("2d"); c.fillStyle = "#e63946"; c.fillRect(0, 0, 60, 30);</script>
+  </body></html>`;
+  const site = http.createServer((q, r) => {
+    if (q.url === "/pic.png") return r.writeHead(200, { "Content-Type": "image/png" }), r.end(png);
+    if (q.url === "/font.ttf") return r.writeHead(200, { "Content-Type": "font/ttf" }), r.end(readFileSync(fontFile));
+    r.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    r.end(page);
+  });
+  await new Promise<void>((done) => site.listen(0, "127.0.0.1", done));
+  const siteUrl = `http://127.0.0.1:${(site.address() as import("node:net").AddressInfo).port}/`;
+
+  check(websiteUrl("example.com/pricing").href === "https://example.com/pricing" && privateHost("192.168.1.4") && privateHost("localhost") && !privateHost("example.com"), "a typed address becomes https, and this Mac's network is told apart from the web");
+  let refused = "";
+  try {
+    websiteUrl("file:///etc/passwd");
+  } catch (e) {
+    refused = (e as Error).message;
+  }
+  check(/Only web pages/.test(refused), "only web pages can be brought in, never files");
+
+  const shop = store.createBoard("Shop", "studio");
+  const steps: number[] = [];
+  const r = await importWebsite(shop.id, { url: siteUrl, width: 1200 }, "studio", (f) => steps.push(f));
+  const b = store.getBoard(r.board);
+  const nodes = Object.values(b.nodes);
+  const textOf = (t: string) => nodes.find((n) => n.type === "text" && plainOf(n.text).includes(t));
+  const plainOf = (t?: string) => (t ?? "").replace(/<[^>]+>/g, "");
+  const root = b.nodes[r.artboard];
+  check(r.board === shop.id && root && !root.parent && root.style.width === "1200px" && root.name === "Fixture shop" && steps.at(-1) === 1, "a website lands on the board as one artboard, as wide as it was read and named after the page");
+  check(textOf("Hello from the fixture")?.style.fontSize === "48px", "its words come in as text layers with their type");
+  const grid = nodes.find((n) => n.style.display === "grid");
+  check(Boolean(grid) && grid!.style.columnGap === "20px" && nodes.filter((n) => n.parent === grid!.id).length === 3, "its layout comes too: the cards' grid, its gap and its three cards");
+  check(Boolean(textOf("★")), "a ::before with words in it becomes a layer");
+  const header = nodes.find((n) => n.type === "text" && plainOf(n.text) === "Fixture");
+  const bar = header && b.nodes[header.parent!];
+  check(bar?.style.position === "absolute" && bar.style.top === "0px", "a fixed header sits where it shows, at the top");
+  check(!textOf("Skip to content") && !textOf("Never shown") && !textOf("Screen reader only"), "what isn't drawn (a skip link off the page, display:none, screen-reader-only words) stays behind");
+  const reveal = textOf("Revealed later");
+  check(Boolean(reveal) && reveal!.style.opacity !== "0", "words waiting for a scroll animation come in shown");
+  const lib = path.resolve(out);
+  const pics = nodes.filter((n) => n.type === "image");
+  const logo = pics.find((n) => n.name?.includes("Logo"));
+  check(Boolean(logo?.src?.startsWith(lib)) && existsSync(logo!.src!), "a picture is copied into the library");
+  const bg = nodes.find((n) => /url\(/.test(n.style.backgroundImage ?? ""));
+  check(Boolean(bg) && bg!.style.backgroundImage!.includes(lib), "a CSS background picture is copied too");
+  const vec = nodes.find((n) => n.type === "svg" || n.type === "vector");
+  check(Boolean(vec) && /42, 157, 143|2a9d8f/i.test(JSON.stringify(vec)), "an SVG keeps the colours its stylesheet gave it");
+  check(pics.some((n) => n.src?.startsWith(lib) && n.style.width === "60px" && n.style.height === "30px"), "a <canvas> comes in as a picture of itself");
+  check((b.fonts ?? []).some((f) => f.family === "Fixture Sans" && existsSync(f.src) && f.src.startsWith(lib)), "the page's own font is copied and carried by the board");
+  check(elsewhere === 0, "the page couldn't reach anything else on this Mac");
+  // Drawn back out, it looks like the page.
+  const drawn = await drawLayers(b, [r.artboard], { scale: 1 });
+  const p = await newPage();
+  await p.setViewport({ width: 1200, height: 900 });
+  await p.goto(siteUrl, { waitUntil: "networkidle0" });
+  const real = Buffer.from(await p.screenshot({ fullPage: true, type: "png" }));
+  const diff = await p.evaluate(async (a: string, c: string) => {
+    const load = (src: string) => new Promise<HTMLImageElement>((ok) => { const i = new Image(); i.onload = () => ok(i); i.src = src; });
+    const [x, y] = await Promise.all([load(a), load(c)]);
+    const w = Math.min(x.width, y.width), h = Math.min(x.height, y.height);
+    const px = (img: HTMLImageElement) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d")!; g.drawImage(img, 0, 0); return g.getImageData(0, 0, w, h).data; };
+    const pa = px(x), pb = px(y);
+    let sum = 0;
+    for (let i = 0; i < pa.length; i += 4) sum += (Math.abs(pa[i] - pb[i]) + Math.abs(pa[i + 1] - pb[i + 1]) + Math.abs(pa[i + 2] - pb[i + 2])) / 3;
+    return { mean: sum / (w * h), sizes: [x.width, x.height, y.width, y.height] };
+  }, `data:image/png;base64,${real.toString("base64")}`, `data:image/png;base64,${drawn.images[r.artboard].toString("base64")}`);
+  await p.close();
+  check(diff.mean < 6 && Math.abs(diff.sizes[1] - diff.sizes[3]) <= 2, `drawn back out, it matches the page (mean difference ${diff.mean.toFixed(2)} of 255, heights ${diff.sizes[1]} and ${diff.sizes[3]})`);
+  // Agents bring sites in too, onto a new board named after it.
+  const viaAgent = await call("board_import_website", { url: siteUrl, width: 390, fullPage: false });
+  const made = viaAgent.json && store.getBoard(viaAgent.json.board);
+  check(made?.name === "Fixture shop" && made.nodes[viaAgent.json.artboard]?.style.width === "390px", `board_import_website makes a board named after the site, read at the width asked for (${made?.name}, ${made?.nodes[viaAgent.json.artboard]?.style.width})`);
+  const undo = store.changeBoard(shop.id, [{ op: "delete", ids: [r.artboard] }], "studio");
+  check(!store.getBoard(shop.id).nodes[r.artboard] && undo.inverse.length > 0, "the imported artboard is an ordinary one: it deletes and undoes like any");
+  site.close();
+  other.close();
+}
+
 console.log(`\nFiles in ${out}`);
 
 await client.close();

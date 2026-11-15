@@ -3,6 +3,7 @@
 // board's own components. Click to add to the selected frame (or the middle of the view), or drag
 // onto the canvas.
 import { useEffect, useState } from "preact/hooks";
+import { openImportWebsite } from "./web-import.js";
 import { htmlToNodes, instanceRootOf, newId, pxValue } from "./board-core.js";
 import { B, CANVAS_ONLY, commit, currentPage, node, useBoard } from "./board-state.js";
 import { canvasEl, placeNew, toWorld, worldBox } from "./board-canvas.js";
@@ -190,6 +191,10 @@ export function AssetsPanel() {
   const one = b.sel.length === 1 ? node(b.sel[0]) : null;
   const artboard = one && !one.parent && one.type === "frame" ? one : null;
   return html`<div class="bd-assets">
+    <${Section} title="Website" collapsible id="bd-a-web">
+      <p class="bd-note">Bring a page in as layers to change: its layout, words, pictures and fonts.</p>
+      <button class="btn sm block" onClick=${() => openImportWebsite({ board: b.id })}><${Icon} n="globe" s=${13} />Import a website…</button>
+    <//>
     ${mains.length > 0 &&
     html`<${Section} title="Components" count=${mains.length} collapsible id="bd-a-comps">
       ${mains.map((m) => html`<${Tile} a=${{ kind: "component", id: m.id }} title="Click to place a copy, or drag it onto the canvas" class="row"><${Icon} n="component" s=${14} /><span class="nm">${m.name}</span><//>`)}

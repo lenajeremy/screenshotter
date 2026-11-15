@@ -185,7 +185,12 @@ export function describeAnchor(board: Board, a: CommentAnchor): string {
 // ---------------------------------------------------------------------------------------------
 // Threads
 
-const now = () => new Date().toISOString();
+// Times only go forward, a millisecond at least, so comments written in a burst keep their order.
+let lastAt = 0;
+const now = () => {
+  lastAt = Math.max(Date.now(), lastAt + 1);
+  return new Date(lastAt).toISOString();
+};
 
 export interface Post {
   text: string;
