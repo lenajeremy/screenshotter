@@ -2324,3 +2324,33 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .bd-following .bd-link { color: #fff; }
 .bd-follow-frame { position: absolute; inset: 0; z-index: 5; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--c); pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .bd-cursor { transition: none; } .bd-agent-flash { animation-duration: 0.01s; } }
+
+/* Boards: shader layers (board-shaders.js). Live tiles in Assets, the panel's Shader section, its code. */
+.bd-asset-grid.shaders { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bd-asset.shader { aspect-ratio: auto; padding: 0; gap: 0; overflow: hidden; align-items: stretch; justify-content: flex-start; }
+.bd-asset.shader .art { display: block; width: 100%; aspect-ratio: 4 / 3; background: linear-gradient(135deg, #8a8a96, #2e2e35); }
+.bd-asset.shader .nm { padding: 6px 8px 7px; font-size: 11px; color: var(--text-2); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-asset.shader:hover .nm { color: var(--text); }
+.bd-sh-sub { display: flex; align-items: center; gap: 6px; margin: 6px 0 -2px; font-size: 11px; font-weight: 600; color: var(--text-3); }
+.bd-sh-tag { padding: 1px 6px; border-radius: 5px; background: var(--panel-3); color: var(--text-2); font-weight: 500; }
+.bd-sh-still { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.bd-sh-status { margin: 0; padding: 7px 9px; border-radius: 8px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font-size: 11.5px; line-height: 1.45; }
+.bd-sh-status.warn { color: var(--amber); box-shadow: inset 2px 0 0 var(--amber), inset 0 0 0 1px var(--line); }
+.bd-sh-status.bad { color: var(--danger-fg); box-shadow: inset 2px 0 0 var(--danger), inset 0 0 0 1px var(--line); }
+.bd-sh-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bd-sh-actions:empty { display: none; }
+.bd-sh-save { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.bd-code { display: flex; flex-direction: column; gap: 6px; }
+.bd-code-box { display: grid; grid-template-columns: auto minmax(0, 1fr); height: 220px; min-height: 96px; resize: vertical; overflow: hidden; border-radius: 8px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+.bd-code-box:focus-within { box-shadow: inset 0 0 0 1px var(--iris); }
+.bd-code.bad .bd-code-box { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent); }
+.bd-code-box .gutter { margin: 0; padding: 8px 6px 8px 8px; overflow: hidden; border-right: 1px solid var(--line); color: var(--text-off); font: 11px/16px var(--mono); text-align: right; user-select: none; }
+.bd-code-box .gutter span { display: block; }
+.bd-code-box .gutter span.bad { color: var(--danger-fg); font-weight: 700; }
+.bd-code-box textarea { min-width: 0; margin: 0; padding: 8px 10px; border: 0; outline: 0; resize: none; overflow: auto; background: transparent; color: var(--text); font: 11px/16px var(--mono); white-space: pre; tab-size: 2; }
+.bd-code-errors { display: flex; flex-direction: column; gap: 4px; }
+.bd-code-err { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding: 6px 8px; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--danger) 10%, transparent); box-shadow: inset 2px 0 0 var(--danger); color: var(--text-2); font: 11px/1.45 var(--mono); text-align: left; cursor: pointer; }
+.bd-code-err b { color: var(--danger-fg); font-weight: 600; white-space: nowrap; }
+.bd-code-err span { overflow-wrap: anywhere; }
+.bd-code-ok { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--text-3); font-size: 11.5px; }
+.bd-code-ok svg { color: var(--ok); }

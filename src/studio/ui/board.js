@@ -11,6 +11,7 @@ import { Inspector } from "./board-inspector.js";
 import { AssetsPanel } from "./board-assets.js";
 import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
+import { pageHtml } from "./board-shaders.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { gridShortcut, intoGridStyle, setLayout, wrapInGrid } from "./board-grid.js";
@@ -216,6 +217,7 @@ export function layerIcon(n, b = B.board) {
   if (n.type === "text") return "text";
   if (n.type === "image") return "image";
   if (n.type === "video") return "video";
+  if (n.type === "shader") return "shader";
   if (n.type === "svg") return "vector";
   if (n.type === "vector") return { g: "layers", rect: "square", circle: "ellipse", ellipse: "ellipse", line: "line", polyline: "line", polygon: "triangle", path: "pen", text: "text", image: "image" }[n.tag] ?? "vector";
   if (!n.parent) return "frame";
@@ -710,7 +712,7 @@ function copySelection() {
 
 /** The frame Preview opens: the selected frame (or the frame round a selected text or picture), else the page's first artboard. */
 function previewTarget() {
-  const leaf = (n) => ["text", "image", "video", "svg", "vector"].includes(n.type);
+  const leaf = (n) => ["text", "image", "video", "svg", "vector", "shader"].includes(n.type);
   let id = B.sel[0];
   while (id && node(id) && leaf(node(id))) id = node(id).parent;
   if (id && node(id)) return id;
@@ -727,7 +729,8 @@ function previewFrame(id = previewTarget()) {
 }
 
 function copyHtml(ids) {
-  const text = ids.map((id) => nodeHtml(B.board, id)).join("\n");
+  // A page of its own: with shaders, the script that plays them goes first.
+  const text = pageHtml(B.board, ids);
   navigator.clipboard
     .writeText(text)
     .then(() => toast({ kind: "ok", icon: "code", title: "Copied as HTML", text: `${ids.length} layer${ids.length === 1 ? "" : "s"}, styles inline`, timeout: 2600 }))

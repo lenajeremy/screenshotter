@@ -51,6 +51,7 @@ const P = {
   animate: '<rect x="9.5" y="5.5" width="10.5" height="13" rx="2.6"/><path d="M3.5 9h3.2M2.5 12h4.2M3.5 15h3.2"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="9.5" r="1.8"/><path d="M21 15.5l-5-5-9.5 9.5"/>',
   video: '<rect x="2.5" y="5.5" width="14" height="13" rx="2.5"/><path d="M16.5 10l5-3v10l-5-3"/>',
+  shader: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 14.5c2.5-2.6 5-2.6 7.5 0s5 2.6 7.5 0c1-1 2-1.6 3-1.8"/><path d="M3 9.5c2.5-2.6 5-2.6 7.5 0s5 2.6 7.5 0c1-1 2-1.6 3-1.8"/>',
   wand: '<path d="M4 20L15 9"/><path d="M13.5 7.5l3 3"/><path d="M18 3v3M16.5 4.5h3"/><path d="M20 10v2M19 11h2"/><path d="M9 3v2M8 4h2"/>',
   canvas: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9h16"/><path d="M9 20V9"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',

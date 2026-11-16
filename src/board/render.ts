@@ -5,13 +5,41 @@
  * A layer is always drawn inside its whole artboard, so it looks as it does on the canvas (its
  * inherited fonts and colours, a size that fills its parent), then cut out.
  */
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { newPage } from "../render/browser.js";
 import { BOARD_CSS, fontFaceCss, fontFamilies, fontLinks, nodeHtml, pxValue, rootOf, styleText, tokenCss, type Board } from "./core.js";
-import { loadMaskFonts } from "./core.js";
+import { loadMaskFonts, subtree } from "./core.js";
+
+// ---------------------------------------------------------------------------------------------
+// Shaders: a page showing shader layers carries the script that draws them (the Studio's own,
+// src/studio/ui/board-shader-runtime.js) as its first script.
+
+let runtimeText: string | undefined;
+/** The shader runtime's source, read once (from the build, or from the source when running from it). */
+export function shaderRuntime(): string {
+  if (runtimeText !== undefined) return runtimeText;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const file = [path.join(here, "..", "studio", "ui", "board-shader-runtime.js"), path.join(here, "..", "..", "src", "studio", "ui", "board-shader-runtime.js")].find((f) => existsSync(f));
+  runtimeText = file ? readFileSync(file, "utf8") : "";
+  return runtimeText;
+}
+
+/** Whether any shown layer in these is a shader. */
+const hasShaders = (board: Board, ids: string[]) => ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.type === "shader" && !board.nodes[x].hidden));
+
+/**
+ * The script that draws a page's shader layers, or nothing when it has none: "live" plays them
+ * (Preview, a page copied out), "still" draws each once at its time (pictures of the board).
+ */
+export function shaderScript(board: Board, ids: string[], mode: "live" | "still"): string {
+  if (!hasShaders(board, ids) || !shaderRuntime()) return "";
+  const start = JSON.stringify(mode === "still" ? { mode, badges: false } : { mode });
+  return `<script data-board-shaders>${shaderRuntime().replace(/<\/script/gi, "<\\/script")}\nBoardShaders.auto(${start});</script>`;
+}
 
 /**
  * The web fonts a board's text masks use, put inside their pictures before the board is drawn (an
@@ -40,8 +68,8 @@ export function artboardDocument(board: Board, rootId: string): string {
   const links = fontLinks(fontFamilies(board, [rootId]), board.fonts)
     .map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
-  const art = nodeHtml(board, rootId, { ids: true, src: srcUrl, still: true });
-  return `<!doctype html><html><head><meta charset="utf-8">${links}<style>${fontFaceCss(board, srcUrl)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
+  const art = nodeHtml(board, rootId, { ids: true, src: srcUrl, still: true, code: true });
+  return `<!doctype html><html><head><meta charset="utf-8">${shaderScript(board, [rootId], "still")}${links}<style>${fontFaceCss(board, srcUrl)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
 }
 
 /** What a layer takes from the layers around it, so a frame previewed by itself still looks as it does in place. */
@@ -66,7 +94,7 @@ export function previewDocument(board: Board, id: string, opts: { width?: number
   const links = fontLinks(fontFamilies(board, [rootOf(board, id)]), board.fonts)
     .map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
-  const body = nodeHtml(board, id, { src: opts.src });
+  const body = nodeHtml(board, id, { src: opts.src, code: true });
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const page = (w ?? 0) >= PAGE_WIDTH;
   const css =
@@ -79,8 +107,8 @@ export function previewDocument(board: Board, id: string, opts: { width?: number
     `max-width:100%;margin:0 auto;${styleText(inherit)}}#bd-frame>*{position:relative!important;left:auto!important;top:auto!important;max-width:100%${page ? ";width:100%!important;min-height:100vh" : ""}}`;
   // Videos that autoplay with sound start without it when the browser won't allow sound before a click.
   // Every second, while the tab shows: if the board changed, take the new frame from this same address.
-  const live = `<script>const play=()=>{for(const v of document.querySelectorAll("video[autoplay]"))v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})};play();let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title;play()}catch{}},1000)</script>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(n.name)} · ${esc(board.name)}</title>${links}<style id="bd-css">${css}</style></head><body><div id="bd-frame">${body}</div>${live}</body></html>`;
+  const live = `<script>const play=()=>{for(const v of document.querySelectorAll("video[autoplay]"))v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})};play();let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title;play();shaders(d)}catch{}},1000);const shaders=(d)=>{if(window.BoardShaders)return BoardShaders.scan(document);const s=d.querySelector("script[data-board-shaders]");if(s){const n=document.createElement("script");n.textContent=s.textContent;document.head.appendChild(n)}}</script>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(n.name)} · ${esc(board.name)}</title>${shaderScript(board, [id], "live")}${links}<style id="bd-css">${css}</style></head><body><div id="bd-frame">${body}</div>${live}</body></html>`;
 }
 
 interface Drawn {
@@ -107,7 +135,7 @@ export async function drawArtboard(board: Board, rootId: string, ids: string[], 
       page.evaluate(async () => {
         await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 6000))]);
         await Promise.all(Array.from(document.images).map((img) => (img.complete ? Promise.resolve() : img.decode().catch(() => undefined))));
-      });
+      }).then(() => page.evaluate("window.BoardShaders ? BoardShaders.ready() : null"));
     await settle();
     const measure = () =>
       page.evaluate(() => {
