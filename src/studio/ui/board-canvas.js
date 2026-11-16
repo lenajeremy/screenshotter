@@ -5,7 +5,7 @@ import { Presence, PresenceBar } from "./board-presence.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
-import { mapSvgImages, svgImageAttrs } from "./board-core.js";
+import { mapSvgImages, shaderBoxStyle, svgImageAttrs } from "./board-core.js";
 import { CANVAS_ONLY } from "./board-state.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
@@ -14,7 +14,7 @@ import { fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
 import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
-import { ShaderLayer } from "./board-shaders.js";
+import { ShaderCanvas } from "./board-shaders.js";
 
 export const canvasEl = { current: null };
 
@@ -179,8 +179,6 @@ class Layer extends Component {
     if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
     // Its first frame (the still) until it's played: videos don't play on their own on the canvas.
     if (n.type === "video") return html`<video ...${attrs} src=${n.src ? srcUrl(n.src) : undefined} poster=${n.poster ? srcUrl(n.poster) : undefined} preload="metadata" playsinline draggable=${false}></video>`;
-    // Drawn by the shader runtime, in a canvas inside its box (board-shaders.js).
-    if (n.type === "shader") return html`<${ShaderLayer} n=${n} attrs=${attrs} />`;
     const nodes = B.board.nodes;
     if (n.type === "svg") {
       // Its pictures (<image href>) load from the library as an image layer's do.
@@ -197,6 +195,11 @@ class Layer extends Component {
       const props = { ...svgProps(svgImageAttrs(Tag, n.attrs, srcUrl)), "data-bid": id, style };
       if (Tag !== "g") return html`<${Tag} ...${props} dangerouslySetInnerHTML=${{ __html: mapSvgImages(n.text ?? "", srcUrl) }}></${Tag}>`;
       return html`<g ...${props}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</g>`;
+    }
+    // A shader fill: drawn by the shader runtime on a canvas behind the frame's layers (board-shaders.js).
+    if (n.shader) {
+      Object.assign(style, shaderBoxStyle(style));
+      return html`<div ...${attrs}><${ShaderCanvas} key=${"shader:" + id} n=${n} />${layersOf(n, nodes, editing)}</div>`;
     }
     return html`<div ...${attrs}>${layersOf(n, nodes, editing)}</div>`;
   }

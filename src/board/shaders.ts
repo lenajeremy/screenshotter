@@ -1,8 +1,9 @@
 /**
- * Shaders on boards: a layer drawn live by the graphics card (a WebGL fragment shader), as mesh
- * gradients, grain, liquid chrome, dither, halftone, light rays and so on. A shader layer is a box
- * like any other; it plays on the canvas and in Preview, and pictures of the board show it frozen
- * at its `time`.
+ * Shaders on boards: a frame's fill drawn live by the graphics card (a WebGL fragment shader), as
+ * mesh gradients, grain, liquid chrome, dither, halftone, light rays and so on. Any frame can have
+ * one: it's drawn over the frame's own fills and behind its layers, so a shader frame lays out like
+ * any other (a grid cell, an item in a stack) and holds words and pictures over its shader. It
+ * plays on the canvas and in Preview, and pictures of the board show it frozen at its `time`.
  *
  * This module is the model: the presets, how a shader's parameters are declared and read, and how
  * a layer's shader is written in and out of HTML. It is pure (no imports), like the core that
@@ -23,7 +24,7 @@
  * A parameter's key is its uniform's name without the u: uWarp is "warp", uTint "tint".
  */
 
-/** A layer's shader. */
+/** A frame's shader. */
 export interface ShaderSpec {
   /** A built-in preset ("mesh-gradient") or one of the board's own, by name. */
   preset?: string;
@@ -37,6 +38,8 @@ export interface ShaderSpec {
   time?: number;
   /** Shows its still instead of playing. */
   paused?: boolean;
+  /** How it mixes with the frame's fills under it (a CSS blend mode: "overlay" for grain over a photo). Normal when left out. */
+  blend?: string;
 }
 
 /** A shader saved on a board as one of its own presets, to place again (like a token). */
@@ -72,6 +75,8 @@ export interface ShaderPreset {
   code: string;
   /** CSS a new layer of it starts with (film grain is laid over what's below it). */
   style?: Record<string, string>;
+  /** How it blends with a frame's fills when it's given to one (film grain: Overlay). */
+  blend?: string;
 }
 
 /** What the runtime gives every shader. */
@@ -353,6 +358,7 @@ void main() {
     name: "Film grain",
     blurb: "Moving grain to lay over anything (blended as Overlay).",
     style: { mixBlendMode: "overlay" },
+    blend: "overlay",
     code: `// Film grain: moving grain, see-through, to lay over other layers (blend mode Overlay suits it).
 uniform float uAmount; // @param 0..1 = 0.5 "Amount"
 uniform float uGrainSize; // @param 1..4 = 1 px "Size"
@@ -577,8 +583,12 @@ export function cleanShaderSpec(raw: unknown): ShaderSpec {
   const time = finite(r.time, -1e5, 1e5);
   if (time !== undefined && time !== 0) out.time = Math.round(time * 1000) / 1000;
   if (r.paused === true || r.paused === "true" || r.paused === "") out.paused = true;
+  if (typeof r.blend === "string" && SHADER_BLENDS.includes(r.blend.trim().toLowerCase()) && r.blend.trim().toLowerCase() !== "normal") out.blend = r.blend.trim().toLowerCase();
   return out;
 }
+
+/** How a shader can mix with the fills under it: CSS's blend modes. */
+export const SHADER_BLENDS = ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"];
 
 /** A shader scaled with its layer (the Scale tool): its lengths in px grow or shrink with it. Undefined when nothing changes. */
 export function scaledShader(spec: ShaderSpec, code: string | undefined, k: number): ShaderSpec | undefined {
@@ -592,15 +602,16 @@ export function scaledShader(spec: ShaderSpec, code: string | undefined, k: numb
 }
 
 // ---------------------------------------------------------------------------------------------
-// HTML in and out. A shader layer is written as
-//   <div data-shader="mesh-gradient" data-params='{"warp":1.2}' data-speed="0.5" data-time="3" data-paused style="…"><canvas></canvas></div>
-// (data-shader="custom" and data-code="…GLSL…" for code of its own). A div, so it's sized and laid
-// out like any frame; the canvas inside is what's drawn on. <canvas data-shader> is read the same,
-// and code may come in a <script type="x-shader/x-fragment"> inside it.
+// HTML in and out. A frame with a shader is written as
+//   <div data-shader="mesh-gradient" data-params='{"warp":1.2}' data-speed="0.5" data-time="3" data-paused style="…"><canvas …></canvas>…its layers…</div>
+// (data-shader="custom" and data-code="…GLSL…" for code of its own). The canvas, its first child, is
+// what's drawn on: placed over the frame's box, behind its layers (the frame is its own stacking
+// context, and a place for the canvas). <canvas data-shader> is read the same, as a frame with
+// nothing in it, and code may come in a <script type="x-shader/x-fragment"> inside it.
 
 const escAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
-/** A shader layer's own attributes (after its style), for nodeHtml. `code`: carry its GLSL and what to draw it with, for a page that plays it. */
+/** A frame's shader as attributes (after its style), for nodeHtml. `code`: carry its GLSL and what to draw it with, for a page that plays it. */
 export function shaderAttrs(spec: ShaderSpec | undefined, own: BoardShader[] = [], opts: { code?: boolean } = {}): string {
   const s = spec ?? {};
   const preset = s.preset ?? CUSTOM_SHADER;
@@ -609,6 +620,7 @@ export function shaderAttrs(spec: ShaderSpec | undefined, own: BoardShader[] = [
   if (s.speed !== undefined && s.speed !== 1) out += ` data-speed="${s.speed}"`;
   if (s.time) out += ` data-time="${s.time}"`;
   if (s.paused) out += " data-paused";
+  if (s.blend) out += ` data-blend="${escAttr(s.blend)}"`;
   const code = shaderCode(s, own);
   const builtIn = preset !== CUSTOM_SHADER && !own.some((x) => x.name === preset) && presetOf(preset);
   // A custom shader's code always goes with it; a board's preset carries its code too, so it still
@@ -618,8 +630,23 @@ export function shaderAttrs(spec: ShaderSpec | undefined, own: BoardShader[] = [
   return out;
 }
 
-/** The canvas inside a shader layer, which the runtime draws on. */
-export const SHADER_CANVAS = `<canvas style="display:block;width:100%;height:100%;border-radius:inherit"></canvas>`;
+/** The canvas a frame's shader is drawn on, as CSS: over the frame's box, behind its layers, never in the way of a click. */
+export const SHADER_CANVAS_CSS = "position:absolute;left:0;top:0;z-index:-1;display:block;width:100%;height:100%;border-radius:inherit;pointer-events:none";
+
+/** The canvas inside a frame with a shader, which the runtime draws on (blended with the frame's fills as the shader says). */
+export const shaderCanvas = (spec?: ShaderSpec) => `<canvas style="${SHADER_CANVAS_CSS}${spec?.blend ? `;mix-blend-mode:${spec.blend}` : ""}"></canvas>`;
+export const SHADER_CANVAS = shaderCanvas();
+
+/**
+ * What a frame with a shader adds to its own CSS: its own stacking context (so the canvas sits
+ * behind its layers, over its fills) and, when it isn't placed already, a place for the canvas.
+ */
+export function shaderBoxStyle(style: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!style.isolation || style.isolation === "auto") out.isolation = "isolate";
+  if (!style.position || style.position === "static") out.position = "relative";
+  return out;
+}
 
 /** A shader from an element's attributes (and the code in a <script> inside it), as written by boards or an agent. */
 export function shaderFromAttrs(attrs: Record<string, string>, script: string | undefined, warnings: string[] = []): ShaderSpec {
@@ -634,6 +661,7 @@ export function shaderFromAttrs(attrs: Record<string, string>, script: string | 
   if (attrs["data-speed"] !== undefined) raw.speed = attrs["data-speed"];
   if (attrs["data-time"] !== undefined) raw.time = attrs["data-time"];
   if (attrs["data-paused"] !== undefined && attrs["data-paused"] !== "false") raw.paused = true;
+  if (attrs["data-blend"] !== undefined) raw.blend = attrs["data-blend"];
   const spec = cleanShaderSpec(raw);
   if (raw.params && typeof raw.params === "object")
     for (const [k, v] of Object.entries(raw.params as Record<string, unknown>)) if (spec.params?.[k] === undefined) warnings.push(`data-params "${k}" was left out: ${JSON.stringify(v)?.slice(0, 60)} isn't a value a shader parameter takes (a number, a colour, or a word).`);
@@ -641,7 +669,7 @@ export function shaderFromAttrs(attrs: Record<string, string>, script: string | 
   return spec;
 }
 
-/** How board_read describes a shader layer. */
+/** How board_read describes a frame's shader. */
 export function shaderWords(spec: ShaderSpec | undefined, own: BoardShader[] = []): string {
   const s = spec ?? {};
   const mine = s.preset ? own.find((x) => x.name === s.preset) : undefined;
@@ -654,6 +682,7 @@ export function shaderWords(spec: ShaderSpec | undefined, own: BoardShader[] = [
   if (s.speed !== undefined && s.speed !== 1) bits.push(`speed ${s.speed}`);
   if (s.time) bits.push(`still at ${s.time}s`);
   if (s.paused) bits.push("paused");
+  if (s.blend) bits.push(`blended as ${s.blend}`);
   return bits.join(", ");
 }
 

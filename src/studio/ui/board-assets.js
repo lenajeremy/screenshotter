@@ -126,6 +126,15 @@ export async function addAsset(a, { at, into, ev } = {}) {
       return;
     }
   }
+  if (a.kind === "shader" && !at) {
+    // With a frame selected, a shader is its fill.
+    const s = B.sel.filter((id) => node(id)?.type === "frame");
+    if (s.length) {
+      const { shaderFillOps } = await import("./board-shaders.js");
+      commit(s.flatMap((id) => shaderFillOps(node(id), a.preset)), { label: "Shader fill" });
+      return;
+    }
+  }
   try {
     const layers = await layersFor(a);
     if (!layers.length) return;

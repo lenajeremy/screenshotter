@@ -585,20 +585,53 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
 void main() { gl_FragColor = vec4(uTint, 1.0); }</script></canvas><canvas data-shader="aurora" data-params="{oops"></canvas></div>`);
   const kids = wrote.nodes[wrote.roots[0]].children!.map((id) => wrote.nodes[id]);
   const [ht, mine, broken] = kids;
-  check(ht.type === "shader" && ht.shader?.preset === "halftone" && ht.shader.params?.spacing === 14 && ht.shader.speed === 0.5 && ht.shader.time === 2.5 && ht.shader.paused === true && ht.style.inset === "0" && !ht.style.height, "<div data-shader> is a shader layer with its params, speed, time and pause, sized by its CSS");
-  check(mine.type === "shader" && !mine.shader?.preset && /gl_FragColor = vec4\(uTint/.test(mine.shader?.code ?? "") && mine.style.width === "200px" && mine.style.height === "100px" && mine.name === "Mine", "<canvas data-shader=custom> takes its GLSL from a script inside it, and its size from its attributes");
-  check(broken.type === "shader" && broken.shader?.preset === "aurora" && broken.style.height === "300px" && wrote.warnings.some((w) => /data-params isn't JSON/.test(w)), "bad data-params is said, and a shader sized by nothing gets a size");
+  check(ht.type === "frame" && !ht.children?.length && ht.shader?.preset === "halftone" && ht.shader.params?.spacing === 14 && ht.shader.speed === 0.5 && ht.shader.time === 2.5 && ht.shader.paused === true && ht.style.inset === "0" && !ht.style.height, "<div data-shader> is a frame with a shader (its params, speed, time and pause), sized by its CSS");
+  check(mine.type === "frame" && !mine.shader?.preset && /gl_FragColor = vec4\(uTint/.test(mine.shader?.code ?? "") && mine.style.width === "200px" && mine.style.height === "100px" && mine.name === "Mine", "<canvas data-shader=custom> takes its GLSL from a script inside it, and its size from its attributes");
+  check(broken.type === "frame" && broken.shader?.preset === "aurora" && broken.style.height === "300px" && wrote.warnings.some((w) => /data-params isn't JSON/.test(w)), "bad data-params is said, and a shader sized by nothing gets a size");
   let sb: Board = emptyBoard("shaderboard", "Shaders", new Date().toISOString());
   sb.tokens = [{ name: "--brand", value: "#ff0000" }];
   sb = applyOps(sb, [{ op: "add", nodes: wrote.nodes, ids: wrote.roots, parent: null, page: sb.pages[0].id }]).board;
   const frame = wrote.roots[0];
   const plain = nodeHtml(sb, frame);
   const played = nodeHtml(sb, frame, { code: true });
-  check(/<div data-shader="halftone" data-params="\{&quot;spacing&quot;:14,&quot;ink&quot;:&quot;var\(--brand\)&quot;\}" data-speed="0.5" data-time="2.5" data-paused style="[^"]*"|<div style="[^"]*" data-shader="halftone"/.test(plain) && !/data-shader="halftone"[^>]*data-code/.test(plain) && /data-shader="custom"[^>]*data-code="uniform vec3 uTint/.test(plain) && /<canvas style="display:block;width:100%;height:100%;border-radius:inherit"><\/canvas>/.test(plain), "out as HTML: a preset by name, code of its own carried, a canvas inside each");
+  check(/<div data-shader="halftone" data-params="\{&quot;spacing&quot;:14,&quot;ink&quot;:&quot;var\(--brand\)&quot;\}" data-speed="0.5" data-time="2.5" data-paused style="[^"]*"|<div style="[^"]*" data-shader="halftone"/.test(plain) && !/data-shader="halftone"[^>]*data-code/.test(plain) && /data-shader="custom"[^>]*data-code="uniform vec3 uTint/.test(plain) && (plain.match(/<canvas style="position:absolute;left:0;top:0;z-index:-1;display:block;width:100%;height:100%;border-radius:inherit;pointer-events:none"><\/canvas><\/div>/g) ?? []).length === 3 && (plain.match(/isolation:isolate/g) ?? []).length === 3, "out as HTML: a preset by name, code of its own carried, a canvas inside each, behind what it holds");
   check(/data-shader="halftone"[^>]*data-code="[^"]*uSpacing[^"]*" data-uniforms="\{&quot;uInk&quot;:&quot;var\(--brand\)&quot;[^"]*uSpacing&quot;:&quot;14px/.test(played), "for a page that plays it, each carries its GLSL and its uniforms");
   const round = htmlToNodes(plain);
-  const back = Object.values(round.nodes).filter((n) => n.type === "shader");
-  check(back.length === 3 && JSON.stringify(back.map((n) => n.shader)) === JSON.stringify([ht.shader, mine.shader, broken.shader]), "HTML out comes back in as the same shaders");
+  const back = Object.values(round.nodes).filter((n) => n.shader);
+  check(back.length === 3 && JSON.stringify(back.map((n) => n.shader)) === JSON.stringify([ht.shader, mine.shader, broken.shader]) && back.every((n) => !n.children?.length && !n.style.isolation), "HTML out comes back in as the same shaders, the canvas not a layer");
+
+  // A shader as any frame's fill: behind its layers, the frame laid out as written.
+  const hero = htmlToNodes(`<section data-shader="aurora" data-blend="soft-light" data-name="Hero" style="display:flex;flex-direction:column;gap:12px;padding:40px;height:320px;background:url(/p.jpg) center / cover"><h1 style="color:#fff">Night skies</h1><p>Words over a shader</p></section>`);
+  const hn = hero.nodes[hero.roots[0]];
+  const hkids = hn.children!.map((id) => hero.nodes[id]);
+  check(hn.type === "frame" && hn.shader?.preset === "aurora" && hn.shader.blend === "soft-light" && hn.name === "Hero" && hn.style.display === "flex" && hn.style.padding === "40px" && hkids.length === 2 && hkids.every((k) => k.type === "text"), `a frame with a shader holds its layers as written (${JSON.stringify(hn)})`);
+  const hbase = emptyBoard("hero", "Hero", new Date().toISOString());
+  let hb: Board = applyOps(hbase, [{ op: "add", nodes: hero.nodes, ids: hero.roots, parent: null, page: hbase.pages[0].id }]).board;
+  const hh = nodeHtml(hb, hn.id);
+  check(/^<div style="[^"]*isolation:isolate[^"]*position:relative[^"]*" data-shader="aurora" data-blend="soft-light"><canvas style="[^"]*z-index:-1[^"]*;mix-blend-mode:soft-light"><\/canvas><div[^>]*>Night skies<\/div>/.test(hh), `out as HTML, the shader is drawn first, behind its layers (${hh.slice(0, 260)})`);
+  const placed = applyOps(hb, [{ op: "set", id: hn.id, style: { position: "absolute", left: "10px", top: "10px" } }]).board;
+  check(!/position:relative/.test(nodeHtml(placed, hn.id, { placed: true })) && /position:absolute/.test(nodeHtml(placed, hn.id, { placed: true })), "a frame placed by hand keeps its place: the shader goes in it as it is");
+  const hround = htmlToNodes(hh);
+  const hr = hround.nodes[hround.roots[0]];
+  check(hr.shader?.preset === "aurora" && hr.children?.length === 2 && !hr.style.isolation, "in again, the same frame: its canvas isn't a layer, the isolation it needs isn't its own CSS");
+  const words = htmlToNodes(`<div data-shader="waves" style="width:300px;height:200px">Hello</div>`);
+  const wn = words.nodes[words.roots[0]];
+  check(wn.type === "frame" && wn.shader?.preset === "waves" && wn.children?.length === 1 && words.nodes[wn.children[0]].type === "text", "words in a shader element are a text layer over the shader, not the shader lost");
+  hb = applyOps(hb, [{ op: "set", id: hn.id, shader: null }]).board;
+  check(!hb.nodes[hn.id].shader && hb.nodes[hn.id].children?.length === 2 && !/data-shader|<canvas/.test(nodeHtml(hb, hn.id)), "the shader taken away, the frame and its layers stay");
+  let onText = "";
+  try {
+    applyOps(hb, [{ op: "set", id: hkids[0].id, shader: { preset: "aurora" } }]);
+  } catch (e) {
+    onText = (e as Error).message;
+  }
+  check(/Only frames take a shader fill/.test(onText), `only frames take a shader (${onText})`);
+  const { upgradeBoard } = await import("../src/board/core.js");
+  const old = { ...emptyBoard("old", "Old", new Date().toISOString()) };
+  old.nodes = { s1: { id: "s1", type: "shader" as never, name: "Glow", parent: null, style: { width: "200px", height: "100px" }, shader: { preset: "aurora" } } };
+  old.pages[0].children = ["s1"];
+  upgradeBoard(old);
+  check(old.nodes.s1.type === "frame" && Array.isArray(old.nodes.s1.children) && old.nodes.s1.shader?.preset === "aurora" && /data-shader="aurora"/.test(nodeHtml(old, "s1")), "a board from before, with shader layers, opens with each a frame with its shader");
   const sneaky = { ...sb, nodes: { ...sb.nodes, [mine.id]: { ...mine, shader: { code: 'void main(){} // </script><script>alert(1)</script>"><img src=x onerror=alert(1)>' } } } };
   const safe = nodeHtml(sneaky, mine.id, { code: true });
   check(!/<script|<img/i.test(safe) && /&lt;\/script>/.test(safe), "code can't break out of its attribute: no script or element gets through");
@@ -1469,6 +1502,23 @@ await fake.close();
   check(del.json.results[0].layersKeepItsCode?.includes(r.shader) && still[0] > 240 && still[1] < 80, "a board's preset removed, the layers using it keep its code and draw the same");
   const refused = await call("board_edit", { board: sb, changes: [{ do: "shader", preset: "lava-lamp" }] }, true);
   check(/There's no shader preset "lava-lamp"\. Built in: mesh-gradient/.test(refused.text), "an unknown preset is refused, with the ones there are");
+
+  // A frame there given a shader fill: drawn behind what it holds, and taken away again.
+  const card = (await call("board_write_html", { board: sb, html: `<div data-name="Card" style="width:200px;height:120px;padding:20px;background:#000"><div data-name="Chip" style="width:40px;height:40px;background:#00ff00"></div><p data-name="Words" style="margin:0;color:#fff">Over the shader</p></div>` })).json.created[0].id;
+  const given = await call("board_edit", { board: sb, changes: [{ do: "shader", id: card, code: "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }" }] });
+  const cardShot = decodePng((await call("board_screenshot", { board: sb, nodes: [card] })).images[0]);
+  const behind = pixelAt(cardShot, 150, 100);
+  const chip = pixelAt(cardShot, 40, 40);
+  check(given.json.results[0].shader === card && behind[0] > 240 && behind[1] < 40 && chip[1] > 240 && chip[0] < 40, `board_edit gives a frame a shader fill, drawn behind its layers (shader ${behind.slice(0, 3)}, layer over it ${chip.slice(0, 3)})`);
+  const cardTree = await call("board_read", { board: sb, node: card });
+  check(/frame "Card"[^\n]*shader of its own code/.test(cardTree.text) && /"Chip"/.test(cardTree.text), "board_read says the frame has a shader, and still holds its layers");
+  const gone = await call("board_edit", { board: sb, changes: [{ do: "shader", id: card, remove: true }] });
+  const shot2 = decodePng((await call("board_screenshot", { board: sb, nodes: [card] })).images[0]);
+  check(gone.json.results[0].removedShader === card && pixelAt(shot2, 150, 100)[0] < 20, "remove takes the shader away, the frame's own fill shows again");
+  const cardHtml = (await call("board_read", { board: sb, node: card, what: "html" })).text;
+  const wordsId = /data-id="([^"]+)" data-name="Words"/.exec(cardHtml)?.[1] ?? `none in ${cardHtml.slice(0, 200)}`;
+  const notFrame = await call("board_edit", { board: sb, changes: [{ do: "shader", id: wordsId, preset: "aurora" }] }, true);
+  check(/Only frames take a shader fill/.test(notFrame.text) || /Only frames take a shader fill/.test(JSON.stringify(notFrame.json ?? {})), `a shader on something that isn't a frame is refused (${notFrame.text.slice(0, 120)})`);
 }
 
 console.log(`\nFiles in ${out}`);

@@ -30,6 +30,8 @@
      and chosen options; nothing else gets a colour of its own. */
   --iris: #4c8dff;
   --iris-soft: rgba(76, 141, 255, 0.16);
+  /* The blue as words on the canvas (a picked artboard's name): 4.5:1 against it. */
+  --iris-fg: #4c8dff;
   /* Behind white words (menus, size labels, a Delete button): deep enough for 4.5:1. */
   --iris-strong: #2f6fed;
   --danger-strong: #dc2626;
@@ -103,6 +105,7 @@
   --lime-soft: rgba(101, 163, 13, 0.12);
   --iris: #2f6fed;
   --iris-soft: rgba(47, 111, 237, 0.12);
+  --iris-fg: #1a52c7;
   --pink: #db2777;
   --amber: #b45309;
   --guide: #f0306f;
@@ -1759,7 +1762,7 @@ li.done .work-shot .scan { display: none; }
 .bd-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .bd-label { position: absolute; display: flex; align-items: center; gap: 6px; height: 20px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; pointer-events: auto; cursor: default; user-select: none; -webkit-user-select: none; }
 .bd-label .t { overflow: hidden; text-overflow: ellipsis; }
-.bd-label:hover, .bd-label.on { color: var(--iris); }
+.bd-label:hover, .bd-label.on { color: var(--iris-fg); }
 .bd-agent { display: inline-flex; align-items: center; gap: 5px; height: 17px; padding: 0 7px 0 6px; border-radius: 999px; background: var(--lime); color: var(--lime-ink); font-size: 10.5px; font-weight: 650; }
 .bd-agent i { background: var(--lime-ink); }
 .bd-working { position: absolute; border-radius: 2px; box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.75); pointer-events: none; }
@@ -2325,7 +2328,7 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .bd-follow-frame { position: absolute; inset: 0; z-index: 5; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--c); pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .bd-cursor { transition: none; } .bd-agent-flash { animation-duration: 0.01s; } }
 
-/* Boards: shader layers (board-shaders.js). Live tiles in Assets, the panel's Shader section, its code. */
+/* Boards: shaders (board-shaders.js). Live tiles in Assets, the shader in the panel's Fill section, its code. */
 .bd-asset-grid.shaders { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .bd-asset.shader { aspect-ratio: auto; padding: 0; gap: 0; overflow: hidden; align-items: stretch; justify-content: flex-start; }
 .bd-asset.shader .art { display: block; width: 100%; aspect-ratio: 4 / 3; background: linear-gradient(135deg, #8a8a96, #2e2e35); }
@@ -2354,3 +2357,34 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .bd-code-err span { overflow-wrap: anywhere; }
 .bd-code-ok { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--text-3); font-size: 11.5px; }
 .bd-code-ok svg { color: var(--ok); }
+/* A frame's shader, in its Fill section: the row naming it, its chooser and its settings. */
+.bd-fill-btns { display: flex; align-items: center; gap: 2px; }
+.bd-fill-btns .icon-btn.on { background: var(--iris-soft); color: var(--iris); }
+.bd-shfill { display: flex; flex-direction: column; gap: 8px; }
+.bd-shfill + .bd-prow, .bd-shfill + .pop + .bd-prow { margin-top: 2px; }
+.bd-prow-main .bd-swatch.shader { overflow: hidden; background: var(--panel-3); box-shadow: inset 0 0 0 1px var(--line); }
+.bd-shfill-chev { flex: none; color: var(--text-3); }
+.bd-shfill .bd-prow { gap: 6px; }
+.bd-shfill-tune { flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-ctl); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); transition: background 0.12s, box-shadow 0.12s, color 0.12s; }
+.bd-shfill-tune:hover { background: var(--panel-3); color: var(--text); }
+.bd-shfill-tune.on { background: var(--iris-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--iris) 55%, transparent); color: var(--iris-fg); }
+.pop.bd-shpick-pop, .pop.bd-shset-pop { padding: 0; max-height: min(620px, calc(100vh - 40px)); }
+.bd-shpick { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.bd-shpick-head { display: flex; align-items: center; gap: 2px; min-height: 24px; }
+.bd-shpick-head b { flex: 1; font: 600 13px var(--display); letter-spacing: -0.01em; color: var(--text); }
+.bd-shpick-search { position: relative; display: flex; align-items: center; }
+.bd-shpick-search svg { position: absolute; left: 9px; color: var(--text-3); pointer-events: none; }
+.bd-shpick-search .input { padding-left: 29px; }
+.bd-shpick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
+.bd-shpick-tile { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; color: var(--text-2); text-align: left; font: inherit; }
+.bd-shpick-tile .art { position: relative; display: grid; place-items: center; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--panel-2); box-shadow: 0 0 0 1px var(--line); color: var(--text-3); transition: box-shadow 0.12s; }
+.bd-shpick-tile .art canvas { position: absolute; inset: 0; }
+.bd-shpick-tile:hover .art { box-shadow: 0 0 0 1px var(--line-2); }
+.bd-shpick-tile.on .art { box-shadow: 0 0 0 2px var(--iris); }
+.bd-shpick-tile:focus-visible { outline: none; }
+.bd-shpick-tile:focus-visible .art { box-shadow: 0 0 0 2px rgba(76, 141, 255, 0.7); }
+.bd-shpick-tile .nm { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-shpick-tile:hover .nm, .bd-shpick-tile.on .nm { color: var(--text); }
+.bd-shpick-tile .tick { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--iris); color: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+.bd-shset { gap: 8px; }
+.bd-shset .bd-code-box { height: 200px; }

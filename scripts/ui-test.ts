@@ -409,16 +409,16 @@ async function drawsDuring(page: Page, names: string[], act: () => Promise<unkno
 
 /** The shader runtime's frame-time budget: high, so a software GPU (Chromium's here) never trips the guard; tiny, to trip it. */
 const shaderBudget = (page: Page, ms: number) => page.evaluate(`globalThis.BoardShaders && BoardShaders.configure({ budget: ${ms} })`);
-/** How many frames each shader layer on the canvas has drawn, by layer id. */
+/** How many frames each shader on the canvas has drawn, by layer id. */
 const layerFrames = (page: Page, ids: string[]) =>
   S(page, (ids: string[]) => {
     const out: Record<string, number> = {};
     for (const l of (globalThis as unknown as { BoardShaders: { stats(): { layers: Array<{ layer: string | null; frames: number }> } } }).BoardShaders.stats().layers) if (l.layer && ids.includes(l.layer)) out[l.layer] = l.frames;
     return out;
   }, ids);
-/** The size a shader layer's canvas is drawn at, in pixels. */
+/** The size a frame's shader canvas is drawn at, in pixels. */
 const canvasSize = (page: Page, id: string) => S(page, (id: string) => ({ width: (document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement).width, height: (document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement).height }), id);
-/** A few of a shader layer's pixels, as text to compare. */
+/** A few of a frame's shader pixels, as text to compare. */
 const canvasPixels = (page: Page, id: string) =>
   S(page, (id: string) => {
     const c = document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement;
@@ -3132,13 +3132,19 @@ const CHECKS: Record<string, Check> = {
     await page.mouse.move(5, 300);
     await page.waitForTimeout(300);
     if ((await states()).some((s) => s !== "paused")) return `a shader tile kept playing once the pointer left: ${JSON.stringify(await states())}`;
-    // One clicked (into the middle of the view), one dragged onto the canvas.
+    // One clicked (into the middle of the view, panned clear of the artboards), one dragged onto the canvas under it.
+    await page.mouse.move(700, 400);
+    for (let i = 0; i < 8; i++) await page.mouse.wheel(60, 0);
+    await page.waitForTimeout(300);
     await page.locator(".bd-asset.shader", { hasText: "Mesh gradient" }).click();
     await page.waitForTimeout(700);
-    const phone = await boxOf(page, t.byName("Phone"));
-    await page.locator(".bd-asset.shader", { hasText: "Aurora" }).dragTo(page.locator(".bd-canvas"), { targetPosition: { x: Math.round(phone.x + phone.width + 260 - 300), y: Math.round(phone.y + 200 - 52) } });
+    const meshId = Object.values(boards.getBoard(t.id).nodes).find((n) => n.shader?.preset === "mesh-gradient")?.id;
+    if (!meshId) return "clicking Mesh gradient in Assets added nothing";
+    const mesh = await boxOf(page, meshId);
+    const cv = (await page.locator(".bd-canvas").boundingBox())!;
+    await page.locator(".bd-asset.shader", { hasText: "Aurora" }).dragTo(page.locator(".bd-canvas"), { targetPosition: { x: Math.round(mesh.x + mesh.width / 2 - cv.x), y: Math.round(mesh.y + mesh.height + 150 - cv.y) } });
     await page.waitForTimeout(900);
-    const shaders = () => Object.values(boards.getBoard(t.id).nodes).filter((n) => n.type === "shader");
+    const shaders = () => Object.values(boards.getBoard(t.id).nodes).filter((n) => n.shader);
     const made = shaders();
     if (made.length !== 2 || !made.some((n) => n.shader?.preset === "mesh-gradient") || !made.some((n) => n.shader?.preset === "aurora")) return `the board's shaders: ${JSON.stringify(made.map((n) => n.shader))}`;
     const before = await layerFrames(page, made.map((n) => n.id));
@@ -3148,7 +3154,7 @@ const CHECKS: Record<string, Check> = {
     const gl = await S(page, () => ({ made: (window as unknown as { __gl: number }).__gl, runtime: (globalThis as unknown as { BoardShaders: { stats(): { contexts: number } } }).BoardShaders.stats().contexts }));
     if (gl.made !== 1 || gl.runtime !== 1) return `${gl.made} WebGL contexts made for 2 layers and ${tiles} tiles (the runtime says ${gl.runtime})`;
     // A second of play redraws no component: the runtime draws in the canvases itself.
-    const draws = await drawsDuring(page, ["BoardCanvas", "Layer", "ShaderLayer", "Inspector", "LayersList", "AssetsPanel", "ShaderAssets"], () => page.waitForTimeout(1000));
+    const draws = await drawsDuring(page, ["BoardCanvas", "Layer", "ShaderCanvas", "Inspector", "LayersList", "AssetsPanel", "ShaderAssets"], () => page.waitForTimeout(1000));
     if (Object.values(draws).some((n) => n > 2)) return `components drew while the shaders played: ${JSON.stringify(draws)}`;
     // Panned: drawn at half the resolution while it moves, sharp again once it stops.
     const id = made.find((n) => n.shader?.preset === "mesh-gradient")!.id;
@@ -3182,7 +3188,9 @@ const CHECKS: Record<string, Check> = {
     const f0 = await layerFrames(page, [id]);
     await page.waitForTimeout(400);
     if ((await layerFrames(page, [id]))[id] <= f0[id] + 5) return "it isn't playing";
-    // Paused: its still, drawn once.
+    // Paused (in its shader settings): its still, drawn once.
+    await page.click("[data-shader-settings]");
+    await page.waitForSelector("[data-shader-settings-pop]");
     await page.click("[data-shader-play]");
     await page.waitForTimeout(400);
     if (!nodeOf(t, id).shader?.paused) return `pause didn't pause it: ${JSON.stringify(nodeOf(t, id).shader)}`;
@@ -3238,6 +3246,113 @@ const CHECKS: Record<string, Check> = {
     await picture(page, "shaders-masked");
     return "ok";
   },
+  async "shaders: any frame takes one as its fill (Fill › shader), drawn behind its layers, filling its grid cell"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:520px;height:300px;background:#fff;display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:20px"><div data-name="Cell" style="background:#fff;padding:30px"><div data-name="Chip" style="width:60px;height:60px;background:#0000ff"></div></div><div data-name="Other" style="background:#808080"></div></div>`);
+    await shaderBudget(page, 1000);
+    const art = t.byName("Art");
+    const cell = t.byName("Cell");
+    await sel(page, [cell]);
+    await page.waitForTimeout(300);
+    // The chooser: every preset's still, playing only under the pointer, and a search.
+    await page.click("[data-shader-add]");
+    await page.waitForSelector("[data-shader-chooser] .bd-shpick-tile canvas");
+    await page.waitForTimeout(700);
+    const tiles = () => S(page, () => [...document.querySelectorAll("[data-shader-chooser] .bd-shpick-tile canvas")].map((c) => (c as HTMLCanvasElement).dataset.shaderState ?? ""));
+    const st0 = await tiles();
+    if (st0.length < 10 || st0.some((s) => s !== "paused")) return `the chooser's tiles: ${JSON.stringify(st0)}`;
+    await page.locator("[data-shader-chooser] .bd-shpick-tile", { hasText: "Waves" }).hover();
+    await page.waitForTimeout(400);
+    if ((await tiles()).filter((s) => s === "playing").length !== 1) return `hovering a tile in the chooser: ${JSON.stringify(await tiles())}`;
+    const search = page.locator("[data-shader-chooser] input");
+    await search.fill("aur");
+    await page.waitForTimeout(150);
+    const found = await S(page, () => [...document.querySelectorAll("[data-shader-chooser] .bd-shpick-tile .nm")].map((e) => e.textContent));
+    if (found.join() !== "Aurora") return `searching "aur" shows ${JSON.stringify(found)}`;
+    await search.fill("");
+    // Picked: the frame has it, keeps its name and its layers, and the chooser stays open to try another.
+    await page.locator("[data-shader-chooser] .bd-shpick-tile", { hasText: "Aurora" }).click();
+    await page.waitForTimeout(600);
+    const n1 = nodeOf(t, cell);
+    if (n1.shader?.preset !== "aurora" || n1.name !== "Cell" || n1.children?.length !== 1 || n1.type !== "frame") return `picked: ${JSON.stringify(n1)}`;
+    if (!(await page.isVisible("[data-shader-chooser] .bd-shpick-tile.on .tick"))) return "the chooser doesn't mark the shader the frame has";
+    const first = await S(page, (id: string) => document.querySelector(`[data-bid="${id}"]`)?.firstElementChild?.getAttribute("data-layer"), cell);
+    if (first !== cell) return "the shader's canvas isn't the frame's first child";
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await page.waitForTimeout(300);
+      await picture(page, `shaders-${theme}-chooser`);
+      const problems = await themeAudit(page);
+      if (problems.length) return `${theme}, choosing: ${problems.join(" | ")}`;
+    }
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    if (await page.isVisible("[data-shader-chooser]")) return "Escape didn't close the chooser";
+    // Its colours are in the panel, under its row: one changed there is what's drawn (Aurora's sky, at the top).
+    const skyBefore = (await canvasPixels(page, cell)).split(",").map(Number);
+    await page.locator('.bd-right [data-shader-fill] .row[data-param="sky"] .color-btn').click();
+    const hex = page.locator('.pop input[placeholder="#ff5fa2"]').first();
+    // Typed once the picker has opened and settled where it shows.
+    await page.waitForTimeout(250);
+    await hex.click();
+    await hex.fill("#ff0000");
+    await hex.press("Enter");
+    await page.waitForTimeout(600);
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await page.waitForTimeout(300);
+      await picture(page, `shaders-${theme}-colour`);
+      const problems = await themeAudit(page);
+      if (problems.length) return `${theme}, a shader's colour: ${problems.join(" | ")}`;
+    }
+    await page.keyboard.press("Escape");
+    const skyAfter = (await canvasPixels(page, cell)).split(",").map(Number);
+    if (nodeOf(t, cell).shader?.params?.sky !== "#ff0000") return `the sky colour on the board: ${JSON.stringify(nodeOf(t, cell).shader)}`;
+    if (!(skyBefore[0] < 80 && skyAfter[0] > 150 && skyAfter[0] > skyAfter[2] * 1.5)) return `the sky colour changed, the sky drawn went from ${skyBefore.slice(0, 3)} to ${skyAfter.slice(0, 3)}`;
+    // The grid cell's size, filled: the canvas is the cell, the frame laid out as before.
+    const cellBox = await boxOf(page, cell);
+    const drawn = await S(page, (id: string) => { const c = document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement; const r = c.getBoundingClientRect(); return { w: r.width, h: r.height }; }, cell);
+    if (Math.abs(drawn.w - cellBox.width) > 1.5 || Math.abs(drawn.h - cellBox.height) > 1.5) return `the canvas is ${drawn.w}×${drawn.h}, the cell ${cellBox.width}×${cellBox.height}`;
+    // Code of its own, from the row: red, so its pixels read; the frame's layer stays over it.
+    await page.click("[data-shader-choose]");
+    await page.click('[data-shader-pick="custom"]');
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Escape");
+    await page.click("[data-shader-settings]");
+    await page.waitForSelector("[data-shader-settings-pop] .bd-code textarea");
+    const code = page.locator("[data-shader-settings-pop] .bd-code textarea");
+    await code.fill("void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }");
+    await code.press("Meta+Enter");
+    await page.waitForTimeout(500);
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await page.waitForTimeout(300);
+      await picture(page, `shaders-${theme}-fill-settings`);
+      const problems = await themeAudit(page);
+      if (problems.length) return `${theme}, its settings: ${problems.join(" | ")}`;
+    }
+    await page.keyboard.press("Escape");
+    await sel(page, []);
+    await page.waitForTimeout(500);
+    const seen = await colorsAt(page, art, 520, [[80, 80], [200, 220], [380, 150], [8, 8]]);
+    if (seen.join() !== "blue,red,rgb(128,128,128),white") return `the chip, the shader behind it, the other cell, outside: ${seen.join(", ")}`;
+    // Taken away: the frame and its layer stay, the canvas goes.
+    await sel(page, [cell]);
+    await page.waitForTimeout(200);
+    await page.click("[data-shader-remove]");
+    await page.waitForTimeout(400);
+    const n2 = nodeOf(t, cell);
+    const left = await S(page, (id: string) => Boolean(document.querySelector(`canvas[data-layer="${id}"]`)), cell);
+    if (n2.shader || n2.children?.length !== 1 || left) return `removed: ${JSON.stringify(n2)}, canvas left ${left}`;
+    // A shader in Assets clicked with a frame selected is its fill, not a new layer.
+    const other = t.byName("Other");
+    const count = Object.keys(boards.getBoard(t.id).nodes).length;
+    await sel(page, [other]);
+    await page.locator(".bd-left-tabs button", { hasText: "Assets" }).click();
+    await page.locator(".bd-asset.shader", { hasText: "Waves" }).click();
+    await page.waitForTimeout(500);
+    const n3 = nodeOf(t, other);
+    return n3.shader?.preset === "waves" && Object.keys(boards.getBoard(t.id).nodes).length === count ? "ok" : `clicked in Assets with a frame selected: ${JSON.stringify(n3)}, ${Object.keys(boards.getBoard(t.id).nodes).length - count} layers more`;
+  },
   async "shaders: one too slow is stopped at its still and says so; code of its own shows its errors by line"(page) {
     const t = await openMaskBoard(page, `<div data-name="Art" style="width:420px;height:320px;background:#fff;position:relative"><div data-name="Mine" data-shader="custom" data-code="uniform vec3 uTint; // @color = #ff3b30
 void main() { gl_FragColor = vec4(uTint * (0.6 + 0.4 * sin(uTime)), 1.0); }" style="position:absolute;left:10px;top:10px;width:400px;height:300px"></div></div>`);
@@ -3258,7 +3373,9 @@ void main() { gl_FragColor = vec4(uTint * (0.6 + 0.4 * sin(uTime)), 1.0); }" sty
     const s2 = await layerFrames(page, [id]);
     await page.waitForTimeout(400);
     if ((await layerFrames(page, [id]))[id] <= s2[id] + 5) return "Try again didn't play it";
-    // Its code, broken on line 2: listed by line as it's typed, and the canvas shows the error once applied.
+    // Its code (in its shader settings), broken on line 2: listed by line as it's typed, and the canvas shows the error once applied.
+    await page.click("[data-shader-settings]");
+    await page.waitForSelector("[data-shader-settings-pop]");
     const code = page.locator(".bd-code textarea");
     await code.fill("uniform vec3 uTint; // @color = #ff3b30\nvoid main() { gl_FragColor = vec4(oops, 1.0); }");
     await page.waitForTimeout(600);

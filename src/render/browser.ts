@@ -67,7 +67,7 @@ export async function getBrowser(): Promise<Browser> {
       // graphics-memory budget can't hold them and silently drops tiles (black screens, missing
       // backgrounds), so give the compositor room.
       "--force-gpu-mem-available-mb=4096",
-      // Boards' shader layers draw with WebGL: where there's no graphics card to use (a VM, a
+      // Boards' shaders draw with WebGL: where there's no graphics card to use (a VM, a
       // server), Chrome may fall back to drawing it in software (SwiftShader), which is plenty for stills.
       "--enable-unsafe-swiftshader",
     ],

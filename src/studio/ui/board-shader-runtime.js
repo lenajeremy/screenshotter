@@ -3,7 +3,7 @@
 // takes in headless Chrome. It is a plain script (it sets globalThis.BoardShaders), so a page can
 // carry it inline; the Studio imports it as a module.
 //
-// How it draws: one WebGL context for every shader layer on the page (browsers allow about 16), on a
+// How it draws: one WebGL context for every shader on the page (browsers allow about 16), on a
 // canvas of its own that's never shown. Each layer is drawn there in turn, at the size it shows,
 // and copied into the layer's own canvas (a 2D one, which browsers don't limit). So a layer is an
 // ordinary element: it's placed, rotated, rounded, blended and masked by CSS like any other.
@@ -746,7 +746,7 @@
     }
   };
 
-  /** What a shader layer written as HTML says: data-code, data-uniforms (or data-params), data-speed, data-time, data-paused. */
+  /** What a shader written as HTML says: data-code, data-uniforms (or data-params), data-speed, data-time, data-paused. */
   function dataOf(el) {
     const d = el.dataset;
     let uniforms = parse(d.uniforms);
@@ -759,7 +759,7 @@
     return { code: d.code || "", uniforms, speed: n(d.speed, 1), time: n(d.time, 0), paused: d.paused !== undefined && d.paused !== "false" };
   }
 
-  /** Draw every shader layer written in a page (elements with data-shader); let go of those no longer there. */
+  /** Draw every shader written in a page (elements with data-shader); let go of those no longer there. */
   function scan(root) {
     const doc = root || (typeof document !== "undefined" ? document : null);
     if (!doc) return 0;
@@ -767,10 +767,15 @@
     let n = 0;
     for (const el of doc.querySelectorAll("[data-shader]")) {
       let canvas = el.tagName === "CANVAS" ? el : [...el.children].find((c) => c.tagName === "CANVAS");
+      // Written by hand without its canvas: one goes in first, over the element's box and behind
+      // what's in it (as boards write it), the element made a place for it.
       if (!canvas) {
         canvas = document.createElement("canvas");
-        canvas.style.cssText = "display:block;width:100%;height:100%;border-radius:inherit";
-        el.appendChild(canvas);
+        canvas.style.cssText = "position:absolute;left:0;top:0;z-index:-1;display:block;width:100%;height:100%;border-radius:inherit;pointer-events:none" + (el.dataset.blend ? ";mix-blend-mode:" + el.dataset.blend : "");
+        const cs = getComputedStyle(el);
+        if (cs.position === "static") el.style.position = "relative";
+        if (cs.isolation !== "isolate") el.style.isolation = "isolate";
+        el.insertBefore(canvas, el.firstChild);
       }
       attach(canvas, dataOf(el));
       n++;

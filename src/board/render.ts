@@ -15,7 +15,7 @@ import { BOARD_CSS, fontFaceCss, fontFamilies, fontLinks, nodeHtml, pxValue, roo
 import { loadMaskFonts, subtree } from "./core.js";
 
 // ---------------------------------------------------------------------------------------------
-// Shaders: a page showing shader layers carries the script that draws them (the Studio's own,
+// Shaders: a page showing shaders carries the script that draws them (the Studio's own,
 // src/studio/ui/board-shader-runtime.js) as its first script.
 
 let runtimeText: string | undefined;
@@ -29,10 +29,10 @@ export function shaderRuntime(): string {
 }
 
 /** Whether any shown layer in these is a shader. */
-const hasShaders = (board: Board, ids: string[]) => ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.type === "shader" && !board.nodes[x].hidden));
+const hasShaders = (board: Board, ids: string[]) => ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.shader && !board.nodes[x].hidden));
 
 /**
- * The script that draws a page's shader layers, or nothing when it has none: "live" plays them
+ * The script that draws a page's shaders, or nothing when it has none: "live" plays them
  * (Preview, a page copied out), "still" draws each once at its time (pictures of the board).
  */
 export function shaderScript(board: Board, ids: string[], mode: "live" | "still"): string {

@@ -13,7 +13,7 @@ import { Icon } from "./icons.js";
 import { api, fail, fileUrl, toast } from "./store.js";
 import { areaRects, areasValid, gridOf, gridPatch, isGrid, parsePlacement, parseTracks, placementCss, placementSpan, trackArgs, trackKind, trackLabel } from "./board-core.js";
 import { AXES as GRID_AXES, changeGrids, gridGeometry, inGrid, insertTrackOps, layoutOf, moveTrackOps, removeTrackOps, setLayout, trackCountOps, trackSizeOps } from "./board-grid.js";
-import { ShaderSection } from "./board-shaders.js";
+import { ShaderChooser, ShaderFill } from "./board-shaders.js";
 
 /** What the panel doesn't draw from: the view and the pointer (it does show the words picked in a text). */
 const PANEL_SKIPS = CANVAS_ONLY.filter((k) => k !== "words");
@@ -83,7 +83,7 @@ export function Inspector() {
   return html`<div class="panel-head bd-ihead">
       <span class="ico"><${Icon} n=${layerIcon(n)} s=${15} /></span>
       <h2>${many ? `${list.length} layers` : n.name}</h2>
-      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", video: "Video", svg: "Vector", vector: "Vector", shader: "Shader" }[n.type]}</span>`}
+      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", video: "Video", svg: "Vector", vector: "Vector" }[n.type]}</span>`}
     </div>
     <div class="panel-body bd-insp">
       ${b.tool === "scale" && html`<${ScaleSection} />`}
@@ -95,12 +95,11 @@ export function Inspector() {
       ${allText && html`<${TypeSection} />`}
       ${!many && n.type === "image" && html`<${ImageSection} />`}
       ${!many && n.type === "video" && html`<${VideoSection} />`}
-      ${!many && n.type === "shader" && html`<${ShaderSection} Color=${BoardColor} commit=${commit} />`}
       ${!many && n.shape && html`<${ShapeSection} />`}
       ${!many && n.type === "svg" && !n.shape && html`<${VectorSection} />`}
       <${LookSection} />
       <${MaskSection} />
-      ${!allText && n.type !== "image" && n.type !== "video" && n.type !== "svg" && n.type !== "shader" && html`<${FillSection} />`}
+      ${!allText && n.type !== "image" && n.type !== "video" && n.type !== "svg" && html`<${FillSection} key=${many ? "many" : n.id} />`}
       ${n.type !== "svg" && html`<${LineSection} kind="border" />`}
       <${LineSection} kind="outline" />
       ${n.type !== "svg" && html`<${ShadowSection} />`}
@@ -777,13 +776,27 @@ const fillLabel = (f) =>
   f.kind === "solid" ? tokenTag(f.color) ?? f.color : f.kind === "image" ? (f.url ?? "").split("/").pop() || "Picture" : f.kind === "css" ? "CSS" : `${f.kind[0].toUpperCase()}${f.kind.slice(1)}`;
 const fillSub = (f) => (f.kind === "linear" ? `${round(f.angle, 1)}°` : f.kind === "image" ? { cover: "Fill", contain: "Fit", auto: "Tile" }[f.size ?? "cover"] : f.stops ? `${f.stops.length} colours` : "");
 
+/**
+ * A layer's fills, top first. A frame's shader is drawn over its CSS fills (and behind its layers),
+ * so it's the top row; the shader button chooses one.
+ */
 function FillSection() {
   const list = ids();
   const n = node(list[0]);
   const fills = fillsOf(n.style);
   const put = (next, key) => setStyle(fillsStyle(next), key);
   const add = () => put([fills.length ? { kind: "linear", angle: 180, stops: [{ color: "rgba(0,0,0,0)", pos: 0 }, { color: "rgba(0,0,0,0.4)", pos: 100 }] } : { kind: "solid", color: "#ffffff" }, ...fills]);
-  return html`<${Section} title="Fill" right=${html`<button class="icon-btn sm" title=${fills.length ? "Add a fill on top" : "Add a fill"} onClick=${add}><${Icon} n="plus" s=${14} /></button>`}>
+  // A shader is one frame's at a time.
+  const shaders = list.length === 1 && n.type === "frame";
+  const shaderBtn = useRef();
+  const [choosing, setChoosing] = useState(null);
+  const right = html`<div class="bd-fill-btns">
+    ${shaders && html`<button class="icon-btn sm ${n.shader ? "on" : ""}" ref=${shaderBtn} data-shader-add aria-pressed=${Boolean(n.shader)} title=${n.shader ? "Choose another shader" : "Add a shader: live graphics drawn by the GPU, behind the frame's layers"} onClick=${() => setChoosing(choosing ? null : shaderBtn.current)}><${Icon} n="shader" s=${14} /></button>`}
+    <button class="icon-btn sm" title=${fills.length ? "Add a fill on top" : "Add a fill"} onClick=${add}><${Icon} n="plus" s=${14} /></button>
+  </div>`;
+  return html`<${Section} title="Fill" right=${right}>
+    ${shaders && n.shader && html`<${ShaderFill} id=${n.id} Color=${BoardColor} commit=${commit} onChoose=${(el) => setChoosing(choosing ? null : el)} />`}
+    ${shaders && choosing && html`<${ShaderChooser} id=${n.id} anchor=${choosing} commit=${commit} onClose=${() => setChoosing(null)} />`}
     ${fills.map((f, i) => {
       const set = (patch, key) => put(fills.map((x, j) => (j === i ? { ...x, ...patch } : x)), key && `fill${i}:${key}`);
       // Swatches are drawn through the board's tokens, as the canvas draws the fill.

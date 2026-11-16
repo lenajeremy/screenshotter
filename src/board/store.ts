@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import path from "node:path";
 import { libraryFolder } from "../studio/scenes.js";
 import { ensureDir, resolveUserPath } from "../util/files.js";
-import { applyOps, emptyBoard, expandOps, mapCssUrls, mapSvgImages, newId, pxValue, reconcileOps, sizeWord, svgImageAttrs, type Board, type BoardNode, type Op } from "./core.js";
+import { applyOps, emptyBoard, expandOps, mapCssUrls, mapSvgImages, newId, pxValue, reconcileOps, sizeWord, svgImageAttrs, upgradeBoard, type Board, type BoardNode, type Op } from "./core.js";
 
 const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));
 export const boardFile = (id: string) => path.join(dir(), `${id}.json`);
@@ -34,7 +34,7 @@ function read(id: string): Board | undefined {
   }
   try {
     const b = JSON.parse(text) as Board;
-    if (b && typeof b === "object" && Array.isArray(b.pages) && b.nodes && typeof b.nodes === "object") return b;
+    if (b && typeof b === "object" && Array.isArray(b.pages) && b.nodes && typeof b.nodes === "object") return upgradeBoard(b);
   } catch {
     // Falls through to the error below.
   }

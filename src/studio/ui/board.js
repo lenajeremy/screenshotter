@@ -217,7 +217,7 @@ export function layerIcon(n, b = B.board) {
   if (n.type === "text") return "text";
   if (n.type === "image") return "image";
   if (n.type === "video") return "video";
-  if (n.type === "shader") return "shader";
+  if (n.shader && !n.children?.length) return "shader";
   if (n.type === "svg") return "vector";
   if (n.type === "vector") return { g: "layers", rect: "square", circle: "ellipse", ellipse: "ellipse", line: "line", polyline: "line", polygon: "triangle", path: "pen", text: "text", image: "image" }[n.tag] ?? "vector";
   if (!n.parent) return "frame";
@@ -712,7 +712,7 @@ function copySelection() {
 
 /** The frame Preview opens: the selected frame (or the frame round a selected text or picture), else the page's first artboard. */
 function previewTarget() {
-  const leaf = (n) => ["text", "image", "video", "svg", "vector", "shader"].includes(n.type);
+  const leaf = (n) => ["text", "image", "video", "svg", "vector"].includes(n.type);
   let id = B.sel[0];
   while (id && node(id) && leaf(node(id))) id = node(id).parent;
   if (id && node(id)) return id;
