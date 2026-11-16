@@ -3214,6 +3214,47 @@ void main() { gl_FragColor = vec4(uTint * (0.6 + 0.4 * sin(uTime)), 1.0); }" sty
     const okText = await S(page, () => document.querySelector(".bd-code-ok")?.textContent ?? "");
     return ok === "playing" && /Compiles/.test(okText) ? "ok" : `fixed, the layer is ${ok} and the panel says "${okText}"`;
   },
+  async "shaders: resized, rotated and scaled on the canvas like any layer, the drawing following"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:700px;height:460px;background:#fff;position:relative"><div data-name="Dots" data-shader="halftone" style="position:absolute;left:40px;top:40px;width:200px;height:150px"></div></div>`);
+    await shaderBudget(page, 1000);
+    const id = t.byName("Dots");
+    await sel(page, [id]);
+    await page.waitForTimeout(500);
+    const w0 = (await canvasSize(page, id)).width;
+    // Its east handle dragged 100 px: wider, and its drawing follows once let go.
+    const z = await S(page, async () => (await import("/ui/board-state.js" as string)).B.view.z);
+    const h = (await page.locator('.bd-handle[data-handle="e"]').boundingBox())!;
+    await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(h.x + h.width / 2 + 100 * z, h.y + h.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    const w1 = (await canvasSize(page, id)).width;
+    if (styleOf(t, id).width !== "300px" || Math.abs(w1 - w0 * 1.5) > 2) return `resized to ${styleOf(t, id).width}, its canvas ${w0} → ${w1} px`;
+    // Rotated from the panel: drawn turned, and still playing.
+    const rot = page.locator(".bd-right .num", { has: page.locator('[title="Rotation"]') }).locator("input");
+    if (await rot.count()) {
+      await rot.fill("20");
+      await rot.press("Enter");
+    } else await commitOps(page, [{ op: "set", id, style: { transform: "rotate(20deg)" } }]);
+    await page.waitForTimeout(400);
+    const turned = await S(page, (x: string) => getComputedStyle(document.querySelector(`.bd-world [data-bid="${x}"]`)!).transform, id);
+    const f1 = await layerFrames(page, [id]);
+    await page.waitForTimeout(400);
+    if (styleOf(t, id).transform !== "rotate(20deg)" || turned === "none" || (await layerFrames(page, [id]))[id] <= f1[id] + 5) return `rotated: ${styleOf(t, id).transform}, drawn ${turned}`;
+    // The Scale tool: the box and its dot spacing (a length in px) twice as big.
+    await S(page, async (x: string) => {
+      const c = await import("/ui/board-canvas.js" as string);
+      const plan = c.scalePlan([x]);
+      plan.to(2);
+      plan.done();
+    }, id);
+    await page.waitForTimeout(600);
+    const n = nodeOf(t, id);
+    if (n.style.width !== "600px" || n.style.height !== "300px" || n.shader?.params?.spacing !== 22) return `scaled: ${JSON.stringify(n.style)} ${JSON.stringify(n.shader)}`;
+    await picture(page, "shaders-transformed");
+    return "ok";
+  },
   async "shaders: Preview plays them, and Copy as HTML is a page that plays them by itself"(page) {
     const t = await openMaskBoard(page, `<div data-name="Art" style="width:420px;height:320px;background:#fff;position:relative"><div data-name="Rays" data-shader="light-rays" data-params='{"light":"var(--brand)"}' style="position:absolute;inset:0"></div></div>`);
     boards.changeBoard(t.id, [{ op: "token", name: "--brand", value: "#ff3b30" }], "studio");
