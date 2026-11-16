@@ -1054,6 +1054,17 @@ await fake.close();
   const g3 = store.getBoard(gb).nodes[art].style;
   check(g3.gap === "32px" && g3.padding === "40px" && g3.gridAutoRows === "240px" && g3.gridTemplateColumns === "1fr 2fr" && g3.width === "1200px", `scale doubles a grid's gaps, padding and px tracks (${JSON.stringify(g3)})`);
 }
+// A text mask at the very top of its frame (top: 0) gets a real height: a bare 0 inside calc() made
+// the whole calc() invalid, so the mask showed nothing.
+{
+  const got = htmlToNodes(`<div style="position:relative;width:400px;height:120px"><span data-mask style="position:absolute;left:0;top:0;width:400px;font-size:100px;line-height:120px">KILN</span><div style="position:absolute;left:0;top:0;width:400px;height:120px;background:#f60"></div></div>`);
+  const board: Board = { ...emptyBoard("m0", "Mask at 0", new Date().toISOString()), nodes: got.nodes };
+  board.pages[0].children = got.roots;
+  for (const id of got.roots) got.nodes[id].parent = null;
+  const out = nodeHtml(board, got.roots[0], {});
+  check(/data-mask-scope/.test(out) && !/calc\([^)]*- 0[;)\s]/.test(out) && /calc\(100% - 0px\)/.test(out), "a mask at the top of its frame writes a valid height (calc with 0px, not a bare 0)");
+}
+
 // Agents' cursors: each agent's latest move on a board (what it touched, what it was doing), from
 // the tools it uses; a look leaves the artboards it wrote to as they were.
 {

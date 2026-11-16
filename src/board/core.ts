@@ -3279,14 +3279,17 @@ export function maskCss(board: Board, id: string, opts: { src?: (src: string) =>
   const H = given(s.height);
   const scope: Style = { position: "absolute", inset: "0" };
   const box: Style = {};
+  // Inside calc() a length needs its unit: a bare 0 there makes the whole calc() invalid (a mask at
+  // the top of its frame then had no height, and showed nothing).
+  const inCalc = (v: string) => (/^[+-]?(0+\.?0*|\.0+)$/.test(v.trim()) ? "0px" : v);
   if (L !== undefined) {
     box.marginLeft = L;
     if (W) box.width = W;
   } else if (R !== undefined) {
-    if (W) Object.assign(box, { marginLeft: `calc(100% - ${R} - ${W})`, width: W });
+    if (W) Object.assign(box, { marginLeft: `calc(100% - ${inCalc(R)} - ${inCalc(W)})`, width: W });
     else box.marginRight = R;
   } else if (W) box.width = W;
-  if (T !== undefined && !T.includes("%")) Object.assign(box, { marginTop: T, height: H ?? `calc(100% - ${T})` });
+  if (T !== undefined && !T.includes("%")) Object.assign(box, { marginTop: T, height: H ?? `calc(100% - ${inCalc(T)})` });
   else if (T !== undefined) {
     // A top in % is of the frame's height, which a margin can't say: a grid row can.
     Object.assign(scope, { display: "grid", gridTemplateRows: `${T} ${H ?? "1fr"}` });
