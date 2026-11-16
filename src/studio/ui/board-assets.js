@@ -11,6 +11,7 @@ import { placeCopy } from "./board.js";
 import { Section, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { shapeInBox } from "./shapes.js";
+import { ShaderAssets, shaderAssetLayers } from "./board-shaders.js";
 import { S, api, dismiss, fail, fileUrl, thumbUrl, toast, useStore } from "./store.js";
 
 // ---------------------------------------------------------------------------------------------
@@ -42,6 +43,7 @@ export const BOARD_SHAPES = [
 
 /** What an asset becomes: the new layers (not yet on the board), made with no parent. */
 async function layersFor(a) {
+  if (a.kind === "shader") return shaderAssetLayers(a);
   if (a.kind === "shape") {
     const k = BOARD_SHAPES.find((x) => x.id === a.id);
     const id = newId();
@@ -203,6 +205,7 @@ export function AssetsPanel() {
       <div class="bd-tints">${TINTS.map((c) => html`<button class=${c === tint ? "on" : ""} style=${{ background: c }} title=${c} onClick=${() => pick(c)}></button>`)}</div>
       <div class="bd-asset-grid shapes">${BOARD_SHAPES.map((k) => html`<${ShapeTile} k=${k} tint=${tint} />`)}</div>
     <//>
+    <${ShaderAssets} />
     <${Section} title="Devices" collapsible id="bd-a-devices">
       <p class="bd-note">A screenshot in Apple's device frame, as a picture on the board.</p>
       ${artboard && html`<button class="btn sm block" onClick=${() => addAsset({ kind: "device", node: artboard.id, name: `${artboard.name} in a device` })}><${Icon} n="phone" s=${13} />Put “${artboard.name}” in a device</button>`}

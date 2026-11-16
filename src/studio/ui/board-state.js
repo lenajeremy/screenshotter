@@ -358,8 +358,8 @@ async function reload({ quiet = false, agent = false } = {}) {
   if (agent && B.board) {
     const before = B.board;
     B.past.push({
-      ops: [{ op: "replace", pages: board.pages, nodes: board.nodes, tokens: board.tokens, name: board.name }],
-      inverse: [{ op: "replace", pages: before.pages, nodes: before.nodes, tokens: before.tokens, name: before.name }],
+      ops: [{ op: "replace", pages: board.pages, nodes: board.nodes, tokens: board.tokens, name: board.name, shaders: board.shaders ?? [] }],
+      inverse: [{ op: "replace", pages: before.pages, nodes: before.nodes, tokens: before.tokens, name: before.name, shaders: before.shaders ?? [] }],
       label: "An agent's change",
     });
     if (B.past.length > HISTORY) B.past.shift();

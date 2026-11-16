@@ -496,16 +496,24 @@
     L.cost = L.probes ? L.cost * 0.6 + ms * 0.4 : ms;
     L.probes++;
     L.probeAt = frameNo + (L.probes < 5 ? 3 : 30 + (L.id % 11));
-    L.strikes = ms > opts.budget ? L.strikes + 1 : Math.max(0, L.strikes - 1);
-    if (L.strikes < 2) return;
+    if (ms > opts.budget) strike(L);
+    else L.strikes = Math.max(0, L.strikes - 1);
+  }
+
+  /** Too slow once more: twice in a row, it's drawn smaller (down to 0.3 of its size), and after that stopped. */
+  function strike(L) {
+    if (++L.strikes < 2) return;
     L.strikes = 0;
     if (L.quality > 0.3) {
       L.quality = Math.max(0.3, L.quality * 0.6);
       L.probes = 0;
+      L.probeAt = frameNo + 3;
       L.dirty = true;
       return;
     }
+    // Stopped: its still is drawn once, so it can be sharp.
     L.slow = true;
+    L.quality = 1;
     L.dirty = true;
   }
 
@@ -627,17 +635,16 @@
       if (!L.visible && opts.mode === "live") continue;
       if (L.plays() || resized || L.dirty) draw(L);
     }
-    // All of them together too slow: the costliest is drawn smaller first.
-    let total = 0;
-    let worst = null;
-    for (const L of layers)
-      if (L.visible && L.plays() && L.probes) {
-        total += L.cost;
-        if (!worst || L.cost > worst.cost) worst = L;
-      }
-    if (worst && total > opts.budget * 1.5 && frameNo >= worst.probeAt - 1) {
-      worst.strikes++;
-      worst.probeAt = frameNo + 3;
+    // All of them together too slow (each one may be fine): every half second, the costliest takes a strike.
+    if (frameNo % 30 === 0) {
+      let total = 0;
+      let worst = null;
+      for (const L of layers)
+        if (L.visible && L.plays() && L.probes) {
+          total += L.cost;
+          if (!worst || L.cost > worst.cost) worst = L;
+        }
+      if (worst && total > opts.budget * 1.5) strike(worst);
     }
     // Kept going while there are layers: a still needs drawing again when it's resized or zoomed.
     if (layers.size) raf = requestAnimationFrame(tick);
@@ -811,7 +818,7 @@
       contexts,
       webgl: gl2 ? 2 : gl ? 1 : 0,
       reduced: reduce,
-      layers: [...layers].map((L) => ({ state: L.stateObj ? L.stateObj.kind : "", frames: L.frames, width: L.canvas.width, height: L.canvas.height, visible: L.visible, quality: L.quality, cost: Math.round(L.cost * 100) / 100 })),
+      layers: [...layers].map((L) => ({ layer: L.canvas.dataset.layer || null, state: L.stateObj ? L.stateObj.kind : "", frames: L.frames, width: L.canvas.width, height: L.canvas.height, visible: L.visible, quality: L.quality, cost: Math.round(L.cost * 100) / 100, probes: L.probes, strikes: L.strikes, probeAt: L.probeAt, frame: frameNo })),
     };
   }
 

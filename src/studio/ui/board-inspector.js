@@ -13,6 +13,7 @@ import { Icon } from "./icons.js";
 import { api, fail, fileUrl, toast } from "./store.js";
 import { areaRects, areasValid, gridOf, gridPatch, isGrid, parsePlacement, parseTracks, placementCss, placementSpan, trackArgs, trackKind, trackLabel } from "./board-core.js";
 import { AXES as GRID_AXES, changeGrids, gridGeometry, inGrid, insertTrackOps, layoutOf, moveTrackOps, removeTrackOps, setLayout, trackCountOps, trackSizeOps } from "./board-grid.js";
+import { ShaderSection } from "./board-shaders.js";
 
 /** What the panel doesn't draw from: the view and the pointer (it does show the words picked in a text). */
 const PANEL_SKIPS = CANVAS_ONLY.filter((k) => k !== "words");
@@ -82,7 +83,7 @@ export function Inspector() {
   return html`<div class="panel-head bd-ihead">
       <span class="ico"><${Icon} n=${layerIcon(n)} s=${15} /></span>
       <h2>${many ? `${list.length} layers` : n.name}</h2>
-      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", video: "Video", svg: "Vector", vector: "Vector" }[n.type]}</span>`}
+      ${!many && html`<span class="sub">${n.isComponent ? "Component" : n.instanceOf ? "Copy" : !n.parent && n.type === "frame" ? "Artboard" : n.shape ? "Shape" : { frame: "Frame", text: "Text", image: "Image", video: "Video", svg: "Vector", vector: "Vector", shader: "Shader" }[n.type]}</span>`}
     </div>
     <div class="panel-body bd-insp">
       ${b.tool === "scale" && html`<${ScaleSection} />`}
@@ -94,11 +95,12 @@ export function Inspector() {
       ${allText && html`<${TypeSection} />`}
       ${!many && n.type === "image" && html`<${ImageSection} />`}
       ${!many && n.type === "video" && html`<${VideoSection} />`}
+      ${!many && n.type === "shader" && html`<${ShaderSection} Color=${BoardColor} commit=${commit} />`}
       ${!many && n.shape && html`<${ShapeSection} />`}
       ${!many && n.type === "svg" && !n.shape && html`<${VectorSection} />`}
       <${LookSection} />
       <${MaskSection} />
-      ${!allText && n.type !== "image" && n.type !== "video" && n.type !== "svg" && html`<${FillSection} />`}
+      ${!allText && n.type !== "image" && n.type !== "video" && n.type !== "svg" && n.type !== "shader" && html`<${FillSection} />`}
       ${n.type !== "svg" && html`<${LineSection} kind="border" />`}
       <${LineSection} kind="outline" />
       ${n.type !== "svg" && html`<${ShadowSection} />`}

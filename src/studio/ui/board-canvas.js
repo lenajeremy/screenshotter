@@ -13,6 +13,7 @@ import { fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
 import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
+import { ShaderLayer } from "./board-shaders.js";
 
 export const canvasEl = { current: null };
 
@@ -177,6 +178,8 @@ class Layer extends Component {
     if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
     // Its first frame (the still) until it's played: videos don't play on their own on the canvas.
     if (n.type === "video") return html`<video ...${attrs} src=${n.src ? srcUrl(n.src) : undefined} poster=${n.poster ? srcUrl(n.poster) : undefined} preload="metadata" playsinline draggable=${false}></video>`;
+    // Drawn by the shader runtime, in a canvas inside its box (board-shaders.js).
+    if (n.type === "shader") return html`<${ShaderLayer} n=${n} attrs=${attrs} />`;
     const nodes = B.board.nodes;
     if (n.type === "svg") {
       if (n.svg) return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg, n.style.overflow) }}></div>`;

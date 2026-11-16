@@ -407,6 +407,27 @@ async function drawsDuring(page: Page, names: string[], act: () => Promise<unkno
   });
 }
 
+/** The shader runtime's frame-time budget: high, so a software GPU (Chromium's here) never trips the guard; tiny, to trip it. */
+const shaderBudget = (page: Page, ms: number) => page.evaluate(`globalThis.BoardShaders && BoardShaders.configure({ budget: ${ms} })`);
+/** How many frames each shader layer on the canvas has drawn, by layer id. */
+const layerFrames = (page: Page, ids: string[]) =>
+  S(page, (ids: string[]) => {
+    const out: Record<string, number> = {};
+    for (const l of (globalThis as unknown as { BoardShaders: { stats(): { layers: Array<{ layer: string | null; frames: number }> } } }).BoardShaders.stats().layers) if (l.layer && ids.includes(l.layer)) out[l.layer] = l.frames;
+    return out;
+  }, ids);
+/** The size a shader layer's canvas is drawn at, in pixels. */
+const canvasSize = (page: Page, id: string) => S(page, (id: string) => ({ width: (document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement).width, height: (document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement).height }), id);
+/** A few of a shader layer's pixels, as text to compare. */
+const canvasPixels = (page: Page, id: string) =>
+  S(page, (id: string) => {
+    const c = document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement;
+    const g = c.getContext("2d")!;
+    const out: number[] = [];
+    for (const [fx, fy] of [[0.2, 0.2], [0.5, 0.5], [0.8, 0.7], [0.3, 0.8]]) out.push(...g.getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data);
+    return out.join(",");
+  }, id);
+
 const CHECKS: Record<string, Check> = {
   // From the 0.14 review of the board editor.
   async "board review: typing then clicking another layer row keeps the words"(page) {
@@ -3027,6 +3048,204 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(700);
     const e = boards.getBoard(t.id).nodes.emptyf1.style;
     return e.display === "grid" && e.gridTemplateColumns === "repeat(2, 1fr)" && e.gridTemplateRows === "repeat(2, 1fr)" ? "ok" : `⇧G on an empty frame made ${JSON.stringify(e)}`;
+  },
+
+  // Shaders: live GPU layers, drawn by one runtime with one WebGL context for all of them.
+  async "shaders: added from Assets they play on the canvas, all in one WebGL context, with no panel drawn per frame"(page) {
+    // Every WebGL context the page makes, counted from before the Studio loads.
+    await page.addInitScript("(() => { const get = HTMLCanvasElement.prototype.getContext; window.__gl = 0; HTMLCanvasElement.prototype.getContext = function (kind, ...rest) { const c = get.call(this, kind, ...rest); if (c && /webgl/.test(String(kind)) && !this.__gl) { this.__gl = 1; window.__gl++; } return c; }; })()");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(400);
+    const t = await openTestBoard(page);
+    await shaderBudget(page, 1000);
+    await sel(page, []);
+    await page.locator(".bd-left-tabs button", { hasText: "Assets" }).click();
+    await page.waitForSelector(".bd-asset.shader canvas");
+    await page.waitForTimeout(700);
+    const tiles = await S(page, () => [...document.querySelectorAll(".bd-asset.shader canvas")].filter((c) => (c as HTMLCanvasElement).dataset.shaderState === "playing").length);
+    if (tiles < 8) return `only ${tiles} shader tiles are playing in Assets`;
+    // One clicked (into the middle of the view), one dragged onto the canvas.
+    await page.locator(".bd-asset.shader", { hasText: "Mesh gradient" }).click();
+    await page.waitForTimeout(700);
+    const phone = await boxOf(page, t.byName("Phone"));
+    await page.locator(".bd-asset.shader", { hasText: "Aurora" }).dragTo(page.locator(".bd-canvas"), { targetPosition: { x: Math.round(phone.x + phone.width + 260 - 300), y: Math.round(phone.y + 200 - 52) } });
+    await page.waitForTimeout(900);
+    const shaders = () => Object.values(boards.getBoard(t.id).nodes).filter((n) => n.type === "shader");
+    const made = shaders();
+    if (made.length !== 2 || !made.some((n) => n.shader?.preset === "mesh-gradient") || !made.some((n) => n.shader?.preset === "aurora")) return `the board's shaders: ${JSON.stringify(made.map((n) => n.shader))}`;
+    const before = await layerFrames(page, made.map((n) => n.id));
+    await page.waitForTimeout(600);
+    const after = await layerFrames(page, made.map((n) => n.id));
+    if (!made.every((n) => after[n.id] > before[n.id] + 5)) return `the shaders aren't playing: frames ${JSON.stringify(before)} then ${JSON.stringify(after)}`;
+    const gl = await S(page, () => ({ made: (window as unknown as { __gl: number }).__gl, runtime: (globalThis as unknown as { BoardShaders: { stats(): { contexts: number } } }).BoardShaders.stats().contexts }));
+    if (gl.made !== 1 || gl.runtime !== 1) return `${gl.made} WebGL contexts made for 2 layers and ${tiles} tiles (the runtime says ${gl.runtime})`;
+    // A second of play redraws no component: the runtime draws in the canvases itself.
+    const draws = await drawsDuring(page, ["BoardCanvas", "Layer", "ShaderLayer", "Inspector", "LayersList", "AssetsPanel", "ShaderAssets"], () => page.waitForTimeout(1000));
+    if (Object.values(draws).some((n) => n > 2)) return `components drew while the shaders played: ${JSON.stringify(draws)}`;
+    // Panned: drawn at half the resolution while it moves, sharp again once it stops.
+    const id = made.find((n) => n.shader?.preset === "mesh-gradient")!.id;
+    const full = await canvasSize(page, id);
+    let least = full.width;
+    for (let i = 0; i < 8; i++) {
+      await page.mouse.move(700, 400);
+      await page.mouse.wheel(14, 0);
+      await page.waitForTimeout(30);
+      least = Math.min(least, (await canvasSize(page, id)).width);
+    }
+    await page.waitForTimeout(500);
+    const settled = await canvasSize(page, id);
+    if (!(least <= full.width * 0.6) || settled.width !== full.width) return `while panning the canvas was ${least} px wide (${full.width} still), then ${settled.width}`;
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await sel(page, [id]);
+      await page.waitForTimeout(400);
+      await picture(page, `shaders-${theme}-assets`);
+      const problems = await themeAudit(page);
+      if (problems.length) return `${theme}: ${problems.join(" | ")}`;
+    }
+    return "ok";
+  },
+  async "shaders: a parameter changes its pixels; pause, play and Reduce Motion"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:480px;height:360px;background:#fff;position:relative"><div data-name="Glow" data-shader="mesh-gradient" style="position:absolute;left:40px;top:30px;width:400px;height:300px"></div></div>`);
+    await shaderBudget(page, 1000);
+    const id = t.byName("Glow");
+    await sel(page, [id]);
+    await page.waitForTimeout(600);
+    const f0 = await layerFrames(page, [id]);
+    await page.waitForTimeout(400);
+    if ((await layerFrames(page, [id]))[id] <= f0[id] + 5) return "it isn't playing";
+    // Paused: its still, drawn once.
+    await page.click("[data-shader-play]");
+    await page.waitForTimeout(400);
+    if (!nodeOf(t, id).shader?.paused) return `pause didn't pause it: ${JSON.stringify(nodeOf(t, id).shader)}`;
+    const p1 = await layerFrames(page, [id]);
+    const still = await canvasPixels(page, id);
+    await page.waitForTimeout(500);
+    if ((await layerFrames(page, [id]))[id] !== p1[id] || (await canvasPixels(page, id)) !== still) return "paused, it still drew";
+    const said = await S(page, () => document.querySelector("[data-shader-status]")?.textContent ?? "");
+    if (!/Paused at its still/.test(said)) return `the panel says "${said}" when paused`;
+    // A parameter changed in the panel: new pixels (and the value on the board).
+    const warp = page.locator('.bd-right .row[data-param="warp"] .val');
+    await warp.fill("2");
+    await warp.press("Enter");
+    await page.waitForTimeout(500);
+    if (nodeOf(t, id).shader?.params?.warp !== 2) return `warp on the board: ${JSON.stringify(nodeOf(t, id).shader)}`;
+    if ((await canvasPixels(page, id)) === still) return "a parameter changed, the pixels didn't";
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await page.waitForTimeout(300);
+      await picture(page, `shaders-${theme}-panel`);
+      const problems = await themeAudit(page);
+      if (problems.length) return `${theme}: ${problems.join(" | ")}`;
+    }
+    await page.click("[data-shader-play]");
+    await page.waitForTimeout(300);
+    const p2 = await layerFrames(page, [id]);
+    await page.waitForTimeout(400);
+    if ((await layerFrames(page, [id]))[id] <= p2[id] + 5) return "played again, it didn't move";
+    // Reduce Motion: every shader a still.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.waitForTimeout(400);
+    const r1 = await layerFrames(page, [id]);
+    await page.waitForTimeout(500);
+    const r2 = await layerFrames(page, [id]);
+    const reduced = await S(page, () => document.querySelector("[data-shader-status]")?.textContent ?? "");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    if (r2[id] !== r1[id] || !/Reduce Motion is on/.test(reduced)) return `with Reduce Motion it drew ${r2[id] - r1[id]} frames, and the panel said "${reduced}"`;
+    await page.waitForTimeout(400);
+    const a1 = await layerFrames(page, [id]);
+    await page.waitForTimeout(400);
+    return (await layerFrames(page, [id]))[id] > a1[id] + 5 ? "ok" : "Reduce Motion off again, it didn't play";
+  },
+  async "shaders: masked, a shader shows only where its mask is"(page) {
+    const red = "void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }";
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:300px;height:300px;background:#fff;position:relative"><div data-name="Circle" data-mask style="position:absolute;left:50px;top:50px;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-name="Fill" data-shader="custom" data-code="${red}" style="position:absolute;left:0;top:0;width:300px;height:300px"></div></div>`);
+    await shaderBudget(page, 1000);
+    await sel(page, []);
+    await page.waitForTimeout(700);
+    const art = t.byName("Art");
+    const seen = await colorsAt(page, art, 300, [[150, 150], [80, 150], [60, 60], [12, 12], [290, 290]]);
+    if (seen.join() !== "red,red,white,white,white") return `inside and outside the circle: ${seen.join(", ")}`;
+    if (!(await S(page, (fill: string) => Boolean(document.querySelector(`[data-mask-scope] [data-bid="${fill}"] canvas`)), t.byName("Fill")))) return "the shader isn't inside what masks it";
+    await picture(page, "shaders-masked");
+    return "ok";
+  },
+  async "shaders: one too slow is stopped at its still and says so; code of its own shows its errors by line"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:420px;height:320px;background:#fff;position:relative"><div data-name="Mine" data-shader="custom" data-code="uniform vec3 uTint; // @color = #ff3b30
+void main() { gl_FragColor = vec4(uTint * (0.6 + 0.4 * sin(uTime)), 1.0); }" style="position:absolute;left:10px;top:10px;width:400px;height:300px"></div></div>`);
+    const id = t.byName("Mine");
+    await sel(page, [id]);
+    await shaderBudget(page, 0.0001);
+    await page.waitForTimeout(1500);
+    const st = await S(page, (x: string) => (document.querySelector(`canvas[data-layer="${x}"]`) as HTMLCanvasElement | null)?.dataset.shaderState, id);
+    const said = await S(page, () => document.querySelector("[data-shader-status]")?.textContent ?? "");
+    const told = await toasts(page);
+    if (st !== "slow" || !/Too slow to play here/.test(said) || !/too slow to play/.test(told)) return `too slow: state ${st}, the panel says "${said}", toasts ${told}, stats ${JSON.stringify(await page.evaluate("BoardShaders.stats()"))}`;
+    const s1 = await layerFrames(page, [id]);
+    await page.waitForTimeout(400);
+    if ((await layerFrames(page, [id]))[id] !== s1[id]) return "stopped as too slow, it still drew";
+    await shaderBudget(page, 1000);
+    await page.locator("[data-shader-status] .bd-link", { hasText: "Try again" }).click();
+    await page.waitForTimeout(600);
+    const s2 = await layerFrames(page, [id]);
+    await page.waitForTimeout(400);
+    if ((await layerFrames(page, [id]))[id] <= s2[id] + 5) return "Try again didn't play it";
+    // Its code, broken on line 2: listed by line as it's typed, and the canvas shows the error once applied.
+    const code = page.locator(".bd-code textarea");
+    await code.fill("uniform vec3 uTint; // @color = #ff3b30\nvoid main() { gl_FragColor = vec4(oops, 1.0); }");
+    await page.waitForTimeout(600);
+    const errs = await S(page, () => [...document.querySelectorAll(".bd-code-err")].map((e) => e.textContent).join(" | "));
+    if (!/^Line 2.*oops/.test(errs)) return `the errors listed: "${errs}"`;
+    await code.press("Meta+Enter");
+    await page.waitForTimeout(600);
+    const bad = await S(page, (x: string) => (document.querySelector(`canvas[data-layer="${x}"]`) as HTMLCanvasElement | null)?.dataset.shaderState, id);
+    if (bad !== "error" || !/oops/.test(nodeOf(t, id).shader?.code ?? "")) return `applied, the layer is ${bad}`;
+    for (const theme of ["dark", "light"]) {
+      await S(page, async (th: string) => (await import("/ui/store.js" as string)).setTheme(th), theme);
+      await page.waitForTimeout(300);
+      await picture(page, `shaders-${theme}-code-error`);
+      const problems = await themeAudit(page);
+      if (problems.length) return `${theme}: ${problems.join(" | ")}`;
+    }
+    await code.fill("uniform vec3 uTint; // @color = #ff3b30\nvoid main() { gl_FragColor = vec4(uTint, 1.0); }");
+    await code.press("Meta+Enter");
+    await page.waitForTimeout(700);
+    const ok = await S(page, (x: string) => (document.querySelector(`canvas[data-layer="${x}"]`) as HTMLCanvasElement | null)?.dataset.shaderState, id);
+    const okText = await S(page, () => document.querySelector(".bd-code-ok")?.textContent ?? "");
+    return ok === "playing" && /Compiles/.test(okText) ? "ok" : `fixed, the layer is ${ok} and the panel says "${okText}"`;
+  },
+  async "shaders: Preview plays them, and Copy as HTML is a page that plays them by itself"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:420px;height:320px;background:#fff;position:relative"><div data-name="Rays" data-shader="light-rays" data-params='{"light":"var(--brand)"}' style="position:absolute;inset:0"></div></div>`);
+    boards.changeBoard(t.id, [{ op: "token", name: "--brand", value: "#ff3b30" }], "studio");
+    const art = t.byName("Art");
+    const frames = (p: Page) => p.evaluate("BoardShaders.stats().layers.map((l) => l.frames)") as Promise<number[]>;
+    // Preview: the runtime is its first script, and the shader plays (Reduce Motion aside).
+    const view = await page.context().browser()!.newPage();
+    await view.goto(`${BASE}board/preview?board=${t.id}&node=${art}&w=420`, { waitUntil: "load" });
+    await view.waitForTimeout(600);
+    const first = await view.evaluate(() => document.querySelector("script")?.hasAttribute("data-board-shaders"));
+    const a = await frames(view);
+    await view.waitForTimeout(500);
+    const b = await frames(view);
+    const state = await view.evaluate(() => (document.querySelector("[data-shader] canvas") as HTMLCanvasElement | null)?.dataset.shaderState);
+    await view.close();
+    if (!first || a.length !== 1 || b[0] <= a[0] + 5 || state !== "playing") return `Preview: runtime first ${first}, frames ${a} then ${b}, ${state}`;
+    // Copy as HTML: the runtime, then the layers carrying their code, playing in a page of their own.
+    const copied = await S(page, async (id: string) => {
+      const m = await import("/ui/board-shaders.js" as string);
+      const s = await import("/ui/board-state.js" as string);
+      for (let i = 0; i < 50 && !m.pageHtml(s.B.board, [id]).startsWith("<script"); i++) await new Promise((r) => setTimeout(r, 100));
+      return m.pageHtml(s.B.board, [id]) as string;
+    }, art);
+    if (!/^<script data-board-shaders>/.test(copied) || !/data-shader="light-rays"[^>]* data-code="/.test(copied)) return `Copy as HTML gave ${copied.slice(0, 160)}`;
+    const own = await page.context().browser()!.newPage();
+    await own.setContent(`<!doctype html><html><head><style>:root{--brand:#2f7dff}</style></head><body style="margin:0">${copied}</body></html>`);
+    await own.waitForTimeout(600);
+    const c = await frames(own);
+    await own.waitForTimeout(500);
+    const d = await frames(own);
+    await own.close();
+    return c.length === 1 && d[0] > c[0] + 5 ? "ok" : `the copied page drew ${c} then ${d} frames`;
   },
 };
 
