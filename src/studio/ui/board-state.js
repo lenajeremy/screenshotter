@@ -80,7 +80,7 @@ export function bset(patch) {
  * What (nearly) only the canvas draws from, changing many times a second as the pointer moves:
  * keys of B, and "words", the words picked in a text being typed in (for the inspector).
  */
-export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "words"];
+export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "words", "presence", "following"];
 /**
  * Redraw the calling component whenever the board changes, except for changes to only the keys it
  * says it `ignore`s.
@@ -400,6 +400,13 @@ function startPolling() {
       const r = await api(`/api/board/rev?id=${encodeURIComponent(B.id)}`);
       const working = r.working ?? [];
       if (working.join() !== B.working.join()) bset({ working });
+      // The agents' latest moves, for their cursors: redrawn only when one moves.
+      const presence = r.presence ?? [];
+      const moved = presence.map((p) => `${p.key}@${p.at}`).join();
+      if (moved !== B.presenceAt) {
+        B.presenceAt = moved;
+        bset({ presence });
+      }
       if (r.talk !== undefined && r.talk !== B.talk) {
         B.talk = r.talk;
         loadComments();
@@ -418,7 +425,7 @@ export async function openBoard(id) {
   try {
     const board = await api(`/api/board?id=${encodeURIComponent(id)}`);
     const remembered = rememberedView(id);
-    Object.assign(B, { id, board, page: remembered?.page && board.pages.some((p) => p.id === remembered.page) ? remembered.page : board.pages[0]?.id, sel: [], hover: null, editing: null, renaming: null, past: [], future: [], tool: "move", working: [], drop: null, guides: [], open: new Set(), comments: { rev: 0, threads: [], agents: board.agents ?? {} }, thread: null, draft: null, talk: "" });
+    Object.assign(B, { id, board, page: remembered?.page && board.pages.some((p) => p.id === remembered.page) ? remembered.page : board.pages[0]?.id, sel: [], hover: null, editing: null, renaming: null, past: [], future: [], tool: "move", working: [], drop: null, guides: [], open: new Set(), comments: { rev: 0, threads: [], agents: board.agents ?? {} }, thread: null, draft: null, talk: "", presence: [], presenceAt: "", following: null });
     if (remembered?.view) B.view = remembered.view;
     else B.view = { ...B.view, fitPending: true };
     set({ boardId: id, scenesPage: false, scenesOpen: false });

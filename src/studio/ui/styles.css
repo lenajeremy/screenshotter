@@ -2282,3 +2282,22 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .wi-progress { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-3); }
 .wi-bar { height: 6px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
 .wi-bar i { display: block; height: 100%; border-radius: inherit; background: var(--iris); transition: width 0.35s var(--ease); }
+
+/* Agents on the board, live: a cursor in each agent's colour with its name, gliding to what it
+   touched (which flashes in that colour), and their avatars over the canvas, to follow one. */
+.bd-presence { position: absolute; left: 0; top: 0; z-index: 3; transform-origin: 0 0; pointer-events: none; }
+.bd-agent-mark { transition: opacity 0.6s ease; }
+.bd-cursor { position: absolute; transition: left 0.55s cubic-bezier(0.22, 0.9, 0.3, 1), top 0.55s cubic-bezier(0.22, 0.9, 0.3, 1); }
+.bd-cursor-in { position: absolute; left: -2px; top: -2px; transform: scale(var(--inv)); transform-origin: 2px 2px; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)); }
+.bd-cursor-in svg { display: block; }
+.bd-cursor-name { position: absolute; left: 14px; top: 16px; padding: 2px 8px; border-radius: 6px 6px 6px 2px; background: var(--c); color: #fff; font: 600 11.5px var(--sans); white-space: nowrap; }
+.bd-agent-flash { position: absolute; border-radius: 3px; box-shadow: 0 0 0 calc(2px * var(--inv)) var(--c); animation: bd-agent-flash 1.6s ease-out forwards; }
+@keyframes bd-agent-flash { 0% { opacity: 1; } 60% { opacity: 0.9; } 100% { opacity: 0; } }
+.bd-presence-bar { position: absolute; top: 10px; right: 12px; z-index: 6; display: flex; align-items: center; gap: 6px; }
+.bd-avatar { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--c); color: #fff; font: 650 11px var(--sans); box-shadow: 0 0 0 2px var(--stage); cursor: pointer; transition: transform 0.12s var(--ease); }
+.bd-avatar:hover { transform: translateY(-1px); }
+.bd-avatar.on { box-shadow: 0 0 0 2px var(--stage), 0 0 0 4px var(--c); }
+.bd-following { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--c); color: #fff; font: 600 11.5px var(--sans); white-space: nowrap; }
+.bd-following .bd-link { color: #fff; }
+.bd-follow-frame { position: absolute; inset: 0; z-index: 5; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--c); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .bd-cursor { transition: none; } .bd-agent-flash { animation-duration: 0.01s; } }

@@ -866,6 +866,52 @@ const CHECKS: Record<string, Check> = {
       site.close();
     }
   },
+  async "an agent's cursor goes to what it touches, and following it brings its changes into view until you take over"(page) {
+    const t = await openTestBoard(page);
+    const phone = t.byName("Phone");
+    const touch = (id: string, doing = "edit") =>
+      boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [phone], at: new Date().toISOString(), touch: { ids: [id], doing } }], "agent");
+    const cursorAt = () => S(page, () => {
+      const c = document.querySelector(".bd-cursor .bd-cursor-in")?.getBoundingClientRect();
+      return c ? { x: c.left, y: c.top, name: document.querySelector(".bd-cursor-name")?.textContent } : null;
+    });
+    touch(t.byName("Row One"));
+    // The cursor is a point (the arrow and name hang from it): there, not "visible" as a box.
+    const shown = await page.waitForSelector(".bd-cursor", { state: "attached", timeout: 5000 }).then(() => true, () => false);
+    if (!shown) return "no cursor came for the agent's change";
+    await page.waitForTimeout(900);
+    const one = await cursorAt();
+    const r1 = await boxOf(page, t.byName("Row One"));
+    if (!one || one.name !== "Design agent") return `the cursor shows ${JSON.stringify(one)}`;
+    if (one.x < r1.x - 4 || one.x > r1.x + r1.width || one.y < r1.y - 4 || one.y > r1.y + r1.height) return `the cursor is at ${one.x},${one.y}, not on Row One (${r1.x},${r1.y} ${r1.width}×${r1.height})`;
+    await picture(page, "presence-cursor");
+    touch(t.byName("Row Three"));
+    await page.waitForTimeout(1500);
+    const three = await cursorAt();
+    const r3 = await boxOf(page, t.byName("Row Three"));
+    if (!three || three.y < r3.y - 4 || three.y > r3.y + r3.height) return "the cursor didn't move to Row Three";
+    // Follow: the view goes to what the agent touches when it's out of sight.
+    await page.click(".bd-avatar");
+    const following = await page.waitForFunction(() => document.querySelector(".bd-following")?.textContent, null, { timeout: 3000 }).then((h) => h.jsonValue(), () => "");
+    if (!/Following Design agent/.test(following)) return `following shows "${following}"`;
+    await S(page, async () => {
+      const m = await import("/ui/board-state.js" as string);
+      m.bset({ view: { ...m.B.view, x: m.B.view.x + 3000, y: m.B.view.y + 2000 } });
+    });
+    await page.waitForTimeout(200);
+    touch(t.byName("Row Two"));
+    await page.waitForTimeout(1600);
+    const r2 = await boxOf(page, t.byName("Row Two"));
+    const vp = page.viewportSize()!;
+    if (r2.x < 0 || r2.y < 0 || r2.x + r2.width > vp.width || r2.y + r2.height > vp.height) return `following didn't bring Row Two into view (it's at ${Math.round(r2.x)},${Math.round(r2.y)})`;
+    await picture(page, "presence-following");
+    // Taking over (a scroll) stops it.
+    await page.mouse.move(vp.width / 2, vp.height / 2);
+    await page.mouse.wheel(0, 200);
+    await page.waitForTimeout(300);
+    const after = await S(page, async () => (await import("/ui/board-state.js" as string)).B.following);
+    return after ? `still following ${after} after a scroll` : "ok";
+  },
   async "the theme: picked in Settings, there from the first frame after a reload, and System follows the Mac"(page) {
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings" } }));
     const appearance = page.locator(".sheet .card", { hasText: "Appearance" });

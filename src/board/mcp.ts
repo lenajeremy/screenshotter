@@ -42,6 +42,7 @@ import {
   treeText,
   type Board,
   type Op,
+  type AgentTouch,
 } from "./core.js";
 import { drawLayers } from "./render.js";
 import { deviceImage } from "./device.js";

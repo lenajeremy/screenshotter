@@ -892,6 +892,26 @@ await fake.close();
   const g3 = store.getBoard(gb).nodes[art].style;
   check(g3.gap === "32px" && g3.padding === "40px" && g3.gridAutoRows === "240px" && g3.gridTemplateColumns === "1fr 2fr" && g3.width === "1200px", `scale doubles a grid's gaps, padding and px tracks (${JSON.stringify(g3)})`);
 }
+// Agents' cursors: each agent's latest move on a board (what it touched, what it was doing), from
+// the tools it uses; a look leaves the artboards it wrote to as they were.
+{
+  const store = await import("../src/board/store.js");
+  const made = await call("board_create", { name: "Presence" });
+  const pid = made.json.id;
+  await call("board_write_html", { board: pid, html: `<div data-name="Screen" style="width:390px;height:400px;background:#fff"><p data-name="Title" style="margin:0">Hi</p></div>` });
+  let b = store.getBoard(pid);
+  const screen = Object.values(b.nodes).find((n) => n.name === "Screen")!.id;
+  const title = Object.values(b.nodes).find((n) => n.type === "text")!.id;
+  const me = () => Object.values(store.getBoard(pid).agents ?? {}).find((a) => a.key === AGENT)?.last;
+  check(me()?.doing === "write" && me()?.ids.includes(screen), "writing an artboard is the agent's last move, on that artboard");
+  await call("board_edit", { board: pid, changes: [{ do: "style", ids: [title], style: { color: "#ff3b30" } }] });
+  check(me()?.doing === "edit" && me()?.ids.join() === title, "changing a layer is its last move, on that layer");
+  const wrote = store.getBoard(pid).agents?.[AGENT]?.artboards.join();
+  await call("board_screenshot", { board: pid, nodes: [title] });
+  b = store.getBoard(pid);
+  check(me()?.doing === "look" && me()?.ids.join() === title && b.agents?.[AGENT]?.artboards.join() === wrote, "a screenshot is a look at that layer, and doesn't count as writing");
+}
+
 // A website brought onto a board: a page served here with the awkward parts in it, read at 1200
 // wide, and checked layer by layer and against the page itself.
 {
