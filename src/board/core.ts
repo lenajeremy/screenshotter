@@ -518,6 +518,32 @@ export function cleanAttrs(attrs: Record<string, string> | undefined): [string, 
 }
 export const attrText = (attrs: Record<string, string> | undefined) => cleanAttrs(attrs).map(([k, v]) => ` ${k}="${escAttr(v)}"`).join("");
 
+/**
+ * The pictures an SVG's <image> elements show (href, or the old xlink:href) passed through `fn`, as
+ * an image layer's src is: a library file made a URL the page can load, or a file copied into the
+ * library. A link inside the SVG (#id) stays as it is.
+ */
+export function mapSvgImages(markup: string, fn: (src: string) => string): string {
+  if (!/<image\b/i.test(markup)) return markup;
+  return markup.replace(/<image\b[^>]*>/gi, (tag) =>
+    tag.replace(/(\s(?:xlink:)?href\s*=\s*)(["'])(.*?)\2/gi, (m, at: string, _q: string, v: string) => {
+      const src = v.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
+      return !src || src.startsWith("#") ? m : `${at}"${escAttr(fn(src))}"`;
+    }),
+  );
+}
+
+/** A vector part's attributes with an <image>'s picture passed through `fn` (see mapSvgImages). */
+export function svgImageAttrs(tag: string | undefined, attrs: Record<string, string> | undefined, fn: (src: string) => string): Record<string, string> | undefined {
+  if (tag !== "image" || !attrs) return attrs;
+  const out = { ...attrs };
+  for (const k of ["href", "xlink:href"]) {
+    const v = out[k]?.trim();
+    if (v && !v.startsWith("#")) out[k] = fn(v);
+  }
+  return out;
+}
+
 function svgAttrs(attrs: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(attrs)) {
@@ -1107,14 +1133,16 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
     }
     case "svg": {
       const inner = `display:block;width:100%;height:100%${n.style.overflow ? `;overflow:${n.style.overflow}` : ""}`;
-      if (n.svg) return `<div${attrs}>${n.svg.replace(/^<svg\b/i, `<svg style="${inner}"`)}</div>`;
+      // Its pictures (<image href>) load as an image layer's do.
+      const pics = (s: string) => (opts.src ? mapSvgImages(s, opts.src) : s);
+      if (n.svg) return `<div${attrs}>${pics(n.svg).replace(/^<svg\b/i, `<svg style="${inner}"`)}</div>`;
       const kids = (n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("");
-      return `<div${attrs}><svg xmlns="http://www.w3.org/2000/svg"${attrText(n.attrs)} style="${inner}">${n.defs ? `<defs>${n.defs}</defs>` : ""}${kids}</svg></div>`;
+      return `<div${attrs}><svg xmlns="http://www.w3.org/2000/svg"${attrText(n.attrs)} style="${inner}">${n.defs ? `<defs>${pics(n.defs)}</defs>` : ""}${kids}</svg></div>`;
     }
     case "vector": {
       const tag = vectorTag(n.tag);
-      const inner = tag === "g" ? (n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("") : (n.text ?? "");
-      return `<${tag}${attrs}${attrText(n.attrs)}>${inner}</${tag}>`;
+      const inner = tag === "g" ? (n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("") : opts.src ? mapSvgImages(n.text ?? "", opts.src) : (n.text ?? "");
+      return `<${tag}${attrs}${attrText(opts.src ? svgImageAttrs(tag, n.attrs, opts.src) : n.attrs)}>${inner}</${tag}>`;
     }
     default:
       return `<div${attrs}>${childrenHtml(board, n.children ?? [], opts, depth)}</div>`;

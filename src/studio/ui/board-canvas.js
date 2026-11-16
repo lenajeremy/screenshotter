@@ -5,6 +5,7 @@ import { Presence, PresenceBar } from "./board-presence.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
+import { mapSvgImages, svgImageAttrs } from "./board-core.js";
 import { CANVAS_ONLY } from "./board-state.js";
 import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
@@ -179,18 +180,19 @@ class Layer extends Component {
     if (n.type === "video") return html`<video ...${attrs} src=${n.src ? srcUrl(n.src) : undefined} poster=${n.poster ? srcUrl(n.poster) : undefined} preload="metadata" playsinline draggable=${false}></video>`;
     const nodes = B.board.nodes;
     if (n.type === "svg") {
-      if (n.svg) return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(n.svg, n.style.overflow) }}></div>`;
+      // Its pictures (<image href>) load from the library as an image layer's do.
+      if (n.svg) return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: svgMarkup(mapSvgImages(n.svg, srcUrl), n.style.overflow) }}></div>`;
       // A vector in parts: each part is drawn (and picked) as its own element.
       const inner = { display: "block", width: "100%", height: "100%", ...(n.style.overflow ? { overflow: n.style.overflow } : {}) };
       return html`<div ...${attrs}><svg ...${svgProps(n.attrs)} style=${inner}>
-        ${n.defs && html`<defs dangerouslySetInnerHTML=${{ __html: n.defs }}></defs>`}
+        ${n.defs && html`<defs dangerouslySetInnerHTML=${{ __html: mapSvgImages(n.defs, srcUrl) }}></defs>`}
         ${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}
       </svg></div>`;
     }
     if (n.type === "vector") {
       const Tag = vectorTag(n.tag);
-      const props = { ...svgProps(n.attrs), "data-bid": id, style };
-      if (Tag !== "g") return html`<${Tag} ...${props} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></${Tag}>`;
+      const props = { ...svgProps(svgImageAttrs(Tag, n.attrs, srcUrl)), "data-bid": id, style };
+      if (Tag !== "g") return html`<${Tag} ...${props} dangerouslySetInnerHTML=${{ __html: mapSvgImages(n.text ?? "", srcUrl) }}></${Tag}>`;
       return html`<g ...${props}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</g>`;
     }
     return html`<div ...${attrs}>${layersOf(n, nodes, editing)}</div>`;

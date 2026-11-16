@@ -380,6 +380,9 @@ export function registerBoardTools(server: McpServer) {
             const got = el ? svgNodes(inlineSvgStyles(el), into, {}, "") : null;
             const kids = got ? got.nodes[got.id].children ?? [] : [];
             if (!got || !kids.length) throw new Error("Write SVG elements (rect, circle, path, g, text…) into a vector.");
+            // Pictures (<image href>) are copied into the library, as an <img>'s are.
+            const warnings: string[] = [];
+            adoptImages(got.nodes, warnings);
             const nodes = { ...got.nodes };
             delete nodes[got.id];
             for (const k of kids) nodes[k] = { ...nodes[k], parent: into };
@@ -390,7 +393,7 @@ export function registerBoardTools(server: McpServer) {
             if (mode === "replace") ops.push({ op: "delete", ids: [t.id] });
             const after = changeBoard(b.id, ops, "agent").board;
             changeBoard(b.id, workingOps(after, kids, await whoAmI(), "write"), "agent");
-            return [text({ created: kids.map((id) => ({ id, name: after.nodes[id]?.name })), outline: kids.map((id) => treeText(after, id, 3)).join("\n") })];
+            return [text({ created: kids.map((id) => ({ id, name: after.nodes[id]?.name })), outline: kids.map((id) => treeText(after, id, 3)).join("\n"), warnings: warnings.length ? warnings : undefined })];
           }
           if (mode === "inside") {
             if (t.type !== "frame") throw new Error(`${t.name} is ${t.type === "text" ? "a text layer" : t.type === "vector" ? "part of a vector" : `an ${t.type} layer`}, which can't hold layers: target its frame, or use position "after".`);

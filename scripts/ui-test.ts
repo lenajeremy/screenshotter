@@ -1667,6 +1667,58 @@ const CHECKS: Record<string, Check> = {
     await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
     return "ok";
   },
+  async "on a board, luminance masks (a gradient, a photo), a mask over a masked group and a vector's own pictures look the same on the canvas, in Preview and in an export"(page) {
+    // A red photo, and one bright on its left half and dark on its right (as a luminance mask, it
+    // shows what's over it on the left only). Both in the library, where the Studio serves files from.
+    const photo = path.join(LIB, "images", "red-photo.png");
+    flat(photo, 120, 96, [255, 0, 0]);
+    const bright = path.join(LIB, "images", "half-bright.png");
+    const rgba = Buffer.alloc(60 * 48 * 4);
+    for (let i = 0; i < 60 * 48; i++) rgba.set(i % 60 < 30 ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4);
+    writeFileSync(bright, encodePng({ width: 60, height: 48, rgba }));
+    const star = `<svg data-name="Star" data-mask="vector" style="position:absolute;left:0;top:0;width:240px;height:240px" viewBox="0 0 240 240"><polygon points="120,0 150,90 240,90 165,145 195,240 120,180 45,240 75,145 0,90 90,90" fill="#000"/></svg>`;
+    const t = await openMaskBoard(
+      page,
+      `<div data-name="Kinds" style="position:relative;width:1000px;height:240px;background:#fff">` +
+        `<div data-name="Fade" style="position:absolute;left:0;top:0;width:300px;height:240px"><div data-mask="luminance" style="position:absolute;left:0;top:0;width:300px;height:240px;background:linear-gradient(90deg,#fff,#000)"></div><img src="${photo}" style="position:absolute;left:0;top:0;width:300px;height:240px;object-fit:cover"></div>` +
+        `<div data-name="Bright" style="position:absolute;left:310px;top:0;width:300px;height:240px"><img data-mask="luminance" src="${bright}" style="position:absolute;left:0;top:0;width:300px;height:240px;object-fit:cover"><img src="${photo}" style="position:absolute;left:0;top:0;width:300px;height:240px;object-fit:cover"></div>` +
+        `<div data-name="Nested" style="position:absolute;left:620px;top:0;width:240px;height:240px"><div data-mask style="position:absolute;left:20px;top:20px;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-name="Group" style="position:absolute;left:0;top:0;width:240px;height:240px">${star}<img src="${photo}" style="position:absolute;left:0;top:0;width:240px;height:240px;object-fit:cover"></div></div>` +
+        // A vector's pictures: an <image> part, and one in its defs (a pattern) written with xlink:href.
+        `<svg data-name="Framed" style="position:absolute;left:870px;top:0;width:120px;height:110px" viewBox="0 0 120 110"><image href="${photo}" width="120" height="110" preserveAspectRatio="none"/></svg>` +
+        `<svg data-name="Tiled" style="position:absolute;left:870px;top:130px;width:120px;height:110px" viewBox="0 0 120 110"><defs><pattern id="red-tile" patternUnits="userSpaceOnUse" width="120" height="110"><image xlink:href="${photo}" width="120" height="110" preserveAspectRatio="none"/></pattern></defs><rect width="120" height="110" fill="url(#red-tile)"/></svg>` +
+        `</div>`,
+    );
+    const kinds = t.byName("Kinds");
+    await sel(page, []);
+    await page.mouse.move(5, 300);
+    await page.waitForTimeout(400);
+    // The fade (strong, faded, gone); the photo mask (its bright half, its dark half); the circle over
+    // the star (inside both; inside the circle but not the star; two of the star's points, outside
+    // the circle); the vector's two pictures.
+    const points: Array<[number, number]> = [[12, 120], [150, 120], [290, 120], [370, 120], [550, 120], [740, 120], [680, 60], [845, 94], [688, 214], [930, 55], [930, 185]];
+    const want = "red,faded,white,red,white,red,white,white,white,red,red";
+    const canvas = await colorsAt(page, kinds, 1000, points, true);
+    await picture(page, "masks-luminance-nested");
+    const files = await S(page, async (a: { id: string; node: string }) => (await import("/ui/store.js" as string)).api("/api/board/export", { id: a.id, nodes: [a.node], scale: 1, format: "png" }), { id: t.id, node: kinds });
+    const shot = decodePng(readFileSync((files as { files: string[] }).files[0]));
+    const exported = points.map(([x, y]) => colorName(pixelAt(shot, x, y), true));
+    const preview = await page.context().browser()!.newPage();
+    await preview.setViewportSize({ width: 1200, height: 600 });
+    await preview.goto(`${BASE}board/preview?board=${encodeURIComponent(t.id)}&node=${encodeURIComponent(kinds)}`, { waitUntil: "networkidle" });
+    await preview.waitForTimeout(400);
+    const pb = (await preview.locator("#bd-frame > *").first().boundingBox())!;
+    const pf = decodePng(await preview.screenshot());
+    const previewed = points.map(([x, y]) => colorName(pixelAt(pf, pb.x + x, pb.y + y), true));
+    // The vector's pictures load from the library, as image layers' do (a bare path would be a 404).
+    const fromLibrary = () => [...document.querySelectorAll("svg image")].map((i) => i.getAttribute("href") ?? i.getAttribute("xlink:href") ?? "").filter((h) => !h.startsWith("/file?path=")).join();
+    const previewHrefs = await S(preview, fromLibrary);
+    await preview.close();
+    if (canvas.join() !== want) return `the canvas shows ${canvas.join()} (${want})`;
+    if (previewed.join() !== want) return `Preview shows ${previewed.join()} (${want})`;
+    if (exported.join() !== want) return `the export shows ${exported.join()} (${want})`;
+    const canvasHrefs = await S(page, fromLibrary);
+    return !canvasHrefs && !previewHrefs ? "ok" : `pictures not loaded from the library: canvas ${canvasHrefs}; Preview ${previewHrefs}`;
+  },
   async "on a board, a fill takes a token from the picker, shows its name and draws its colour"(page) {
     const t = await openTestBoard(page);
     const phone = t.byName("Phone");

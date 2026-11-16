@@ -515,6 +515,22 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
   check(/mask \(vector\) of 2 layers above it/.test(treeText(put.board, plain.root)) && new RegExp(`masked by #${S1}`).test(treeText(put.board, plain.root)), "the outline says what's a mask and what it masks");
 }
 
+// A vector's own pictures (<image href="/a/file.png">) go through the same `src` as image layers'
+// (the Studio serves only /file?path=…), in its parts, its defs and an svg kept as one piece.
+{
+  const m = await import("../src/board/core.js");
+  const src = (s: string) => `/file?path=${encodeURIComponent(s)}`;
+  const parts = addHtmlOps(`<svg data-name="Pics" viewBox="0 0 100 100" style="width:100px;height:100px"><defs><pattern id="p" width="1" height="1"><image xlink:href="/lib/tile.png" width="10" height="10"/></pattern></defs><image href="/lib/a b.png" width="50" height="50"/><use href="#p"/><rect fill="url(#p)" width="10" height="10"/></svg>`, null, {});
+  const pb: Board = { ...emptyBoard("pics", "Pics", new Date().toISOString()), nodes: parts.nodes };
+  const root = parts.roots[0];
+  pb.nodes[root].parent = null;
+  const out = nodeHtml(pb, root, { src });
+  check(out.includes(`href="/file?path=%2Flib%2Fa%20b.png"`) && out.includes(`xlink:href="/file?path=%2Flib%2Ftile.png"`) && out.includes(`<use href="#p"`), `an <image>'s href and xlink:href load through src, in a part and in defs; a link inside the SVG stays (${out.slice(0, 400)})`);
+  check(nodeHtml(pb, root).includes(`href="/lib/a b.png"`) && pb.nodes[Object.keys(pb.nodes).find((k) => pb.nodes[k].tag === "image")!].attrs!.href === "/lib/a b.png", "without src (board_read) the paths are as written, and the layer keeps them");
+  const whole = m.mapSvgImages(`<svg><image x="0" xlink:href='/lib/c&amp;d.png'/><image href="https://x.test/e.png"/><image href="data:image/png;base64,AA"/></svg>`, (s) => (/^(https?:|data:)/.test(s) ? s : src(s)));
+  check(whole.includes(`xlink:href="/file?path=%2Flib%2Fc%26d.png"`) && whole.includes(`href="https://x.test/e.png"`) && whole.includes(`href="data:image/png;base64,AA"`), `an svg kept as one piece has its pictures mapped too, entities read and quotes either way (${whole})`);
+}
+
 // ---------------------------------------------------------------------------------------------
 // The tools, through MCP
 
@@ -735,6 +751,53 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
   const flex = (await call("board_write_html", { board: mbId, html: `<div data-name="Flexy" style="width:300px;height:300px;display:flex;flex-direction:column"></div>` })).json.created[0].id;
   const warned = await call("board_write_html", { board: mbId, target: flex, html: `<div data-mask style="width:100px;height:100px;background:#000"></div><div style="width:100px;height:100px;background:red"></div>` });
   check((warned.json.warnings ?? []).some((w: string) => /flex or grid layout/.test(w)), "a mask an agent leaves in a flex layout's flow comes with a warning of what to do");
+}
+
+// Luminance masks (a gradient and a photo), a mask over a group that has a mask of its own, and a
+// vector's own picture, written by an agent and drawn by the engine. scripts/ui-test.ts checks the
+// same on the canvas and in Preview, in both engines.
+{
+  const { decodePng, encodePng, pixelAt } = await import("../src/util/png.js");
+  const store = await import("../src/board/store.js");
+  // Pictures from outside the library, as an agent's would be.
+  const elsewhere = mkdtempSync(path.join(tmpdir(), "board-test-pics-"));
+  const picture = (name: string, w: number, h: number, at: (x: number) => number[]) => {
+    const px = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < w * h; i++) px.set([...at(i % w), 255], i * 4);
+    writeFileSync(path.join(elsewhere, name), encodePng({ width: w, height: h, rgba: px }));
+    return path.join(elsewhere, name);
+  };
+  const photo = picture("photo.png", 120, 96, () => [255, 0, 0]);
+  const bright = picture("half-bright.png", 60, 48, (x) => (x < 30 ? [255, 255, 255] : [0, 0, 0]));
+  const star = `<svg data-name="Star" data-mask="vector" style="position:absolute;left:0;top:0;width:240px;height:240px" viewBox="0 0 240 240"><polygon points="120,0 150,90 240,90 165,145 195,240 120,180 45,240 75,145 0,90 90,90" fill="#000"/></svg>`;
+  const mk = await call("board_create", { name: "More masks" });
+  const id = mk.json.id;
+  const wrote = await call("board_write_html", {
+    board: id,
+    html:
+      `<div data-name="Kinds" style="position:relative;width:1120px;height:240px;background:#fff">` +
+      `<div data-name="Fade" style="position:absolute;left:0;top:0;width:300px;height:240px"><div data-mask="luminance" style="position:absolute;left:0;top:0;width:300px;height:240px;background:linear-gradient(90deg,#fff,#000)"></div><img src="${photo}" style="position:absolute;left:0;top:0;width:300px;height:240px;object-fit:cover"></div>` +
+      `<div data-name="Bright" style="position:absolute;left:310px;top:0;width:300px;height:240px"><img data-mask="luminance" src="${bright}" style="position:absolute;left:0;top:0;width:300px;height:240px;object-fit:cover"><img src="${photo}" style="position:absolute;left:0;top:0;width:300px;height:240px;object-fit:cover"></div>` +
+      `<div data-name="Nested" style="position:absolute;left:620px;top:0;width:240px;height:240px"><div data-mask style="position:absolute;left:20px;top:20px;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-name="Group" style="position:absolute;left:0;top:0;width:240px;height:240px">${star}<img src="${photo}" style="position:absolute;left:0;top:0;width:240px;height:240px;object-fit:cover"></div></div>` +
+      `<svg data-name="Framed" style="position:absolute;left:880px;top:0;width:240px;height:240px" viewBox="0 0 240 240"><image href="${photo}" x="0" y="0" width="240" height="240" preserveAspectRatio="none"/></svg>` +
+      `</div>`,
+  });
+  const art = wrote.json.created[0].id;
+  const b = store.getBoard(id);
+  const href = Object.values(b.nodes).find((n) => n.tag === "image")?.attrs?.href ?? "";
+  check(href.startsWith(path.resolve(out)) && href !== photo, `board_write_html copies a vector's picture into the library, as it does an <img>'s (${href})`);
+  const into = await call("board_write_html", { board: id, target: Object.values(b.nodes).find((n) => n.name === "Framed")!.id, html: `<image href="${bright}" width="10" height="10"/><image href="${path.join(elsewhere, "missing.png")}" width="10" height="10"/>` });
+  const added = into.json.created.map((c: { id: string }) => store.getBoard(id).nodes[c.id].attrs?.href ?? "");
+  check(added[0].startsWith(path.resolve(out)) && /no picture at .*missing\.png/.test((into.json.warnings ?? []).join()), "SVG written into a vector has its pictures copied in too, and a missing one is said");
+  await call("board_edit", { board: id, changes: [{ do: "delete", ids: into.json.created.map((c: { id: string }) => c.id) }] });
+  const shot = decodePng((await call("board_screenshot", { board: id, nodes: [art], scale: 1 })).images[0]);
+  const g = (x: number, y: number) => pixelAt(shot, x, y)[1];
+  const red = (x: number, y: number) => pixelAt(shot, x, y)[0] > 200 && g(x, y) < 60;
+  const white = (x: number, y: number) => pixelAt(shot, x, y)[0] > 230 && g(x, y) > 230;
+  check(red(10, 120) && g(150, 120) > 90 && g(150, 120) < 170 && white(290, 120), `a luminance gradient fades the photo out from left to right (${[10, 150, 290].map((x) => pixelAt(shot, x, 120).slice(0, 3).join(",")).join(" / ")})`);
+  check(red(310 + 60, 120) && white(310 + 240, 120), "a photo used as a luminance mask shows the photo over it where it's bright, and nothing where it's dark");
+  check(red(620 + 120, 120) && white(620 + 60, 60) && white(620 + 225, 94) && white(620 + 68, 214), "a mask over a group clips the group's own masked layers: the star, its points cut off by the circle");
+  check(red(880 + 120, 120), "a vector's picture draws in exports");
 }
 
 // ---------------------------------------------------------------------------------------------

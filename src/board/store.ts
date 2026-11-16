@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import path from "node:path";
 import { libraryFolder } from "../studio/scenes.js";
 import { ensureDir, resolveUserPath } from "../util/files.js";
-import { applyOps, emptyBoard, expandOps, mapCssUrls, newId, pxValue, reconcileOps, sizeWord, type Board, type BoardNode, type Op } from "./core.js";
+import { applyOps, emptyBoard, expandOps, mapCssUrls, mapSvgImages, newId, pxValue, reconcileOps, sizeWord, svgImageAttrs, type Board, type BoardNode, type Op } from "./core.js";
 
 const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));
 export const boardFile = (id: string) => path.join(dir(), `${id}.json`);
@@ -361,6 +361,18 @@ export function adoptImages(nodes: Record<string, BoardNode>, warnings: string[]
     if (n.type === "video" && n.poster) n.poster = adoptImage(n.poster, lib).src;
   }
   for (const n of Object.values(nodes)) adoptCssPictures(n.style, warnings, lib);
+  // A vector's pictures (<image href="/path">) too: the Studio serves only the library's files.
+  const svgPicture = (src: string) => {
+    if (!/^(\/|~|file:)/i.test(src)) return src;
+    const adopted = adoptImage(src, lib);
+    if (adopted.warning) warnings.push(`There's no picture at ${src}: the vector's <image> shows nothing.`);
+    return adopted.src;
+  };
+  for (const n of Object.values(nodes)) {
+    if (n.type !== "svg" && n.type !== "vector") continue;
+    if (n.attrs) n.attrs = svgImageAttrs(n.tag, n.attrs, svgPicture);
+    for (const k of ["svg", "defs", "text"] as const) if (n[k]) n[k] = mapSvgImages(n[k]!, svgPicture);
+  }
   return nodes;
 }
 
