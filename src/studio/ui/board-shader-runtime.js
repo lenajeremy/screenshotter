@@ -9,8 +9,12 @@
 // ordinary element: it's placed, rotated, rounded, blended and masked by CSS like any other.
 //
 // What it saves: layers off screen aren't drawn; while the view is panned or zoomed they're drawn
-// at half the resolution; never more than 2 pixels per CSS pixel while playing. With Reduce Motion
-// on, every shader is a still. A frame-time guard times each layer's drawing now and then (by
+// at half the resolution; never more than 2 pixels per CSS pixel while playing. Not everything on
+// screen plays at once: the biggest shader in view does, and the next ones only while they fit a
+// budget of pixels a frame (four at most); one too small on screen to be worth moving holds its
+// frame, and what's being worked on (the Studio's selection, a tile under the pointer) always plays.
+// Playing ones are drawn 30 times a second: they move slowly. With Reduce Motion on, every shader
+// is a still. A frame-time guard times each layer's drawing now and then (by
 // waiting for the graphics card to finish it): one that's too slow is drawn smaller, then stopped
 // at its still, and says so.
 //
@@ -49,6 +53,16 @@
     budget: 24,
     /** Write on a layer that was too slow to play. */
     badges: true,
+    /** Frames a second a playing shader is drawn at: they move slowly, so 30 looks like 60 and costs half. */
+    fps: 30,
+    /** Device pixels drawn a frame by the shaders playing together, at most: the biggest on screen always plays, the next ones while they fit. */
+    pixelBudget: 4.5e6,
+    /** How many play at once, at most. */
+    maxPlaying: 4,
+    /** Smaller than this on screen (its shorter side, CSS px), a shader holds its frame: motion at thumbnail size isn't worth drawing. */
+    minPlaySide: 120,
+    /** Whether a layer is being worked on (given its data-layer): it plays, whatever its size. The Studio's selection. */
+    focus: () => false,
     /** Told when a layer starts playing, pauses, fails or is stopped as too slow: (canvas, state). */
     onState: null,
   };
@@ -69,6 +83,8 @@
   let ro = null;
   let movingUntil = 0;
   let wasMoving = false;
+  /** The frame the layers to play were last chosen at (-Infinity: choose again now). */
+  let planAt = -Infinity;
   const PIXEL = new Uint8Array(4);
 
   const mq = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
@@ -299,6 +315,10 @@
       this.base = 0;
       this.since = now();
       this.data = null;
+      /** Held at a frame (it would play, but others take the budget, or it's too small to see move). */
+      this.held = false;
+      this.heldAt = 0;
+      this.lastDraw = 0;
     }
     set(data) {
       const d = data || {};
@@ -313,9 +333,10 @@
         this.base = time;
         this.since = now();
       } else if (num(was.speed, 1) !== speed) {
-        this.base = this.shown();
+        this.base = this.held ? this.heldAt : this.shown();
         this.since = now();
       }
+      if (this.held) this.heldAt = this.base;
       this.speed = speed;
       this.time = time;
       this.paused = paused;
@@ -338,6 +359,10 @@
     }
     plays() {
       return opts.mode === "live" && !this.paused && !reduce && !this.slow && this.speed !== 0;
+    }
+    /** Playing now: it would play, and it isn't held. */
+    live() {
+      return this.plays() && !this.held;
     }
     resolve() {
       const u = (this.data && this.data.uniforms) || {};
@@ -461,8 +486,8 @@
       glc.width = Math.min(8192, Math.max(glc.width, 2 ** Math.ceil(Math.log2(w))));
       glc.height = Math.min(8192, Math.max(glc.height, 2 ** Math.ceil(Math.log2(h))));
     }
-    const plays = L.plays();
-    const t = plays ? L.shown() : L.time;
+    const plays = L.live();
+    const t = plays ? L.shown() : L.held ? L.heldAt : L.time;
     g.viewport(0, 0, w, h);
     g.useProgram(e.prog);
     for (const [name, u] of e.uniforms) {
@@ -487,8 +512,9 @@
     L.frames++;
     L.drawn++;
     L.dirty = false;
+    L.lastDraw = now();
     if (L.slow && opts.badges && opts.mode === "live") badge(L, "Too slow to play here: showing its still");
-    setState(L, { kind: L.slow ? "slow" : opts.mode === "still" ? "still" : reduce ? "reduced" : L.paused || L.speed === 0 ? "paused" : "playing", ms: Math.round(L.cost * 10) / 10 });
+    setState(L, { kind: L.slow ? "slow" : opts.mode === "still" ? "still" : reduce ? "reduced" : L.paused || L.speed === 0 ? "paused" : L.held ? "held" : "playing", ms: Math.round(L.cost * 10) / 10 });
   }
 
   /** The guard: a layer that keeps taking longer than the budget is drawn smaller, then stopped. */
@@ -604,7 +630,62 @@
   // The loop
 
   function wake() {
+    planAt = -Infinity;
     if (!raf && layers.size && typeof requestAnimationFrame === "function") raf = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Which of the layers that would play do: what's being worked on first, then the biggest on
+   * screen while they fit the budget. The rest hold the frame they're at, and carry on from it.
+   */
+  function plan() {
+    planAt = frameNo;
+    if (opts.mode !== "live") return;
+    let root = null;
+    try {
+      root = opts.root && opts.root();
+    } catch {}
+    const R = root ? root.getBoundingClientRect() : { left: 0, top: 0, right: G.innerWidth || 0, bottom: G.innerHeight || 0 };
+    const want = [];
+    for (const L of layers) {
+      if (!L.plays() || !L.visible || !L.canvas.isConnected) {
+        if (L.held && !L.plays()) L.held = false;
+        continue;
+      }
+      const r = L.canvas.getBoundingClientRect();
+      const w = Math.max(0, Math.min(r.right, R.right) - Math.max(r.left, R.left));
+      const h = Math.max(0, Math.min(r.bottom, R.bottom) - Math.max(r.top, R.top));
+      let focus = Boolean(L.data && L.data.always);
+      try {
+        focus = focus || Boolean(opts.focus(L.canvas.dataset.layer || null));
+      } catch {}
+      want.push({ L, area: w * h, side: Math.min(r.width, r.height), focus });
+    }
+    want.sort((a, b) => Number(b.focus) - Number(a.focus) || b.area - a.area);
+    let n = 0;
+    let px = 0;
+    for (const x of want) {
+      const cost = x.L.canvas.width * x.L.canvas.height;
+      const run = x.focus || (x.area > 0 && x.side >= opts.minPlaySide && n < opts.maxPlaying && (n === 0 || px + cost <= opts.pixelBudget));
+      if (run) {
+        n++;
+        px += cost;
+      }
+      hold(x.L, !run);
+    }
+  }
+
+  function hold(L, on) {
+    if (on === L.held) return;
+    if (on) {
+      L.heldAt = L.shown();
+      L.held = true;
+    } else {
+      L.base = L.heldAt;
+      L.since = now();
+      L.held = false;
+    }
+    L.dirty = true;
   }
 
   function tick() {
@@ -624,6 +705,8 @@
     // draw, the view moving. Otherwise the loop sleeps until something wakes it (a change, a
     // resize, a layer coming into view, the board's view moving).
     let again = isMoving;
+    if (frameNo - planAt >= 8) plan();
+    const due = 1000 / Math.max(1, opts.fps) - 2;
     for (const L of [...layers]) {
       // Gone from the page (its element removed): let it go.
       if (!L.canvas.isConnected) {
@@ -638,15 +721,16 @@
       }
       const resized = fit(L, isMoving);
       if (!L.visible && opts.mode === "live") continue;
-      if (L.plays() || resized || L.dirty) draw(L);
-      if (L.plays() || (L.dirty && L.cssW > 0 && L.cssH > 0)) again = true;
+      const live = L.live();
+      if ((live && t - L.lastDraw >= due) || resized || L.dirty) draw(L);
+      if (live || (L.dirty && L.cssW > 0 && L.cssH > 0)) again = true;
     }
     // All of them together too slow (each one may be fine): every half second, the costliest takes a strike.
     if (frameNo % 30 === 0) {
       let total = 0;
       let worst = null;
       for (const L of layers)
-        if (L.visible && L.plays() && L.probes) {
+        if (L.visible && L.live() && L.probes) {
           total += L.cost;
           if (!worst || L.cost > worst.cost) worst = L;
         }
@@ -671,6 +755,7 @@
             if (!x) continue;
             const was = x.visible;
             x.visible = en.isIntersecting;
+            if (x.visible !== was) planAt = -Infinity;
             if (x.visible && !was) {
               x.dirty = true;
               wake();
@@ -711,7 +796,7 @@
       },
       state: () => L.stateObj || null,
       /** The moment it shows now, in seconds of its time. */
-      shown: () => (L.plays() ? L.shown() : L.time),
+      shown: () => (L.live() ? L.shown() : L.held ? L.heldAt : L.time),
     };
   }
 
@@ -828,7 +913,7 @@
       contexts,
       webgl: gl2 ? 2 : gl ? 1 : 0,
       reduced: reduce,
-      layers: [...layers].map((L) => ({ layer: L.canvas.dataset.layer || null, state: L.stateObj ? L.stateObj.kind : "", frames: L.frames, width: L.canvas.width, height: L.canvas.height, visible: L.visible, quality: L.quality, cost: Math.round(L.cost * 100) / 100, probes: L.probes, strikes: L.strikes, probeAt: L.probeAt, frame: frameNo })),
+      layers: [...layers].map((L) => ({ layer: L.canvas.dataset.layer || null, state: L.stateObj ? L.stateObj.kind : "", held: L.held, frames: L.frames, width: L.canvas.width, height: L.canvas.height, visible: L.visible, quality: L.quality, cost: Math.round(L.cost * 100) / 100, probes: L.probes, strikes: L.strikes, probeAt: L.probeAt, frame: frameNo })),
     };
   }
 

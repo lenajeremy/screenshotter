@@ -3353,6 +3353,40 @@ const CHECKS: Record<string, Check> = {
     const n3 = nodeOf(t, other);
     return n3.shader?.preset === "waves" && Object.keys(boards.getBoard(t.id).nodes).length === count ? "ok" : `clicked in Assets with a frame selected: ${JSON.stringify(n3)}, ${Object.keys(boards.getBoard(t.id).nodes).length - count} layers more`;
   },
+  async "shaders: not all at once: zoomed out they hold their frame, the biggest in view plays, the selected one always does"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Page" style="width:600px;display:flex;flex-direction:column;background:#fff"><div data-name="One" data-shader="mesh-gradient" style="height:400px"></div><div data-name="Two" data-shader="aurora" style="height:400px"></div><div data-name="Three" data-shader="waves" style="height:400px"></div></div>`);
+    await shaderBudget(page, 1000);
+    const ids = ["One", "Two", "Three"].map((n) => t.byName(n));
+    const states = () => S(page, (ids: string[]) => ids.map((id) => (document.querySelector(`canvas[data-layer="${id}"]`) as HTMLCanvasElement | null)?.dataset.shaderState ?? ""), ids);
+    const moved = async (ms = 500) => {
+      const a = await layerFrames(page, ids);
+      await page.waitForTimeout(ms);
+      const b = await layerFrames(page, ids);
+      return ids.map((id) => b[id] - a[id]);
+    };
+    const zoom = (z: number) => S(page, async (z: number) => (await import("/ui/board-canvas.js" as string)).zoomTo(z), z);
+    await sel(page, []);
+    // Zoomed out, each is a thumbnail: none moves.
+    await zoom(0.15);
+    await page.waitForTimeout(700);
+    const far = await moved();
+    if (far.some((n) => n > 0) || (await states()).some((s) => s !== "held")) return `zoomed out: frames ${far}, states ${await states()}`;
+    // The selected one plays, however small.
+    await sel(page, [ids[1]]);
+    await page.waitForTimeout(500);
+    const picked = await moved();
+    if (!(picked[1] > 5 && picked[0] === 0 && picked[2] === 0)) return `with Two selected, zoomed out: frames ${picked}`;
+    // At full size, only what fits the budget plays: here the one filling the view, at 30 frames a second.
+    await sel(page, []);
+    await S(page, async (id: string) => (await import("/ui/board-canvas.js" as string)).fit([id], { instant: true }), ids[0]);
+    await zoom(2.2);
+    await page.waitForTimeout(800);
+    const near = await moved(1000);
+    const st = await states();
+    if (!(near[0] >= 8 && near[0] <= 36)) return `the one in view drew ${near[0]} frames in a second (it should play, at no more than 30 a second); states ${st}`;
+    if (near[2] > 0) return `one out of view drew: ${near}`;
+    return "ok";
+  },
   async "shaders: one too slow is stopped at its still and says so; code of its own shows its errors by line"(page) {
     const t = await openMaskBoard(page, `<div data-name="Art" style="width:420px;height:320px;background:#fff;position:relative"><div data-name="Mine" data-shader="custom" data-code="uniform vec3 uTint; // @color = #ff3b30
 void main() { gl_FragColor = vec4(uTint * (0.6 + 0.4 * sin(uTime)), 1.0); }" style="position:absolute;left:10px;top:10px;width:400px;height:300px"></div></div>`);

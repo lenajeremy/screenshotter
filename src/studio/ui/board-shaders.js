@@ -39,6 +39,8 @@ BS.configure({
     }
     return B.dragging === "pan" || B.dragging === "resize" || B.dragging === "scale" || performance.now() - viewAt < 140;
   },
+  // The frame being worked on plays, however small, whatever else is on screen.
+  focus: (id) => Boolean(id) && B.sel.includes(id),
   onState: (canvas, st) => {
     const id = canvas.dataset.layer;
     if (!id) return;
@@ -127,7 +129,8 @@ export function shaderAssetLayers(a) {
 function ShaderTile({ a, name, code, title, style, picked, onPick }) {
   const ref = useRef();
   const handle = useRef(null);
-  const data = (play) => ({ code, uniforms: shaderUniforms(code), time: 2, paused: !play });
+  // Played only under the pointer, so it always plays then: it doesn't wait its turn behind the board's.
+  const data = (play) => ({ code, uniforms: shaderUniforms(code), time: 2, paused: !play, always: true });
   useEffect(() => {
     const h = BS.attach(ref.current, data(false));
     handle.current = h;
