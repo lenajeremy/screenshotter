@@ -1,5 +1,10 @@
 # What's new
 
+## 0.15.1 · 16 November 2026
+
+### Fixes
+- Boards are smooth again with Assets open. Its shader tiles all played at once, all the time, which made every board choppy to pan, zoom and point at, with or without a shader on it. Each tile now shows its still and plays while the pointer is on it, and shaders use nothing while none is playing.
+
 ## 0.15.0 · 16 November 2026
 
 ### Highlights
