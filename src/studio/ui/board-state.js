@@ -94,6 +94,12 @@ export function useBoard(ignore) {
   return B;
 }
 
+/** Call `fn` (at most once a frame) whenever the board changes, for code outside components. Returns how to stop. */
+export function onBoard(fn, ignore) {
+  listeners.set(fn, ignore ? new Set(ignore) : null);
+  return () => listeners.delete(fn);
+}
+
 export const node = (id) => B.board?.nodes[id];
 export const currentPage = () => B.board?.pages.find((p) => p.id === B.page) ?? B.board?.pages[0];
 

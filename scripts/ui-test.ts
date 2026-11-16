@@ -3114,8 +3114,24 @@ const CHECKS: Record<string, Check> = {
     await page.locator(".bd-left-tabs button", { hasText: "Assets" }).click();
     await page.waitForSelector(".bd-asset.shader canvas");
     await page.waitForTimeout(700);
-    const tiles = await S(page, () => [...document.querySelectorAll(".bd-asset.shader canvas")].filter((c) => (c as HTMLCanvasElement).dataset.shaderState === "playing").length);
-    if (tiles < 8) return `only ${tiles} shader tiles are playing in Assets`;
+    // The tiles show their stills, and nothing draws while they sit there: the runtime's loop sleeps.
+    const states = () => S(page, () => [...document.querySelectorAll(".bd-asset.shader canvas")].map((c) => (c as HTMLCanvasElement).dataset.shaderState ?? ""));
+    const still = await states();
+    const tiles = still.length;
+    if (tiles < 8 || still.some((s) => s !== "paused")) return `the shader tiles in Assets aren't all stills: ${JSON.stringify(still)}`;
+    const frameNo = () => page.evaluate("BoardShaders.stats().layers[0]?.frame ?? -1") as Promise<number>;
+    const f0 = await frameNo();
+    await page.waitForTimeout(500);
+    const f1 = await frameNo();
+    if (f1 !== f0) return `with only stills, the shader runtime still ran ${f1 - f0} frames in half a second`;
+    // The pointer on one plays it, only it; off it, it's a still again.
+    await page.locator(".bd-asset.shader", { hasText: "Liquid chrome" }).hover();
+    await page.waitForTimeout(400);
+    const hovered = await states();
+    if (hovered.filter((s) => s === "playing").length !== 1) return `hovering a shader tile: ${JSON.stringify(hovered)}`;
+    await page.mouse.move(5, 300);
+    await page.waitForTimeout(300);
+    if ((await states()).some((s) => s !== "paused")) return `a shader tile kept playing once the pointer left: ${JSON.stringify(await states())}`;
     // One clicked (into the middle of the view), one dragged onto the canvas.
     await page.locator(".bd-asset.shader", { hasText: "Mesh gradient" }).click();
     await page.waitForTimeout(700);

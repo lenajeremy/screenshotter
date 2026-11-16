@@ -9,7 +9,7 @@
 import "./board-shader-runtime.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { SHADER_PRESETS, cleanShaderSpec, newId, nodeHtml, parseShaderParams, presetOf, round, saveShaderPresetOps, shaderCode, shaderLabel, shaderPresetName, shaderUniforms, shaderUsers, shaderValues, subtree } from "./board-core.js";
-import { B, CANVAS_ONLY, node, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, node, onBoard, useBoard } from "./board-state.js";
 import { Dropdown, Num, Section, Seg, Slider, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { toast } from "./store.js";
@@ -49,6 +49,9 @@ BS.configure({
     }
   },
 });
+// The runtime sleeps when nothing plays; a change to the board (the view moving, above all) wakes
+// it, to redraw stills at the new zoom.
+onBoard(() => BS.wake());
 
 /** A shader layer's state, kept up to date: { kind: "playing" | "paused" | "reduced" | "slow" | "error" | "nogl", ms, errors }. */
 export function useShaderState(id) {
@@ -115,13 +118,22 @@ export function shaderAssetLayers(a) {
   return [{ id: newId(), type: "shader", name: p?.name ?? shaderLabel(a.preset), parent: null, shader: { preset: a.preset, ...(own && !p ? { code: own.code } : {}) }, style: { width: "400px", height: "300px", flexShrink: "0", ...(p?.style ?? {}) } }];
 }
 
+/**
+ * A preset's tile: its still, playing only while the pointer (or the keyboard) is on it. Ten tiles
+ * playing at once kept the GPU busy, and the whole board choppy, for as long as Assets was open.
+ */
 function ShaderTile({ a, name, code, title, style }) {
   const ref = useRef();
+  const handle = useRef(null);
+  const data = (play) => ({ code, uniforms: shaderUniforms(code), time: 2, paused: !play });
   useEffect(() => {
-    const h = BS.attach(ref.current, { code, uniforms: shaderUniforms(code), time: 2 });
+    const h = BS.attach(ref.current, data(false));
+    handle.current = h;
     return () => h.detach();
   }, [code]);
+  const play = (on) => handle.current?.update(data(on));
   return html`<button class="bd-asset shader" data-shader-tile=${a.preset} title=${`${name}: ${title} Click to add it, or drag it onto the canvas.`} draggable="true"
+    onPointerEnter=${() => play(true)} onPointerLeave=${() => play(false)} onFocus=${() => play(true)} onBlur=${() => play(false)}
     onDragStart=${(e) => {
       e.dataTransfer.setData("text/x-board-asset", JSON.stringify(a));
       e.dataTransfer.effectAllowed = "copy";

@@ -620,10 +620,15 @@
     // Once the view stops, everything is drawn sharp again.
     if (wasMoving && !isMoving) for (const L of layers) L.dirty = true;
     wasMoving = isMoving;
+    // Another frame only while there's something to do: a layer playing in view, one still to
+    // draw, the view moving. Otherwise the loop sleeps until something wakes it (a change, a
+    // resize, a layer coming into view, the board's view moving).
+    let again = isMoving;
     for (const L of [...layers]) {
       // Gone from the page (its element removed): let it go.
       if (!L.canvas.isConnected) {
         if (++L.gone > 2) detach(L);
+        else again = true;
         continue;
       }
       L.gone = 0;
@@ -634,6 +639,7 @@
       const resized = fit(L, isMoving);
       if (!L.visible && opts.mode === "live") continue;
       if (L.plays() || resized || L.dirty) draw(L);
+      if (L.plays() || (L.dirty && L.cssW > 0 && L.cssH > 0)) again = true;
     }
     // All of them together too slow (each one may be fine): every half second, the costliest takes a strike.
     if (frameNo % 30 === 0) {
@@ -646,8 +652,7 @@
         }
       if (worst && total > opts.budget * 1.5) strike(worst);
     }
-    // Kept going while there are layers: a still needs drawing again when it's resized or zoomed.
-    if (layers.size) raf = requestAnimationFrame(tick);
+    if (again && layers.size) raf = requestAnimationFrame(tick);
   }
 
   // -------------------------------------------------------------------------------------------
