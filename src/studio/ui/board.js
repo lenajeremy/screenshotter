@@ -4,6 +4,7 @@ import { Component } from "preact";
 import { looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, isGrid, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
+import { maskGroupOps, maskOps, maskRuns } from "./board-core.js";
 import { B, CANVAS_ONLY, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
@@ -209,6 +210,7 @@ function NameInput({ value, onDone }) {
 // Layers
 
 export function layerIcon(n, b = B.board) {
+  if (n.mask) return "mask";
   if (n.isComponent) return "component";
   if (n.instanceOf) return "instance";
   if (n.type === "text") return "text";
@@ -230,11 +232,13 @@ function LayersList() {
   const ref = useRef();
   const rows = [];
   const picked = new Set(b.sel);
-  const walk = (id, depth) => {
+  const walk = (id, depth, masked) => {
     const n = b.board.nodes[id];
     if (!n) return;
-    rows.push({ id, depth, n, on: picked.has(id), open: b.open.has(id), hovered: b.hover === id, renaming: b.renaming === id });
-    if (n.children?.length && b.open.has(id)) for (const c of n.children) walk(c, depth + 1);
+    rows.push({ id, depth, n, on: picked.has(id), open: b.open.has(id), hovered: b.hover === id, renaming: b.renaming === id, masked });
+    if (!n.children?.length || !b.open.has(id)) return;
+    const marks = maskMarks(b.board, n);
+    for (const c of n.children) walk(c, depth + 1, marks?.get(c));
   };
   for (const id of page?.children ?? []) walk(id, 0);
   // Keep the selected layer in sight.
@@ -262,14 +266,14 @@ const INDENT = 20;
 class Row extends Component {
   shouldComponentUpdate(next) {
     const p = this.props;
-    return next.n !== p.n || next.depth !== p.depth || next.on !== p.on || next.open !== p.open || next.hovered !== p.hovered || next.renaming !== p.renaming;
+    return next.n !== p.n || next.depth !== p.depth || next.on !== p.on || next.open !== p.open || next.hovered !== p.hovered || next.renaming !== p.renaming || next.masked !== p.masked;
   }
   render(props) {
     return LayerRow(props);
   }
 }
 
-function LayerRow({ id, depth, n, on, open, hovered, renaming }) {
+function LayerRow({ id, depth, n, on, open, hovered, renaming, masked }) {
   const toggle = (e) => {
     e.stopPropagation();
     const o = new Set(B.open);
@@ -286,6 +290,7 @@ function LayerRow({ id, depth, n, on, open, hovered, renaming }) {
         if (!B.sel.includes(id)) select(id);
         openLayerMenu(e.clientX, e.clientY);
       }}>
+    ${masked && html`<${MaskMark} kind=${masked} x=${2 + depth * INDENT} />`}
     ${n.children?.length ? html`<button class="tw ${open ? "open" : ""}" onPointerDown=${(e) => e.stopPropagation()} onClick=${toggle} aria-label=${open ? "Close" : "Open"}><${Icon} n="right" s=${11} w=${2} /></button>` : html`<span class="tw"></span>`}
     <span class="ico"><${Icon} n=${layerIcon(n)} s=${14} /></span>
     ${renaming
@@ -1030,6 +1035,98 @@ export const selectCopies = (main) => select(instancesOf(B.board, main));
 const hasOverrides = (id) => subtree(B.board, id).some((x) => node(x)?.overrides?.length);
 
 // =============================================================================================
+// Masks, as Figma has them: a layer used as a mask shows the layers above it in its frame only
+// where it is. ⌃⌘M uses one layer as a mask (or stops it being one), or puts several in a mask group.
+
+/** In a frame's rows: the mask's own ("head") and those of the layers it masks ("mid", the last "end"), " off" while it's hidden. */
+function maskMarks(board, n) {
+  if (n.type !== "frame" || !n.children.some((c) => board.nodes[c]?.mask)) return null;
+  const marks = new Map();
+  for (const r of maskRuns(board, n.children)) {
+    if (!r.mask || !r.ids.length) continue;
+    const off = board.nodes[r.mask].hidden ? " off" : "";
+    marks.set(r.mask, "head" + off);
+    r.ids.forEach((c, i) => marks.set(c, (i === r.ids.length - 1 ? "end" : "mid") + off));
+  }
+  return marks;
+}
+
+/** The line in the layer list joining a mask to the layers it masks. */
+function MaskMark({ kind, x }) {
+  const [where, off] = kind.split(" ");
+  return html`<i class="bd-mask-mark ${where} ${off ?? ""}" style=${{ left: x + "px" }} aria-hidden="true"></i>`;
+}
+
+/** Layers' boxes in their frames as drawn (left and top from the frame's inside edge), for placing masks by. */
+function boxesInFrame(ids) {
+  const out = {};
+  for (const id of ids) {
+    const b = worldBox(id);
+    if (!b) continue;
+    const p = node(id)?.parent;
+    let x = b.x;
+    let y = b.y;
+    if (p && worldBox(p)) {
+      const pb = worldBox(p);
+      const cs = getComputedStyle(elOf(p));
+      x -= pb.x + (parseFloat(cs.borderLeftWidth) || 0);
+      y -= pb.y + (parseFloat(cs.borderTopWidth) || 0);
+    }
+    out[id] = { x, y, width: b.width, height: b.height };
+  }
+  return out;
+}
+
+const maskToast = (e) => toast({ kind: "info", icon: "mask", title: "That can't be a mask", text: e.message, timeout: 6000 });
+
+/** Use a layer as a mask of the layers above it in its frame (in a flex or grid frame, in a mask group of its own). */
+export function useAsMask(id, type = "alpha") {
+  const n = node(id);
+  if (!n) return;
+  try {
+    const r = maskOps(B.board, id, type, boxesInFrame([id]));
+    if (commit(r.ops, { label: "Use as mask" }) === false) return;
+    if (r.group) {
+      select(r.group);
+      bset({ open: new Set([...B.open, r.group]) });
+      toast({ kind: "info", icon: "mask", title: "In a mask group", text: "A mask in a flex or grid frame goes in a group of its own, laid out by hand. Drag the layers it should mask into the group, above the mask.", timeout: 7000 });
+    }
+  } catch (e) {
+    maskToast(e);
+  }
+}
+
+/** A mask an ordinary layer again: what it hid shows. */
+export function removeMask(id) {
+  const ops = maskOps(B.board, id, null).ops;
+  if (ops.length) commit(ops, { label: "Remove mask" });
+}
+
+export const setMaskType = (id, type) => node(id)?.mask && node(id).mask !== type && commit([{ op: "set", id, mask: type }], { label: "Mask type" });
+
+/** Figma's "Mask with selection": the selected layers in a new mask group, the one at the back masking the rest. */
+export function maskSelection(type = "alpha") {
+  const ids = outermost().filter((id) => !node(id).locked);
+  if (!ids.length) return;
+  try {
+    const r = maskGroupOps(B.board, ids, type, boxesInFrame(ids));
+    if (commit(r.ops, { label: "Mask with selection" }) === false) return;
+    select(r.group);
+    bset({ open: new Set([...B.open, r.group]) });
+  } catch (e) {
+    maskToast(e);
+  }
+}
+
+/** ⌃⌘M: one layer becomes a mask (or stops being one); several go into a mask group. */
+export function toggleMask() {
+  const ids = outermost().filter((id) => !node(id).locked);
+  if (!ids.length) return;
+  if (ids.length > 1) return maskSelection();
+  return node(ids[0]).mask ? removeMask(ids[0]) : useAsMask(ids[0]);
+}
+
+// =============================================================================================
 // The layer menu
 
 /** Every layer under the pointer, deepest first, to pick one however deep it is. */
@@ -1070,6 +1167,8 @@ export function openLayerMenu(x, y, { stack = [] } = {}) {
     any && !vectors && { label: "Wrap in flex frame", icon: "flexCol", kbd: "⇧A", run: () => wrapSelection() },
     any && !vectors && { label: "Wrap in grid", icon: "grid", kbd: "⇧G", run: wrapInGrid },
     any && !vectors && { label: "Wrap in frame", icon: "frame", kbd: "⌥⌘G", run: () => wrapSelection({ free: true }) },
+    one && !vectors && one.parent && { label: one.mask ? "Remove mask" : "Use as mask", icon: "mask", kbd: "⌃⌘M", run: toggleMask },
+    s.length > 1 && !vectors && { label: "Mask with selection", icon: "mask", kbd: "⌃⌘M", run: () => maskSelection() },
     vectors && { label: "Group", icon: "layers", kbd: "⌥⌘G", run: () => wrapSelection() },
     (frame || one?.tag === "g") && one.children?.length && { label: "Ungroup", icon: "layers", kbd: "⇧⌘G", run: ungroupSelection },
     one?.type === "svg" && one.svg && { label: "Split into layers", icon: "layers", run: () => splitVector(one.id) },
@@ -1110,6 +1209,7 @@ function onKey(e) {
     e.preventDefault();
     e.stopPropagation();
   };
+  if (e.ctrlKey && e.metaKey && (k === "m" || e.code === "KeyM")) return take(), toggleMask();
   if (m && !e.shiftKey && k === "z") return take(), undo();
   if (m && ((e.shiftKey && k === "z") || k === "y")) return take(), redo();
   if (m && k === "d") return take(), duplicateSelection();
@@ -1180,6 +1280,7 @@ export function boardCommand(name) {
     actual: () => zoomTo(1, undefined, { animate: true }),
     duplicate: () => !typingNow() && duplicateSelection(),
     delete: () => !typingNow() && deleteSelection(),
+    mask: () => !typingNow() && toggleMask(),
     exportImage: () => document.querySelector(".bd-topbar .btn.primary")?.click(),
     toggleLeft: () => bset({ leftOpen: !B.leftOpen }),
     // ⌘\ (the app's menu calls it Focus Mode): both side panels away, or back.

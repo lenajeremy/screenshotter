@@ -68,6 +68,11 @@ export interface BoardNode {
   master?: string;
   /** In a copy: what was changed here ("style.color", "text"), which the component's changes leave alone. */
   overrides?: string[];
+  /**
+   * Used as a mask, as Figma has it: not drawn itself, it shows the layers above it in its frame (up
+   * to the next mask) only where it is: by its alpha, its outline (vector) or its brightness (luminance).
+   */
+  mask?: MaskType;
 }
 
 export interface BoardPage {
@@ -1000,11 +1005,17 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
         flush();
         continue;
       }
+      // What a mask shows, as boards write it out: its layers are this frame's own.
+      if (c.attrs["data-mask-scope"] !== undefined) {
+        for (const inner of c.children) if (typeof inner !== "string") for (const g of inner.children) if (typeof g !== "string") kids.push(...[convert(g, id, column)].filter((x): x is string => Boolean(x)));
+        continue;
+      }
       const k = convert(c, id, column);
-      if (k) kids.push(k);
+      if (k) kids.push(maskFromHtml(nodes[k], c));
     }
     flush();
     nodes[id].children = kids;
+    importCssMask(nodes, id);
     return id;
   };
 
@@ -1024,7 +1035,8 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
     }
     flushLoose();
     const id = convert(c, null, false);
-    if (id) roots.push(id);
+    // (A mask written as a top-level element is one when the HTML goes into a frame.)
+    if (id) roots.push(maskFromHtml(nodes[id], c));
   }
   flushLoose();
   if (classes) warnings.push(`${classes} element${classes === 1 ? "" : "s"} had class names. Boards read inline styles only (style="…"), so those classes did nothing: give the styles inline.`);
@@ -1064,8 +1076,10 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
     if (style.position === "absolute") delete style.position;
   }
   if (n.hidden) style.display = "none";
+  // A mask isn't drawn: its look is the mask of the layers after it (see childrenHtml).
+  if (n.mask && maskActive(board, id)) style.visibility = "hidden";
   const css = styleText(style);
-  const attrs = `${opts.ids ? ` data-id="${id}" data-name="${escAttr(n.name)}"${n.isComponent ? " data-component" : ""}${n.instanceOf ? ` data-copy-of="${n.instanceOf}"` : ""}` : ""}${css ? ` style="${escAttr(css)}"` : ""}`;
+  const attrs = `${opts.ids ? ` data-id="${id}" data-name="${escAttr(n.name)}"${n.isComponent ? " data-component" : ""}${n.instanceOf ? ` data-copy-of="${n.instanceOf}"` : ""}` : ""}${n.mask ? ` data-mask="${n.mask}"` : ""}${css ? ` style="${escAttr(css)}"` : ""}`;
   switch (n.type) {
     case "text":
       return `<div${attrs}>${n.text ?? ""}</div>`;
@@ -1091,12 +1105,15 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
       return `<${tag}${attrs}${attrText(n.attrs)}>${inner}</${tag}>`;
     }
     default:
-      return `<div${attrs}>${(n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("")}</div>`;
+      return `<div${attrs}>${childrenHtml(board, n.children ?? [], opts, depth)}</div>`;
   }
 }
 
 /** The CSS every board is drawn with, in the Studio and in exports alike. */
-export const BOARD_CSS = "*,*::before,*::after{box-sizing:border-box}img,video{display:block}";
+export const BOARD_CSS =
+  "*,*::before,*::after{box-sizing:border-box}img,video{display:block}" +
+  // What a mask shows is drawn over the frame: clicks go through it to the layers it shows, and to those below.
+  "[data-mask-scope]{pointer-events:none}[data-mask-scope]>*>*{pointer-events:auto}";
 
 /** A token's name as CSS has it: "--brand" (a name given as "brand" gets its dashes). */
 export const tokenName = (name: string) => (name.trim().startsWith("--") ? name.trim() : `--${name.trim()}`);
@@ -1452,6 +1469,8 @@ export type Op =
       instanceOf?: string | null;
       master?: string | null;
       overrides?: string[] | null;
+      /** Use the layer as a mask of this kind (null: an ordinary layer again). */
+      mask?: MaskType | null;
       /** Made by a component for its copies (so it doesn't count as a change made in a copy). */
       sync?: boolean;
     }
@@ -1584,7 +1603,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           back.tag = n.tag ?? null;
           n.tag = vectorTag(op.tag);
         }
-        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides"] as const) {
+        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides", "mask"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
           if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
@@ -1838,7 +1857,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
 const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate", "gridColumn", "gridRow", "gridArea", "justifySelf"];
 
-const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name"] as const;
+const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name", "mask"] as const;
 
 /** The keys a set step changes, as overrides name them ("style.color", "text"). */
 function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {
@@ -2201,6 +2220,9 @@ function describe(board: Board, id: string): string {
     bits.push(`src ${(n.src ?? "").slice(0, 80)}`, [v.autoplay ? "autoplay" : "no autoplay", v.loop ? "loop" : "once", v.muted ? "no sound" : "sound"].join(" "));
   }
   if (n.type === "svg") bits.push(n.svg ? (n.shape ? `shape ${String(n.shape.type ?? "")}` : "one piece") : `in parts${n.attrs?.viewBox ? `, viewBox ${n.attrs.viewBox}` : ""}`);
+  if (n.mask) bits.push(maskWords(board, id));
+  const maskedBy = maskOf(board, id);
+  if (maskedBy) bits.push(`masked by #${maskedBy}${board.nodes[maskedBy]?.hidden ? " (mask hidden, so shown whole)" : ""}`);
   if (n.isComponent) bits.push("component");
   if (n.instanceOf) bits.push(`copy of component #${n.instanceOf}`);
   if (n.overrides?.length) bits.push(`changed in this copy: ${n.overrides.map((k) => k.replace(/^style\./, "")).join(", ")}`);
@@ -2878,4 +2900,674 @@ export function flexToGrid(board: Board, id: string): { frame: Record<string, st
     children[c] = patch;
   }
   return { frame, children };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Masks, as Figma has them. A layer used as a mask isn't drawn: its look (by its alpha, its outline
+// or its brightness) shows the layers above it in its frame, up to the next mask, and hides the rest
+// of them. "Above" is after it in the frame's list, as everywhere on a board.
+//
+// In HTML the mask stays where it is, hidden, and the layers it masks are drawn after it inside two
+// elements made for the purpose: the first covers the frame (`position:absolute; inset:0`), so the
+// layers keep the places their left and top give them; the second (static, so it never becomes what
+// they're placed in) sits on the mask's box and carries the mask's look as CSS:
+//   - a frame: its fills as mask-image layers (colours, gradients, pictures; mask-mode alpha or
+//     luminance), its corners as clip-path: inset(0 round …); a vector mask is the clip-path alone;
+//   - a picture: mask-image: url(…), sized and placed as its object-fit and object-position say;
+//   - a vector: its SVG as a data: URL image (a vector mask makes every painted pixel solid);
+//   - words: an SVG holding the text layer's own HTML and CSS in a foreignObject, so they wrap as
+//     they do on the canvas (an SVG drawn as an image can't load fonts: web fonts are put inside it,
+//     see loadMaskFonts);
+//   - the mask's opacity as one more layer, intersected with the rest.
+// That needs the mask's box to be known from its CSS: a mask is placed by hand (absolute, by left
+// and top). In a flex or grid frame the mask and what it masks go in a "mask group", a frame of their
+// own laid out by hand, which is one item of the layout (maskGroupOps).
+
+export type MaskType = "alpha" | "vector" | "luminance";
+export const MASK_TYPES: readonly MaskType[] = ["alpha", "vector", "luminance"];
+export const isMaskType = (v: unknown): v is MaskType => typeof v === "string" && (MASK_TYPES as readonly string[]).includes(v);
+
+/** Whether a layer's mask is at work: it's a mask, shown, and in a frame (not on the page, not in a vector). */
+export function maskActive(board: Board, id: string): boolean {
+  const n = board.nodes[id];
+  if (!n?.mask || n.hidden || !n.parent) return false;
+  return board.nodes[n.parent]?.type === "frame";
+}
+
+export interface MaskRun {
+  /** The mask whose layers these are (shown or hidden); none for the layers below the first mask. */
+  mask?: string;
+  ids: string[];
+}
+
+/** A frame's layers in runs: those below any mask, then each mask with the layers it masks. */
+export function maskRuns(board: Board, ids: string[]): MaskRun[] {
+  const runs: MaskRun[] = [{ ids: [] }];
+  for (const id of ids) {
+    const n = board.nodes[id];
+    if (!n) continue;
+    if (n.mask) runs.push({ mask: id, ids: [] });
+    else runs[runs.length - 1].ids.push(id);
+  }
+  return runs;
+}
+
+/** The mask a layer is under: the nearest mask below it in its frame (shown or not). */
+export function maskOf(board: Board, id: string): string | undefined {
+  const n = board.nodes[id];
+  if (!n?.parent || n.mask) return undefined;
+  const p = board.nodes[n.parent];
+  if (p?.type !== "frame") return undefined;
+  const kids = p.children ?? [];
+  for (let i = kids.indexOf(id) - 1; i >= 0; i--) if (board.nodes[kids[i]]?.mask) return kids[i];
+  return undefined;
+}
+
+/** The layers a mask masks: those above it in its frame, up to the next mask. */
+export function maskedBy(board: Board, mask: string): string[] {
+  const n = board.nodes[mask];
+  if (!n?.mask || !n.parent) return [];
+  return maskRuns(board, board.nodes[n.parent]?.children ?? []).find((r) => r.mask === mask)?.ids ?? [];
+}
+
+/** A frame's layers as HTML, the layers each mask masks drawn inside the elements that mask them. */
+function childrenHtml(board: Board, kids: string[], opts: HtmlOptions, depth: number): string {
+  const draw = (c: string) => nodeHtml(board, c, opts, depth + 1);
+  if (!kids.some((c) => board.nodes[c]?.mask)) return kids.map(draw).join("");
+  return maskRuns(board, kids)
+    .map((r) => {
+      const inner = r.ids.map(draw).join("");
+      if (!r.mask) return inner;
+      const css = maskActive(board, r.mask) && inner ? maskCss(board, r.mask, { src: opts.src }) : null;
+      const m = draw(r.mask);
+      if (!css) return m + inner;
+      return `${m}<div data-mask-scope${opts.ids ? `="${r.mask}"` : ""} style="${escAttr(styleText(css.scope))}"><div style="${escAttr(styleText(css.box))}">${inner}</div></div>`;
+    })
+    .join("");
+}
+
+// ----- The mask's look as CSS
+
+/** A list split at its top-level commas (not those inside brackets). */
+function splitList(v: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of v) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+/** Words of CSS split at top-level spaces, a "/" its own word. */
+function splitWords(v: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  const push = () => {
+    if (cur.trim()) out.push(cur.trim());
+    cur = "";
+  };
+  for (const ch of v) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && /\s/.test(ch)) push();
+    else if (depth === 0 && ch === "/") {
+      push();
+      out.push("/");
+    } else cur += ch;
+  }
+  push();
+  return out;
+}
+
+/** Where the bracket opened at `i` closes. */
+function closing(s: string, i: number): number {
+  let d = 0;
+  for (let j = i; j < s.length; j++) {
+    if (s[j] === "(") d++;
+    else if (s[j] === ")" && --d === 0) return j;
+  }
+  return s.length - 1;
+}
+
+const IMAGE_FN = /(?:url|(?:repeating-)?(?:linear|radial|conic)-gradient|-webkit-(?:linear|radial)-gradient|image-set|-webkit-image-set|cross-fade)\(/i;
+const REPEATS = new Set(["repeat", "no-repeat", "repeat-x", "repeat-y", "space", "round"]);
+const COLORISH = /^(#|rgba?\(|hsla?\(|hwb\(|lab\(|lch\(|oklab\(|oklch\(|color\(|color-mix\(|var\(|transparent$|currentcolor$|[a-z]+$)/i;
+const POSITION_WORDS = new Set(["left", "right", "top", "bottom", "center"]);
+
+interface Fill {
+  image: string;
+  size: string;
+  position: string;
+  repeat: string;
+}
+
+/** A frame's fills as CSS has them (top first), and its colour (drawn under them). */
+function fillsOfStyle(s: Style): { fills: Fill[]; color?: string } {
+  const at = (list: string[], i: number, d: string) => (list.length ? list[i % list.length] : d);
+  const sizes = splitList(s.backgroundSize ?? "");
+  const positions = splitList(s.backgroundPosition ?? "");
+  const repeats = splitList(s.backgroundRepeat ?? "");
+  let color = s.backgroundColor;
+  const fills: Fill[] = [];
+  if (s.backgroundImage) {
+    splitList(s.backgroundImage).forEach((image, i) => {
+      if (image !== "none") fills.push({ image, size: at(sizes, i, "auto"), position: at(positions, i, "0% 0%"), repeat: at(repeats, i, "repeat") });
+    });
+  } else if (s.background) {
+    const layers = splitList(s.background);
+    layers.forEach((layer, i) => {
+      const m = IMAGE_FN.exec(layer);
+      let image = "";
+      let rest = layer;
+      if (m) {
+        const end = closing(layer, m.index + m[0].length - 1);
+        image = layer.slice(m.index, end + 1);
+        rest = `${layer.slice(0, m.index)} ${layer.slice(end + 1)}`;
+      }
+      const pos: string[] = [];
+      const size: string[] = [];
+      const rep: string[] = [];
+      let inSize = false;
+      for (const w of splitWords(rest)) {
+        if (w === "/") inSize = true;
+        else if (REPEATS.has(w)) rep.push(w);
+        else if (/^(scroll|fixed|local|border-box|padding-box|content-box|text|none)$/i.test(w)) continue;
+        else if (i === layers.length - 1 && !POSITION_WORDS.has(w) && !/^-?[\d.]/.test(w) && COLORISH.test(w)) color ??= w;
+        else (inSize ? size : pos).push(w);
+      }
+      if (image) fills.push({ image, size: size.join(" ") || "auto", position: pos.join(" ") || "0% 0%", repeat: rep.join(" ") || "repeat" });
+    });
+  }
+  return { fills, color: color && color !== "transparent" ? color : undefined };
+}
+
+const RADIUS_LONGHANDS = ["borderTopLeftRadius", "borderTopRightRadius", "borderBottomRightRadius", "borderBottomLeftRadius"] as const;
+
+/** A layer's corners as clip-path's inset() has them after "round", or undefined for square ones. */
+function cornersOf(s: Style): string | undefined {
+  const four = (list: string[]): string[] => {
+    const [a = "0", b = a, c = a, d = b] = list;
+    return [a, b, c, d];
+  };
+  const short = splitWords(s.borderRadius ?? "");
+  const slash = short.indexOf("/");
+  const h = four(slash < 0 ? short : short.slice(0, slash));
+  const v = slash < 0 ? h.slice() : four(short.slice(slash + 1));
+  RADIUS_LONGHANDS.forEach((k, i) => {
+    const w = splitWords(s[k] ?? "");
+    if (!w.length) return;
+    h[i] = w[0];
+    v[i] = w[1] ?? w[0];
+  });
+  const zero = (x: string) => /^0(px|%|em|rem)?$/.test(x.trim());
+  if ([...h, ...v].every(zero)) return undefined;
+  const say = (list: string[]) => (list.every((x) => x === list[0]) ? list[0] : list.join(" "));
+  return say(h) === say(v) ? say(h) : `${say(h)} / ${say(v)}`;
+}
+
+/** var(--x) (with fallbacks, and tokens that use tokens) replaced by the board's values: for a picture drawn outside the page. */
+export function resolveTokens(value: string, tokens: BoardToken[]): string {
+  if (!value.includes("var(")) return value;
+  const map = new Map(tokens.map((t) => [t.name, t.value]));
+  const once = (s: string): string => {
+    let out = "";
+    let i = 0;
+    for (;;) {
+      const at = s.indexOf("var(", i);
+      if (at < 0) return out + s.slice(i);
+      const end = closing(s, at + 3);
+      const inner = s.slice(at + 4, end);
+      const name = (splitList(inner)[0] ?? "").trim();
+      const fallback = inner.includes(",") ? inner.slice(inner.indexOf(",") + 1).trim() : "";
+      out += s.slice(i, at) + (map.get(name) ?? fallback);
+      i = end + 1;
+    }
+  };
+  let out = value;
+  for (let k = 0; k < 8 && out.includes("var("); k++) out = once(out);
+  return out;
+}
+
+/** SVG markup as a data: URL that's safe inside url("…") and an HTML attribute. */
+export function svgDataUrl(svg: string): string {
+  return `data:image/svg+xml,${svg.replace(/[^\x20-\x7e]|[%#"'<>(){}|\\^`[\]]/gu, (c) => (c.length === 1 && c.charCodeAt(0) < 128 ? `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}` : encodeURIComponent(c)))}`;
+}
+
+const cssUrl = (u: string) => `url("${u.replace(/["\\\n]/g, (c) => encodeURIComponent(c))}")`;
+const NO_SIZE = /^(auto|fit-content|max-content|min-content|stretch|-webkit-fill-available)?$/;
+const FITS: Record<string, string> = { fill: "100% 100%", cover: "cover", contain: "contain", none: "auto", "scale-down": "contain" };
+
+/** What a layer passes down to its words that a picture of them must be told. */
+const TEXT_INHERITED = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "fontStretch", "fontVariant", "lineHeight", "letterSpacing", "wordSpacing", "color", "textAlign", "textTransform", "textIndent", "whiteSpace", "wordBreak", "overflowWrap", "direction", "fontFeatureSettings", "fontVariationSettings", "webkitFontSmoothing", "textRendering", "hyphens", "tabSize"];
+/** Where and how big a layer is, and its opacity: the mask's box and its opacity layer say these. */
+const MASK_PLACEMENT = /^(position|left|top|right|bottom|inset|width|height|(min|max)(Width|Height)|margin\w*|transform|rotate|translate|scale|opacity|zIndex|flex|flexGrow|flexShrink|flexBasis|alignSelf|justifySelf|placeSelf|order|grid(Area|Row|Column)\w*|mixBlendMode|visibility|display)$/;
+
+/**
+ * @font-face rules with their font files inside (data: URLs), by family (lower case): what a text
+ * mask's picture needs, since an SVG drawn as an image can't load fonts. Filled by loadMaskFonts.
+ */
+export const MASK_FONTS = new Map<string, string>();
+const maskFontListeners = new Set<() => void>();
+/** Be told when fonts for text masks have arrived (to draw them again). Returns the way to stop. */
+export function onMaskFonts(fn: () => void): () => void {
+  maskFontListeners.add(fn);
+  return () => void maskFontListeners.delete(fn);
+}
+
+const familyNames = (list: string | undefined) =>
+  (list ?? "")
+    .split(",")
+    .map((f) => f.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+
+/** The font family a style gives: its own, or the one in its `font` shorthand (after the size). */
+const familyOf = (s: Style | undefined): string | undefined =>
+  s?.fontFamily ?? (s?.font ? /(?:^|\s)(?:[\d.]+(?:px|pt|r?em|%|v[wh]|ex|ch|cm|mm|in|pc|q)|(?:xx?-|x?x?-)?(?:small|large)|medium|smaller|larger)(?:\s*\/\s*\S+)?\s+(.+)$/i.exec(s.font)?.[1] : undefined);
+
+/** A text layer's words as XHTML (what an SVG's foreignObject takes). */
+function xhtml(nodes: HNode[]): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return nodes
+    .map((c) => {
+      if (typeof c === "string") return esc(c);
+      if (c.tag === "br" || c.tag === "wbr") return `<${c.tag}/>`;
+      const attrs = Object.entries(c.attrs)
+        .filter(([k, v]) => ATTR_NAME.test(k) && safeAttr(k, v))
+        .map(([k, v]) => ` ${k}="${escAttr(v).replace(/>/g, "&gt;")}"`)
+        .join("");
+      return `<${c.tag}${attrs}>${xhtml(c.children)}</${c.tag}>`;
+    })
+    .join("");
+}
+
+/** A text layer drawn as an SVG picture of its words, as the canvas lays them out. */
+function textMaskSvg(board: Board, id: string, type: MaskType): string {
+  const n = board.nodes[id];
+  const style: Style = {};
+  // Later wins, as in CSS: a property set again goes to the end (after a shorthand set before it).
+  const put = (from: Style, keep: (k: string) => boolean = () => true) => {
+    for (const [k, v] of Object.entries(from))
+      if (keep(k)) {
+        delete style[k];
+        style[k] = v;
+      }
+  };
+  put({ margin: "0", fontFamily: "Inter, system-ui, sans-serif", fontSize: "16px", color: "#000" });
+  const up: Style = {};
+  for (const a of ancestors(board, id)) {
+    const s = board.nodes[a]?.style ?? {};
+    // A `font` shorthand counts when nothing nearer set the type (it would undo what did).
+    if (s.font && !["font", "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight"].some((k) => up[k] !== undefined)) up.font = s.font;
+    for (const k of TEXT_INHERITED) if (s[k] !== undefined && up[k] === undefined) up[k] = s[k];
+  }
+  put(up);
+  put(n.style, (k) => !MASK_PLACEMENT.test(k));
+  const width = n.style.width && !NO_SIZE.test(n.style.width.trim());
+  const height = n.style.height && !NO_SIZE.test(n.style.height.trim());
+  put({ boxSizing: "border-box", width: width ? "100%" : "max-content", maxWidth: "100%", ...(height ? { height: "100%" } : {}) });
+  if (type === "vector") put({ color: "#000", webkitTextFillColor: "#000", background: "none", backgroundImage: "none", textShadow: "none", filter: "none" });
+  for (const [k, v] of Object.entries(style)) style[k] = resolveTokens(v, board.tokens);
+  // A picture can't reach the system's UI font by these names.
+  for (const k of ["fontFamily", "font"]) if (style[k]) style[k] = style[k].replace(/-apple-system|BlinkMacSystemFont/gi, "system-ui");
+  const families = new Set(familyNames(familyOf(n.style) ? resolveTokens(familyOf(n.style)!, board.tokens) : style.fontFamily).map((f) => f.toLowerCase()));
+  for (const m of (n.text ?? "").matchAll(/font-family:\s*([^;"]+)/gi)) for (const f of familyNames(resolveTokens(m[1], board.tokens))) families.add(f.toLowerCase());
+  const faces = [...families].map((f) => MASK_FONTS.get(f) ?? "").join("");
+  const words = xhtml(parseHtml(resolveTokens(n.text ?? "", board.tokens)).children);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">${faces ? `<style>${faces}</style>` : ""}<foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="${escAttr(styleText(style))}">${words}</div></foreignObject></svg>`;
+}
+
+/** A vector layer as an SVG picture: its markup, sized by the box it's drawn in, tokens and colour filled in. */
+function vectorMaskSvg(board: Board, id: string, type: MaskType): string {
+  const n = board.nodes[id];
+  const markup = resolveTokens(svgMarkup(board, id), board.tokens).trim();
+  let color = n.style.color;
+  for (const a of ancestors(board, id)) color ??= board.nodes[a]?.style.color;
+  const open = /^<svg\b[^>]*>/i.exec(markup);
+  if (!open) return "";
+  // Its size is the box it's drawn in (mask-size), as an inline <svg> at 100% of its layer.
+  let head = open[0].replace(/\s(width|height)="[^"]*"/gi, "").replace(/^<svg\b/i, '<svg width="100%" height="100%"');
+  if (!/\sxmlns=/.test(head)) head = head.replace(/^<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  if (color) head = head.replace(/^<svg\b/i, `<svg style="color:${escAttr(resolveTokens(color, board.tokens))}"`);
+  let body = markup.slice(open[0].length).replace(/<\/svg>\s*$/i, "");
+  // A vector mask is its outline: every painted pixel counts as solid.
+  if (type === "vector") body = `<defs><filter id="bd-solid" x="-50%" y="-50%" width="200%" height="200%"><feComponentTransfer><feFuncA type="linear" slope="255"/></feComponentTransfer></filter></defs><g filter="url(#bd-solid)">${body}</g>`;
+  return `${head}${body}</svg>`;
+}
+
+export interface MaskCss {
+  /** The element that covers the frame, holding what the mask shows. */
+  scope: Style;
+  /** The element inside it on the mask's box, with the mask's look as CSS. */
+  box: Style;
+}
+
+/** The CSS that masks the layers above a mask (see the top of this section), or null if it isn't one. */
+export function maskCss(board: Board, id: string, opts: { src?: (src: string) => string } = {}): MaskCss | null {
+  const n = board.nodes[id];
+  if (!n?.mask) return null;
+  const type = n.mask;
+  const s = n.style;
+  // Where it is: left/top (or right/bottom) and its size, in its frame.
+  const [it, ir = it, ib = it, il = ir] = splitWords(s.inset ?? "");
+  const given = (v: string | undefined) => (v === undefined || NO_SIZE.test(v.trim()) ? undefined : v.trim());
+  const L = given(s.left ?? il);
+  const T = given(s.top ?? it);
+  const R = given(s.right ?? ir);
+  const Bm = given(s.bottom ?? ib);
+  const W = given(s.width);
+  const H = given(s.height);
+  const scope: Style = { position: "absolute", inset: "0" };
+  const box: Style = {};
+  if (L !== undefined) {
+    box.marginLeft = L;
+    if (W) box.width = W;
+  } else if (R !== undefined) {
+    if (W) Object.assign(box, { marginLeft: `calc(100% - ${R} - ${W})`, width: W });
+    else box.marginRight = R;
+  } else if (W) box.width = W;
+  if (T !== undefined && !T.includes("%")) Object.assign(box, { marginTop: T, height: H ?? `calc(100% - ${T})` });
+  else if (T !== undefined) {
+    // A top in % is of the frame's height, which a margin can't say: a grid row can.
+    Object.assign(scope, { display: "grid", gridTemplateRows: `${T} ${H ?? "1fr"}` });
+    box.gridRow = "2";
+  } else if (Bm !== undefined) {
+    Object.assign(scope, { display: "flex", flexDirection: "column", justifyContent: "flex-end" });
+    Object.assign(box, { flex: "none", marginBottom: Bm, height: H ?? "auto" });
+  } else box.height = H ?? "100%";
+
+  // Its look.
+  interface Layer {
+    image: string;
+    size: string;
+    position: string;
+    repeat: string;
+    composite: "add" | "intersect";
+  }
+  const layers: Layer[] = [];
+  const whole = (image: string): Layer => ({ image, size: "100% 100%", position: "0% 0%", repeat: "no-repeat", composite: "add" });
+  const NOTHING = "linear-gradient(transparent, transparent)";
+  const corners = n.type === "frame" || n.type === "image" || n.type === "video" || n.type === "svg" ? cornersOf(s) : undefined;
+  let clip = corners ? `inset(0 round ${corners})` : undefined;
+  const map = (v: string) => (opts.src && v.includes("url(") ? mapCssUrls(v, opts.src) : v);
+  if (type === "vector" && n.type !== "svg" && n.type !== "text") {
+    // Its outline, corners and all; what it's filled with doesn't count.
+    clip ??= "inset(0)";
+  } else if (n.type === "frame") {
+    const { fills, color } = fillsOfStyle(s);
+    for (const f of fills) layers.push({ ...f, image: map(f.image), composite: "add" });
+    if (color) layers.push(whole(`linear-gradient(${color}, ${color})`));
+    if (!layers.length) layers.push(whole(NOTHING));
+  } else if (n.type === "image" || n.type === "video") {
+    const src = n.type === "video" ? n.poster : n.src;
+    layers.push(src ? { image: cssUrl(opts.src ? opts.src(src) : src), size: FITS[s.objectFit ?? "fill"] ?? "100% 100%", position: s.objectPosition ?? "50% 50%", repeat: "no-repeat", composite: "add" } : whole(NOTHING));
+  } else if (n.type === "svg") {
+    const svg = vectorMaskSvg(board, id, type);
+    layers.push(whole(svg ? cssUrl(svgDataUrl(svg)) : NOTHING));
+  } else if (n.type === "text") {
+    layers.push(whole(cssUrl(svgDataUrl(textMaskSvg(board, id, type)))));
+  } else layers.push(whole(NOTHING));
+  // Its opacity, over all of it.
+  const op = s.opacity?.trim();
+  if (layers.length && type !== "vector" && op && op !== "1" && op !== "100%") {
+    const c = `rgb(255 255 255 / ${op})`;
+    layers.unshift({ ...whole(`linear-gradient(${c}, ${c})`), composite: "intersect" });
+  }
+  if (layers.length) {
+    const list = (k: keyof Layer) => layers.map((l) => l[k]).join(", ");
+    const mode = type === "luminance" ? "luminance" : "alpha";
+    Object.assign(box, {
+      webkitMaskImage: list("image"),
+      webkitMaskSize: list("size"),
+      webkitMaskPosition: list("position"),
+      webkitMaskRepeat: list("repeat"),
+      webkitMaskComposite: layers.map((l) => (l.composite === "intersect" ? "source-in" : "source-over")).join(", "),
+      maskImage: list("image"),
+      maskSize: list("size"),
+      maskPosition: list("position"),
+      maskRepeat: list("repeat"),
+      maskMode: layers.map(() => mode).join(", "),
+      maskComposite: list("composite"),
+    });
+  }
+  if (clip) Object.assign(box, { webkitClipPath: clip, clipPath: clip });
+  return { scope, box };
+}
+
+/** How board_read describes a mask. */
+function maskWords(board: Board, id: string): string {
+  const n = board.nodes[id];
+  const on = maskedBy(board, id);
+  const bits = [`mask (${n.mask}) of ${on.length} layer${on.length === 1 ? "" : "s"} above it`];
+  if (n.hidden) bits.push("hidden, so they're shown whole");
+  const p = n.parent ? board.nodes[n.parent] : undefined;
+  if (!p || p.type !== "frame") bits.push("not at work: a mask works inside a frame");
+  else if (inFlow(board, id)) bits.push("in its frame's flex or grid flow, so its place isn't known from its CSS: give it position absolute with left and top, or make a mask group");
+  return bits.join(", ");
+}
+
+// ----- HTML in
+
+/** A layer written with data-mask (as boards write masks out) is a mask; the hiding its HTML had goes. */
+function maskFromHtml(n: BoardNode, el: HEl): string {
+  const v = el.attrs["data-mask"];
+  if (v === undefined) return n.id;
+  n.mask = isMaskType(v) ? v : "alpha";
+  if (n.style.visibility === "hidden") delete n.style.visibility;
+  return n.id;
+}
+
+const CSS_MASK_KEYS = ["mask", "maskImage", "maskSize", "maskPosition", "maskRepeat", "maskMode", "maskOrigin", "maskClip", "maskComposite", "maskType", "webkitMask", "webkitMaskImage", "webkitMaskSize", "webkitMaskPosition", "webkitMaskRepeat", "webkitMaskOrigin", "webkitMaskClip", "webkitMaskComposite", "webkitMaskSourceType"];
+
+/**
+ * A frame with a CSS mask (mask-image: a gradient or a picture) over layers it places by hand
+ * becomes a mask group: the mask a layer of its own, under them. A mask over flowing layers stays
+ * CSS (it draws the same; a mask layer needs the layers it masks placed by hand), as does one that
+ * says more than a mask layer can (several images, composites, repeats, odd sizes).
+ */
+function importCssMask(nodes: Record<string, BoardNode>, id: string) {
+  const f = nodes[id];
+  const s = f.style;
+  const image = s.maskImage ?? s.webkitMaskImage;
+  if (!image || s.mask || s.webkitMask || s.maskComposite || s.webkitMaskComposite) return;
+  const kids = (f.children ?? []).map((k) => nodes[k]).filter(Boolean);
+  if (!kids.length || kids.some((k) => k.style.position !== "absolute" || k.mask)) return;
+  const one = splitList(image);
+  if (one.length !== 1) return;
+  const size = (s.maskSize ?? s.webkitMaskSize ?? "auto").trim();
+  const position = (s.maskPosition ?? s.webkitMaskPosition ?? "").trim();
+  const repeat = (s.maskRepeat ?? s.webkitMaskRepeat ?? "").trim();
+  const url = /^url\(\s*(['"]?)(.*?)\1\s*\)$/i.exec(one[0]);
+  const gradient = /^(repeating-)?(linear|radial|conic)-gradient\(/i.test(one[0]);
+  if (!url && !gradient) return;
+  const fit = ({ auto: "fill", "100% 100%": "fill", cover: "cover", contain: "contain" } as Record<string, string>)[size];
+  if (url ? !fit : size !== "auto" && size !== "100% 100%") return;
+  if (gradient && position && !/^(0(px|%)? 0(px|%)?|center|50% 50%|left top|top left)$/.test(position)) return;
+  if (url && repeat && repeat !== "no-repeat") return;
+  const type: MaskType = /luminance/i.test(s.maskMode ?? s.webkitMaskSourceType ?? "") ? "luminance" : "alpha";
+  const mid = newId();
+  const place = { position: "absolute", left: "0px", top: "0px", width: "100%", height: "100%" };
+  nodes[mid] = url
+    ? { id: mid, type: "image", name: "Mask", parent: id, mask: type, src: url[2], style: { ...place, objectFit: fit!, ...(position ? { objectPosition: position } : {}) } }
+    : { id: mid, type: "frame", name: "Mask", parent: id, mask: type, style: { ...place, backgroundImage: one[0] }, children: [] };
+  f.children = [mid, ...(f.children ?? [])];
+  for (const k of CSS_MASK_KEYS) delete s[k];
+  if (!s.position) s.position = "relative";
+}
+
+// ----- Making and removing masks
+
+function maskRefusal(board: Board, id: string): string | undefined {
+  const n = board.nodes[id];
+  if (!n) return `There's no layer ${id}.`;
+  if (n.type === "vector") return `${n.name} is part of a vector: SVG has its own masks. Use the whole vector layer as the mask instead.`;
+  if (!n.parent) return `${n.name} is on the page: a mask works inside a frame. Select it with the layers it should mask and use "Mask with selection" to put them in a mask group.`;
+  return undefined;
+}
+
+/** Where a flex or grid layout puts an item: its cell, alignment, order, margins and flex sizing. */
+const LAYOUT_PLACE = ["gridArea", "gridRow", "gridColumn", "gridRowStart", "gridRowEnd", "gridColumnStart", "gridColumnEnd", "justifySelf", "alignSelf", "placeSelf", "order", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "flex", "flexGrow", "flexShrink", "flexBasis"];
+
+/** A layer's box in its frame (left, top, width, height) as its CSS gives it, in px where it can tell. */
+function boxFromStyle(n: BoardNode): Box {
+  return { x: pxValue(n.style.left) ?? 0, y: pxValue(n.style.top) ?? 0, width: pxValue(n.style.width) ?? 100, height: pxValue(n.style.height) ?? 100 };
+}
+
+/**
+ * Steps that make a layer a mask of the layers above it in its frame (or change its kind), or an
+ * ordinary layer again (null). One placed by its frame's flex or grid layout goes into a mask group
+ * of its own first, since a mask is placed by hand. `boxes` are layers' boxes in their frames as
+ * drawn (the Studio measures them); without them their CSS says.
+ */
+export function maskOps(board: Board, id: string, type: MaskType | null, boxes: Record<string, Box> = {}): { ops: Op[]; group?: string } {
+  if (type === null) return { ops: board.nodes[id]?.mask ? [{ op: "set", id, mask: null }] : [] };
+  const why = maskRefusal(board, id);
+  if (why) throw new OpError(why);
+  const n = board.nodes[id];
+  if (inFlow(board, id)) return maskGroupOps(board, [id], type, boxes);
+  const ops: Op[] = [{ op: "set", id, mask: type }];
+  // Its box must be in its CSS: one the flow placed (in a frame laid out by hand) is placed where it is now.
+  const b = boxes[id];
+  if (b && n.style.position !== "absolute" && n.style.position !== "fixed") ops.push({ op: "set", id, style: { position: "absolute", left: `${round(b.x)}px`, top: `${round(b.y)}px` } });
+  return { ops };
+}
+
+/**
+ * Steps that put layers side by side in one frame into a new "Mask group" frame, as Figma's "Use as
+ * mask" does with several layers: the one at the back is the mask of the rest. The group is the
+ * mask's box (what shows), placed where the mask was: in a flex or grid frame, as one item of the
+ * layout. Inside it every layer is placed by hand where it was.
+ */
+export function maskGroupOps(board: Board, ids: string[], type: MaskType, boxes: Record<string, Box> = {}): { ops: Op[]; group: string } {
+  const list = [...new Set(ids)].filter((x) => board.nodes[x]);
+  if (!list.length) throw new OpError("Pick the layers to mask.");
+  const parent = board.nodes[list[0]].parent;
+  if (list.some((x) => board.nodes[x].parent !== parent)) throw new OpError("Pick layers side by side in one frame: the one at the back masks the rest.");
+  for (const x of list) if (board.nodes[x].type === "vector") throw new OpError(maskRefusal(board, x)!);
+  const sibs = siblingsOf(board, list[0]);
+  const ordered = sibs.filter((x) => list.includes(x));
+  const mask = ordered[0];
+  const box = (x: string) => boxes[x] ?? boxFromStyle(board.nodes[x]);
+  const mb = box(mask);
+  const gid = newId();
+  const p = parent ? board.nodes[parent] : null;
+  const flowing = Boolean(p && (isFlex(p) || isGrid(p)) && inFlow(board, mask));
+  const size = { width: `${round(mb.width)}px`, height: `${round(mb.height)}px` };
+  // In a layout, the group takes the mask's place in it: its grid cell, its alignment, its order.
+  const placed: Style = {};
+  if (flowing) for (const k of LAYOUT_PLACE) if (board.nodes[mask].style[k] !== undefined) placed[k] = board.nodes[mask].style[k];
+  const style: Style = flowing ? { position: "relative", flexShrink: "0", ...placed, ...size } : parent ? { position: "absolute", left: `${round(mb.x)}px`, top: `${round(mb.y)}px`, ...size } : { left: `${round(mb.x)}px`, top: `${round(mb.y)}px`, ...size };
+  const page = parent ? undefined : pageOf(board, mask)?.id;
+  const ops: Op[] = [{ op: "add", nodes: { [gid]: { id: gid, type: "frame", name: "Mask group", parent, style, children: [] } }, ids: [gid], parent, page, index: sibs.indexOf(mask) }];
+  ordered.forEach((x, k) => {
+    const b = box(x);
+    ops.push({ op: "move", id: x, parent: gid, index: k });
+    const unplace = Object.fromEntries(LAYOUT_PLACE.map((k) => [k, null]));
+    ops.push({ op: "set", id: x, style: { ...unplace, position: "absolute", left: `${round(b.x - mb.x)}px`, top: `${round(b.y - mb.y)}px`, right: null, bottom: null, inset: null, ...(x === mask ? size : {}) } });
+  });
+  ops.push({ op: "set", id: mask, mask: type });
+  return { ops, group: gid };
+}
+
+// ----- Fonts for text masks
+
+type Fetcher = (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer> }>;
+const FACE_RE = /@font-face\s*{[^}]*}/g;
+const GOOGLE_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+const loadingFonts = new Map<string, Promise<void>>();
+
+/** Whether a @font-face's unicode-range covers any of these characters (no range: it covers them all). */
+function coversAny(face: string, chars: Set<number>): boolean {
+  const m = /unicode-range:\s*([^;}]+)/i.exec(face);
+  if (!m) return true;
+  return m[1].split(",").some((r) => {
+    const [a, b] = r.trim().replace(/^U\+/i, "").split("-");
+    const lo = parseInt(a.replace(/\?/g, "0"), 16);
+    const hi = b ? parseInt(b, 16) : parseInt(a.replace(/\?/g, "F"), 16);
+    return [...chars].some((c) => c >= lo && c <= hi);
+  });
+}
+
+/**
+ * The web fonts (Google Fonts) a board's text masks use, fetched and put in MASK_FONTS with the font
+ * files inside, so the pictures of their words use them. The Mac's own fonts need nothing. A font
+ * that can't be had (offline, a name Google doesn't know) draws in the next font of its list.
+ * Resolves true when it added any. `node`: asked from the engine (which says it's a browser, to be
+ * given woff2 files).
+ */
+export async function loadMaskFonts(board: Board, fetcher: Fetcher = globalThis.fetch as unknown as Fetcher, opts: { node?: boolean } = {}): Promise<boolean> {
+  const want = new Map<string, { weights: Set<string>; chars: Set<number> }>();
+  for (const n of Object.values(board.nodes)) {
+    if (n.type !== "text" || !n.mask || !n.parent) continue;
+    let family = familyOf(n.style);
+    let weight = n.style.fontWeight ?? (n.style.font ? /\b(bold|[1-9]00)\b/i.exec(n.style.font)?.[1] : undefined);
+    for (const a of ancestors(board, n.id)) {
+      family ??= familyOf(board.nodes[a]?.style);
+      weight ??= board.nodes[a]?.style.fontWeight;
+    }
+    const words = plainText(n.text);
+    const names = [...familyNames(resolveTokens(family ?? "Inter", board.tokens)), ...[...(n.text ?? "").matchAll(/font-family:\s*([^;"]+)/gi)].flatMap((m) => familyNames(resolveTokens(m[1], board.tokens)))];
+    for (const name of names) {
+      if (GENERIC_FONTS.has(name.toLowerCase()) || name.startsWith("-") || MASK_FONTS.has(name.toLowerCase())) continue;
+      const w = want.get(name) ?? { weights: new Set(["400"]), chars: new Set<number>() };
+      const fw = resolveTokens(weight ?? "400", board.tokens).trim();
+      w.weights.add(fw === "bold" ? "700" : /^\d{3}$/.test(fw) ? fw : "400");
+      for (const m of (n.text ?? "").matchAll(/font-weight:\s*(\d{3}|bold)/gi)) w.weights.add(m[1] === "bold" ? "700" : m[1]);
+      if (/<(b|strong)\b/i.test(n.text ?? "")) w.weights.add("700");
+      for (const ch of words) w.chars.add(ch.codePointAt(0)!);
+      want.set(name, w);
+    }
+  }
+  if (!want.size || typeof fetcher !== "function") return false;
+  let added = false;
+  const b64 = (buf: ArrayBuffer) => {
+    const bytes = new Uint8Array(buf);
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
+  await Promise.all(
+    [...want].map(([name, w]) => {
+      const key = name.toLowerCase();
+      const known = loadingFonts.get(key);
+      if (known) return known;
+      const job = (async () => {
+        try {
+          const weights = [...w.weights].sort();
+          const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(name).replace(/%20/g, "+")}:ital,wght@${[0, 1].flatMap((i) => weights.map((x) => `${i},${x}`)).join(";")}&display=block`;
+          const res = await fetcher(url, opts.node ? { headers: { "User-Agent": GOOGLE_UA } } : undefined);
+          if (!res.ok) return;
+          const css = await res.text();
+          const faces = (css.match(FACE_RE) ?? []).filter((f) => coversAny(f, w.chars.size ? w.chars : new Set([65])));
+          const out: string[] = [];
+          for (const face of faces) {
+            const src = /url\(\s*(['"]?)(https:[^'")]+)\1\s*\)(?:\s*format\(\s*['"]?([\w-]+)['"]?\s*\))?/i.exec(face);
+            if (!src) continue;
+            const file = await fetcher(src[2]);
+            if (!file.ok) continue;
+            const format = src[3] ?? (/\.woff2(\?|$)/.test(src[2]) ? "woff2" : /\.woff(\?|$)/.test(src[2]) ? "woff" : "truetype");
+            const mime = format === "woff2" ? "font/woff2" : format === "woff" ? "font/woff" : "font/ttf";
+            out.push(face.replace(/src:[^;}]+/i, `src:url(data:${mime};base64,${b64(await file.arrayBuffer())}) format("${format}")`));
+          }
+          if (out.length) {
+            MASK_FONTS.set(key, out.join(""));
+            added = true;
+          }
+        } catch {
+          // Offline, or a font Google doesn't have: the words draw in the next font of their list.
+        }
+      })();
+      loadingFonts.set(key, job);
+      return job;
+    }),
+  );
+  if (added) for (const fn of maskFontListeners) fn();
+  return added;
 }

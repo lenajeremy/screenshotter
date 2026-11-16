@@ -39,6 +39,7 @@ const agentman = await fakeAgentman(AM_SOCKET, [
 
 const { startStudio } = await import("../src/studio/server.js");
 const { encodePng } = await import("../src/util/png.js");
+const { decodePng, pixelAt } = await import("../src/util/png.js");
 const { renderHtml } = await import("../src/render/mockup.js");
 const { closeBrowser } = await import("../src/render/browser.js");
 const boards = await import("../src/board/store.js");
@@ -323,9 +324,47 @@ async function openGridBoard(page: Page) {
   const byName = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
   return { id: b.id, byName };
 }
+/** A board with one artboard written from `html`, open on the page; `byName` finds a layer's id. */
+async function openMaskBoard(page: Page, htmlText: string) {
+  const b = boards.createBoard("Mask test board", "studio");
+  const made = boardCore.addHtmlOps(htmlText, null, { page: b.pages[0].id });
+  boards.changeBoard(b.id, made.ops, "studio");
+  await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+  await page.waitForSelector(".bd-world [data-bid]");
+  await page.waitForTimeout(900);
+  const byName = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
+  return { id: b.id, byName };
+}
 /** The canvas's commit, for setting up a board as a person would have left it. */
 const commitOps = (page: Page, ops: unknown[]) => S(page, async (ops: unknown[]) => (await import("/ui/board-state.js" as string)).commit(ops, { label: "Test" }), ops);
 const childNames = (t: { id: string }, id: string) => (boards.getBoard(t.id).nodes[id].children ?? []).map((c) => boards.getBoard(t.id).nodes[c].name).join(",");
+
+/** A pixel's colour, in words: red, blue, white, faded (red seen through partly), or its numbers. */
+const colorName = ([r, g, b]: number[], faded = false) =>
+  r > 200 && g < 80 && b < 80 ? "red" : r > 225 && g > 225 && b > 225 ? "white" : b > 200 && r < 80 && g < 80 ? "blue" : faded && r > 200 && g >= 80 && g <= 225 && Math.abs(g - b) < 30 ? "faded" : `rgb(${r},${g},${b})`;
+
+/** The colours on screen at points of a layer `w` px wide (in its own px, from its top left). */
+async function colorsAt(page: Page, id: string, w: number, pts: Array<[number, number]>, faded = false) {
+  const box = await boxOf(page, id);
+  const k = box.width / w;
+  const f = decodePng(await page.screenshot());
+  return pts.map(([x, y]) => colorName(pixelAt(f, box.x + x * k, box.y + y * k), faded));
+}
+
+/** How much of a part of a layer (x, y, width, height in its own px) shows red on screen. */
+async function redShare(page: Page, id: string, w: number, [x0, y0, rw, rh]: number[]) {
+  const box = await boxOf(page, id);
+  const k = box.width / w;
+  const f = decodePng(await page.screenshot());
+  let red = 0;
+  let all = 0;
+  for (let y = y0; y < y0 + rh; y += 2)
+    for (let x = x0; x < x0 + rw; x += 2) {
+      all++;
+      red += colorName(pixelAt(f, box.x + x * k, box.y + y * k)) === "red" ? 1 : 0;
+    }
+  return red / all;
+}
 
 const boardSel = (page: Page) => S(page, async () => {
   const m = await import("/ui/board-state.js" as string);
@@ -1384,6 +1423,203 @@ const CHECKS: Record<string, Check> = {
     const phone = boards.getBoard(t.id).nodes[t.byName("Phone")];
     const pasted = boards.getBoard(t.id).nodes[phone.children![phone.children!.length - 1]];
     return pasted.type === "frame" && pasted.children?.length === 2 ? "ok" : `pasted: ${pasted.type} with ${pasted.children?.length ?? 0} layers`;
+  },
+  async "on a board, Use as mask (⌃⌘M) clips the layers above it, live as they and it move, change and scale, with its list marks, panel and undo"(page) {
+    const t = await openMaskBoard(page, `<div data-name="Card" style="position:relative;width:400px;height:400px;background:#fff"><div data-name="Below" style="position:absolute;left:0;top:0;width:40px;height:40px;background:rgb(0,0,255)"></div><div data-name="Shape" style="position:absolute;left:100px;top:100px;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-name="Photo" style="position:absolute;left:0;top:0;width:400px;height:400px;background:rgb(255,0,0)"></div></div>`);
+    const [card, shape, photo] = ["Card", "Shape", "Photo"].map(t.byName);
+    const look = (pts: Array<[number, number]>) => colorsAt(page, card, 400, pts);
+    if ((await look([[20, 20]])).join() !== "red") return "the photo doesn't cover the card before it's masked";
+    await sel(page, [shape]);
+    await page.waitForTimeout(200);
+    await page.locator(`.bd-row[data-lid="${shape}"]`).click();
+    await page.locator(".bd-stage").hover({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("Control+Meta+KeyM");
+    await page.waitForTimeout(500);
+    if (nodeOf(t, shape).mask !== "alpha") return `⌃⌘M made it ${nodeOf(t, shape).mask}`;
+    // The circle shows the photo; outside it, the layer below the mask and the card show.
+    let got = await look([[200, 200], [20, 20], [380, 380], [110, 110]]);
+    if (got.join() !== "red,blue,white,white") return `masked, the card shows ${got.join()} (centre, below, corner, outside the circle)`;
+    // The layer list joins the mask to the layers it masks; the panel says what it is.
+    if (!(await page.locator(`.bd-row[data-lid="${shape}"] .bd-mask-mark.head`).count()) || !(await page.locator(`.bd-row[data-lid="${photo}"] .bd-mask-mark.end`).count())) return "the layer list doesn't mark the mask and what it masks";
+    const panel = page.locator(".bd-right section", { has: page.locator("h3", { hasText: /^Mask$/ }) });
+    if ((await panel.locator(".seg button.on").textContent())?.trim() !== "Alpha") return "the panel's Mask section doesn't show Alpha";
+    // Moving the photo: clipped all the way, live.
+    await sel(page, []);
+    const cb = await boxOf(page, card);
+    const k = cb.width / 400;
+    await page.mouse.move(cb.x + 200 * k, cb.y + 200 * k);
+    await page.mouse.down();
+    await page.mouse.move(cb.x + 280 * k, cb.y + 200 * k, { steps: 4 });
+    await page.mouse.move(cb.x + 350 * k, cb.y + 200 * k, { steps: 4 });
+    await page.waitForTimeout(120);
+    got = await look([[120, 200], [250, 200]]);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    if (got.join() !== "white,red") return `mid-drag, the moved photo shows ${got.join()} at the circle's left and middle`;
+    if (styleOf(t, photo).left !== "150px") return `the photo was dropped at ${styleOf(t, photo).left}`;
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(400);
+    // Moving the mask (arrow keys) moves what shows.
+    await sel(page, [shape]);
+    for (let i = 0; i < 5; i++) await page.keyboard.press("Shift+ArrowRight");
+    await page.waitForTimeout(400);
+    await sel(page, []);
+    got = await look([[110, 200], [340, 200]]);
+    if (got.join() !== "white,red") return `the mask moved 50 px right shows ${got.join()}`;
+    // Off with its eye, on again; then by its brightness (black: nothing) and by its outline.
+    await sel(page, [shape]);
+    await page.waitForTimeout(200);
+    await panel.locator("[data-mask-eye]").click();
+    await page.waitForTimeout(300);
+    const off = (await look([[380, 380]])).join();
+    await panel.locator("[data-mask-eye]").click();
+    await page.waitForTimeout(300);
+    await panel.locator(".seg button", { hasText: "Luminance" }).click();
+    await page.waitForTimeout(300);
+    const luma = (await look([[250, 200]])).join();
+    await panel.locator(".seg button", { hasText: "Vector" }).click();
+    await page.waitForTimeout(300);
+    const vector = (await look([[250, 200], [110, 200]])).join();
+    await panel.locator(".seg button", { hasText: "Alpha" }).click();
+    await page.waitForTimeout(300);
+    if (off !== "red" || luma !== "white" || vector !== "red,white") return `mask off ${off} (red), luminance of black ${luma} (white), vector ${vector} (red,white)`;
+    // The Scale tool scales the mask with everything else in the card.
+    await sel(page, [card]);
+    await page.keyboard.press("k");
+    await page.waitForTimeout(300);
+    const field = page.locator(".bd-scale-row .num input");
+    await field.click();
+    await field.fill("50");
+    await field.press("Enter");
+    await page.waitForTimeout(600);
+    await S(page, async () => {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      (await import("/ui/board-state.js" as string)).bset({ tool: "move" });
+    });
+    if (styleOf(t, shape).width !== "100px" || styleOf(t, shape).left !== "75px") return `scaled to 50%, the mask is ${styleOf(t, shape).width} wide at ${styleOf(t, shape).left}`;
+    await sel(page, []);
+    got = await colorsAt(page, card, 200, [[125, 100], [60, 100], [190, 190]]);
+    if (got.join() !== "red,white,white") return `scaled, the card shows ${got.join()}`;
+    await page.locator(".bd-stage").hover({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(400);
+    // ⌃⌘M on the mask removes it: the photo shows whole; undo puts the mask back.
+    await sel(page, [shape]);
+    await page.keyboard.press("Control+Meta+KeyM");
+    await page.waitForTimeout(400);
+    const removed = `${nodeOf(t, shape).mask ?? "none"} ${(await look([[380, 380]])).join()}`;
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(400);
+    await sel(page, [photo]);
+    await page.waitForTimeout(200);
+    await picture(page, "mask-use");
+    const back = `${nodeOf(t, shape).mask} ${(await look([[380, 380], [250, 200]])).join()}`;
+    if (removed !== "none red" || back !== "alpha white,red") return `removing the mask: ${removed} (none red); undone: ${back} (alpha white,red)`;
+    // Its outline shows over the selected layer it masks.
+    if ((await page.locator(".bd-mask-line").count()) !== 1) return "no mask outline over the selected masked layer";
+    // The panel's + uses a layer as a mask too; the layer menu offers it.
+    await panel.locator("[data-mask-add]").click();
+    await page.waitForTimeout(400);
+    const viaPanel = nodeOf(t, photo).mask;
+    await page.locator(".bd-stage").hover({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(300);
+    await sel(page, [shape]);
+    await page.locator(`.bd-row[data-lid="${shape}"]`).click({ button: "right" });
+    await page.waitForTimeout(300);
+    const menu = await page.locator(".ctx-item", { hasText: "Remove mask" }).count();
+    await page.keyboard.press("Escape");
+    return viaPanel === "alpha" && menu === 1 && !nodeOf(t, photo).mask ? "ok" : `the panel's + made ${viaPanel}; the layer menu has Remove mask ${menu} time(s); undone: ${nodeOf(t, photo).mask ?? "none"}`;
+  },
+  async "on a board, Mask with selection makes a mask group; gradient, text and vector masks look the same on the canvas and in an export; duplicates and copies keep them"(page) {
+    const red = (x: number, w = 200, h = 200) => `<div data-name="Red ${x}" style="position:absolute;left:${x}px;top:0;width:${w}px;height:${h}px;background:rgb(255,0,0)"></div>`;
+    // A picture whose left half is opaque and right half clear: as a mask, only its left half shows.
+    const half = path.join(LIB, "images", "half-clear.png");
+    const rgba = Buffer.alloc(40 * 40 * 4);
+    for (let i = 0; i < 40 * 40; i++) rgba.set([0, 0, 0, i % 40 < 20 ? 255 : 0], i * 4);
+    writeFileSync(half, encodePng({ width: 40, height: 40, rgba }));
+    const t = await openMaskBoard(
+      page,
+      `<div data-name="Poster" style="position:relative;width:600px;height:520px;background:#fff">` +
+        `<div data-name="Fade" style="position:absolute;left:0;top:0;width:200px;height:200px;background-image:linear-gradient(#000, transparent)"></div>${red(0)}` +
+        `<p data-name="Word" style="position:absolute;left:200px;top:0;width:200px;height:200px;margin:0;font:900 190px/200px Helvetica;text-align:center;color:#000">M</p>${red(200)}` +
+        `<svg data-name="Dot" style="position:absolute;left:400px;top:0;width:200px;height:200px" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>${red(400)}` +
+        `<div data-name="Row" style="position:absolute;left:0;top:220px;width:600px;height:80px;display:flex;gap:10px"><div data-name="Dot2" style="width:80px;height:80px;border-radius:50%;background:#000;flex-shrink:0"></div><div data-name="Next" style="width:80px;height:80px;background:#0a0;flex-shrink:0"></div></div>` +
+        // Last, so it masks only the layer after it (a mask masks every layer above it, to the next mask).
+        `<img data-name="Half" data-mask src="${half}" style="position:absolute;left:0;top:320px;width:200px;height:200px"><div data-name="Red pic" style="position:absolute;left:0;top:320px;width:200px;height:200px;background:rgb(255,0,0)"></div>` +
+        `</div>`,
+    );
+    const poster = t.byName("Poster");
+    const pairs = [["Fade", "Red 0"], ["Word", "Red 200"], ["Dot", "Red 400"]].map((p) => p.map(t.byName));
+    for (const ids of pairs) {
+      await sel(page, ids);
+      await page.locator(".bd-stage").hover({ position: { x: 5, y: 5 } });
+      await page.keyboard.press("Control+Meta+KeyM");
+      await page.waitForTimeout(400);
+    }
+    const groups = pairs.map(([m]) => nodeOf(t, m).parent!);
+    if (groups.some((g, i) => nodeOf(t, g).name !== "Mask group" || nodeOf(t, g).children![0] !== pairs[i][0] || nodeOf(t, pairs[i][0]).mask !== "alpha")) return `mask groups: ${groups.map((g) => `${nodeOf(t, g).name}: ${nodeOf(t, g).children!.map((c) => nodeOf(t, c).name).join("+")}`).join(" | ")}`;
+    if (nodeOf(t, groups[0]).style.width !== "200px" || nodeOf(t, groups[1]).style.left !== "200px") return `the groups are ${groups.map((g) => `${nodeOf(t, g).style.left} ${nodeOf(t, g).style.width}`).join(", ")}`;
+    // In a flex row, the mask goes into a mask group of its own, which keeps its place in the row.
+    const next0 = (await boxOf(page, t.byName("Next"))).x;
+    await sel(page, [t.byName("Dot2")]);
+    await page.keyboard.press("Control+Meta+KeyM");
+    await page.waitForTimeout(500);
+    const dotGroup = nodeOf(t, nodeOf(t, t.byName("Dot2")).parent!);
+    if (dotGroup.name !== "Mask group" || dotGroup.parent !== t.byName("Row") || dotGroup.style.position !== "relative" || Math.abs((await boxOf(page, t.byName("Next"))).x - next0) > 1) return `in a flex row: ${dotGroup.name} in ${dotGroup.parent}, ${dotGroup.style.position}; the next item moved ${(await boxOf(page, t.byName("Next"))).x - next0} px`;
+    await sel(page, []);
+    await page.mouse.move(5, 300);
+    // What shows, on the canvas: the fade, the letter, the circle.
+    const points: Array<[number, number]> = [[100, 12], [100, 150], [500, 100], [404, 4], [300, 250], [50, 420], [150, 420]];
+    const canvas = await colorsAt(page, poster, 600, points, true);
+    const word = await redShare(page, poster, 600, [200, 0, 200, 200]);
+    // And in an export, drawn by the engine.
+    const files = await S(page, async (a: { id: string; node: string }) => (await import("/ui/store.js" as string)).api("/api/board/export", { id: a.id, nodes: [a.node], scale: 1, format: "png" }), { id: t.id, node: poster });
+    const shot = decodePng(readFileSync((files as { files: string[] }).files[0]));
+    const exported = points.map(([x, y]) => colorName(pixelAt(shot, x, y), true));
+    let inked = 0;
+    for (let y = 0; y < 200; y += 2) for (let x = 200; x < 400; x += 2) inked += colorName(pixelAt(shot, x, y)) === "red" ? 1 : 0;
+    const wordExport = inked / 10000;
+    const want = "red,faded,red,white,white,red,white";
+    if (canvas.join() !== want) return `the canvas shows ${canvas.join()} (${want})`;
+    if (exported.join() !== want) return `the export shows ${exported.join()} (${want})`;
+    if (word < 0.15 || word > 0.7 || Math.abs(word - wordExport) > 0.06) return `the letter shows ${Math.round(word * 100)}% of its box on the canvas, ${Math.round(wordExport * 100)}% in the export`;
+    // And in Preview, a web page of its own in this browser.
+    const preview = await page.context().browser()!.newPage();
+    await preview.setViewportSize({ width: 900, height: 700 });
+    await preview.goto(`${BASE}board/preview?board=${encodeURIComponent(t.id)}&node=${encodeURIComponent(poster)}`, { waitUntil: "networkidle" });
+    await preview.waitForTimeout(400);
+    const pb = (await preview.locator("#bd-frame > *").first().boundingBox())!;
+    const pf = decodePng(await preview.screenshot());
+    const previewed = points.map(([x, y]) => colorName(pixelAt(pf, pb.x + x, pb.y + y), true));
+    await preview.close();
+    if (previewed.join() !== want) return `Preview shows ${previewed.join()} (${want})`;
+    // Duplicated, a mask group is still masked; copied and pasted too.
+    const scopes = await page.locator(".bd-world [data-mask-scope]").count();
+    await sel(page, [groups[2]]);
+    await page.keyboard.press("Meta+d");
+    await page.waitForTimeout(500);
+    const dup = boards.getBoard(t.id).nodes[poster].children!.find((c) => !Object.values(groups).includes(c) && nodeOf(t, c).name === "Mask group" && nodeOf(t, c).parent === poster);
+    const dupMask = dup && nodeOf(t, nodeOf(t, dup).children![0]);
+    await S(page, () => {
+      const dt = new DataTransfer();
+      window.dispatchEvent(new ClipboardEvent("copy", { clipboardData: dt, bubbles: true }));
+      (window as unknown as { __clip: DataTransfer }).__clip = dt;
+    });
+    await sel(page, [poster]);
+    await S(page, () => window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: (window as unknown as { __clip: DataTransfer }).__clip, bubbles: true })));
+    await page.waitForTimeout(600);
+    const pasted = Object.values(boards.getBoard(t.id).nodes).filter((n) => n.name === "Mask group" && n.parent === poster).length;
+    if (dupMask?.mask !== "alpha" || pasted !== 5 || (await page.locator(".bd-world [data-mask-scope]").count()) !== scopes + 2) return `duplicate's mask ${dupMask?.mask}, ${pasted} mask groups on the poster (5), ${await page.locator(".bd-world [data-mask-scope]").count()} masked on the canvas (${scopes + 2})`;
+    // A look in both themes, with the mask group open in the list and its mask in the panel.
+    await sel(page, [pairs[1][0]]);
+    await page.waitForTimeout(300);
+    await picture(page, "mask-group-dark");
+    await S(page, async () => (await import("/ui/store.js" as string)).setTheme("light"));
+    await page.waitForTimeout(400);
+    await picture(page, "mask-group-light");
+    await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
+    return "ok";
   },
   async "on a board, a fill takes a token from the picker, shows its name and draws its colour"(page) {
     const t = await openTestBoard(page);

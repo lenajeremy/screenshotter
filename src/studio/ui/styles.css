@@ -2282,3 +2282,26 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .wi-progress { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-3); }
 .wi-bar { height: 6px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
 .wi-bar i { display: block; height: 100%; border-radius: inherit; background: var(--iris); transition: width 0.35s var(--ease); }
+/* Boards: masks. What a mask shows is drawn over its frame (see maskCss in the core): clicks go
+   through to the layers it shows, and to those below it. */
+.bd-world [data-mask-scope] { pointer-events: none; }
+.bd-world [data-mask-scope] > * > * { pointer-events: auto; }
+/* The mask's outline over a layer it masks, picked or under the pointer. */
+.bd-mask-line { position: absolute; border: 1px dashed var(--iris); opacity: 0.85; pointer-events: none; }
+/* The layer list: a line from the mask down along the layers it masks (the ones above it). */
+.bd-mask-mark { position: absolute; top: 0; bottom: 0; width: 8px; pointer-events: none; }
+.bd-mask-mark::before { content: ""; position: absolute; left: 0; width: 1.5px; border-radius: 1px; background: var(--text-3); }
+.bd-mask-mark.head::before { top: 50%; bottom: 0; }
+.bd-mask-mark.mid::before { top: 0; bottom: 0; }
+.bd-mask-mark.end::before { top: 0; height: 50%; }
+.bd-mask-mark.head::after, .bd-mask-mark.end::after { content: ""; position: absolute; left: 0; top: calc(50% - 0.75px); width: 4.5px; height: 1.5px; border-radius: 1px; background: var(--text-3); }
+.bd-mask-mark.off::before, .bd-mask-mark.off::after { opacity: 0.4; }
+.bd-row.on .bd-mask-mark::before, .bd-row.on .bd-mask-mark::after { background: var(--text-2); }
+/* The panel's Mask section. */
+.bd-mask-kind .seg { width: 100%; }
+.bd-mask-kind .seg button { flex: 1; }
+.bd-mask-what { display: flex; align-items: center; gap: 8px; min-height: 26px; color: var(--text-3); font-size: 11.5px; line-height: 1.45; }
+.bd-mask-what > span { flex: 1; min-width: 0; }
+.bd-mask-what b { color: var(--text-2); font-weight: 560; }
+.bd-mask-what.by svg { flex: none; color: var(--text-3); }
+.bd-mask-what .btn { flex: none; }

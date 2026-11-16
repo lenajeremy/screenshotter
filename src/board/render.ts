@@ -11,6 +11,17 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { newPage } from "../render/browser.js";
 import { BOARD_CSS, fontFaceCss, fontFamilies, fontLinks, nodeHtml, pxValue, rootOf, styleText, tokenCss, type Board } from "./core.js";
+import { loadMaskFonts } from "./core.js";
+
+/**
+ * The web fonts a board's text masks use, put inside their pictures before the board is drawn (an
+ * SVG drawn as an image can't load fonts). Offline, or slow, it gives up after a few seconds and the
+ * words draw in the next font of their list.
+ */
+export async function maskFontsFor(board: Board): Promise<void> {
+  if (!Object.values(board.nodes).some((n) => n.mask && n.type === "text")) return;
+  await Promise.race([loadMaskFonts(board, globalThis.fetch as never, { node: true }).catch(() => false), new Promise((r) => setTimeout(r, 8000))]);
+}
 
 export interface Box {
   x: number;
@@ -86,6 +97,7 @@ interface Drawn {
 export async function drawArtboard(board: Board, rootId: string, ids: string[], opts: { scale?: number; maxEdge?: number; format?: "png" | "jpeg"; quality?: number; transparent?: boolean } = {}): Promise<Drawn> {
   const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-board-"));
   const file = path.join(dir, "board.html");
+  await maskFontsFor(board);
   await writeFile(file, artboardDocument(board, rootId));
   const page = await newPage();
   try {
