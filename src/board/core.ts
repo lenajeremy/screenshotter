@@ -2,12 +2,15 @@
  * Boards: designs made of real HTML and CSS, laid out on pages of artboards, that agents and people
  * edit together. A board is a tree of layers (frames, text, images and vectors), each with its CSS.
  *
- * This module is pure (no imports, no Node or DOM APIs) so the engine and the Studio's canvas share
- * it: the canvas loads the compiled file as /ui/board-core.js. Everything that changes a board goes
+ * This module is pure (no Node or DOM APIs; its only import is the shader model beside it, as pure)
+ * so the engine and the Studio's canvas share it: the canvas loads the compiled file as
+ * /ui/board-core.js (and the shader model as /ui/shaders.js). Everything that changes a board goes
  * through `applyOps`, which also returns the steps that undo it.
  */
+import { CUSTOM_SHADER, SHADER_CANVAS, cleanShaderCode, scaledShader, shaderAttrs, shaderCode, shaderFromAttrs, shaderPresetName, shaderWords, presetOf, type BoardShader, type ShaderSpec } from "./shaders.js";
+export * from "./shaders.js";
 
-export type NodeType = "frame" | "text" | "image" | "svg" | "vector" | "video";
+export type NodeType = "frame" | "text" | "image" | "svg" | "vector" | "video" | "shader";
 
 /** How a video plays in Preview (and the page it becomes): Figma's settings, autoplay, loop and sound. */
 export interface VideoSettings {
@@ -73,6 +76,8 @@ export interface BoardNode {
    * to the next mask) only where it is: by its alpha, its outline (vector) or its brightness (luminance).
    */
   mask?: MaskType;
+  /** A shader layer's shader: a preset or code of its own, its parameters, speed and still (see shaders.ts). */
+  shader?: ShaderSpec;
 }
 
 export interface BoardPage {
@@ -120,6 +125,8 @@ export interface Board {
   agents?: Record<string, BoardAgent>;
   /** Typefaces the board carries (see BoardFont). */
   fonts?: BoardFont[];
+  /** Shaders saved on the board as its own presets, to place again. */
+  shaders?: BoardShader[];
 }
 
 /**
@@ -930,6 +937,8 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
     const style: Style = { ...own };
     if (inFlowColumn && inlineLevel && !style.alignSelf) style.alignSelf = "flex-start";
 
+    // A shader: <div data-shader> as boards write it, or <canvas data-shader> (see the Shaders section).
+    if (isShaderElement(el)) return add(shaderLayer(el, parent, style, warnings));
     if (el.tag === "img") {
       if (!style.objectFit && style.width && style.height) style.objectFit = "cover";
       for (const k of ["width", "height"] as const) if (!style[k] && pxValue(el.attrs[k]) !== undefined) style[k] = `${pxValue(el.attrs[k])}px`;
@@ -1070,6 +1079,8 @@ export interface HtmlOptions {
   hidden?: boolean;
   /** Draw a video as its still (its first frame), for pictures: exports, thumbnails, screenshots. */
   still?: boolean;
+  /** Carry each shader's GLSL and what to draw it with, for a page that plays it (Preview, exports, Copy as HTML). */
+  code?: boolean;
 }
 
 /** CSS with each url(…) passed through `fn` (a local path made a loadable URL). */
@@ -1116,6 +1127,8 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
       const inner = tag === "g" ? (n.children ?? []).map((c) => nodeHtml(board, c, opts, depth + 1)).join("") : (n.text ?? "");
       return `<${tag}${attrs}${attrText(n.attrs)}>${inner}</${tag}>`;
     }
+    case "shader":
+      return `<div${attrs}${shaderAttrs(n.shader, board.shaders, { code: opts.code })}>${SHADER_CANVAS}</div>`;
     default:
       return `<div${attrs}>${childrenHtml(board, n.children ?? [], opts, depth)}</div>`;
   }
@@ -1261,7 +1274,12 @@ export function scaleOps(board: Board, id: string, k: number, inherited: Inherit
       const t = scaleInline(n.text, k);
       if (t !== n.text) op.text = t;
     }
-    if (op.style || op.text !== undefined) ops.push(op);
+    // A shader's lengths (a halftone's spacing, a dither's pixel) scale with it.
+    if (n.type === "shader" && n.shader) {
+      const sh = scaledShader(n.shader, shaderCode(n.shader, board.shaders), k);
+      if (sh) op.shader = sh;
+    }
+    if (op.style || op.text !== undefined || op.shader) ops.push(op);
   }
   // Type and spacing the layer only inherits don't change with it: it gets them, scaled, of its own.
   if (words || relative) {
@@ -1483,6 +1501,8 @@ export type Op =
       overrides?: string[] | null;
       /** Use the layer as a mask of this kind (null: an ordinary layer again). */
       mask?: MaskType | null;
+      /** A shader layer's shader, whole (see shaders.ts). */
+      shader?: ShaderSpec | null;
       /** Made by a component for its copies (so it doesn't count as a change made in a copy). */
       sync?: boolean;
     }
@@ -1497,13 +1517,15 @@ export type Op =
   | { op: "token"; name: string; value: string | null; index?: number }
   /** Add a typeface to the board, or (remove) take it off. One per family, weight, style and range. */
   | { op: "font"; font: BoardFont; remove?: boolean }
+  /** Save a shader as one of the board's own presets, or change one (null code removes it). */
+  | { op: "shaderPreset"; name: string; code: string | null; index?: number }
   | { op: "rename"; name: string }
   /** Mark artboards as being worked on by an agent (null clears them; no ids clears all). */
   | { op: "working"; ids?: string[]; at: string | null }
   /** Remember an agent that worked on the board (and on which artboards). */
   | { op: "agent"; agent: Omit<BoardAgent, "firstAt" | "lastAt" | "artboards" | "last">; artboards?: string[]; at: string; touch?: Omit<AgentTouch, "at"> }
   /** The whole design at once (how the Studio undoes a change an agent made). */
-  | { op: "replace"; pages: BoardPage[]; nodes: Record<string, BoardNode>; tokens: BoardToken[]; name?: string };
+  | { op: "replace"; pages: BoardPage[]; nodes: Record<string, BoardNode>; tokens: BoardToken[]; name?: string; shaders?: BoardShader[] };
 
 export class OpError extends Error {}
 
@@ -1543,7 +1565,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
     if (parent) {
       const p = mut(parent);
       const holds = p.type === "frame" || (p.type === "svg" && !p.svg) || (p.type === "vector" && p.tag === "g");
-      if (!holds) throw new OpError(`Only frames hold layers; ${p.name} is ${p.type === "text" ? "text" : p.type === "image" ? "an image" : p.type === "svg" ? "a vector drawn as one piece (split it into its parts first)" : "a part of a vector"}.`);
+      if (!holds) throw new OpError(`Only frames hold layers; ${p.name} is ${p.type === "text" ? "text" : p.type === "image" ? "an image" : p.type === "shader" ? "a shader" : p.type === "svg" ? "a vector drawn as one piece (split it into its parts first)" : "a part of a vector"}.`);
       p.children ??= [];
       return p.children;
     }
@@ -1615,7 +1637,7 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           back.tag = n.tag ?? null;
           n.tag = vectorTag(op.tag);
         }
-        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides", "mask"] as const) {
+        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides", "mask", "shader"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
           if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
@@ -1723,6 +1745,9 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
         if (!fonts.length) delete board.fonts;
         break;
       }
+      case "shaderPreset":
+        undo.push(...shaderPresetStep(board, op));
+        break;
       case "rename":
         undo.push({ op: "rename", name: board.name });
         board.name = op.name.slice(0, 120) || board.name;
@@ -1748,12 +1773,16 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
         break;
       }
       case "replace":
-        undo.push({ op: "replace", pages: board.pages.map((p) => ({ ...p, children: p.children.slice() })), nodes: { ...board.nodes }, tokens: board.tokens.slice(), name: board.name });
+        undo.push({ op: "replace", pages: board.pages.map((p) => ({ ...p, children: p.children.slice() })), nodes: { ...board.nodes }, tokens: board.tokens.slice(), name: board.name, ...(op.shaders ? { shaders: board.shaders?.slice() ?? [] } : {}) });
         if (!op.pages?.length) throw new OpError("A board keeps at least one page.");
         board.pages = op.pages.map((p) => ({ ...p, children: p.children.slice() }));
         board.nodes = { ...op.nodes };
         board.tokens = op.tokens.slice();
         if (op.name) board.name = op.name;
+        if (op.shaders) {
+          if (op.shaders.length) board.shaders = op.shaders.slice();
+          else delete board.shaders;
+        }
         copied.clear();
         pageCopied.clear();
         for (const p of board.pages) pageCopied.add(p.id);
@@ -1870,7 +1899,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
 const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate", "gridColumn", "gridRow", "gridArea", "justifySelf"];
 
-const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name", "mask"] as const;
+const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name", "mask", "shader"] as const;
 
 /** The keys a set step changes, as overrides name them ("style.color", "text"). */
 function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {
@@ -2233,6 +2262,7 @@ function describe(board: Board, id: string): string {
     bits.push(`src ${(n.src ?? "").slice(0, 80)}`, [v.autoplay ? "autoplay" : "no autoplay", v.loop ? "loop" : "once", v.muted ? "no sound" : "sound"].join(" "));
   }
   if (n.type === "svg") bits.push(n.svg ? (n.shape ? `shape ${String(n.shape.type ?? "")}` : "one piece") : `in parts${n.attrs?.viewBox ? `, viewBox ${n.attrs.viewBox}` : ""}`);
+  if (n.type === "shader") bits.push(shaderWords(n.shader, board.shaders));
   if (n.mask) bits.push(maskWords(board, id));
   const maskedBy = maskOf(board, id);
   if (maskedBy) bits.push(`masked by #${maskedBy}${board.nodes[maskedBy]?.hidden ? " (mask hidden, so shown whole)" : ""}`);
@@ -3586,4 +3616,74 @@ export async function loadMaskFonts(board: Board, fetcher: Fetcher = globalThis.
   );
   if (added) for (const fn of maskFontListeners) fn();
   return added;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shaders: layers drawn live by the graphics card. The model (presets, parameters, HTML attributes)
+// is in shaders.ts and the drawing in the Studio's board-shader-runtime.js; here is what needs a
+// board: a shader layer read from HTML, and the board's own presets.
+
+const SHADER_SCRIPT = /^(x-shader\/x-fragment|x-shader\/fragment|x-shader|text\/x-glsl|x-glsl|glsl)$/i;
+const isShaderScript = (c: HNode): c is HEl => typeof c !== "string" && c.tag === "script" && SHADER_SCRIPT.test((c.attrs.type ?? "").trim());
+
+/** Whether an element is a shader layer: data-shader on it, or a canvas holding shader code. */
+function isShaderElement(el: HEl): boolean {
+  return el.attrs["data-shader"] !== undefined || (el.tag === "canvas" && el.children.some(isShaderScript));
+}
+
+/** A shader layer from HTML: its shader, and a size when nothing gives it one (a div would be 0 high). */
+function shaderLayer(el: HEl, parent: string | null, style: Style, warnings: string[]): Omit<BoardNode, "id"> {
+  const script = el.children.find(isShaderScript);
+  const code = script ? script.children.filter((c): c is string => typeof c === "string").join("") : undefined;
+  const shader = shaderFromAttrs(el.attrs, code, warnings);
+  // A canvas's own width and height attributes count, as an image's do.
+  for (const k of ["width", "height"] as const) if (!style[k] && pxValue(el.attrs[k]) !== undefined) style[k] = `${pxValue(el.attrs[k])}px`;
+  const has = (k: string) => style[k] !== undefined && style[k] !== "auto";
+  if (!has("height") && !has("inset") && !(has("top") && has("bottom")) && !has("aspectRatio") && !has("flex") && !has("flexGrow")) {
+    const w = pxValue(style.width);
+    style.height = `${w ? Math.round(w * 0.75) : 300}px`;
+  }
+  if (!has("width") && !has("inset") && !(has("left") && has("right")) && (style.position === "absolute" || parent === null)) style.width = "400px";
+  const name = el.attrs["data-name"] || el.attrs["aria-label"] || el.attrs.title || presetOf(shader.preset)?.name || shader.preset || "Shader";
+  return { type: "shader", name: name.slice(0, 60), parent, style, shader };
+}
+
+/** Save, change or remove one of the board's own shader presets (on the board being changed); returns the step that undoes it. */
+function shaderPresetStep(board: Board, op: Extract<Op, { op: "shaderPreset" }>): Op[] {
+  const name = shaderPresetName(op.name);
+  if (!name || name === CUSTOM_SHADER) throw new OpError(`"${op.name}" can't be a shader preset's name: use letters, digits and -.`);
+  const list = (board.shaders ?? []).slice();
+  const i = list.findIndex((s) => s.name === name);
+  if (op.code !== null && i < 0 && presetOf(name)) throw new OpError(`"${name}" is one of the built-in shader presets: give yours another name.`);
+  const undo: Op[] = [i >= 0 ? { op: "shaderPreset", name, code: list[i].code, index: i } : { op: "shaderPreset", name, code: null }];
+  if (op.code === null) {
+    if (i >= 0) list.splice(i, 1);
+  } else {
+    const code = cleanShaderCode(op.code);
+    if (!code.trim()) throw new OpError("A shader preset needs its code.");
+    if (i >= 0) list[i] = { name, code };
+    else list.splice(Math.max(0, Math.min(list.length, op.index ?? list.length)), 0, { name, code });
+  }
+  if (list.length) board.shaders = list;
+  else delete board.shaders;
+  return undo;
+}
+
+/** The shader layers using one of the board's own presets. */
+export const shaderUsers = (board: Board, name: string) => Object.values(board.nodes).filter((n) => n.type === "shader" && n.shader?.preset === name).map((n) => n.id);
+
+/**
+ * Steps that save a shader layer's code as one of the board's own presets and make the layer use it
+ * (keeping its code too, so it still draws if the preset is removed).
+ */
+export function saveShaderPresetOps(board: Board, id: string, name: string): Op[] {
+  const n = board.nodes[id];
+  if (n?.type !== "shader") throw new OpError("Only a shader layer's code can be saved as a shader preset.");
+  const code = shaderCode(n.shader, board.shaders);
+  if (!code) throw new OpError(`${n.name} has no shader code to save.`);
+  const slug = shaderPresetName(name);
+  return [
+    { op: "shaderPreset", name: slug, code },
+    { op: "set", id, shader: { ...n.shader, preset: slug, code } },
+  ];
 }

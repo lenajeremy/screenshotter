@@ -516,6 +516,167 @@ const CARD = `<div style="display:flex;flex-direction:column;gap:12px;padding:24
 }
 
 // ---------------------------------------------------------------------------------------------
+// Shaders: the model (presets, parameters, HTML in and out, steps and undo, components, scale),
+// code compiled where it runs (errors by line), and pictures of them (not blank, the same at the
+// same moment, tokens resolved where they're drawn).
+{
+  const sh = await import("../src/board/core.js");
+  const { decodePng, pixelAt } = await import("../src/util/png.js");
+  const { drawLayers } = await import("../src/board/render.js");
+  const { compileShaders } = await import("../src/board/shader-check.js");
+
+  // Parameters, as the comments on uniforms declare them.
+  const CODE = [
+    "uniform float uWarp; // @param 0..2 = 0.9 \"Warp it\"",
+    "uniform float uSpacing; // @param 4..40 = 11 px",
+    "uniform int uLevels; // @param 2..8 = 4",
+    "uniform vec3 uTint; // @colour = #ff5a1f",
+    "uniform vec4 uGlow; // @color = var(--brand)",
+    "uniform int uMode; // @choice soft|hard|wild = hard",
+    "uniform float uLonely;",
+    "uniform vec3 uWrong; // @param 0..1 = 0",
+    "void main() { gl_FragColor = vec4(uTint * uWarp, 1.0); }",
+  ].join("\n");
+  const parsed = sh.parseShaderParams(CODE);
+  const p = Object.fromEntries(parsed.params.map((x) => [x.key, x]));
+  check(parsed.params.length === 6 && p.warp.label === "Warp it" && p.warp.min === 0 && p.warp.max === 2 && p.warp.default === 0.9 && p.warp.step === 0.02, "a @param is a number with its range, default, step and label");
+  check(p.spacing.px === true && p.levels.glsl === "int" && p.levels.step === 1 && p.tint.kind === "color" && p.tint.default === "#ff5a1f" && p.tint.label === "Tint" && p.glow.default === "var(--brand)", "px lengths, whole numbers and colours (tokens too) are read");
+  check(p.mode.kind === "choice" && p.mode.options?.join() === "soft,hard,wild" && p.mode.default === "hard", "a @choice has its words and default");
+  check(parsed.warnings.some((w) => /Line 7 \(uLonely\)/.test(w)) && parsed.warnings.some((w) => /Line 8 \(uWrong\).*not a vec3/.test(w)), `uniforms without a comment, or with the wrong one, are said by line (${parsed.warnings.join(" | ")})`);
+  // Every preset declares its parameters cleanly, and its defaults are good values.
+  const bad = sh.SHADER_PRESETS.filter((pr) => {
+    const r = sh.parseShaderParams(pr.code);
+    return r.warnings.length || r.params.length < 2 || r.params.some((x) => sh.shaderParamValue(x, x.default) === undefined);
+  });
+  check(sh.SHADER_PRESETS.length >= 8 && ["mesh-gradient", "grain-gradient", "liquid-chrome", "dither", "halftone", "light-rays", "waves", "aurora"].every((id) => sh.presetOf(id)) && !bad.length, `${sh.SHADER_PRESETS.length} presets, each with its parameters (${bad.map((x) => x.id).join(", ") || "all clean"})`);
+
+  // Values made safe.
+  check(sh.shaderParamValue(p.warp, 9) === 2 && sh.shaderParamValue(p.warp, "1.25") === 1.25 && sh.shaderParamValue(p.levels, 3.6) === 4 && sh.shaderParamValue(p.warp, "lots") === undefined && sh.shaderParamValue(p.warp, Infinity) === undefined, "numbers are clamped to their range, whole for an int, and nonsense refused");
+  const colours = ["#abc", "rgb(10 20 30 / 50%)", "oklch(70% 0.2 30)", "var(--brand, #000)", "rebeccapurple"];
+  const evil = ["red;background:url(x)", '"><script>alert(1)</script>', "url(javascript:alert(1))", "expression(alert(1))", "var(--a);x:y"];
+  check(colours.every((c) => sh.shaderParamValue(p.tint, c) === c) && evil.every((c) => sh.shaderParamValue(p.tint, c) === undefined), "colours are CSS colours or tokens, and nothing else gets through");
+  check(sh.shaderParamValue(p.mode, "WILD") === "wild" && sh.shaderParamValue(p.mode, 0) === "soft" && sh.shaderParamValue(p.mode, "loud") === undefined, "a choice is one of its words (or their index)");
+  const u = sh.shaderUniforms(CODE, { warp: 1.5, mode: "wild", spacing: 20, tint: "var(--brand)" });
+  check(u.uWarp === 1.5 && u.uMode === 2 && u.uSpacing === "20px" && u.uTint === "var(--brand)" && u.uLevels === 4 && u.uGlow === "var(--brand)", `uniforms: choices by index, lengths as px, colours as CSS (${JSON.stringify(u)})`);
+  const warned: string[] = [];
+  const kept = sh.cleanShaderParams(CODE, { uWarp: 3, ghost: 1, tint: "red;x:y", mode: "soft" }, warned);
+  check(kept.warp === 2 && kept.mode === "soft" && !("ghost" in kept) && !("tint" in kept) && warned.some((w) => /no parameter "ghost"/.test(w)) && warned.some((w) => /isn't a value for tint/.test(w)), "unknown params and bad values are left out, and said");
+  const spec = sh.cleanShaderSpec({ preset: "Mesh Gradient", code: "x\u0000yé", params: { a: 1, "b c": 2, d: "</script>", e: { x: 1 } }, speed: 99, time: "3", paused: "true" });
+  check(spec.preset === "mesh-gradient" && spec.code === "x y " && JSON.stringify(spec.params) === '{"a":1}' && spec.speed === 10 && spec.time === 3 && spec.paused === true, `a shader is kept clean whatever it came from (${JSON.stringify(spec)})`);
+
+  // HTML in and out.
+  const wrote = htmlToNodes(`<div style="position:relative;width:600px;height:400px"><div data-shader="halftone" data-params='{"spacing":14,"ink":"var(--brand)"}' data-speed="0.5" data-time="2.5" data-paused style="position:absolute;inset:0;border-radius:24px"></div><canvas data-shader="custom" data-name="Mine" width="200" height="100"><script type="x-shader/x-fragment">uniform vec3 uTint; // @color = #00ff00
+void main() { gl_FragColor = vec4(uTint, 1.0); }</script></canvas><canvas data-shader="aurora" data-params="{oops"></canvas></div>`);
+  const kids = wrote.nodes[wrote.roots[0]].children!.map((id) => wrote.nodes[id]);
+  const [ht, mine, broken] = kids;
+  check(ht.type === "shader" && ht.shader?.preset === "halftone" && ht.shader.params?.spacing === 14 && ht.shader.speed === 0.5 && ht.shader.time === 2.5 && ht.shader.paused === true && ht.style.inset === "0" && !ht.style.height, "<div data-shader> is a shader layer with its params, speed, time and pause, sized by its CSS");
+  check(mine.type === "shader" && !mine.shader?.preset && /gl_FragColor = vec4\(uTint/.test(mine.shader?.code ?? "") && mine.style.width === "200px" && mine.style.height === "100px" && mine.name === "Mine", "<canvas data-shader=custom> takes its GLSL from a script inside it, and its size from its attributes");
+  check(broken.type === "shader" && broken.shader?.preset === "aurora" && broken.style.height === "300px" && wrote.warnings.some((w) => /data-params isn't JSON/.test(w)), "bad data-params is said, and a shader sized by nothing gets a size");
+  let sb: Board = emptyBoard("shaderboard", "Shaders", new Date().toISOString());
+  sb.tokens = [{ name: "--brand", value: "#ff0000" }];
+  sb = applyOps(sb, [{ op: "add", nodes: wrote.nodes, ids: wrote.roots, parent: null, page: sb.pages[0].id }]).board;
+  const frame = wrote.roots[0];
+  const plain = nodeHtml(sb, frame);
+  const played = nodeHtml(sb, frame, { code: true });
+  check(/<div data-shader="halftone" data-params="\{&quot;spacing&quot;:14,&quot;ink&quot;:&quot;var\(--brand\)&quot;\}" data-speed="0.5" data-time="2.5" data-paused style="[^"]*"|<div style="[^"]*" data-shader="halftone"/.test(plain) && !/data-shader="halftone"[^>]*data-code/.test(plain) && /data-shader="custom"[^>]*data-code="uniform vec3 uTint/.test(plain) && /<canvas style="display:block;width:100%;height:100%;border-radius:inherit"><\/canvas>/.test(plain), "out as HTML: a preset by name, code of its own carried, a canvas inside each");
+  check(/data-shader="halftone"[^>]*data-code="[^"]*uSpacing[^"]*" data-uniforms="\{&quot;uInk&quot;:&quot;var\(--brand\)&quot;[^"]*uSpacing&quot;:&quot;14px/.test(played), "for a page that plays it, each carries its GLSL and its uniforms");
+  const round = htmlToNodes(plain);
+  const back = Object.values(round.nodes).filter((n) => n.type === "shader");
+  check(back.length === 3 && JSON.stringify(back.map((n) => n.shader)) === JSON.stringify([ht.shader, mine.shader, broken.shader]), "HTML out comes back in as the same shaders");
+  const sneaky = { ...sb, nodes: { ...sb.nodes, [mine.id]: { ...mine, shader: { code: 'void main(){} // </script><script>alert(1)</script>"><img src=x onerror=alert(1)>' } } } };
+  const safe = nodeHtml(sneaky, mine.id, { code: true });
+  check(!/<script|<img/i.test(safe) && /&lt;\/script>/.test(safe), "code can't break out of its attribute: no script or element gets through");
+
+  // Steps, undo, a board's own presets.
+  const set = applyOps(sb, [{ op: "set", id: ht.id, shader: { preset: "dither", params: { pixel: 4 } } }]);
+  check(set.board.nodes[ht.id].shader?.preset === "dither" && applyOps(set.board, set.inverse).board.nodes[ht.id].shader?.preset === "halftone", "a shader changes as one step, and undoes");
+  const saved = applyOps(sb, sh.saveShaderPresetOps(sb, mine.id, "Green Glow"));
+  check(saved.board.shaders?.[0]?.name === "green-glow" && saved.board.nodes[mine.id].shader?.preset === "green-glow" && sh.shaderUsers(saved.board, "green-glow").join() === mine.id && !applyOps(saved.board, saved.inverse).board.shaders, "a shader saved as the board's own preset is used by its layer, and undoes");
+  let refused = "";
+  try {
+    applyOps(sb, [{ op: "shaderPreset", name: "aurora", code: "void main(){}" }]);
+  } catch (e) {
+    refused = (e as Error).message;
+  }
+  check(/built-in/.test(refused), "a board's preset can't take a built-in one's name");
+  const edited = applyOps(saved.board, [{ op: "shaderPreset", name: "green-glow", code: "void main() { gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0); }" }]).board;
+  check(/0\.0, 0\.0, 1\.0/.test(sh.shaderCode(edited.nodes[mine.id].shader, edited.shaders) ?? "") && /uTint/.test(sh.shaderCode(edited.nodes[mine.id].shader, []) ?? ""), "editing the board's preset changes its layers; without it, a layer falls back on its own code");
+  const replaced = applyOps(saved.board, [{ op: "replace", pages: sb.pages, nodes: sb.nodes, tokens: sb.tokens, shaders: [] }]);
+  check(!replaced.board.shaders && applyOps(replaced.board, replaced.inverse).board.shaders?.length === 1, "replacing the whole board takes its presets with it, and undoes");
+  check(/shader "halftone" \(preset\), params spacing=14 ink=var\(--brand\), speed 0.5, still at 2.5s, paused/.test(treeText(sb, frame)) && /shader of its own code \(2 lines\)/.test(treeText(sb, frame)), "the outline says what each shader is");
+
+  // Components and the Scale tool.
+  let cb: Board = { ...sb };
+  cb = applyOps(cb, [{ op: "set", id: frame, isComponent: true }]).board;
+  const copy = instanceTree(cb, frame, null);
+  cb = applyOps(cb, [{ op: "add", nodes: copy.nodes, ids: [copy.id], parent: null, page: cb.pages[0].id }]).board;
+  const follower = Object.values(cb.nodes).find((n) => n.master === ht.id)!;
+  cb = applyOps(cb, expandOps(cb, [{ op: "set", id: ht.id, shader: { preset: "halftone", params: { spacing: 20 } } }])).board;
+  const follows = cb.nodes[follower.id].shader?.params?.spacing === 20;
+  cb = applyOps(cb, expandOps(cb, [{ op: "set", id: follower.id, shader: { preset: "waves" } }])).board;
+  cb = applyOps(cb, expandOps(cb, [{ op: "set", id: ht.id, shader: { preset: "halftone", params: { spacing: 30 } } }])).board;
+  check(follows && cb.nodes[follower.id].shader?.preset === "waves" && cb.nodes[follower.id].overrides?.includes("shader"), "a component's copies follow its shader, until a copy changes its own");
+  const { scaleOps } = await import("../src/board/core.js");
+  const sized = applyOps(sb, [{ op: "set", id: ht.id, style: { inset: null, width: "300px", height: "200px" } }]).board;
+  const scaled = applyOps(sized, scaleOps(sized, ht.id, 2)).board.nodes[ht.id];
+  check(scaled.style.width === "600px" && scaled.shader?.params?.spacing === 28 && scaled.shader.params.ink === "var(--brand)", "the Scale tool scales a shader's box and its lengths in px");
+  // Masked: drawn inside what masks it, as any layer.
+  const masked = htmlToNodes(`<div style="position:relative;width:200px;height:200px"><div data-mask style="position:absolute;left:0;top:0;width:200px;height:200px;border-radius:50%;background:#000"></div><div data-shader="mesh-gradient" style="position:absolute;left:0;top:0;width:200px;height:200px"></div></div>`);
+  let mb: Board = emptyBoard("maskshader", "Masked", new Date().toISOString());
+  mb = applyOps(mb, [{ op: "add", nodes: masked.nodes, ids: masked.roots, parent: null, page: mb.pages[0].id }]).board;
+  check(/data-mask-scope[^>]*><div style="[^"]*mask-image[^"]*"><div[^>]*data-shader="mesh-gradient"/.test(nodeHtml(mb, masked.roots[0])), "a shader above a mask is drawn inside what masks it");
+
+  // Compiled where it runs: errors by the line they're on.
+  const good = "uniform vec3 uTint; // @color = #ff0000\nvoid main() {\n  gl_FragColor = vec4(uTint, 1.0);\n}";
+  const oops = "uniform vec3 uTint; // @color = #ff0000\nvoid main() {\n  float a = 1.0;\n  gl_FragColor = vec4(oops, 1.0);\n}";
+  const v3 = "#version 300 es\nout vec4 colour;\nvoid main() {\n  colour = vec4(nope);\n}";
+  const toy = "void mainImage(out vec4 c, in vec2 p) { c = vec4(p / iResolution.xy, sin(iTime), 1.0); }";
+  const compiled = await compileShaders([good, oops, v3, toy, "", ...sh.SHADER_PRESETS.map((x) => x.code)]);
+  if ("unavailable" in compiled) check(false, `shaders compile in headless Chrome (${compiled.unavailable})`);
+  else {
+    const e = (c: string) => compiled.get(c) ?? [];
+    check(!e(good).length && !e(toy).length, "good code compiles, Shadertoy's mainImage too");
+    check(e(oops)[0]?.line === 4 && /oops/.test(e(oops)[0].message), `an error names the line it's on (${JSON.stringify(e(oops))})`);
+    check(e(v3)[0]?.line === 4 && /nope/.test(e(v3)[0].message), `GLSL 3.00 compiles in WebGL 2, its errors on their lines too (${JSON.stringify(e(v3))})`);
+    check(/no shader code/.test(e("")[0]?.message ?? ""), "no code at all is said");
+    check(sh.SHADER_PRESETS.every((x) => !e(x.code).length), `every preset compiles (${sh.SHADER_PRESETS.filter((x) => e(x.code).length).map((x) => `${x.id}: ${JSON.stringify(e(x.code))}`).join("; ")})`);
+  }
+
+  // Pictures: not blank, the same at the same moment, another moment another picture, tokens resolved.
+  const pic = htmlToNodes(`<div data-name="Art" style="width:240px;height:160px;display:flex;background:#fff"><div data-shader="mesh-gradient" data-time="4" style="width:120px;height:160px;flex-shrink:0"></div><div data-shader="custom" data-code="uniform vec3 uTint; // @color = #00ff00
+void main() { gl_FragColor = vec4(uTint, 1.0); }" data-params='{"tint":"var(--brand)"}' style="width:60px;height:160px;flex-shrink:0"></div><div data-shader="custom" data-code="void main() { gl_FragColor = vec4(oops); }" style="width:60px;height:160px;flex-shrink:0"></div></div>`);
+  let pb: Board = emptyBoard("pics", "Pictures", new Date().toISOString());
+  pb.tokens = [{ name: "--brand", value: "#0000ff" }];
+  pb = applyOps(pb, [{ op: "add", nodes: pic.nodes, ids: pic.roots, parent: null, page: pb.pages[0].id }]).board;
+  const art = pic.roots[0];
+  const [mesh, tinted, failing] = pb.nodes[art].children!;
+  const shot1 = decodePng((await drawLayers(pb, [art], { scale: 1 })).images[art]);
+  const shot2 = decodePng((await drawLayers(pb, [art], { scale: 1 })).images[art]);
+  const later = applyOps(pb, [{ op: "set", id: mesh, shader: { preset: "mesh-gradient", time: 9 } }]).board;
+  const shot3 = decodePng((await drawLayers(later, [art], { scale: 1 })).images[art]);
+  const meshPixels = (f: ReturnType<typeof decodePng>) => {
+    const seen = new Set<string>();
+    for (let y = 4; y < 156; y += 6) for (let x = 4; x < 116; x += 6) seen.add(pixelAt(f, x, y).slice(0, 3).map((v) => v >> 3).join());
+    return seen;
+  };
+  const same = Buffer.compare(shot1.rgba, shot2.rgba) === 0;
+  const differs = [...meshPixels(shot1)].join("|") !== [...meshPixels(shot3)].join("|");
+  check(meshPixels(shot1).size > 20, `a shader in a picture isn't blank (${meshPixels(shot1).size} colours)`);
+  check(same && differs, "drawn twice at its time it's the same picture; at another time, another");
+  const tint = pixelAt(shot1, 150, 80);
+  check(tint[2] > 240 && tint[0] < 20 && tint[1] < 20, `a colour param that's a token is drawn in the token's colour (${tint})`);
+  const recoloured = applyOps(pb, [{ op: "token", name: "--brand", value: "#ff8800" }]).board;
+  const tint2 = pixelAt(decodePng((await drawLayers(recoloured, [art], { scale: 1 })).images[art]), 150, 80);
+  check(tint2[0] > 240 && tint2[1] > 120 && tint2[1] < 150 && tint2[2] < 20, `change the token and the shader follows (${tint2})`);
+  const card = pixelAt(shot1, 215, 20);
+  check(card[0] > 20 && card[0] > card[2] && card[3] === 255, `a shader that doesn't compile shows its error card, and the rest of the board still draws (${card})`);
+  const two = decodePng((await drawLayers(pb, [art], { scale: 2 })).images[art]);
+  check(two.width === 480 && meshPixels(two).size > 0 && pixelAt(two, 300, 160)[2] > 240, "at 2× the shaders are drawn at 2×");
+  void tinted;
+  void failing;
+}
+
+// ---------------------------------------------------------------------------------------------
 // The tools, through MCP
 
 const out = mkdtempSync(path.join(tmpdir(), "board-test-"));
@@ -1207,6 +1368,44 @@ await fake.close();
   check(!store.getBoard(shop.id).nodes[r.artboard] && undo.inverse.length > 0, "the imported artboard is an ordinary one: it deletes and undoes like any");
   site.close();
   other.close();
+}
+
+// Shaders through the tools: added and changed, own code compiled with errors by line, saved as the
+// board's preset, written as HTML, read back, and pictured at its time.
+{
+  const { decodePng, pixelAt } = await import("../src/util/png.js");
+  const sb = (await call("board_create", { name: "Shader tools" })).json.id;
+  const art = (await call("board_write_html", { board: sb, html: `<div data-name="Hero" style="width:400px;height:300px;position:relative;background:#111"></div>` })).json.created[0].id;
+  const added = await call("board_edit", { board: sb, changes: [{ do: "token", name: "--brand", value: "#2f7dff" }, { do: "shader", preset: "mesh-gradient", into: art, x: 0, y: 0, width: 400, height: 300, params: { color1: "var(--brand)", warp: 5, nope: 1 }, time: 4 }] });
+  const r = added.json.results[1];
+  check(r?.shader && r.params.warp === 2 && r.params.color1 === "var(--brand)" && r.warnings?.some((w: string) => /nope/.test(w)), `board_edit adds a shader layer, its params made safe and what was left out said (${JSON.stringify(r)})`);
+  const tree = await call("board_read", { board: sb, node: art });
+  check(/shader "mesh-gradient" \(preset\), params color1=var\(--brand\) warp=2, still at 4s/.test(tree.text), "board_read describes it");
+  const broken = await call("board_edit", { board: sb, changes: [{ do: "shader", id: r.shader, code: "uniform float uGlow; // @param 0..1 = 0.5\nvoid main() {\n  gl_FragColor = vec4(vec3(uGlow) * missing, 1.0);\n}" }] });
+  const br = broken.json.results[0];
+  check(br.errors?.some((e: string) => /^line 3: .*missing/.test(e)) && /fix/.test(br.fix), `its own code that doesn't compile comes back with errors by line (${JSON.stringify(br.errors)})`);
+  const fixed = await call("board_edit", { board: sb, changes: [{ do: "shader", id: r.shader, code: "uniform float uGlow; // @param 0..1 = 0.5\nuniform vec3 uTint; // @color = #ff3b30\nvoid main() {\n  gl_FragColor = vec4(uTint * (0.5 + uGlow), 1.0);\n}", params: { glow: 0.5 }, savePreset: "Red Glow" }] });
+  check(!fixed.json.results[0].errors && fixed.json.results[0].preset === "red-glow", "fixed, it compiles, and is saved as the board's own preset");
+  const listed = await call("board_read", { board: sb, what: "shaders" });
+  check(/- red-glow: .*glow 0\.\.1/.test(listed.text) && /- halftone: .*spacing 4\.\.40 \(11 px\)/.test(listed.text), "board_read lists the presets, the board's own too, with their params");
+  const shot = await call("board_screenshot", { board: sb, nodes: [art] });
+  const mid = pixelAt(decodePng(shot.images[0]), 200, 150);
+  check(mid[0] > 240 && mid[1] > 40 && mid[1] < 80 && mid[2] < 70, `board_screenshot draws the shader (${mid})`);
+  const viaHtml = await call("board_write_html", {
+    board: sb,
+    target: art,
+    html: `<canvas data-shader="custom" data-name="Bad" style="position:absolute;left:0;top:0;width:100px;height:100px"><script type="x-shader/x-fragment">void main() {\n  gl_FragColor = vec4(huh);\n}</script></canvas><div data-shader="waves" data-params='{"layers":40,"far":"red;x"}' style="position:absolute;left:100px;top:0;width:100px;height:100px"></div>`,
+  });
+  check(viaHtml.json.shaderErrors?.layers?.[0]?.name === "Bad" && /^line 2: .*huh/.test(viaHtml.json.shaderErrors.layers[0].errors[0]), `board_write_html compiles an agent's shader code and says what's wrong, by line (${JSON.stringify(viaHtml.json.shaderErrors)})`);
+  check(viaHtml.json.warnings?.some((w: string) => /"far" was left out/.test(w)), "and makes its params safe, saying what it left out");
+  const html = await call("board_read", { board: sb, node: art, what: "html" });
+  check(/data-shader="waves" data-params="\{&quot;layers&quot;:10\}"/.test(html.text) && /data-shader="red-glow"/.test(html.text), "board_read html writes shaders as data-shader with their params");
+  const del = await call("board_edit", { board: sb, changes: [{ do: "shader", deletePreset: "red-glow" }] });
+  const after = await call("board_screenshot", { board: sb, nodes: [art] });
+  const still = pixelAt(decodePng(after.images[0]), 200, 150);
+  check(del.json.results[0].layersKeepItsCode?.includes(r.shader) && still[0] > 240 && still[1] < 80, "a board's preset removed, the layers using it keep its code and draw the same");
+  const refused = await call("board_edit", { board: sb, changes: [{ do: "shader", preset: "lava-lamp" }] }, true);
+  check(/There's no shader preset "lava-lamp"\. Built in: mesh-gradient/.test(refused.text), "an unknown preset is refused, with the ones there are");
 }
 
 console.log(`\nFiles in ${out}`);

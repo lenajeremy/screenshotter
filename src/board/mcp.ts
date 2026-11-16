@@ -32,6 +32,8 @@ import {
   maskOps,
   maskGroupOps,
   inFlow,
+  isFlex,
+  isGrid,
   cssValue,
   freeSpot,
   newId,
@@ -59,6 +61,8 @@ import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
 import { importWebsite } from "./web-import.js";
 import { describeAnchor, getComments, keysOf, reply, sentOnly, startThread, threadForAgent } from "./comments.js";
+import { SHADER_PRESETS, cleanShaderCode, cleanShaderParams, cleanShaderSpec, parseShaderParams, presetOf, shaderCatalog, shaderCode, shaderKey, shaderPresetName, shaderUsers, shaderValues, type ShaderSpec } from "./core.js";
+import { compileShaders, errorWords } from "./shader-check.js";
 
 type Content = CallToolResult["content"];
 const text = (value: unknown): Content[number] => ({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) });
@@ -85,6 +89,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
 - Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
+- Shaders: live graphics drawn by the GPU (WebGL fragment shaders), as a layer: a moving hero backdrop, a texture, or a finish laid over a picture. Built-in presets: ${SHADER_PRESETS.map((p) => p.id).join(", ")} (film-grain is see-through and blends as Overlay over what's below it). Add one with board_edit { do: "shader", preset: "mesh-gradient", into, width, height, params: { color1: "var(--brand)", warp: 1.2 } }, or in HTML: <div data-shader="aurora" data-params='{"intensity":1.3}' style="position:absolute;inset:0"></div> (<canvas data-shader="…"> works too), sized like any layer, with corners, opacity, blend, rotation and masks as CSS. board_read what "shaders" lists every preset's params (numbers with their ranges, colours, choices). It plays on the canvas and in Preview; board_screenshot and exports show it frozen at its time (time / data-time, in seconds): pick a moment that looks good. Writing your own: board_edit { do: "shader", code } or <canvas data-shader="custom"><script type="x-shader/x-fragment">…</script></canvas>. It's GLSL ES 1.00 (or "#version 300 es" first): a main() that sets gl_FragColor (Shadertoy's mainImage, iTime and iResolution work too), given uniform float uTime (seconds), vec2 uRes (the size drawn, in pixels) and float uPx (pixels per design pixel: gl_FragCoord.xy / uPx is in the design's px); precision is set for you. Declare each parameter as a uniform with a comment and the person gets a slider, a colour picker (with the board's tokens) or a choice for it: "uniform float uWarp; // @param 0..2 = 1", "uniform float uSpacing; // @param 4..40 = 12 px" (a length in design px, given to you in drawn px), "uniform vec3 uTint; // @color = #ff5a1f", "uniform int uMode; // @choice soft|hard = soft"; its key in params is its name without the u (warp, tint). Your code is compiled as you write it and errors come back with their line numbers: fix them and send the code again (until then the layer shows the error). savePreset keeps a good one on the board to place again by name. Keep shaders light (a few noise octaves, short loops): one too slow to play is stopped at its still and says so.
 - Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. The person usually sends several at once, as one numbered list: make every change it asks for with the tools above, then answer each in its thread (board_comment's \`replies\` answers them all in one call); the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
 const BoardRef = z.string().describe("The board's id (from board_list or board_create) or its name; \"scratchpad\" is the person's scratchpad.");
@@ -254,6 +259,27 @@ const ChangeSchema = z.discriminatedUnion("do", [
     type: z.enum(["alpha", "vector", "luminance"]).optional().describe("alpha (default): by its opacity, so a gradient to transparent fades what it masks; vector: by its outline; luminance: by its brightness (white shows, black hides)."),
     remove: z.boolean().optional().describe("Make the masks ordinary layers again (what they hid shows)."),
   }),
+  z.object({
+    do: z.literal("shader"),
+    id: z.string().optional().describe("A shader layer to change. Without it, a new shader layer is added (where into/before/after or x/y say, width × height)."),
+    preset: z.string().optional().describe(`A built-in preset (${SHADER_PRESETS.map((p) => p.id).join(", ")}) or one of the board's own; board_read what "shaders" lists their params.`),
+    code: z.string().max(20_000).optional().describe("GLSL fragment shader code of its own (see the instructions: uTime, uRes, uPx, and // @param, @color, @choice comments for parameters)."),
+    params: z.record(z.string(), z.union([z.string(), z.number(), z.null()])).optional().describe('Parameter values by key: numbers, colours (#hex, rgb(), a name, var(--token)), choices by their word. null puts one back to its default.'),
+    speed: z.number().min(-10).max(10).optional().describe("1 as made, 0.5 half as fast, 0 still."),
+    time: z.number().min(-100_000).max(100_000).optional().describe("The moment (seconds) pictures of the board show, and the canvas while paused."),
+    paused: z.boolean().optional().describe("Show its still instead of playing."),
+    savePreset: z.string().optional().describe("Also save its code as one of the board's own presets by this name (place it again with preset)."),
+    deletePreset: z.string().optional().describe("Remove one of the board's own presets (alone in a change; layers using it keep its code)."),
+    width: z.number().positive().optional().describe("A new layer's width in px. Default 400."),
+    height: z.number().positive().optional().describe("A new layer's height in px. Default 300."),
+    into: z.string().optional().describe('A frame to put a new one in, or "page".'),
+    before: z.string().optional(),
+    after: z.string().optional(),
+    index: z.number().int().min(0).optional(),
+    x: z.number().optional().describe("Left edge: on the page, or inside a frame laid out by hand."),
+    y: z.number().optional(),
+    name: z.string().optional(),
+  }),
   z.object({ do: z.literal("detach"), id: z.string().describe("A copy of a component, to make ordinary layers.") }),
   z.object({ do: z.literal("reset"), id: z.string().describe("A copy (or a layer in one) to make match its component again.") }),
 ]);
@@ -265,6 +291,133 @@ function styleOf(map: Record<string, string | number | null>): Record<string, st
     out[k] = v === null ? null : cssValue(k, v);
   }
   return out;
+}
+
+type ShaderChange = Extract<z.infer<typeof ChangeSchema>, { do: "shader" }>;
+
+/**
+ * board_edit's shader change: a new shader layer, a change to one (its preset, code, params, speed,
+ * time, paused), or one of the board's own presets saved or removed. Its own code is compiled where
+ * it will run, and errors come back by line.
+ */
+async function shaderChange(b: Board, c: ShaderChange, ops: Op[], need: (id: string) => BoardNode, touched: string[]): Promise<Record<string, unknown>> {
+  if (c.deletePreset !== undefined) {
+    const name = shaderPresetName(c.deletePreset);
+    if (!b.shaders?.some((s) => s.name === name)) throw new Error(`There's no shader preset "${name}" on this board${b.shaders?.length ? ` (it has ${b.shaders.map((s) => s.name).join(", ")})` : ""}.`);
+    const users = shaderUsers(b, name);
+    // The layers using it keep drawing the same: its code goes with each.
+    for (const id of users) ops.push({ op: "set", id, shader: { ...b.nodes[id].shader, code: shaderCode(b.nodes[id].shader, b.shaders) } });
+    ops.push({ op: "shaderPreset", name, code: null });
+    return { deletedPreset: name, layersKeepItsCode: users };
+  }
+  const n = c.id ? need(c.id) : undefined;
+  if (n && n.type !== "shader") throw new Error(`${n.name} isn't a shader layer: leave out id to add a new one.`);
+  const was: ShaderSpec = n?.shader ?? {};
+  let spec: ShaderSpec = { ...was };
+  if (c.preset !== undefined) {
+    const p = shaderPresetName(c.preset);
+    if (!presetOf(p) && !b.shaders?.some((s) => s.name === p)) throw new Error(`There's no shader preset "${c.preset}". Built in: ${SHADER_PRESETS.map((x) => x.id).join(", ")}${b.shaders?.length ? `; this board's own: ${b.shaders.map((s) => s.name).join(", ")}` : ""}.`);
+    spec = { ...spec, preset: p };
+    delete spec.code;
+  }
+  if (c.code !== undefined) {
+    spec = { ...spec, code: cleanShaderCode(c.code) };
+    if (c.preset === undefined) delete spec.preset;
+  }
+  if (!spec.preset && !spec.code) spec.preset = SHADER_PRESETS[0].id;
+  const code = shaderCode(spec, b.shaders) ?? "";
+  const declared = parseShaderParams(code);
+  const warnings: string[] = [];
+  // Values the code still has a parameter for are kept; new ones are made safe; null resets one.
+  const sameCode = code === (shaderCode(was, b.shaders) ?? "");
+  const params: Record<string, number | string> = {};
+  for (const [k, v] of Object.entries(was.params ?? {})) if (sameCode || declared.params.some((p) => p.key === k)) params[k] = v;
+  for (const [k, v] of Object.entries(c.params ?? {})) if (v === null) delete params[shaderKey(k)];
+  Object.assign(params, cleanShaderParams(code, Object.fromEntries(Object.entries(c.params ?? {}).filter(([, v]) => v !== null)), warnings));
+  spec.params = params;
+  if (c.speed !== undefined) spec.speed = c.speed;
+  if (c.time !== undefined) spec.time = c.time;
+  if (c.paused !== undefined) spec.paused = c.paused;
+  spec = cleanShaderSpec(spec);
+  // Its own code (or one of the board's presets) is compiled where it will run; the built-in ones are known good.
+  const own = !presetOf(spec.preset) || Boolean(b.shaders?.some((s) => s.name === spec.preset));
+  let errors: string[] | undefined;
+  if (own && code) {
+    warnings.push(...declared.warnings);
+    const got = await compileShaders([code]);
+    if ("unavailable" in got) warnings.push(`It couldn't be compiled here to check it (${got.unavailable}); the canvas shows any error.`);
+    else if (got.get(code)?.length) errors = errorWords(got.get(code)!);
+  }
+  if (c.savePreset) {
+    const slug = shaderPresetName(c.savePreset);
+    ops.push({ op: "shaderPreset", name: slug, code });
+    spec = { ...spec, preset: slug, code };
+  }
+  let id: string;
+  if (n) {
+    id = n.id;
+    const size = { ...(c.width ? { width: `${c.width}px` } : {}), ...(c.height ? { height: `${c.height}px` } : {}) };
+    ops.push({ op: "set", id, shader: spec, ...(c.name ? { name: c.name } : {}), ...(Object.keys(size).length ? { style: size } : {}) });
+  } else {
+    const where = placeFor(b, c, need);
+    id = newId();
+    const w = c.width ?? 400;
+    const h = c.height ?? 300;
+    const style: Record<string, string> = { width: `${w}px`, height: `${h}px`, flexShrink: "0", ...(presetOf(spec.preset)?.style ?? {}) };
+    const holder = where.parent ? b.nodes[where.parent] : undefined;
+    const laidOut = isFlex(holder) || isGrid(holder);
+    if (!where.parent) Object.assign(style, { left: `${Math.round(c.x ?? freeSpot(b, where.page!, w).left)}px`, top: `${Math.round(c.y ?? 0)}px` });
+    else if (!laidOut || c.x !== undefined || c.y !== undefined) {
+      Object.assign(style, { position: "absolute", left: `${Math.round(c.x ?? 0)}px`, top: `${Math.round(c.y ?? 0)}px` });
+      if (holder && !holder.style.position) ops.push({ op: "set", id: holder.id, style: { position: "relative" } });
+    }
+    ops.push({ op: "add", nodes: { [id]: { id, type: "shader", name: c.name ?? presetOf(spec.preset)?.name ?? spec.preset ?? "Shader", parent: where.parent, shader: spec, style } }, ids: [id], parent: where.parent, page: where.page, index: where.index });
+  }
+  touched.push(id);
+  return {
+    shader: id,
+    preset: spec.preset ?? "custom",
+    params: shaderValues(declared.params, spec.params),
+    ...(errors ? { errors, fix: "It doesn't compile, so the layer shows this error on the canvas: fix the lines named and send the code again." } : {}),
+    ...(warnings.length ? { warnings } : {}),
+  };
+}
+
+/**
+ * Shader layers an agent wrote as HTML: their params made safe against what the shader declares,
+ * and their own code compiled where it will run. Returns the ones that don't compile, with why.
+ */
+async function checkShaders(b: Board, nodes: Record<string, BoardNode>, warnings: string[]): Promise<Array<{ id: string; name: string; errors: string[] }>> {
+  const list = Object.values(nodes).filter((n) => n.type === "shader");
+  const own: string[] = [];
+  for (const n of list) {
+    const code = shaderCode(n.shader, b.shaders);
+    if (!code) {
+      warnings.push(`The shader "${n.name}" has nothing to draw: "${n.shader?.preset ?? ""}" isn't a preset (${SHADER_PRESETS.map((p) => p.id).join(", ")}) and it has no code.`);
+      continue;
+    }
+    const said: string[] = [];
+    const params = cleanShaderParams(code, n.shader?.params ?? {}, said);
+    n.shader = { ...n.shader, params };
+    if (!Object.keys(params).length) delete n.shader.params;
+    warnings.push(...said.map((w) => `"${n.name}": ${w}`));
+    if (presetOf(n.shader.preset) && !b.shaders?.some((s) => s.name === n.shader?.preset)) continue;
+    own.push(code);
+    warnings.push(...parseShaderParams(code).warnings.map((w) => `"${n.name}": ${w}`));
+  }
+  if (!own.length) return [];
+  const got = await compileShaders(own);
+  if ("unavailable" in got) {
+    warnings.push(`Shader code couldn't be compiled here to check it (${got.unavailable}); the canvas shows any error.`);
+    return [];
+  }
+  const failing: Array<{ id: string; name: string; errors: string[] }> = [];
+  for (const n of list) {
+    const code = shaderCode(n.shader, b.shaders);
+    const errs = code ? got.get(code) : undefined;
+    if (errs?.length) failing.push({ id: n.id, name: n.name, errors: errorWords(errs) });
+  }
+  return failing;
 }
 
 export function registerBoardTools(server: McpServer) {
@@ -307,10 +460,10 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Read a board",
       description:
-        "Look inside a board. `what`: \"overview\" (default: pages, artboards with sizes, tokens), \"tree\" (an outline of a layer or every artboard on a page, with ids, sizes as written (320, fit, fill) and layout; `measure` adds the sizes they really came out at), \"html\" (a layer and what's in it as HTML with inline styles and data-id on every element) or \"tokens\".",
+        "Look inside a board. `what`: \"overview\" (default: pages, artboards with sizes, tokens), \"tree\" (an outline of a layer or every artboard on a page, with ids, sizes as written (320, fit, fill) and layout; `measure` adds the sizes they really came out at), \"html\" (a layer and what's in it as HTML with inline styles and data-id on every element), \"tokens\", or \"shaders\" (the shader presets, built in and the board's own, with their params).",
       inputSchema: {
         board: BoardRef,
-        what: z.enum(["overview", "tree", "html", "tokens"]).optional(),
+        what: z.enum(["overview", "tree", "html", "tokens", "shaders"]).optional(),
         node: z.string().optional().describe("A layer's id, for tree and html. Default: every artboard on the page."),
         page: z.string().optional().describe("A page's id. Default: the first page."),
         depth: z.number().int().min(1).max(20).optional().describe("How many levels the tree goes down. Default 4."),
@@ -327,9 +480,10 @@ export function registerBoardTools(server: McpServer) {
         const ids = a.node ? [a.node] : page.children;
         if (what === "overview") {
           const s = summarizeBoard(b);
-          return [text({ id: b.id, name: b.name, rev: b.rev, pages: s.pages, tokens: b.tokens, layers: s.layers, editedAt: b.updatedAt, lastEditBy: b.by })];
+          return [text({ id: b.id, name: b.name, rev: b.rev, pages: s.pages, tokens: b.tokens, ...(b.shaders?.length ? { shaderPresets: b.shaders.map((x) => x.name) } : {}), layers: s.layers, editedAt: b.updatedAt, lastEditBy: b.by })];
         }
         if (what === "tokens") return [text(b.tokens.length ? b.tokens : "No tokens yet. Add one with board_edit { do: \"token\", name, value }.")];
+        if (what === "shaders") return [text(`Shader presets (board_edit { do: "shader", preset, params }, or <div data-shader="…" data-params='{…}'>). Each param: its range and default, or "colour", or its words.\n${shaderCatalog(b.shaders ?? [])}`)];
         if (what === "html") return [text(ids.map((id) => nodeHtml(b, id, { ids: true })).join("\n\n") || "The page is empty.")];
         let out = ids.map((id) => treeText(b, id, a.depth ?? 4)).join("\n\n") || "The page is empty.";
         if (a.measure && ids.length) {
@@ -411,6 +565,7 @@ export function registerBoardTools(server: McpServer) {
         await placePhotos(made.nodes, made.warnings, photos);
         adoptImages(made.nodes, made.warnings);
         await addVideoStills(made.nodes, made.warnings);
+        const shaderErrors = await checkShaders(b, made.nodes, made.warnings);
         // New artboards go where asked, else to the right of the others.
         if (!parent) {
           const pid = page ?? b.pages[0].id;
@@ -438,7 +593,15 @@ export function registerBoardTools(server: McpServer) {
           else if (m?.mask && inFlow(after, id)) made.warnings.push(`The mask "${m.name}" (#${id}) is placed by its frame's flex or grid layout, so where it is can't be told from its CSS: give it position:absolute with left, top, width and height (and the layers it masks too), or board_edit mask it with them to make a mask group.`);
         }
         changeBoard(b.id, workingOps(after, made.roots, await whoAmI(), "write"), "agent");
-        const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), photos: photos.length ? [...new Set(photos)] : undefined, warnings: made.warnings.length ? made.warnings : undefined })];
+        const out: Content = [
+          text({
+            created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })),
+            outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"),
+            photos: photos.length ? [...new Set(photos)] : undefined,
+            shaderErrors: shaderErrors.length ? { layers: shaderErrors, fix: "These don't compile, so each shows its error on the canvas: fix the lines named and send the code again (board_edit { do: \"shader\", id, code })." } : undefined,
+            warnings: made.warnings.length ? made.warnings : undefined,
+          }),
+        ];
         if (a.preview) {
           const root = rootOf(after, made.roots[0]);
           const { images } = await drawLayers(after, [root], { scale: 1, maxEdge: 1400 });
@@ -453,7 +616,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again), mask (Figma's Use as mask: a layer masks the layers above it in its frame; several go into a mask group; remove undoes it). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again), mask (Figma's Use as mask: a layer masks the layers above it in its frame; several go into a mask group; remove undoes it), shader (a live GPU shader layer, a preset or code of its own, or a change to one's preset, code, params, speed, time or paused; its own code comes back compiled, errors by line). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -744,6 +907,10 @@ export function registerBoardTools(server: McpServer) {
               const order = siblingsOf(b, c.ids[0]);
               const mask = c.ids.slice().sort((x, y) => order.indexOf(x) - order.indexOf(y))[0];
               results.push({ mask, type: c.type ?? "alpha", ...(made.group ? { group: made.group } : {}) });
+              break;
+            }
+            case "shader": {
+              results.push(await shaderChange(b, c, ops, need, touched));
               break;
             }
             case "detach":
