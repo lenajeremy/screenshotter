@@ -6,33 +6,18 @@
     <description>Updates to Screenshotter.</description>
     <language>en</language>
     <item>
-      <title>Screenshotter 0.15.0</title>
-      <pubDate>Mon, 16 Nov 2026 06:01:10 GMT</pubDate>
-      <sparkle:version>0.15.0</sparkle:version>
-      <sparkle:shortVersionString>0.15.0</sparkle:shortVersionString>
+      <title>Screenshotter 0.15.1</title>
+      <pubDate>Mon, 16 Nov 2026 09:51:11 GMT</pubDate>
+      <sparkle:version>0.15.1</sparkle:version>
+      <sparkle:shortVersionString>0.15.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>https://screenshotter-umber.vercel.app/changelog.html</sparkle:fullReleaseNotesLink>
-      <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Highlights</h4>
+      <description><![CDATA[<style>body{font:13px -apple-system,system-ui;line-height:1.45;color:#1d1d1f}h4{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6e6e73;margin:14px 0 4px}ul{padding-left:18px;margin:0}li{margin:4px 0}code{font:12px ui-monospace,monospace}@media (prefers-color-scheme:dark){body{color:#f5f5f7}h4{color:#a1a1a6}}</style><h4>Fixes</h4>
 <ul>
-<li><strong>Shaders.</strong> Live GPU graphics as a layer: mesh gradients, grain, liquid chrome, dither, halftone, light rays, waves, aurora, contours and film grain, in <strong>Assets › Shaders</strong>. Tune each with sliders and colours (board tokens too), play or pause it, and choose the moment pictures and exports freeze it at. Write your own in GLSL, or have an agent write one: comments in the code become the panel&#39;s controls, errors come back by line, and a shader too slow for your Mac pauses itself. Preview plays them live.</li>
-<li><strong>Grids, completely.</strong> Any frame can be free, flex or a CSS grid (<strong>⇧G</strong>). Set columns and rows with real track sizes (fr, px, auto, minmax), gaps, named areas, alignment and dense flow; place each layer by cell and span. On the canvas a grid shows its tracks and areas: drag layers into cells, drag across cells to span them, and add or resize tracks from the edges.</li>
-<li><strong>Masks, as in Figma.</strong> <strong>Use as mask</strong> (⌃⌘M) on a frame, a picture, a vector or words, and it shows the layers above it only where it is: by its alpha, its outline or its brightness, and a gradient fades what it masks. <strong>Mask with selection</strong> makes a mask group. The layers list shows what each mask holds, and Preview and exports draw masks exactly as the canvas does.</li>
-<li><strong>Bring in a website.</strong> Type an address (<strong>Import a website</strong> in My designs, a board&#39;s Assets, or paste a URL onto a board) and the page lands as an artboard of ordinary layers, laid out as the browser drew it, with its pictures and fonts copied to your Mac. Change it, or have an agent change it. Agents can do it too (<strong>board_import_website</strong>).</li>
-<li><strong>Follow your agent.</strong> An agent at work has a cursor in its own colour, with its name, that glides to whatever it changes or looks at; the layers flash as it touches them. Click its avatar over the canvas to follow it until you take over.</li>
-<li><strong>Comments go together.</strong> Comments and replies wait on the board (a hollow pin, <strong>Not sent</strong>) until you send them: each agent gets one numbered list with everything for it, instead of a message per comment while it works. Change or delete any before sending; ⌘⏎ sends them all.</li>
-<li><strong>Light mode.</strong> Settings › General › Theme: System, Light or Dark. System follows your Mac as it changes.</li>
-<li><strong>Smoother boards.</strong> Panning, pinching, dragging and scrubbing on a big board take half the work or less, the inspector saves a few times a second instead of at every step, and the design editor and timeline draw once a frame.</li>
-</ul>
-<h4>Fixes</h4>
-<ul>
-<li>A mask at the very top of its frame showed nothing; it shows now.</li>
-<li>Pictures inside a vector (an SVG&#39;s <image>) load on the canvas and in Preview, and are copied into your library.</li>
-<li>Width and height fields show four digits (a 1440 artboard) beside their mode.</li>
-<li>Comments written in the same instant keep the order they were written in.</li>
-<li>White words on the selection blue and on red buttons are easier to read, in both themes.</li>
+<li>Boards are smooth again with Assets open. Its shader tiles all played at once, all the time, which made every board choppy to pan, zoom and point at, with or without a shader on it. Each tile now shows its still and plays while the pointer is on it, and shaders use nothing while none is playing.</li>
 </ul>
 ]]></description>
-      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.15.0.dmg" type="application/octet-stream" sparkle:edSignature="+XEG6ehRXUL/bhLabwsZdPrLFmPBuWWemHWGc5QYDvmhuNMjPkHQP8QG6CmhhdgGNXfwlaCxlypgZukGcz6yBw==" length="66243706" />
+      <enclosure url="https://screenshotter-umber.vercel.app/downloads/Screenshotter-0.15.1.dmg" type="application/octet-stream" sparkle:edSignature="t8/VZIRdUvbpJSBFFMpaL7B9b+jd5FZceBLJ3b9xkoN2G2ZJII+iiRAgtswpjnuLLSPZM08DuTra91OyHxeNAw==" length="71195580" />
     </item>
   </channel>
 </rss>
