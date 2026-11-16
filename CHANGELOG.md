@@ -1,5 +1,24 @@
 # What's new
 
+## 0.15.0 · 16 November 2026
+
+### Highlights
+- **Shaders.** Live GPU graphics as a layer: mesh gradients, grain, liquid chrome, dither, halftone, light rays, waves, aurora, contours and film grain, in **Assets › Shaders**. Tune each with sliders and colours (board tokens too), play or pause it, and choose the moment pictures and exports freeze it at. Write your own in GLSL, or have an agent write one: comments in the code become the panel's controls, errors come back by line, and a shader too slow for your Mac pauses itself. Preview plays them live.
+- **Grids, completely.** Any frame can be free, flex or a CSS grid (**⇧G**). Set columns and rows with real track sizes (fr, px, auto, minmax), gaps, named areas, alignment and dense flow; place each layer by cell and span. On the canvas a grid shows its tracks and areas: drag layers into cells, drag across cells to span them, and add or resize tracks from the edges.
+- **Masks, as in Figma.** **Use as mask** (⌃⌘M) on a frame, a picture, a vector or words, and it shows the layers above it only where it is: by its alpha, its outline or its brightness, and a gradient fades what it masks. **Mask with selection** makes a mask group. The layers list shows what each mask holds, and Preview and exports draw masks exactly as the canvas does.
+- **Bring in a website.** Type an address (**Import a website** in My designs, a board's Assets, or paste a URL onto a board) and the page lands as an artboard of ordinary layers, laid out as the browser drew it, with its pictures and fonts copied to your Mac. Change it, or have an agent change it. Agents can do it too (**board_import_website**).
+- **Follow your agent.** An agent at work has a cursor in its own colour, with its name, that glides to whatever it changes or looks at; the layers flash as it touches them. Click its avatar over the canvas to follow it until you take over.
+- **Comments go together.** Comments and replies wait on the board (a hollow pin, **Not sent**) until you send them: each agent gets one numbered list with everything for it, instead of a message per comment while it works. Change or delete any before sending; ⌘⏎ sends them all.
+- **Light mode.** Settings › General › Theme: System, Light or Dark. System follows your Mac as it changes.
+- **Smoother boards.** Panning, pinching, dragging and scrubbing on a big board take half the work or less, the inspector saves a few times a second instead of at every step, and the design editor and timeline draw once a frame.
+
+### Fixes
+- A mask at the very top of its frame showed nothing; it shows now.
+- Pictures inside a vector (an SVG's <image>) load on the canvas and in Preview, and are copied into your library.
+- Width and height fields show four digits (a 1440 artboard) beside their mode.
+- Comments written in the same instant keep the order they were written in.
+- White words on the selection blue and on red buttons are easier to read, in both themes.
+
 ## 0.14.0 · 13 November 2026
 
 ### Highlights
