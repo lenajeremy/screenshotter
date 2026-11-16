@@ -1,6 +1,7 @@
 // The board canvas: every artboard drawn as the real HTML and CSS it is, on an endless canvas you
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
+import { Presence, PresenceBar } from "./board-presence.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
@@ -382,6 +383,8 @@ export function BoardCanvas() {
       ${page.children.map((id) => html`<${Layer} key=${id} n=${b.board.nodes[id]} root editing=${b.editing} />`)}
     </div>
     <${Overlay} />
+    <${Presence} />
+    <${PresenceBar} />
     ${!page.children.length && html`<div class="bd-empty"><b>An empty page</b><span>Press F and drag to draw an artboard, paste HTML, or ask an agent to design here.</span></div>`}
   </div>`;
 }

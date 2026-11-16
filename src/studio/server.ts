@@ -346,7 +346,8 @@ function restorePicture(p: unknown): void {
  * there (so the Studio fetches those again). Kept while neither the board's file nor its comments'
  * changed: reading and parsing a big board at every poll cost the engine far more than the answer.
  */
-const revs = new Map<string, { key: string; rev: number; by?: string; updatedAt: string; working: Record<string, string> | undefined; talk: string }>();
+type Presence = { key: string; name: string; kind: string; at: string; ids: string[]; doing: string };
+const revs = new Map<string, { key: string; rev: number; by?: string; updatedAt: string; working: Record<string, string> | undefined; talk: string; presence: Presence[] }>();
 function boardRev(id: string | null) {
   if (!validBoardId(id)) throw new Error("Unknown board");
   const stamp = (f: string) => {
@@ -362,11 +363,17 @@ function boardRev(id: string | null) {
   if (!c || c.key !== key || key.startsWith("|")) {
     const b = getBoard(id);
     const agents = Object.values(b.agents ?? {});
-    c = { key, rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: b.working, talk: `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}` };
+    // Each agent's latest move, for its cursor in the Studio (the most recent few; the Studio lets old ones go).
+    const presence = agents
+      .filter((a) => a.last)
+      .map((a) => ({ key: a.key, name: a.name, kind: a.kind, ...a.last! }))
+      .sort((x, y) => y.at.localeCompare(x.at))
+      .slice(0, 8);
+    c = { key, rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: b.working, talk: `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}`, presence };
     revs.set(id, c);
   }
   // Who is at work is read against the clock each time: it lapses without the file changing.
-  return { rev: c.rev, by: c.by, updatedAt: c.updatedAt, working: workingNow(c.working), talk: c.talk };
+  return { rev: c.rev, by: c.by, updatedAt: c.updatedAt, working: workingNow(c.working), talk: c.talk, presence: c.presence };
 }
 
 function recentFiles(): Array<{ path: string; kind: string; mtime: number; scene?: { id: string; name: string } }> {

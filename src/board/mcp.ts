@@ -45,6 +45,7 @@ import {
   treeText,
   type Board,
   type Op,
+  type AgentTouch,
 } from "./core.js";
 import { drawLayers } from "./render.js";
 import { deviceImage } from "./device.js";
@@ -134,10 +135,17 @@ function placeInfo(b: Board, id: string) {
  * The artboards a set of layers is on, marked as being worked on, and the agent remembered as
  * having worked on them (so a comment on them can reach it).
  */
-function workingOps(b: Board, ids: string[], me: AgentIdentity): Op[] {
-  const roots = [...new Set(ids.filter((id) => b.nodes[id]).map((id) => rootOf(b, id)))];
+/**
+ * The agent at work: the artboards it's on (they glow in the Studio), and what it just did, for its
+ * cursor there (`doing`, with the layers it touched; a look leaves the artboards it wrote to alone).
+ */
+function workingOps(b: Board, ids: string[], me: AgentIdentity, doing: AgentTouch["doing"] = "edit"): Op[] {
+  const there = ids.filter((id) => b.nodes[id]);
+  const roots = [...new Set(there.map((id) => rootOf(b, id)))];
   const at = new Date().toISOString();
-  return [...(roots.length ? [{ op: "working" as const, ids: roots, at }] : []), { op: "agent", agent: me, artboards: roots, at }];
+  const looking = doing === "look" || doing === "read";
+  const touch = there.length ? { touch: { ids: there.slice(0, 40), doing } } : {};
+  return [...(roots.length && !looking ? [{ op: "working" as const, ids: roots, at }] : []), { op: "agent", agent: me, artboards: looking ? [] : roots, at, ...touch }];
 }
 
 const StyleValue = z.union([z.string(), z.number(), z.null()]);
@@ -381,7 +389,7 @@ export function registerBoardTools(server: McpServer) {
             if (got.nodes[got.id].defs) ops.push({ op: "set", id: rootSvg(b, into), defs: `${b.nodes[rootSvg(b, into)].defs ?? ""}${got.nodes[got.id].defs}` });
             if (mode === "replace") ops.push({ op: "delete", ids: [t.id] });
             const after = changeBoard(b.id, ops, "agent").board;
-            changeBoard(b.id, workingOps(after, kids, await whoAmI()), "agent");
+            changeBoard(b.id, workingOps(after, kids, await whoAmI(), "write"), "agent");
             return [text({ created: kids.map((id) => ({ id, name: after.nodes[id]?.name })), outline: kids.map((id) => treeText(after, id, 3)).join("\n") })];
           }
           if (mode === "inside") {
@@ -423,12 +431,13 @@ export function registerBoardTools(server: McpServer) {
         // Replacing: the new layers go where the old one was, before it's removed.
         const changed = changeBoard(b.id, ops, "agent");
         const after = changed.board;
-        changeBoard(b.id, workingOps(after, made.roots, await whoAmI()), "agent");
+        changeBoard(b.id, workingOps(after, made.roots, await whoAmI(), "write"), "agent");
         for (const id of Object.keys(made.nodes)) {
           const m = after.nodes[id];
           if (m?.mask && !m.parent) made.warnings.push(`"${m.name}" has data-mask but sits on the page: a mask works inside a frame, at the back of the layers it masks.`);
           else if (m?.mask && inFlow(after, id)) made.warnings.push(`The mask "${m.name}" (#${id}) is placed by its frame's flex or grid layout, so where it is can't be told from its CSS: give it position:absolute with left, top, width and height (and the layers it masks too), or board_edit mask it with them to make a mask group.`);
         }
+        changeBoard(b.id, workingOps(after, made.roots, await whoAmI(), "write"), "agent");
         const out: Content = [text({ created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })), outline: made.roots.map((id) => treeText(after, id, 4)).join("\n\n"), photos: photos.length ? [...new Set(photos)] : undefined, warnings: made.warnings.length ? made.warnings : undefined })];
         if (a.preview) {
           const root = rootOf(after, made.roots[0]);
@@ -784,6 +793,8 @@ export function registerBoardTools(server: McpServer) {
         const ids = a.nodes?.length ? a.nodes : (page?.children ?? []).slice(0, 8);
         if (!ids.length) throw new Error("The page is empty: there's nothing to picture yet.");
         const { images, boxes } = await drawLayers(b, ids, { scale: a.scale ?? 1, maxEdge: a.maxEdge ?? 1400 });
+        // Its cursor goes to what it's looking at.
+        changeBoard(b.id, workingOps(b, ids, await whoAmI(), "look"), "agent");
         const out: Content = [];
         for (const id of ids) {
           if (!images[id]) {
@@ -896,7 +907,7 @@ export function registerBoardTools(server: McpServer) {
         const b = a.board ? findBoard(a.board) : null;
         const me = await whoAmI();
         const r = await importWebsite(b?.id ?? null, { url: a.url, width: a.width, fullPage: a.fullPage, page: a.page }, "agent");
-        changeBoard(r.board, workingOps(getBoard(r.board), [r.artboard], me), "agent");
+        changeBoard(r.board, workingOps(getBoard(r.board), [r.artboard], me, "import"), "agent");
         return [text({ ...r, note: `It's on the board as the artboard ${r.artboard}. board_read it (tree) to find the layers, board_screenshot it to see it.` })];
       }),
   );
