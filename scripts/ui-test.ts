@@ -3353,6 +3353,76 @@ const CHECKS: Record<string, Check> = {
     const n3 = nodeOf(t, other);
     return n3.shader?.preset === "waves" && Object.keys(boards.getBoard(t.id).nodes).length === count ? "ok" : `clicked in Assets with a frame selected: ${JSON.stringify(n3)}, ${Object.keys(boards.getBoard(t.id).nodes).length - count} layers more`;
   },
+  async "layers: deep layers keep their names: deeper levels step in by less, then the list scrolls sideways to the one selected or opened; the panel drags wider"(page) {
+    // Words sixteen levels down: fifteen frames, each inside the last, in an artboard.
+    let inner = `<p data-name="Deepest words" style="margin:0">Deep</p>`;
+    for (let i = 15; i >= 1; i--) inner = `<div data-name="Level ${i}" style="padding:2px">${inner}</div>`;
+    const t = await openMaskBoard(page, `<div data-name="Art" style="width:420px;height:320px;background:#fff">${inner}</div>`);
+    const deep = t.byName("Deepest words");
+    const look = (name: string) => S(page, (name: string) => {
+      const list = document.querySelector(".bd-rows") as HTMLElement;
+      const L = list.getBoundingClientRect();
+      const rows = [...list.querySelectorAll(".bd-row")] as HTMLElement[];
+      const row = rows.find((r) => r.querySelector(".nm")?.textContent === name);
+      const nm = row?.querySelector(".nm")?.getBoundingClientRect();
+      return {
+        step: parseFloat(getComputedStyle(list).getPropertyValue("--step")),
+        least: Math.round(Math.min(...rows.map((r) => (r.querySelector(".nm") as HTMLElement).getBoundingClientRect().width))),
+        shown: nm ? Math.round(Math.min(nm.right, L.right) - Math.max(nm.left, L.left)) : -1,
+        sideways: list.scrollWidth - list.clientWidth,
+        panel: (document.querySelector(".bd-left") as HTMLElement).offsetWidth,
+      };
+    }, name);
+    await page.mouse.move(700, 400);
+    try {
+      await sel(page, [deep]);
+      await page.waitForTimeout(300);
+      const a = await look("Deepest words");
+      if (!(a.step >= 12 && a.step < 20)) return `sixteen levels deep, each steps in by ${a.step}px (it should be less than 20, and no less than 12)`;
+      if (a.least < 90) return `a name kept only ${a.least}px`;
+      if (a.sideways <= 0 || a.shown < 80) return `selected sixteen levels down, ${a.shown}px of its name shows (the list can scroll ${a.sideways}px sideways)`;
+      // Opening a group brings its layer into sight.
+      await S(page, async (id: string) => {
+        const st = await import("/ui/board-state.js" as string);
+        const open = new Set(st.B.open as Set<string>);
+        open.delete(id);
+        st.bset({ open, sel: [] });
+      }, t.byName("Level 15"));
+      await page.waitForTimeout(200);
+      await S(page, () => ((document.querySelector(".bd-rows") as HTMLElement).scrollLeft = 0));
+      await page.locator(`.bd-row[data-lid="${t.byName("Level 15")}"] .tw`).click();
+      await page.waitForTimeout(300);
+      const b = await look("Deepest words");
+      if (b.shown < 80) return `opened, the layer inside shows ${b.shown}px of its name`;
+      // A locked layer keeps its lock showing (and only that) without the pointer on it.
+      await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).commit([{ op: "set", id, locked: true }], { label: "Lock" }), t.byName("Level 2"));
+      await page.mouse.move(700, 400);
+      await page.waitForTimeout(250);
+      const kept = await S(page, (id: string) => [...document.querySelectorAll(`.bd-row[data-lid="${id}"] .acts .icon-btn`)].map((b) => getComputedStyle(b).opacity + "/" + getComputedStyle(b.parentElement!).opacity), t.byName("Level 2"));
+      if (kept.join() !== "1/1,0/1") return `a locked layer's buttons, as opacity/row opacity: ${kept}`;
+      // The panel drags wider, and then nothing needs to scroll sideways; a double-click puts it back.
+      const edge = (await page.locator(".bd-resizer").boundingBox())!;
+      await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+      await page.mouse.down();
+      for (let i = 1; i <= 10; i++) await page.mouse.move(edge.x + edge.width / 2 + 20 * i, edge.y + edge.height / 2);
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      const c = await look("Deepest words");
+      const kept2 = await S(page, () => localStorage.getItem("board:left-w"));
+      if (!(c.panel >= 440 && c.panel <= 452) || kept2 !== String(c.panel)) return `dragged 200px, the panel is ${c.panel}px wide (kept as ${kept2})`;
+      if (c.sideways > 1 || c.step <= a.step) return `at ${c.panel}px, levels step in by ${c.step}px and the list scrolls ${c.sideways}px sideways`;
+      await page.locator(".bd-resizer").dblclick();
+      await page.waitForTimeout(300);
+      const d = await look("Deepest words");
+      if (d.panel !== 248 || (await S(page, () => localStorage.getItem("board:left-w")))) return `double-clicked, the panel is ${d.panel}px wide`;
+      return "ok";
+    } finally {
+      await S(page, async () => {
+        (await import("/ui/board-state.js" as string)).bset({ leftW: null });
+        localStorage.removeItem("board:left-w");
+      });
+    }
+  },
   async "shaders: not all at once: zoomed out they hold their frame, the biggest in view plays, the selected one always does"(page) {
     const t = await openMaskBoard(page, `<div data-name="Page" style="width:600px;display:flex;flex-direction:column;background:#fff"><div data-name="One" data-shader="mesh-gradient" style="height:400px"></div><div data-name="Two" data-shader="aurora" style="height:400px"></div><div data-name="Three" data-shader="waves" style="height:400px"></div></div>`);
     await shaderBudget(page, 1000);

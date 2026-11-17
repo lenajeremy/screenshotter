@@ -5,6 +5,19 @@ import { OpError, applyOps, expandOps, pxValue, rootOf } from "./board-core.js";
 import { shapeInBox } from "./shapes.js";
 import { S, api, fail, set, toast } from "./store.js";
 
+/** The left panel's width as last dragged, if it was. */
+function savedLeftWidth() {
+  try {
+    const w = Number(localStorage.getItem("board:left-w"));
+    return w >= LEFT_MIN && w <= LEFT_MAX ? w : null;
+  } catch {
+    return null;
+  }
+}
+/** How narrow and how wide the left panel can be dragged. */
+export const LEFT_MIN = 248;
+export const LEFT_MAX = 560;
+
 export const B = {
   id: null,
   board: null,
@@ -28,6 +41,8 @@ export const B = {
   working: [],
   leftOpen: true,
   rightOpen: true,
+  /** The width the left panel was dragged to (kept on this Mac), or null for the usual 248. */
+  leftW: savedLeftWidth(),
   /** An insertion line or a drop target while dragging. */
   drop: null,
   guides: [],

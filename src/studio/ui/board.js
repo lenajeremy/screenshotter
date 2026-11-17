@@ -2,10 +2,10 @@
 // layers on the left, the canvas in the middle, the layer's CSS (in words) on the right.
 import { Component } from "preact";
 import { looksLikeUrl, openImportWebsite } from "./web-import.js";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, isGrid, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { maskGroupOps, maskOps, maskRuns } from "./board-core.js";
-import { B, CANVAS_ONLY, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AssetsPanel } from "./board-assets.js";
@@ -39,7 +39,7 @@ export function BoardApp() {
     };
   }, []);
   if (!b.board) return html`<div class="bd-app"><div class="boot"><div class="boot-mark"></div></div></div>`;
-  return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}">
+  return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}" style=${{ "--bd-left-w": b.leftW ? b.leftW + "px" : null }}>
     <${BoardTopbar} />
     ${b.leftOpen && html`<aside class="panel bd-left">
       <div class="bd-left-tabs" role="tablist">
@@ -47,9 +47,45 @@ export function BoardApp() {
       </div>
       ${(b.leftTab ?? "layers") === "assets" ? html`<${AssetsPanel} />` : b.leftTab === "comments" ? html`<${CommentsPanel} />` : html`<${PagesList} /><${LayersList} />`}
     </aside>`}
+    ${b.leftOpen && html`<${LeftResizer} />`}
     <main class="bd-stage"><${BoardCanvas} /></main>
     ${b.rightOpen && html`<aside class="panel bd-right"><${Inspector} /></aside>`}
   </div>`;
+}
+
+/** The left panel's edge: drag it wider for deep layers or long names; double-click for the usual width. */
+function LeftResizer() {
+  const down = (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const app = ev.currentTarget.closest(".bd-app");
+    const w0 = app.querySelector(".bd-left").offsetWidth;
+    // The canvas keeps at least 340px.
+    const max = Math.max(LEFT_MIN, Math.min(LEFT_MAX, w0 + app.querySelector(".bd-stage").offsetWidth - 340));
+    const x0 = ev.clientX;
+    let w = w0;
+    app.classList.add("resizing");
+    const move = (e) => {
+      w = Math.round(Math.min(max, Math.max(LEFT_MIN, w0 + e.clientX - x0)));
+      app.style.setProperty("--bd-left-w", w + "px");
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      app.classList.remove("resizing");
+      if (w !== w0) keepLeftWidth(w);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
+  return html`<div class="bd-resizer" title="Drag to resize. Double-click for the usual width." onPointerDown=${down} onDblClick=${() => keepLeftWidth(null)}></div>`;
+}
+
+function keepLeftWidth(w) {
+  bset({ leftW: w === LEFT_MIN ? null : w });
+  try {
+    w && w !== LEFT_MIN ? localStorage.setItem("board:left-w", String(w)) : localStorage.removeItem("board:left-w");
+  } catch {}
 }
 
 const TOOLS = [
@@ -232,33 +268,91 @@ function LayersList() {
   const b = useBoard(["view", "guides", "words"]);
   const page = currentPage();
   const ref = useRef();
+  const [room, setRoom] = useState(236);
   const rows = [];
   const picked = new Set(b.sel);
+  let deepest = 0;
   const walk = (id, depth, masked) => {
     const n = b.board.nodes[id];
     if (!n) return;
     rows.push({ id, depth, n, on: picked.has(id), open: b.open.has(id), hovered: b.hover === id, renaming: b.renaming === id, masked });
+    if (depth > deepest) deepest = depth;
     if (!n.children?.length || !b.open.has(id)) return;
     const marks = maskMarks(b.board, n);
     for (const c of n.children) walk(c, depth + 1, marks?.get(c));
   };
   for (const id of page?.children ?? []) walk(id, 0);
-  // Keep the selected layer in sight.
+  const { step, width } = indentFor(deepest, room);
+  // The room the rows have, as the panel is dragged wider or narrower.
   useEffect(() => {
-    const el = ref.current?.querySelector(".bd-row.on");
-    el?.scrollIntoView?.({ block: "nearest" });
+    const list = ref.current?.querySelector(".bd-rows");
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setRoom(list.clientWidth - 12));
+    ro.observe(list);
+    return () => ro.disconnect();
+  }, []);
+  // Keep the selected layer in sight, however deep it is.
+  useLayoutEffect(() => {
+    const list = ref.current?.querySelector(".bd-rows");
+    const row = list?.querySelector(".bd-row.on");
+    if (row) reveal(list, row);
   }, [b.sel.join()]);
+  // A group just opened brings its first layer into sight.
+  useLayoutEffect(() => {
+    if (!revealNext) return;
+    const list = ref.current?.querySelector(".bd-rows");
+    const row = list?.querySelector(`.bd-row[data-lid="${revealNext}"]`);
+    revealNext = null;
+    if (row) reveal(list, row, { vertical: false });
+  });
   return html`<section class="bd-layers" ref=${ref}>
     <div class="bd-head"><h3>Layers</h3></div>
-    <div class="bd-rows" onPointerDown=${layerDown}>
+    <div class="bd-rows" style=${{ "--step": step + "px", "--row-w": width + "px" }} onPointerDown=${layerDown}>
       ${rows.length ? rows.map((r) => html`<${Row} key=${r.id} ...${r} />`) : html`<p class="bd-hint">Layers you draw, paste or an agent writes appear here.</p>`}
-      ${b.drop?.layer && html`<div class="bd-row-drop ${b.drop.layer.inside ? "inside" : ""}" style=${{ top: b.drop.layer.y + "px", left: b.drop.layer.x + "px" }}></div>`}
+      ${b.drop?.layer && html`<div class="bd-row-drop ${b.drop.layer.inside ? "inside" : ""}" style=${{ top: b.drop.layer.y + "px", left: b.drop.layer.x + "px", width: b.drop.layer.w + "px" }}></div>`}
     </div>
   </section>`;
 }
 
-/** How far each level of the layer list steps in: the chevron (16) and the gap after it (4). */
+/** How far each level of the layer list steps in at most: the chevron (16) and the gap after it (4), so a layer's chevron sits under its parent's icon. */
 const INDENT = 20;
+/** How little a level may step in when the layers go deep, and still read as a level. */
+const INDENT_MIN = 12;
+/** A row's own parts: its left edge (6), the chevron and its gap (20), the icon and its gap (22), and its right edge (4). */
+const ROW_PARTS = 52;
+/** The least room a layer's name keeps, however deep the layer is. */
+const NAME_ROOM = 96;
+
+/**
+ * How far each level steps in, and how wide every row is. Levels step in by a full 20px while the
+ * deepest open layer still has room for its name; deeper than that they step in by less, down to
+ * 12px, and past that the rows grow wider than the panel and the list scrolls sideways (following
+ * the selection), so no name is ever squeezed out.
+ */
+function indentFor(deepest, room) {
+  const step = deepest ? Math.max(INDENT_MIN, Math.min(INDENT, Math.floor((room - ROW_PARTS - NAME_ROOM) / deepest))) : INDENT;
+  return { step, width: ROW_PARTS + deepest * step + NAME_ROOM };
+}
+
+/** A layer whose group was just opened, to bring into sight once it's listed. */
+let revealNext = null;
+
+/** Scroll the layer list just enough to show a row's chevron, icon and name (and, sideways, a little of its parent's). */
+function reveal(list, row, { vertical = true } = {}) {
+  if (vertical) {
+    const top = row.offsetTop;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + row.offsetHeight - list.clientHeight;
+  }
+  const step = parseFloat(getComputedStyle(list).getPropertyValue("--step")) || INDENT;
+  const start = row.offsetLeft + (parseFloat(getComputedStyle(row).paddingLeft) || 6);
+  const from = Math.max(0, start - step - 6);
+  // The chevron, the icon and their gaps (42), then the name.
+  const to = Math.min(list.scrollWidth, start + 42 + NAME_ROOM);
+  const x = list.scrollLeft;
+  if (to - from > list.clientWidth || from < x) list.scrollLeft = from;
+  else if (to > x + list.clientWidth) list.scrollLeft = to - list.clientWidth;
+}
 
 /**
  * A row redraws only when what it shows changed: its layer (every change gives a layer a new
@@ -279,12 +373,16 @@ function LayerRow({ id, depth, n, on, open, hovered, renaming, masked }) {
   const toggle = (e) => {
     e.stopPropagation();
     const o = new Set(B.open);
-    o.has(id) ? o.delete(id) : o.add(id);
+    if (o.has(id)) o.delete(id);
+    else {
+      o.add(id);
+      revealNext = n.children?.[0] ?? null;
+    }
     bset({ open: o });
   };
   const name = n.type === "text" && /^Text$|^Text \d+$/.test(n.name) ? plainText(n.text).slice(0, 40) || n.name : n.name;
   // Each level steps in by the chevron and its gap, so a layer's chevron sits under its parent's icon.
-  return html`<div class="bd-row ${on ? "on" : ""} ${hovered ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ paddingLeft: 6 + depth * INDENT + "px" }}
+  return html`<div class="bd-row ${on ? "on" : ""} ${hovered ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ "--d": depth }}
       onPointerEnter=${() => bset({ hover: id })} onPointerLeave=${() => B.hover === id && bset({ hover: null })}
       onDblClick=${(e) => (e.stopPropagation(), bset({ renaming: id }))}
       onContextMenu=${(e) => {
@@ -292,7 +390,7 @@ function LayerRow({ id, depth, n, on, open, hovered, renaming, masked }) {
         if (!B.sel.includes(id)) select(id);
         openLayerMenu(e.clientX, e.clientY);
       }}>
-    ${masked && html`<${MaskMark} kind=${masked} x=${2 + depth * INDENT} />`}
+    ${masked && html`<${MaskMark} kind=${masked} />`}
     ${n.children?.length ? html`<button class="tw ${open ? "open" : ""}" onPointerDown=${(e) => e.stopPropagation()} onClick=${toggle} aria-label=${open ? "Close" : "Open"}><${Icon} n="right" s=${11} w=${2} /></button>` : html`<span class="tw"></span>`}
     <span class="ico"><${Icon} n=${layerIcon(n)} s=${14} /></span>
     ${renaming
@@ -342,7 +440,8 @@ function layerDown(e) {
     const inside = holds && f > 0.28 && f < 0.72;
     const before = !inside && f <= 0.5;
     target = inside ? { parent: oid, index: (on.children ?? []).length } : { ref: oid, after: !before };
-    bset({ drop: { layer: { y: (inside ? r.top + r.height / 2 : before ? r.top : r.bottom) - lr.top + list.scrollTop, x: (parseFloat(over.style.paddingLeft) || 6) + (inside ? 18 : 0), inside } } });
+    const x = over.offsetLeft + (parseFloat(getComputedStyle(over).paddingLeft) || 6) + (inside ? 18 : 0);
+    bset({ drop: { layer: { y: (inside ? r.top + r.height / 2 : before ? r.top : r.bottom) - lr.top + list.scrollTop, x, w: over.offsetLeft + over.offsetWidth - 2 - x, inside } } });
   };
   const up = () => {
     removeEventListener("pointermove", move);
@@ -1055,9 +1154,9 @@ function maskMarks(board, n) {
 }
 
 /** The line in the layer list joining a mask to the layers it masks. */
-function MaskMark({ kind, x }) {
+function MaskMark({ kind }) {
   const [where, off] = kind.split(" ");
-  return html`<i class="bd-mask-mark ${where} ${off ?? ""}" style=${{ left: x + "px" }} aria-hidden="true"></i>`;
+  return html`<i class="bd-mask-mark ${where} ${off ?? ""}" aria-hidden="true"></i>`;
 }
 
 /** Layers' boxes in their frames as drawn (left and top from the frame's inside edge), for placing masks by. */

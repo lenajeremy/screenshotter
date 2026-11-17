@@ -20,7 +20,7 @@ A board is a design canvas made of real HTML and CSS, in the spirit of [Paper](h
 - **The Studio editor** (`src/studio/ui/board*.js`):
   - **Library:** a Boards shelf with thumbnails, an "agent at work" badge, and New board.
   - **Canvas:** the real HTML on an endless canvas. Pick, go in and out, and ⌘-click to go deep. Move with snapping, reorder inside flex and drag out into another frame, resize. Frame, rectangle and text tools, plus images.
-  - **Panels:** pages, and a layer list with drag to reorder and nest.
+  - **Panels:** pages, and a layer list with drag to reorder and nest. Deep layers keep their names: levels step in 20px while the deepest open layer still has 96px for its name, then by less (down to 12px), and past that the rows grow wider than the panel and the list scrolls sideways, following the layer selected or opened. Lock and hide stay at the panel's visible edge, and stay showing on a locked or hidden layer. The left panel drags wider (248–560px, kept on the Mac; double-click its edge for 248).
   - **The right panel:**
     - layout and size (Fixed, Fit, Fill or Relative)
     - flex
