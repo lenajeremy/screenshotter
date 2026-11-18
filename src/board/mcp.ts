@@ -153,6 +153,26 @@ function workingOps(b: Board, ids: string[], me: AgentIdentity, doing: AgentTouc
   return [...(roots.length && !looking ? [{ op: "working" as const, ids: roots, at }] : []), { op: "agent", agent: me, artboards: looking ? [] : roots, at, ...touch }];
 }
 
+/**
+ * The layers a write made, in the order they're drawn (each frame before what's in it), spread
+ * evenly over at most `max`: the agent's cursor walks them in the Studio, building the new layers
+ * in one after another, so someone watching sees the design come together, not appear at once.
+ */
+function writtenLayers(b: Board, roots: string[], max = 40): string[] {
+  const all: string[] = [];
+  const walk = (id: string) => {
+    const n = b.nodes[id];
+    if (!n) return;
+    all.push(id);
+    for (const c of n.children ?? []) walk(c);
+  };
+  roots.forEach(walk);
+  if (all.length <= max) return all;
+  const picked = new Set<string>();
+  for (let i = 0; i < max; i++) picked.add(all[Math.floor((i * all.length) / max)]);
+  return all.filter((id) => picked.has(id));
+}
+
 const StyleValue = z.union([z.string(), z.number(), z.null()]);
 const StyleMap = z.record(z.string(), StyleValue).describe('CSS properties in camelCase or kebab-case (backgroundColor or "background-color"), values as CSS ("12px", "#0a0a0b", "var(--brand)"). A bare number is px (except opacity, fontWeight, lineHeight, flexGrow, zIndex). null removes the property.');
 
@@ -561,7 +581,7 @@ export function registerBoardTools(server: McpServer) {
             if (got.nodes[got.id].defs) ops.push({ op: "set", id: rootSvg(b, into), defs: `${b.nodes[rootSvg(b, into)].defs ?? ""}${got.nodes[got.id].defs}` });
             if (mode === "replace") ops.push({ op: "delete", ids: [t.id] });
             const after = changeBoard(b.id, ops, "agent").board;
-            changeBoard(b.id, workingOps(after, kids, await whoAmI(), "write"), "agent");
+            changeBoard(b.id, workingOps(after, writtenLayers(after, kids), await whoAmI(), "write"), "agent");
             return [text({ created: kids.map((id) => ({ id, name: after.nodes[id]?.name })), outline: kids.map((id) => treeText(after, id, 3)).join("\n"), warnings: warnings.length ? warnings : undefined })];
           }
           if (mode === "inside") {
@@ -604,13 +624,13 @@ export function registerBoardTools(server: McpServer) {
         // Replacing: the new layers go where the old one was, before it's removed.
         const changed = changeBoard(b.id, ops, "agent");
         const after = changed.board;
-        changeBoard(b.id, workingOps(after, made.roots, await whoAmI(), "write"), "agent");
+        changeBoard(b.id, workingOps(after, writtenLayers(after, made.roots), await whoAmI(), "write"), "agent");
         for (const id of Object.keys(made.nodes)) {
           const m = after.nodes[id];
           if (m?.mask && !m.parent) made.warnings.push(`"${m.name}" has data-mask but sits on the page: a mask works inside a frame, at the back of the layers it masks.`);
           else if (m?.mask && inFlow(after, id)) made.warnings.push(`The mask "${m.name}" (#${id}) is placed by its frame's flex or grid layout, so where it is can't be told from its CSS: give it position:absolute with left, top, width and height (and the layers it masks too), or board_edit mask it with them to make a mask group.`);
         }
-        changeBoard(b.id, workingOps(after, made.roots, await whoAmI(), "write"), "agent");
+        changeBoard(b.id, workingOps(after, writtenLayers(after, made.roots), await whoAmI(), "write"), "agent");
         const out: Content = [
           text({
             created: made.roots.map((id) => ({ id, name: after.nodes[id]?.name })),

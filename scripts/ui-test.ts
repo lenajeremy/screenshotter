@@ -981,6 +981,11 @@ const CHECKS: Record<string, Check> = {
     if (!then.following) return "following stopped when the agent moved";
     if (Math.abs(then.z - zoomed.z) > 0.01) return `the view went to ${then.z.toFixed(2)}×, not the ${zoomed.z.toFixed(2)}× zoomed to`;
     if (r1b.x < 0 || r1b.y < 0 || r1b.x + r1b.width > vp.width || r1b.y + r1b.height > vp.height) return `following at your zoom didn't bring Row One into view (it's at ${Math.round(r1b.x)},${Math.round(r1b.y)})`;
+    // A write of several layers: the cursor walks them in order, naming each, and they build in.
+    boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [phone], at: new Date().toISOString(), touch: { ids: [t.byName("Row One"), t.byName("Row Two"), t.byName("Row Three")], doing: "write" } }], "agent");
+    const said = new Set<string>();
+    for (let i = 0; i < 30; i++) { const d = await S(page, () => document.querySelector(".bd-cursor-doing")?.textContent ?? ""); if (d) said.add(d); await page.waitForTimeout(100); }
+    if (!["adding Row One", "adding Row Two", "adding Row Three"].every((w) => said.has(w))) return `the walk said ${[...said].join(" / ")}`;
     // Moving the view off what the agent is doing stops it.
     await page.mouse.move(vp.width / 2, vp.height / 2);
     for (let i = 0; i < 12; i++) { await page.mouse.wheel(900, 900); await page.waitForTimeout(30); }

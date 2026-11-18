@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { pageOf, rootOf } from "./board-core.js";
 import { B, bset } from "./board-state.js";
-import { canvasEl, followGliding, frameBox, worldBox } from "./board-canvas.js";
+import { canvasEl, elOf, followGliding, frameBox, worldBox } from "./board-canvas.js";
 import { html } from "./controls.js";
 
 /** After its last move, an agent Agentman can't vouch for stays this long (it may be thinking). */
@@ -18,8 +18,8 @@ const IDLE_MS = 45_000;
 /** Within this long of its last move an agent reads as "at work"; after it, "thinking". */
 const LIVE_MS = 12_000;
 const FADE_MS = 6_000;
-/** The cursor visits each layer a move touched, this long on each. */
-const STEP_MS = 260;
+/** The cursor visits each layer a move touched, this long on each (quicker for a big write, so the walk takes at most about 4 s). */
+const stepOf = (p) => Math.max(70, Math.min(260, 4200 / Math.max(1, p.ids?.length ?? 1)));
 const COLOURS = ["#7c6cff", "#f0508c", "#1ba7c4", "#e8890c", "#2f9e57", "#e2603f", "#4c6ef5", "#b350d6"];
 const VERBS = { edit: "changing", write: "adding", import: "bringing in", look: "looking at", read: "reading" };
 
@@ -30,6 +30,19 @@ export function colourOf(key) {
 }
 
 const age = (p) => Date.now() - Date.parse(p.at);
+/**
+ * How long since the Studio first saw a move (it reaches the Studio up to a poll after it's made):
+ * the cursor's walk and the build-in run from then, so none of their first steps are skipped.
+ */
+const firstSeen = new Map();
+function since(p) {
+  const k = `${p.key}@${p.at}`;
+  if (!firstSeen.has(k)) {
+    firstSeen.set(k, Date.now());
+    if (firstSeen.size > 200) firstSeen.delete(firstSeen.keys().next().value);
+  }
+  return Date.now() - firstSeen.get(k);
+}
 /** How long an agent may stay on the board, by what Agentman says it's doing. */
 function stayMs(p) {
   if (p.state === "ended") return 0;
@@ -64,13 +77,20 @@ export function agentArtboards() {
   return out;
 }
 
+/** Moves whose new layers have been built in already. */
+const built = new Set();
+
 const ago = (ms) => (ms < 5000 ? "just now" : ms < 60_000 ? `${Math.round(ms / 1000)} s ago` : `${Math.round(ms / 60_000)} min ago`);
 /** What the agent is doing, in a few words: "changing Title and 3 more", "thinking", "waiting for you". */
 function doingNow(p) {
   const phase = phaseOf(p);
   if (phase === "waiting") return "waiting for you";
   if (phase === "thinking") return `thinking · ${Math.round(age(p) / 1000)} s`;
-  const n = (p.ids ?? []).map((id) => B.board?.nodes[id]?.name).filter(Boolean);
+  const ids = p.ids ?? [];
+  // While the cursor walks a move's layers, it names the one it's on.
+  const step = ids.length > 1 ? Math.floor(since(p) / stepOf(p)) : -1;
+  if (step >= 0 && step < ids.length && B.board?.nodes[ids[step]]) return `${VERBS[p.doing] ?? "working on"} ${B.board.nodes[ids[step]].name}`;
+  const n = ids.map((id) => B.board?.nodes[id]?.name).filter(Boolean);
   const what = n.length > 1 ? `${n[0]} and ${n.length - 1} more` : n[0] ?? "the board";
   return `${VERBS[p.doing] ?? "working on"} ${what}`;
 }
@@ -118,17 +138,40 @@ export function Presence() {
   const [, tick] = useState(0);
   const agents = activeAgents();
   // A move that touched several layers: the cursor steps through them, so the work reads as it was done.
-  const stepping = agents.some((p) => (p.ids?.length ?? 0) > 1 && age(p) < (p.ids.length + 1) * STEP_MS);
+  const stepping = agents.some((p) => (p.ids?.length ?? 0) > 1 && since(p) < (p.ids.length + 1) * stepOf(p));
   useEffect(() => {
     if (!agents.length) return;
-    const t = setInterval(() => tick((n) => n + 1), stepping ? STEP_MS / 2 : 1000);
+    const t = setInterval(() => tick((n) => n + 1), stepping ? 60 : 1000);
     return () => clearInterval(t);
   }, [agents.length > 0, stepping]);
+  // A fresh write builds in: each new layer fades up as the cursor reaches it (once per move, not on load).
+  useEffect(() => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    for (const p of agents) {
+      const tag = `${p.key}@${p.at}`;
+      if (p.doing !== "write" || built.has(tag) || age(p) > 4000) continue;
+      built.add(tag);
+      const st = stepOf(p);
+      drawn(p).forEach((id, i) => elOf(id)?.animate?.([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }],
+        { duration: 380, delay: Math.max(0, i * st - since(p)), easing: "cubic-bezier(0.16, 1, 0.3, 1)", fill: "backwards" }));
+    }
+  }, [agents.map((p) => p.at).join()]);
   // Following: each new move of that agent is framed; an agent that has finished stops it; you taking over stops it.
   const followed = (b.presence ?? []).find((p) => p.key === b.following);
   useEffect(() => {
-    if (followed && age(followed) < stayMs(followed)) bringIntoView(followed);
+    if (!followed || age(followed) >= stayMs(followed)) return;
+    // A look (a screenshot, a read) moves the view only when what it looks at is out of sight: looking isn't changing.
+    if (["look", "read"].includes(followed.doing) && watching(followed)) return;
+    bringIntoView(followed);
   }, [followed?.at]);
+  // While the cursor walks a move's layers, the view keeps the one it's on in sight, at the zoom it's at.
+  const walk = followed && b.following && (followed.ids?.length ?? 0) > 1 ? Math.floor(since(followed) / stepOf(followed)) : -1;
+  useEffect(() => {
+    if (walk < 1 || followGliding()) return;
+    const ids = drawn(followed);
+    const r = walk < ids.length ? worldBox(ids[walk]) : null;
+    if (r) frameBox(r, { zoom: B.view.z, ms: 420, focus: tipOf(r) });
+  }, [walk]);
   useEffect(() => {
     if (b.following && followed?.state === "ended") unfollow();
   }, [followed?.state]);
@@ -156,7 +199,7 @@ export function Presence() {
       const boxes = ids.map((id) => [id, worldBox(id)]).filter(([, r]) => r);
       if (!boxes.length) return null;
       // Which layer the cursor is on: it walks the touched layers in order, then rests on the first.
-      const step = Math.floor(age(p) / STEP_MS);
+      const step = Math.floor(since(p) / stepOf(p));
       const walking = boxes.length > 1 && step < boxes.length;
       const at = walking ? boxes[Math.min(step, boxes.length - 1)][1] : union(boxes.map(([, r]) => r));
       const tip = tipOf(walking ? at : boxes[0][1]);
@@ -165,7 +208,7 @@ export function Presence() {
       const phase = phaseOf(p);
       const c = colourOf(p.key);
       return html`<div key=${p.key} class="bd-agent-mark ${phase}" style=${{ "--c": c, "--inv": 1 / z, opacity: fade }}>
-        ${boxes.slice(0, walking ? step + 1 : boxes.length).map(([id, r], i) => html`<div key=${p.at + id} class="bd-agent-flash" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px", animationDelay: walking ? "0s" : `${Math.min(i, 12) * 40}ms` }}></div>`)}
+        ${boxes.slice(0, walking ? step + 1 : boxes.length).map(([id, r], i) => html`<div key=${p.at + id} class="bd-agent-flash" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px", animationDelay: walking ? "0s" : `${Math.min(i, 12) * 40}ms`, animationDuration: walking ? `${Math.max(0.45, (stepOf(p) * 5) / 1000)}s` : undefined }}></div>`)}
         <div class="bd-cursor" data-agent=${p.key} style=${{ left: tip.x + "px", top: tip.y + "px" }}>
           <div class="bd-cursor-in">
             <svg width="18" height="20" viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z" fill="var(--c)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
