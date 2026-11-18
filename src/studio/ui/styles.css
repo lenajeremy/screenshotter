@@ -2338,7 +2338,8 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .bd-avatar.on { box-shadow: 0 0 0 2px var(--stage), 0 0 0 4px var(--c); }
 .bd-following { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--c); color: #fff; font: 600 11.5px var(--sans); white-space: nowrap; }
 .bd-following .bd-link { color: #fff; }
-.bd-follow-frame { position: absolute; inset: 0; z-index: 5; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--c); pointer-events: none; }
+/* The frame sits in the square canvas but is clipped by the rounded stage around it: it takes the stage's corner, so the line curves with it. */
+.bd-follow-frame { position: absolute; inset: 0; z-index: 5; border-radius: var(--r-panel); box-shadow: inset 0 0 0 2px var(--c); pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .bd-cursor { transition: none; } .bd-agent-flash { animation-duration: 0.01s; } }
 
 /* Boards: shaders (board-shaders.js). Live tiles in Assets, the shader in the panel's Fill section, its code. */
