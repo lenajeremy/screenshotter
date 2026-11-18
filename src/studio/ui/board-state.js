@@ -423,7 +423,7 @@ function startPolling() {
       if (working.join() !== B.working.join()) bset({ working });
       // The agents' latest moves, for their cursors: redrawn only when one moves.
       const presence = r.presence ?? [];
-      const moved = presence.map((p) => `${p.key}@${p.at}`).join();
+      const moved = presence.map((p) => `${p.key}@${p.at}:${p.state ?? ''}`).join();
       if (moved !== B.presenceAt) {
         B.presenceAt = moved;
         bset({ presence });

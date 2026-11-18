@@ -1,18 +1,26 @@
-// Agents on the board, live: each agent at work has a cursor in its own colour, with its name,
-// that glides to what it just touched (the layers flash in its colour), and an avatar over the
-// canvas. Click an avatar to follow that agent: the view goes with its changes until you take over
-// (a scroll, a click, Esc).
+// Agents on the board, live: each agent at work has a cursor in its own colour, with its name and
+// what it's doing, that glides to what it just touched (each layer flashing in its colour as the
+// cursor reaches it), the artboard it's on marked in that colour, and an avatar over the canvas.
+// An agent stays while Agentman says it's still at work (thinking, rendering, running a command
+// between board moves), not only for a while after its last move. Click an avatar to follow that
+// agent: the view frames each change as it lands, until you take over (a scroll, a click, Esc).
 import { useEffect, useState } from "preact/hooks";
-import { pageOf } from "./board-core.js";
-import { B, bset, currentPage } from "./board-state.js";
-import { canvasEl, centerOn, fit, worldBox } from "./board-canvas.js";
+import { pageOf, rootOf } from "./board-core.js";
+import { B, bset } from "./board-state.js";
+import { canvasEl, frameBox, worldBox } from "./board-canvas.js";
 import { html } from "./controls.js";
 
-/** Long enough to read as "at work", short enough that a finished agent's cursor goes. */
-const ACTIVE_MS = 45_000;
+/** After its last move, an agent Agentman can't vouch for stays this long (it may be thinking). */
+const GRACE_MS = 3 * 60_000;
+/** An agent Agentman says is idle (its turn over) leaves this long after its last move. */
+const IDLE_MS = 45_000;
+/** Within this long of its last move an agent reads as "at work"; after it, "thinking". */
+const LIVE_MS = 12_000;
 const FADE_MS = 6_000;
+/** The cursor visits each layer a move touched, this long on each. */
+const STEP_MS = 260;
 const COLOURS = ["#7c6cff", "#f0508c", "#1ba7c4", "#e8890c", "#2f9e57", "#e2603f", "#4c6ef5", "#b350d6"];
-const VERBS = { edit: "is changing", write: "is adding", import: "brought in", look: "is looking at", read: "is reading" };
+const VERBS = { edit: "changing", write: "adding", import: "bringing in", look: "looking at", read: "reading" };
 
 export function colourOf(key) {
   let h = 0;
@@ -21,29 +29,53 @@ export function colourOf(key) {
 }
 
 const age = (p) => Date.now() - Date.parse(p.at);
-/** The agents at work now, the most recent first. */
-export const activeAgents = () => (B.presence ?? []).filter((p) => age(p) < ACTIVE_MS).sort((a, b) => b.at.localeCompare(a.at));
+/** How long an agent may stay on the board, by what Agentman says it's doing. */
+function stayMs(p) {
+  if (p.state === "ended") return 0;
+  if (p.state === "busy" || p.state === "waiting_input") return Infinity;
+  if (p.state === "idle") return IDLE_MS;
+  return GRACE_MS;
+}
+/** The agents on the board now, the most recent first. */
+export const activeAgents = () => (B.presence ?? []).filter((p) => age(p) < stayMs(p)).sort((a, b) => b.at.localeCompare(a.at));
 
-/** The box around what an agent touched, on the page showing (board units), or null. */
-function boxOf(p) {
-  const boxes = (p.ids ?? []).filter((id) => B.board?.nodes[id] && pageOf(B.board, id)?.id === B.page).map(worldBox).filter(Boolean);
-  if (!boxes.length) return null;
-  const x = Math.min(...boxes.map((b) => b.x));
-  const y = Math.min(...boxes.map((b) => b.y));
-  return { x, y, width: Math.max(...boxes.map((b) => b.x + b.width)) - x, height: Math.max(...boxes.map((b) => b.y + b.height)) - y };
+/** "at work" just after a move; "thinking" (or "waiting for you") between moves. */
+function phaseOf(p) {
+  if (p.state === "waiting_input") return "waiting";
+  return age(p) < LIVE_MS ? "live" : "thinking";
 }
 
+const drawn = (p) => (p.ids ?? []).filter((id) => B.board?.nodes[id] && pageOf(B.board, id)?.id === B.page);
+const union = (boxes) => {
+  if (!boxes.length) return null;
+  const x = Math.min(...boxes.map((b) => b.x)), y = Math.min(...boxes.map((b) => b.y));
+  return { x, y, width: Math.max(...boxes.map((b) => b.x + b.width)) - x, height: Math.max(...boxes.map((b) => b.y + b.height)) - y };
+};
+/** The box around what an agent touched, on the page showing (board units), or null. */
+const boxOf = (p) => union(drawn(p).map(worldBox).filter(Boolean));
 /** Where the cursor points: inside the box near its top left, not off in a big artboard's middle. */
 const tipOf = (box) => ({ x: box.x + Math.min(box.width / 2, 36), y: box.y + Math.min(box.height / 2, 24) });
 
-function describe(p) {
-  const n = (p.ids ?? []).map((id) => B.board?.nodes[id]?.name).filter(Boolean);
-  const what = n.length > 1 ? `${n[0]} and ${n.length - 1} more` : n[0] ?? "the board";
-  const s = Math.round(age(p) / 1000);
-  return `${p.name} ${VERBS[p.doing] ?? "is working on"} ${what}${s >= 5 ? ` · ${s} s ago` : ""}`;
+/** The artboards each agent is on now (where its latest move was), for their marks: id → agent. */
+export function agentArtboards() {
+  const out = new Map();
+  for (const p of activeAgents().slice().reverse()) for (const id of p.ids ?? []) if (B.board?.nodes[id]) out.set(rootOf(B.board, id), p);
+  return out;
 }
 
-/** Go with an agent: bring what it touched into view (its page, then the place), only moving when it's out of sight. */
+const ago = (ms) => (ms < 5000 ? "just now" : ms < 60_000 ? `${Math.round(ms / 1000)} s ago` : `${Math.round(ms / 60_000)} min ago`);
+/** What the agent is doing, in a few words: "changing Title and 3 more", "thinking", "waiting for you". */
+function doingNow(p) {
+  const phase = phaseOf(p);
+  if (phase === "waiting") return "waiting for you";
+  if (phase === "thinking") return `thinking · ${Math.round(age(p) / 1000)} s`;
+  const n = (p.ids ?? []).map((id) => B.board?.nodes[id]?.name).filter(Boolean);
+  const what = n.length > 1 ? `${n[0]} and ${n.length - 1} more` : n[0] ?? "the board";
+  return `${VERBS[p.doing] ?? "working on"} ${what}`;
+}
+const describe = (p) => `${p.name} · ${doingNow(p)}${phaseOf(p) === "live" ? ` · ${ago(age(p))}` : ""}`;
+
+/** Go with an agent's latest move: its page, then a view that frames what it touched. */
 function bringIntoView(p) {
   const id = (p.ids ?? []).find((x) => B.board?.nodes[x]);
   if (!id) return;
@@ -53,15 +85,7 @@ function bringIntoView(p) {
     requestAnimationFrame(() => requestAnimationFrame(() => bringIntoView(p)));
     return;
   }
-  const box = boxOf(p);
-  const c = canvasEl.current?.getBoundingClientRect();
-  if (!box || !c) return;
-  const { x, y, z } = B.view;
-  const s = { left: box.x * z + x, top: box.y * z + y, right: (box.x + box.width) * z + x, bottom: (box.y + box.height) * z + y };
-  const inside = s.left >= 24 && s.top >= 48 && s.right <= c.width - 24 && s.bottom <= c.height - 24;
-  if (inside) return;
-  if (box.width * z < c.width - 96 && box.height * z < c.height - 96) centerOn({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
-  else fit(p.ids.filter((i) => B.board.nodes[i]));
+  frameBox(boxOf(p));
 }
 
 export function follow(key) {
@@ -76,17 +100,21 @@ export function Presence() {
   const b = B;
   const [, tick] = useState(0);
   const agents = activeAgents();
-  // Fading out on time, with nothing else changing.
+  // A move that touched several layers: the cursor steps through them, so the work reads as it was done.
+  const stepping = agents.some((p) => (p.ids?.length ?? 0) > 1 && age(p) < (p.ids.length + 1) * STEP_MS);
   useEffect(() => {
     if (!agents.length) return;
-    const t = setInterval(() => tick((n) => n + 1), 1000);
+    const t = setInterval(() => tick((n) => n + 1), stepping ? STEP_MS / 2 : 1000);
     return () => clearInterval(t);
-  }, [agents.length > 0]);
-  // Following: each new move of that agent comes into view; you taking over stops it.
-  const followed = agents.find((p) => p.key === b.following);
+  }, [agents.length > 0, stepping]);
+  // Following: each new move of that agent is framed; an agent that has finished stops it; you taking over stops it.
+  const followed = (b.presence ?? []).find((p) => p.key === b.following);
   useEffect(() => {
-    if (followed) bringIntoView(followed);
+    if (followed && age(followed) < stayMs(followed)) bringIntoView(followed);
   }, [followed?.at]);
+  useEffect(() => {
+    if (b.following && followed?.state === "ended") unfollow();
+  }, [followed?.state]);
   useEffect(() => {
     if (!b.following) return;
     const el = canvasEl.current;
@@ -106,18 +134,24 @@ export function Presence() {
   const { x, y, z } = b.view;
   return html`<div class="bd-presence" aria-hidden="true" style=${{ transform: `translate(${x}px, ${y}px) scale(${z})` }}>
     ${agents.map((p) => {
-      const box = boxOf(p);
-      if (!box) return null;
-      const tip = tipOf(box);
-      const left = ACTIVE_MS - age(p);
+      const ids = drawn(p);
+      const boxes = ids.map((id) => [id, worldBox(id)]).filter(([, r]) => r);
+      if (!boxes.length) return null;
+      // Which layer the cursor is on: it walks the touched layers in order, then rests on the first.
+      const step = Math.floor(age(p) / STEP_MS);
+      const walking = boxes.length > 1 && step < boxes.length;
+      const at = walking ? boxes[Math.min(step, boxes.length - 1)][1] : union(boxes.map(([, r]) => r));
+      const tip = tipOf(walking ? at : boxes[0][1]);
+      const left = stayMs(p) - age(p);
       const fade = left < FADE_MS ? Math.max(0, left / FADE_MS) : 1;
+      const phase = phaseOf(p);
       const c = colourOf(p.key);
-      return html`<div key=${p.key} class="bd-agent-mark" style=${{ "--c": c, "--inv": 1 / z, opacity: fade }}>
-        <div key=${p.at} class="bd-agent-flash" style=${{ left: box.x + "px", top: box.y + "px", width: box.width + "px", height: box.height + "px" }}></div>
+      return html`<div key=${p.key} class="bd-agent-mark ${phase}" style=${{ "--c": c, "--inv": 1 / z, opacity: fade }}>
+        ${boxes.slice(0, walking ? step + 1 : boxes.length).map(([id, r], i) => html`<div key=${p.at + id} class="bd-agent-flash" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px", animationDelay: walking ? "0s" : `${Math.min(i, 12) * 40}ms` }}></div>`)}
         <div class="bd-cursor" data-agent=${p.key} style=${{ left: tip.x + "px", top: tip.y + "px" }}>
           <div class="bd-cursor-in">
             <svg width="18" height="20" viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z" fill="var(--c)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
-            <span class="bd-cursor-name">${p.name}</span>
+            <span class="bd-cursor-name"><b>${p.name}</b><span class="bd-cursor-doing">${phase === "thinking" ? html`thinking<i class="bd-dots"><i></i><i></i><i></i></i>` : doingNow(p)}</span></span>
           </div>
         </div>
       </div>`;
@@ -129,12 +163,16 @@ export function Presence() {
 export function PresenceBar() {
   const b = B;
   const agents = activeAgents();
-  if (!b.board || !agents.length) return null;
-  const following = agents.find((p) => p.key === b.following);
-  return html`${following && html`<div class="bd-follow-frame" style=${{ "--c": colourOf(following.key) }}></div>`}<div class="bd-presence-bar" onPointerDown=${(e) => e.stopPropagation()}>
+  const followedP = (b.presence ?? []).find((p) => p.key === b.following);
+  const following = b.following && followedP;
+  if (!b.board || (!agents.length && !following)) return null;
+  const here = following && agents.some((p) => p.key === followedP.key);
+  return html`${following && html`<div class="bd-follow-frame" style=${{ "--c": colourOf(followedP.key) }}></div>`}<div class="bd-presence-bar" onPointerDown=${(e) => e.stopPropagation()}>
     ${following &&
-    html`<span class="bd-following" style=${{ "--c": colourOf(following.key) }}>Following ${following.name}<button class="bd-link" onClick=${unfollow}>Stop</button></span>`}
-    ${agents.map((p) => html`<button key=${p.key} class="bd-avatar ${p.key === b.following ? "on" : ""}" style=${{ "--c": colourOf(p.key) }}
+    html`<span class="bd-following" style=${{ "--c": colourOf(followedP.key) }}>
+      <span class="bd-following-t">Following <b>${followedP.name}</b><span class="bd-following-doing">${here ? doingNow(followedP) : "waiting for its next move"}</span></span>
+      <button class="bd-link" onClick=${unfollow}>Stop</button></span>`}
+    ${agents.map((p) => html`<button key=${p.key} class="bd-avatar ${p.key === b.following ? "on" : ""} ${phaseOf(p)}" style=${{ "--c": colourOf(p.key) }}
         title=${`${describe(p)}. ${p.key === b.following ? "Click to stop following" : "Click to follow"}`}
         aria-label=${p.key === b.following ? `Stop following ${p.name}` : `Follow ${p.name}`} aria-pressed=${p.key === b.following}
         onClick=${() => (p.key === b.following ? unfollow() : follow(p.key))}>${(p.name.trim()[0] ?? "A").toUpperCase()}</button>`)}

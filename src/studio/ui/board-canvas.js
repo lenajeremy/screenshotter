@@ -1,7 +1,7 @@
 // The board canvas: every artboard drawn as the real HTML and CSS it is, on an endless canvas you
 // pan and zoom, with selection, moving, resizing and drawing new layers on top.
 import { Component } from "preact";
-import { Presence, PresenceBar } from "./board-presence.js";
+import { Presence, PresenceBar, agentArtboards, colourOf } from "./board-presence.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
@@ -59,16 +59,16 @@ export function screenBox(id) {
  * ease-out). Scrolling and pinching move it directly.
  */
 let glide = 0;
-function setView(to, animate) {
+function setView(to, animate, ms = 220) {
   cancelAnimationFrame(glide);
   if (!animate) return bset({ view: to });
   const from = { ...B.view };
   const t0 = performance.now();
-  const ms = 220;
   canvasEl.current?.classList.add("moving");
   const step = (now) => {
     const t = Math.min(1, (now - t0) / ms);
-    const k = 1 - (1 - t) ** 3;
+    // A quick ease-out for the zoom commands; a longer glide (following an agent) eases in and out.
+    const k = ms > 300 ? (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2) : 1 - (1 - t) ** 3;
     const z = from.z * (to.z / from.z) ** k;
     // The point under the middle of the canvas travels in a straight line while the zoom changes evenly.
     const c = canvasEl.current?.getBoundingClientRect() ?? { width: 0, height: 0 };
@@ -99,6 +99,29 @@ export function centerOn(p, { dx = 0 } = {}) {
   if (!c) return;
   const z = B.view.z;
   setView({ z, x: c.width / 2 + dx - p.x * z, y: c.height / 2 - p.y * z }, true);
+}
+
+/**
+ * Frame a box (board units) for following an agent: big enough to read what it's doing, with the
+ * place around it in view. A small change is zoomed in on (up to 1.5×), a big one fitted; the view
+ * only moves when the box is out of view, too small to read, or most of the canvas away from it.
+ */
+export function frameBox(box, { ms = 650 } = {}) {
+  const c = canvasEl.current?.getBoundingClientRect();
+  if (!c || !box) return;
+  const pad = 96, top = 56;
+  const W = c.width - pad * 2, H = c.height - pad * 2 - top;
+  // Show at least a third of the canvas's worth around a small layer, so its place reads too.
+  const w = Math.max(box.width, (W / 1.5) * 0.34), h = Math.max(box.height, (H / 1.5) * 0.34);
+  const z = Math.max(0.05, Math.min(1.5, W / w, H / h));
+  const { x, y, z: oz } = B.view;
+  const s = { left: box.x * oz + x, top: box.y * oz + y, right: (box.x + box.width) * oz + x, bottom: (box.y + box.height) * oz + y };
+  const inView = s.left >= 24 && s.top >= top && s.right <= c.width - 24 && s.bottom <= c.height - 24;
+  const readable = box.width * oz >= Math.min(W * 0.18, box.width * z * 0.6) || oz >= z * 0.8;
+  const near = Math.hypot((s.left + s.right) / 2 - c.width / 2, (s.top + s.bottom) / 2 - c.height / 2) < Math.min(c.width, c.height) * 0.3;
+  if (inView && readable && (near || oz >= z * 0.8)) return;
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  setView({ z, x: c.width / 2 - cx * z, y: (c.height + top) / 2 - cy * z }, true, ms);
 }
 
 /** Fit layers (default: everything on the page) in the canvas, gliding there unless `instant`. */
@@ -430,14 +453,17 @@ function Overlay() {
   const locked = one && node(one)?.locked;
   const movable = b.sel.length > 1 && !b.editing ? b.sel.filter((id) => !node(id)?.locked) : [];
   const group = movable.length > 1 ? unionOf(movable.map(screenBox).filter(Boolean)) : null;
+  // Each agent marks the artboard it's on now (its latest move), in its own colour and with its name.
+  const onIt = agentArtboards();
   return html`<div class="bd-overlay">
     ${roots.map((id) => {
       const r = screenBox(id);
       if (!r) return null;
-      const working = b.working.includes(id);
-      return html`<div key=${id} class="bd-label ${b.sel.includes(id) ? "on" : ""} ${working ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px" }} data-label=${id}>
-        ${working && html`<span class="bd-agent"><i></i>Agent</span>`}<span class="t">${b.board.nodes[id].name}</span></div>
-        ${working && html`<div class="bd-working" style=${{ left: r.x - 2 + "px", top: r.y - 2 + "px", width: r.width + 4 + "px", height: r.height + 4 + "px" }}></div>`}`;
+      const agent = onIt.get(id);
+      const writing = agent && !["look", "read"].includes(agent.doing);
+      return html`<div key=${id} class="bd-label ${b.sel.includes(id) ? "on" : ""} ${agent ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px", "--c": agent ? colourOf(agent.key) : undefined }} data-label=${id}>
+        ${agent && html`<span class="bd-agent"><i></i>${agent.name}</span>`}<span class="t">${b.board.nodes[id].name}</span></div>
+        ${writing && html`<div class="bd-working" style=${{ left: r.x - 2 + "px", top: r.y - 2 + "px", width: r.width + 4 + "px", height: r.height + 4 + "px", "--c": colourOf(agent.key) }}></div>`}`;
     })}
     <${GridOverlay} />
     ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}

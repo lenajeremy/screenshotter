@@ -41,6 +41,7 @@ import { VIDEO_EXT, videoStill } from "../board/video.js";
 import { mediaInfo } from "../util/media.js";
 import { deviceImage } from "../board/device.js";
 import type { Op } from "../board/core.js";
+import { liveSessions } from "../board/agentman.js";
 import { agentsNow, bringIn, deliver, deliverBatch, editPending, getComments, markBatchSending, markSending, remove, reply, sendPending, setResolved, startThread, type AnchorInput } from "../board/comments.js";
 import { imageSize } from "../util/image.js";
 import { aiStatus, designDirections, editScene, AIEditSchema, StoppedError } from "./ai.js";
@@ -346,7 +347,22 @@ function restorePicture(p: unknown): void {
  * there (so the Studio fetches those again). Kept while neither the board's file nor its comments'
  * changed: reading and parsing a big board at every poll cost the engine far more than the answer.
  */
-type Presence = { key: string; name: string; kind: string; at: string; ids: string[]; doing: string };
+type Presence = { key: string; name: string; kind: string; at: string; ids: string[]; doing: string; session?: string; state?: string; activeAt?: number };
+
+/**
+ * What Agentman says each session is doing (busy, idle, waiting_input, ended), so an agent between
+ * board moves (thinking, rendering, running a command) stays on the board instead of dropping out.
+ * Refreshed in the background: the poll never waits on Agentman, it answers with the last word.
+ */
+let sessionStates = new Map<string, { state?: string; lastActivityAt?: number }>();
+let statesAsked = 0;
+function refreshSessionStates() {
+  if (Date.now() - statesAsked < 1500) return;
+  statesAsked = Date.now();
+  liveSessions()
+    .then((ss) => { sessionStates = new Map(ss.map((x) => [x.id, { state: x.state, lastActivityAt: x.lastActivityAt }])); })
+    .catch(() => { sessionStates = new Map(); });
+}
 const revs = new Map<string, { key: string; rev: number; by?: string; updatedAt: string; working: Record<string, string> | undefined; talk: string; presence: Presence[] }>();
 function boardRev(id: string | null) {
   if (!validBoardId(id)) throw new Error("Unknown board");
@@ -366,14 +382,19 @@ function boardRev(id: string | null) {
     // Each agent's latest move, for its cursor in the Studio (the most recent few; the Studio lets old ones go).
     const presence = agents
       .filter((a) => a.last)
-      .map((a) => ({ key: a.key, name: a.name, kind: a.kind, ...a.last! }))
+      .map((a) => ({ key: a.key, name: a.name, kind: a.kind, session: a.session, ...a.last! }))
       .sort((x, y) => y.at.localeCompare(x.at))
       .slice(0, 8);
     c = { key, rev: b.rev, by: b.by, updatedAt: b.updatedAt, working: b.working, talk: `${getComments(b.id).rev}:${agents.length}:${agents.reduce((n, a) => n + a.artboards.length, 0)}`, presence };
     revs.set(id, c);
   }
   // Who is at work is read against the clock each time: it lapses without the file changing.
-  return { rev: c.rev, by: c.by, updatedAt: c.updatedAt, working: workingNow(c.working), talk: c.talk, presence: c.presence };
+  refreshSessionStates();
+  const presence = c.presence.map((p) => {
+    const s = p.session ? sessionStates.get(p.session) : undefined;
+    return s ? { ...p, state: s.state, activeAt: s.lastActivityAt } : p;
+  });
+  return { rev: c.rev, by: c.by, updatedAt: c.updatedAt, working: workingNow(c.working), talk: c.talk, presence };
 }
 
 function recentFiles(): Array<{ path: string; kind: string; mtime: number; scene?: { id: string; name: string } }> {

@@ -933,7 +933,7 @@ const CHECKS: Record<string, Check> = {
       boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [phone], at: new Date().toISOString(), touch: { ids: [id], doing } }], "agent");
     const cursorAt = () => S(page, () => {
       const c = document.querySelector(".bd-cursor .bd-cursor-in")?.getBoundingClientRect();
-      return c ? { x: c.left, y: c.top, name: document.querySelector(".bd-cursor-name")?.textContent } : null;
+      return c ? { x: c.left, y: c.top, name: document.querySelector(".bd-cursor-name b")?.textContent, doing: document.querySelector(".bd-cursor-doing")?.textContent } : null;
     });
     touch(t.byName("Row One"));
     // The cursor is a point (the arrow and name hang from it): there, not "visible" as a box.
@@ -943,6 +943,10 @@ const CHECKS: Record<string, Check> = {
     const one = await cursorAt();
     const r1 = await boxOf(page, t.byName("Row One"));
     if (!one || one.name !== "Design agent") return `the cursor shows ${JSON.stringify(one)}`;
+    if (!/changing Row One/.test(one.doing ?? "")) return `the cursor says it's "${one.doing}"`;
+    // The artboard it's on is marked with its name (not a nameless "Agent"), in its colour.
+    const mark = await S(page, () => document.querySelector(".bd-label.working .bd-agent")?.textContent);
+    if (mark !== "Design agent") return `the artboard's mark says "${mark}"`;
     if (one.x < r1.x - 4 || one.x > r1.x + r1.width || one.y < r1.y - 4 || one.y > r1.y + r1.height) return `the cursor is at ${one.x},${one.y}, not on Row One (${r1.x},${r1.y} ${r1.width}×${r1.height})`;
     await picture(page, "presence-cursor");
     touch(t.byName("Row Three"));
