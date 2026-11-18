@@ -926,7 +926,7 @@ const CHECKS: Record<string, Check> = {
       site.close();
     }
   },
-  async "an agent's cursor goes to what it touches, and following it brings its changes into view until you take over"(page) {
+  async "an agent's cursor goes to what it touches, and following it brings its changes into view, at your zoom, until you look away"(page) {
     const t = await openTestBoard(page);
     const phone = t.byName("Phone");
     const touch = (id: string, doing = "edit") =>
@@ -954,27 +954,39 @@ const CHECKS: Record<string, Check> = {
     const three = await cursorAt();
     const r3 = await boxOf(page, t.byName("Row Three"));
     if (!three || three.y < r3.y - 4 || three.y > r3.y + r3.height) return "the cursor didn't move to Row Three";
-    // Follow: the view goes to what the agent touches when it's out of sight.
+    // Follow: the view frames what the agent touches.
     await page.click(".bd-avatar");
     const following = await page.waitForFunction(() => document.querySelector(".bd-following")?.textContent, null, { timeout: 3000 }).then((h) => h.jsonValue(), () => "");
     if (!/Following Design agent/.test(following)) return `following shows "${following}"`;
-    await S(page, async () => {
-      const m = await import("/ui/board-state.js" as string);
-      m.bset({ view: { ...m.B.view, x: m.B.view.x + 3000, y: m.B.view.y + 2000 } });
-    });
-    await page.waitForTimeout(200);
-    touch(t.byName("Row Two"));
-    await page.waitForTimeout(1600);
-    const r2 = await boxOf(page, t.byName("Row Two"));
     const vp = page.viewportSize()!;
-    if (r2.x < 0 || r2.y < 0 || r2.x + r2.width > vp.width || r2.y + r2.height > vp.height) return `following didn't bring Row Two into view (it's at ${Math.round(r2.x)},${Math.round(r2.y)})`;
+    const state = () => S(page, async () => { const m = await import("/ui/board-state.js" as string); return { following: m.B.following, z: m.B.view.z }; });
+    await page.waitForTimeout(900);
+    // Zooming in on the agent's work, to watch closely, keeps following...
+    const before = await state();
+    const rz = await boxOf(page, t.byName("Row Three"));
+    await page.mouse.move(rz.x + rz.width / 2, rz.y + rz.height / 2);
+    await page.keyboard.down("Control");
+    for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -15); await page.waitForTimeout(40); }   // a pinch's worth
+    await page.keyboard.up("Control");
+    await page.waitForTimeout(400);
+    const zoomed = await state();
+    if (!zoomed.following) return "zooming stopped following";
+    if (zoomed.z < before.z * 1.2) return `the zoom didn't go in (${before.z.toFixed(2)}× to ${zoomed.z.toFixed(2)}×)`;
     await picture(page, "presence-following");
-    // Taking over (a scroll) stops it.
+    // ...and the agent's next move, now out of sight, is brought into view at that zoom.
+    touch(t.byName("Row One"));
+    await page.waitForTimeout(1600);
+    const then = await state();
+    const r1b = await boxOf(page, t.byName("Row One"));
+    if (!then.following) return "following stopped when the agent moved";
+    if (Math.abs(then.z - zoomed.z) > 0.01) return `the view went to ${then.z.toFixed(2)}×, not the ${zoomed.z.toFixed(2)}× zoomed to`;
+    if (r1b.x < 0 || r1b.y < 0 || r1b.x + r1b.width > vp.width || r1b.y + r1b.height > vp.height) return `following at your zoom didn't bring Row One into view (it's at ${Math.round(r1b.x)},${Math.round(r1b.y)})`;
+    // Moving the view off what the agent is doing stops it.
     await page.mouse.move(vp.width / 2, vp.height / 2);
-    await page.mouse.wheel(0, 200);
-    await page.waitForTimeout(300);
-    const after = await S(page, async () => (await import("/ui/board-state.js" as string)).B.following);
-    return after ? `still following ${after} after a scroll` : "ok";
+    for (let i = 0; i < 12; i++) { await page.mouse.wheel(900, 900); await page.waitForTimeout(30); }
+    await page.waitForTimeout(400);
+    const after = await state();
+    return after.following ? `still following ${after.following} with the view moved away` : "ok";
   },
   async "the theme: picked in Settings, there from the first frame after a reload, and System follows the Mac"(page) {
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings" } }));

@@ -3,11 +3,12 @@
 // cursor reaches it), the artboard it's on marked in that colour, and an avatar over the canvas.
 // An agent stays while Agentman says it's still at work (thinking, rendering, running a command
 // between board moves), not only for a while after its last move. Click an avatar to follow that
-// agent: the view frames each change as it lands, until you take over (a scroll, a click, Esc).
-import { useEffect, useState } from "preact/hooks";
+// agent: the view goes to each change as it lands. Zooming keeps it (and the view keeps your zoom);
+// moving the view away from where the agent is working, Esc, or Stop ends it.
+import { useEffect, useRef, useState } from "preact/hooks";
 import { pageOf, rootOf } from "./board-core.js";
 import { B, bset } from "./board-state.js";
-import { canvasEl, frameBox, worldBox } from "./board-canvas.js";
+import { canvasEl, followGliding, frameBox, worldBox } from "./board-canvas.js";
 import { html } from "./controls.js";
 
 /** After its last move, an agent Agentman can't vouch for stays this long (it may be thinking). */
@@ -75,7 +76,10 @@ function doingNow(p) {
 }
 const describe = (p) => `${p.name} · ${doingNow(p)}${phaseOf(p) === "live" ? ` · ${ago(age(p))}` : ""}`;
 
-/** Go with an agent's latest move: its page, then a view that frames what it touched. */
+/** The zoom the person chose while following (null: each change is framed at a zoom that suits it). */
+let followZoom = null;
+
+/** Go with an agent's latest move: its page, then a view that frames what it touched (at the person's zoom, if they set one). */
 function bringIntoView(p) {
   const id = (p.ids ?? []).find((x) => B.board?.nodes[x]);
   if (!id) return;
@@ -85,10 +89,23 @@ function bringIntoView(p) {
     requestAnimationFrame(() => requestAnimationFrame(() => bringIntoView(p)));
     return;
   }
-  frameBox(boxOf(p));
+  const box = boxOf(p);
+  const first = drawn(p).map(worldBox).find(Boolean);
+  frameBox(box, { zoom: followZoom, focus: first && tipOf(first) });
+}
+
+/** Whether the view is still on what the agent is doing: a good part of it showing, or it filling the view. */
+function watching(p) {
+  const box = boxOf(p), c = canvasEl.current?.getBoundingClientRect();
+  if (!box || !c) return true;
+  const { x, y, z } = B.view;
+  const l = Math.max(0, box.x * z + x), t = Math.max(0, box.y * z + y), r = Math.min(c.width, (box.x + box.width) * z + x), btm = Math.min(c.height, (box.y + box.height) * z + y);
+  const seen = Math.max(0, r - l) * Math.max(0, btm - t);
+  return seen >= box.width * z * box.height * z * 0.15 || seen >= c.width * c.height * 0.25;
 }
 
 export function follow(key) {
+  followZoom = null;
   bset({ following: key });
   const p = (B.presence ?? []).find((x) => x.key === key);
   if (p) bringIntoView(p);
@@ -115,20 +132,21 @@ export function Presence() {
   useEffect(() => {
     if (b.following && followed?.state === "ended") unfollow();
   }, [followed?.state]);
+  // The person moving the view: a zoom is kept (it becomes the zoom the view follows at); a move that
+  // takes the view off what the agent is doing ends the follow. The view's own glides don't count.
+  const lastZ = useRef(b.view.z);
+  useEffect(() => {
+    const zoomed = Math.abs(b.view.z - lastZ.current) > 1e-4;
+    lastZ.current = b.view.z;
+    if (!b.following || followGliding()) return;
+    if (zoomed) followZoom = b.view.z;
+    if (followed && agents.some((p) => p.key === followed.key) && !watching(followed)) unfollow();
+  }, [b.view.x, b.view.y, b.view.z]);
   useEffect(() => {
     if (!b.following) return;
-    const el = canvasEl.current;
-    // The avatars themselves switch who's followed: a press on them isn't taking over.
-    const stop = (e) => !e.target?.closest?.(".bd-presence-bar") && unfollow();
     const key = (e) => e.key === "Escape" && unfollow();
-    el?.addEventListener("wheel", stop, { passive: true });
-    el?.addEventListener("pointerdown", stop, true);
     addEventListener("keydown", key, true);
-    return () => {
-      el?.removeEventListener("wheel", stop);
-      el?.removeEventListener("pointerdown", stop, true);
-      removeEventListener("keydown", key, true);
-    };
+    return () => removeEventListener("keydown", key, true);
   }, [b.following]);
   if (!b.board || !agents.length) return null;
   const { x, y, z } = b.view;
