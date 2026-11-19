@@ -3,7 +3,7 @@ import { h } from "preact";
 
 const P = {
   captures: '<rect x="3" y="3" width="7.5" height="11" rx="2"/><rect x="13.5" y="3" width="7.5" height="7" rx="2"/><rect x="13.5" y="13" width="7.5" height="8" rx="2"/><rect x="3" y="17" width="7.5" height="4" rx="1.5"/>',
-  background: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 15.5l4.6-4.6a2 2 0 0 1 2.8 0L17 17.5"/><path d="M14 14.5l1.6-1.6a2 2 0 0 1 2.8 0L21 15.5"/><circle cx="15.5" cy="8.5" r="1.6"/>',
+  background: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8.5 3.5 3.5 8.5"/><path d="M14.5 3.5 3.5 14.5" opacity=".75"/><path d="M20 4 4 20" opacity=".55"/><path d="M20.5 9.5 9.5 20.5" opacity=".35"/><path d="M20.5 15.5l-5 5" opacity=".2"/>',
   text: '<path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M9.5 19h5"/>',
   layers: '<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12.2l8.5 4.5 8.5-4.5"/><path d="M3.5 16.2l8.5 4.5 8.5-4.5"/>',
   exports: '<path d="M7 3.5h7l4.5 4.5v11a2 2 0 0 1-2 2h-9.5a2 2 0 0 1-2-2v-13.5a2 2 0 0 1 2-2z"/><path d="M13.5 3.5V8h4.5"/><path d="M12 11v6"/><path d="M9.5 14.5L12 17l2.5-2.5"/>',
@@ -25,17 +25,17 @@ const P = {
   trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M5.5 7l1 12a2 2 0 0 0 2 1.8h7a2 2 0 0 0 2-1.8l1-12"/><path d="M9 7V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V7"/>',
   copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/>',
   folder: '<path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
-  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path d="M10.5 5.5h3"/>',
-  sim: '<rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path d="M10.5 5.5h3"/><circle cx="12" cy="13" r="2.4"/>',
-  browser: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 9h18"/><path d="M6 6.8h.01M8.5 6.8h.01"/>',
-  window: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 8.5h18"/><circle cx="6" cy="6.5" r=".6"/><circle cx="8" cy="6.5" r=".6"/><circle cx="10" cy="6.5" r=".6"/>',
-  card: '<rect x="5" y="3.5" width="14" height="17" rx="3.5"/><path d="M8.5 16.5h7"/>',
-  noframe: '<path d="M5 8V5h3"/><path d="M16 5h3v3"/><path d="M19 16v3h-3"/><path d="M8 19H5v-3"/>',
+  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path d="M10.6 5.2h2.8"/><path d="M18.9 8.5v2.5"/>',
+  sim: '<rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path d="M10.6 5.2h2.8"/><path d="M10.7 10.2v5.6l4.4-2.8z"/>',
+  browser: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 9.5h18"/><rect x="7.5" y="6.1" width="9" height="1.8" rx=".9"/>',
+  window: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="6.4" cy="7.3" r=".75" fill="currentColor" stroke="none"/><circle cx="8.9" cy="7.3" r=".75" fill="currentColor" stroke="none"/><circle cx="11.4" cy="7.3" r=".75" fill="currentColor" stroke="none"/>',
+  card: '<rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M8.8 7.2h6.4M8.8 10.2h4"/><rect x="8.8" y="13" width="6.4" height="5" rx="1"/>',
+  noframe: '<rect x="6" y="3" width="12" height="18" rx="3" stroke-dasharray="2.4 2.6"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-1.2-.9-1.6-.9-2.6 0-1 .8-1.7 1.9-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1.2"/><circle cx="10" cy="7.5" r="1.2"/><circle cx="15" cy="7.5" r="1.2"/>',
   webcam: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="10" r="3"/><path d="M6.6 18c1.3-2.2 3.1-3.3 5.4-3.3s4.1 1.1 5.4 3.3"/>',
   monitor: '<rect x="2.5" y="4" width="19" height="12.5" rx="2"/><path d="M8.5 20.5h7"/><path d="M12 16.5v4"/>',
-  upload: '<path d="M12 16V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4 16.5v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+  upload: '<path d="M12 3.5V15"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M4 15.5v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
   record: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>',
   camera: '<path d="M4 8a2 2 0 0 1 2-2h1.5l1.5-2h6l1.5 2H18a2 2 0 0 1 2 2v9.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
@@ -81,7 +81,7 @@ const P = {
   sidebarR: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M14.5 4v16"/>',
   expand: '<path d="M14 4h6v6"/><path d="M20 4l-6.5 6.5"/><path d="M10 20H4v-6"/><path d="M4 20l6.5-6.5"/>',
   collapse: '<path d="M4 14h6v6"/><path d="M3.5 20.5L10 14"/><path d="M20 10h-6V4"/><path d="M20.5 3.5L14 10"/>',
-  focus: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9.5 9.5L7 12l2.5 2.5M14.5 9.5L17 12l-2.5 2.5"/>',
+  focus: '<rect x="3" y="4.5" width="18" height="15" rx="2.5" opacity=".4"/><rect x="7.5" y="8" width="9" height="8" rx="1.5"/>',
   sliders: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
   // Two upright sliders, their knobs at different heights: a thing's settings (a shader's).
   tune: '<path d="M8.5 3.5v8.4M8.5 17.1v3.4M15.5 3.5v2.4M15.5 11.1v9.4"/><circle cx="8.5" cy="14.5" r="2.6"/><circle cx="15.5" cy="8.5" r="2.6"/>',
@@ -124,8 +124,10 @@ const P = {
   wrap: '<path d="M4 7h13a3 3 0 0 1 0 6H8"/><path d="M10.5 10.5L8 13l2.5 2.5"/><path d="M4 17h5"/>',
   vector: '<path d="M5 19c2-8 5-12 14-14"/><rect x="3" y="17" width="4" height="4" rx="1"/><rect x="17" y="3" width="4" height="4" rx="1"/>',
   page: '<path d="M7 3.5h7l4.5 4.5v11a2 2 0 0 1-2 2h-9.5a2 2 0 0 1-2-2v-13.5a2 2 0 0 1 2-2z"/><path d="M13.5 3.5V8h4.5"/>',
-  corners: '<path d="M4 9V7a3 3 0 0 1 3-3h2M15 4h2a3 3 0 0 1 3 3v2M20 15v2a3 3 0 0 1-3 3h-2M9 20H7a3 3 0 0 1-3-3v-2"/>',
-  sides: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9h16M4 15h16M9 4v16M15 4v16" opacity=".4"/>',
+  corners: '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5" opacity=".3"/><path d="M4.5 9V8a3.5 3.5 0 0 1 3.5-3.5h1M15 4.5h1a3.5 3.5 0 0 1 3.5 3.5v1M19.5 15v1a3.5 3.5 0 0 1-3.5 3.5h-1M9 19.5H8a3.5 3.5 0 0 1-3.5-3.5v-1" stroke-width="2.1"/>',
+  // Corner radius: one rounded corner.
+  radius: '<path d="M4.5 19.5V12a7.5 7.5 0 0 1 7.5-7.5h7.5"/>',
+  sides: '<path d="M8 4.5h8"/><path d="M19.5 8v8"/><path d="M16 19.5H8"/><path d="M4.5 16V8"/><path d="M4.5 4.5h.01M19.5 4.5h.01M19.5 19.5h.01M4.5 19.5h.01" opacity=".45"/>',
   laptop: '<rect x="5" y="5" width="14" height="10" rx="1.5"/><path d="M2.5 18.5h19"/>',
   bolt: '<path d="M13 2.5L4.5 13.5H12l-1 8 8.5-11H12z"/>',
   // Grids: columns and rows of a grid frame, and the gaps between them.
@@ -134,8 +136,8 @@ const P = {
   gapCols: '<rect x="3.5" y="5" width="6" height="14" rx="1.5"/><rect x="14.5" y="5" width="6" height="14" rx="1.5"/><path d="M12 9v6" stroke-dasharray="1.6 1.8"/>',
   gapRows: '<rect x="5" y="3.5" width="14" height="6" rx="1.5"/><rect x="5" y="14.5" width="14" height="6" rx="1.5"/><path d="M9 12h6" stroke-dasharray="1.6 1.8"/>',
   // Padding: a frame with the sides it pads drawn heavy (left and right; top and bottom).
-  padX: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5" opacity=".38"/><path d="M7.5 8.5v7M16.5 8.5v7" stroke-width="2.4"/>',
-  padY: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5" opacity=".38"/><path d="M8.5 7.5h7M8.5 16.5h7" stroke-width="2.4"/>',
+  padX: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5" opacity=".42"/><rect x="9.5" y="8.5" width="5" height="7" rx="1.2"/><path d="M5.6 12h2M16.4 12h2"/>',
+  padY: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5" opacity=".42"/><rect x="8.5" y="9.5" width="7" height="5" rx="1.2"/><path d="M12 5.6v2M12 16.4v2"/>',
   mask: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="12" cy="12" r="4.6"/><path d="M12 7.4a4.6 4.6 0 0 1 0 9.2z" fill="currentColor" stroke="none"/>',
 };
 

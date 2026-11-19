@@ -187,7 +187,7 @@ function PartSection() {
         <${Num} label="W" value=${at.w} digits=${1} min=${0} onChange=${(v) => setBox("w", v)} />
         <${Num} label="H" value=${at.h} digits=${1} min=${0} onChange=${(v) => setBox("h", v)} />
       </div>`}
-      ${n.tag === "rect" && one && html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${Number(n.attrs?.rx ?? 0)} min=${0} onChange=${(v) => setAttrs({ rx: v ? String(v) : null, ry: null }, "rx")} />`}
+      ${n.tag === "rect" && one && html`<${Num} label=${html`<${Icon} n="radius" s=${12} />`} title="Corner radius" value=${Number(n.attrs?.rx ?? 0)} min=${0} onChange=${(v) => setAttrs({ rx: v ? String(v) : null, ry: null }, "rx")} />`}
     <//>
     <${Section} title="Paint">
       ${n.tag !== "line" && n.tag !== "polyline" && html`<${Paint} label="Fill" prop="fill" />`}
@@ -589,7 +589,7 @@ function LookSection() {
     html`<div class="bd-radius ${four ? "four" : ""}">
       ${four
         ? r.map((x, i) => html`<${Num} label=${["↖", "↗", "↘", "↙"][i]} title="Corner radius" value=${x} min=${0} onChange=${(v) => setStyle(radiusStyle(r.map((y, j) => (j === i ? v ?? 0 : y))), `r${i}`)} />`)
-        : html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${r.every((x) => x === r[0]) ? r[0] : undefined} placeholder="—" min=${0} onChange=${(v) => setStyle(radiusStyle([v ?? 0, v ?? 0, v ?? 0, v ?? 0]), "radius")} />`}
+        : html`<${Num} label=${html`<${Icon} n="radius" s=${12} />`} title="Corner radius" value=${r.every((x) => x === r[0]) ? r[0] : undefined} placeholder="—" min=${0} onChange=${(v) => setStyle(radiusStyle([v ?? 0, v ?? 0, v ?? 0, v ?? 0]), "radius")} />`}
       <button class="icon-btn sm ${four ? "on" : ""}" title="Each corner" onClick=${toggleFour}><${Icon} n="corners" s=${14} /></button>
     </div>`}
   <//>`;
