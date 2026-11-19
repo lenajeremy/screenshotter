@@ -630,6 +630,31 @@ const CHECKS: Record<string, Check> = {
     if (picked !== "List") return `a click picked ${picked}, not the layer on the artboard (List)`;
     return spill || labels ? `${spill} controls run out of the panel, ${labels} labels overlap their values` : "ok";
   },
+  async "on a board, padding and corners show each side when the sides differ, and two fields (or one) when they match"(page) {
+    const t = await openTestBoard(page);
+    const list = t.byName("List");
+    const fields = () => S(page, () => ({ pads: [...document.querySelectorAll(".bd-pads .num, .bd-pads input")].length, four: document.querySelector(".bd-pads")?.classList.contains("four"), radius: document.querySelector(".bd-radius")?.classList.contains("four"),
+      values: [...document.querySelectorAll(".bd-pads input")].map((i) => (i as HTMLInputElement).value) }));
+    boards.changeBoard(t.id, [{ op: "set", id: list, style: { ...boards.getBoard(t.id).nodes[list].style, padding: "0px 0px 18px 0px", borderRadius: "12px" } }], "agent");
+    await page.waitForTimeout(1200);
+    await sel(page, [list]);
+    await page.waitForTimeout(300);
+    const uneven = await fields();
+    if (!uneven.four) return `uneven padding shows ${JSON.stringify(uneven)}`;
+    if (!uneven.values.includes("18")) return `the bottom padding isn't shown: ${uneven.values.join(",")}`;
+    await picture(page, "padding-each-side");
+    boards.changeBoard(t.id, [{ op: "set", id: list, style: { ...boards.getBoard(t.id).nodes[list].style, padding: "10px 16px", borderRadius: "4px 4px 12px 12px" } }], "agent");
+    await page.waitForTimeout(1200);
+    await sel(page, [t.byName("Phone")]);
+    await page.waitForTimeout(200);
+    await sel(page, [list]);
+    await page.waitForTimeout(300);
+    const even = await fields();
+    if (even.four) return "even padding still shows each side";
+    if (!even.radius) return "corners that differ don't show each corner";
+    await picture(page, "padding-two-fields");
+    return "ok";
+  },
   async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {
     const t = await openTestBoard(page);
     const one = await boxOf(page, t.byName("Row One"));

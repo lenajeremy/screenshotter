@@ -133,6 +133,9 @@ const P = {
   gridRows: '<rect x="4" y="3.5" width="16" height="17" rx="2.5"/><path d="M4 9.2h16M4 14.8h16"/>',
   gapCols: '<rect x="3.5" y="5" width="6" height="14" rx="1.5"/><rect x="14.5" y="5" width="6" height="14" rx="1.5"/><path d="M12 9v6" stroke-dasharray="1.6 1.8"/>',
   gapRows: '<rect x="5" y="3.5" width="14" height="6" rx="1.5"/><rect x="5" y="14.5" width="14" height="6" rx="1.5"/><path d="M9 12h6" stroke-dasharray="1.6 1.8"/>',
+  // Padding: a frame with the sides it pads drawn heavy (left and right; top and bottom).
+  padX: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5" opacity=".38"/><path d="M7.5 8.5v7M16.5 8.5v7" stroke-width="2.4"/>',
+  padY: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5" opacity=".38"/><path d="M8.5 7.5h7M8.5 16.5h7" stroke-width="2.4"/>',
   mask: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="12" cy="12" r="4.6"/><path d="M12 7.4a4.6 4.6 0 0 1 0 9.2z" fill="currentColor" stroke="none"/>',
 };
 

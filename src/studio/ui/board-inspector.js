@@ -494,10 +494,23 @@ function padStyle([t, r, b, l]) {
   return { padding: t || r || b || l ? v : null, paddingTop: null, paddingRight: null, paddingBottom: null, paddingLeft: null };
 }
 
+/**
+ * Whether a box's sides (or corners) show one field each: as the person last picked, or, until they
+ * pick, whenever the sides differ (so the real values show, not a "—"). A new selection starts over.
+ */
+function useEach(uneven, key) {
+  const [pick, setPick] = useState(null);
+  useEffect(() => setPick(null), [key]);
+  const each = pick ?? uneven;
+  return [each, () => setPick(!each)];
+}
+const unevenSides = (v) => v[0] !== v[2] || v[1] !== v[3];
+
 function FlexSection() {
   const list = ids();
   const n = node(list[0]);
-  const [four, setFour] = useState(false);
+  const padNow = sides(n.style, "padding", PAD_KEYS);
+  const [four, toggleFour] = useEach(unevenSides(padNow), list.join());
   const flex = isFlex(n);
   const grid = n.style.display === "grid";
   if (!flex) {
@@ -531,7 +544,7 @@ function FlexSection() {
       </div>
       <div class="bd-flex-side">
         <${Seg} value=${column ? "column" : "row"} options=${[{ value: "column", icon: "flexCol", label: "", title: "Column" }, { value: "row", icon: "flexRow", label: "", title: "Row" }]} onChange=${(v) => set({ flexDirection: v === "row" ? null : "column" })} />
-        <${Num} label=${html`<${Icon} n=${column ? "flexCol" : "flexRow"} s=${12} />`} title="Gap" value=${px(n.style.gap) ?? 0} min=${0} onChange=${(v) => set({ gap: v ? `${v}px` : null }, "gap")} />
+        <${Num} label=${html`<${Icon} n=${column ? "gapRows" : "gapCols"} s=${13} />`} title="Gap" value=${px(n.style.gap) ?? 0} min=${0} onChange=${(v) => set({ gap: v ? `${v}px` : null }, "gap")} />
       </div>
     </div>
     <div class="bd-flex-opts">
@@ -541,9 +554,9 @@ function FlexSection() {
     <div class="bd-pads ${four ? "four" : ""}">
       ${four
         ? ["Top", "Right", "Bottom", "Left"].map((s, i) => html`<${Num} label=${s[0]} title=${`${s} padding`} value=${pad[i]} min=${0} onChange=${(v) => set(padStyle(pad.map((x, j) => (j === i ? v ?? 0 : x))), `pad${i}`)} />`)
-        : html`<${Num} label=${html`<${Icon} n="flexRow" s=${12} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
-          <${Num} label=${html`<${Icon} n="flexCol" s=${12} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
-      <button class="icon-btn sm ${four ? "on" : ""}" title="Each side" onClick=${() => setFour(!four)}><${Icon} n="sides" s=${14} /></button>
+        : html`<${Num} label=${html`<${Icon} n="padX" s=${13} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
+          <${Num} label=${html`<${Icon} n="padY" s=${13} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
+      <button class="icon-btn sm ${four ? "on" : ""}" title="Each side" onClick=${toggleFour}><${Icon} n="sides" s=${14} /></button>
     </div>
   <//>`;
 }
@@ -557,7 +570,8 @@ const RADIUS_KEYS = ["borderTopLeftRadius", "borderTopRightRadius", "borderBotto
 function LookSection() {
   const list = ids();
   const n = node(list[0]);
-  const [four, setFour] = useState(false);
+  const rNow = sides(n.style, "borderRadius", RADIUS_KEYS);
+  const [four, toggleFour] = useEach(!rNow.every((x) => x === rNow[0]), list.join());
   const opacity = shared((m) => (m.style.opacity === undefined ? 1 : Number(m.style.opacity)));
   const blend = shared((m) => m.style.mixBlendMode ?? "normal");
   const r = sides(n.style, "borderRadius", RADIUS_KEYS);
@@ -576,7 +590,7 @@ function LookSection() {
       ${four
         ? r.map((x, i) => html`<${Num} label=${["↖", "↗", "↘", "↙"][i]} title="Corner radius" value=${x} min=${0} onChange=${(v) => setStyle(radiusStyle(r.map((y, j) => (j === i ? v ?? 0 : y))), `r${i}`)} />`)
         : html`<${Num} label=${html`<${Icon} n="corners" s=${12} />`} title="Corner radius" value=${r.every((x) => x === r[0]) ? r[0] : undefined} placeholder="—" min=${0} onChange=${(v) => setStyle(radiusStyle([v ?? 0, v ?? 0, v ?? 0, v ?? 0]), "radius")} />`}
-      <button class="icon-btn sm ${four ? "on" : ""}" title="Each corner" onClick=${() => setFour(!four)}><${Icon} n="corners" s=${14} /></button>
+      <button class="icon-btn sm ${four ? "on" : ""}" title="Each corner" onClick=${toggleFour}><${Icon} n="corners" s=${14} /></button>
     </div>`}
   <//>`;
 }
@@ -1740,7 +1754,7 @@ function GridSection() {
   const id = list[0];
   const n = node(id);
   const g = gridOf(n.style);
-  const [four, setFour] = useState(false);
+  const [four, toggleFour] = useEach(unevenSides(sides(n.style, "padding", PAD_KEYS)), list.join());
   const [more, setMore] = useState(false);
   const [presets, setPresets] = useState(false);
   const presetBtn = useRef();
@@ -1768,9 +1782,9 @@ function GridSection() {
     <div class="bd-pads ${four ? "four" : ""}">
       ${four
         ? ["Top", "Right", "Bottom", "Left"].map((s, i) => html`<${Num} label=${s[0]} title=${`${s} padding`} value=${pad[i]} min=${0} onChange=${(v) => set(padStyle(pad.map((x, j) => (j === i ? v ?? 0 : x))), `pad${i}`)} />`)
-        : html`<${Num} label=${html`<${Icon} n="flexRow" s=${12} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
-          <${Num} label=${html`<${Icon} n="flexCol" s=${12} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
-      <button class="icon-btn sm ${four ? "on" : ""}" title="Each side" onClick=${() => setFour(!four)}><${Icon} n="sides" s=${14} /></button>
+        : html`<${Num} label=${html`<${Icon} n="padX" s=${13} />`} title="Padding left and right" value=${pad[1] === pad[3] ? pad[1] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([pad[0], v ?? 0, pad[2], v ?? 0]), "padx")} />
+          <${Num} label=${html`<${Icon} n="padY" s=${13} />`} title="Padding top and bottom" value=${pad[0] === pad[2] ? pad[0] : undefined} placeholder="—" min=${0} onChange=${(v) => set(padStyle([v ?? 0, pad[1], v ?? 0, pad[3]]), "pady")} />`}
+      <button class="icon-btn sm ${four ? "on" : ""}" title="Each side" onClick=${toggleFour}><${Icon} n="sides" s=${14} /></button>
     </div>
     <button class="bd-more ${more ? "open" : ""}" onClick=${() => setMore(!more)} aria-expanded=${more}><${Icon} n="right" s=${11} w=${2} />Flow, new tracks and areas</button>
     ${more && html`<div class="bd-grid-more">
