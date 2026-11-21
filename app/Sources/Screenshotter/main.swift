@@ -16,9 +16,14 @@ MainActor.assumeIsolated {
         if (ProcessInfo.processInfo.environment["FIGMA_TOKEN"] ?? "").isEmpty, let figma = Keychain.load("figma") {
             setenv("FIGMA_TOKEN", figma, 1)
         }
+        // This copy's library: the one its own app noted.
+        if (ProcessInfo.processInfo.environment["SCREENSHOTTER_STUDIO_FILE"] ?? "").isEmpty {
+            setenv("SCREENSHOTTER_STUDIO_FILE", AppName.studioFile, 1)
+        }
+        setenv("SCREENSHOTTER_APP_NAME", AppName.name, 1)
         var argv: [UnsafeMutablePointer<CChar>?] = ([node, server] + args.dropFirst(2)).map { strdup($0) } + [nil]
         execv(node, &argv)
-        FileHandle.standardError.write(Data("Screenshotter couldn't start its MCP server: \(node): \(String(cString: strerror(errno)))\n".utf8))
+        FileHandle.standardError.write(Data("\(AppName.name) couldn't start its MCP server: \(node): \(String(cString: strerror(errno)))\n".utf8))
         exit(1)
     }
     // One Screenshotter at a time (two would each start an engine): a second copy (another build,

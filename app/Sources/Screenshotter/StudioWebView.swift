@@ -150,7 +150,7 @@ final class StudioWindow: NSWindow {
                    backing: .buffered, defer: false)
         titlebarAppearsTransparent = true
         titleVisibility = .hidden
-        title = "Screenshotter"
+        title = AppName.name
         // The web UI's window colour (--win) in each theme, so a resize or a reload never flashes the other.
         backgroundColor = NSColor(name: nil) { look in
             look.bestMatch(from: [.darkAqua, .aqua]) == .aqua

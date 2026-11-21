@@ -18,8 +18,7 @@ import { importFigma } from "../board/figma-import.js";
 import { connectedAgents } from "../board/agents-live.js";
 import { installedAgents, type AgentId } from "../agent/agents.js";
 import { deleteThread, getThread, listThreads, send as sendChat, stop as stopChat } from "../agent/chat.js";
-import { VIDEO_EXT, videoStill } from "../board/video.js";
-import { mediaInfo } from "../util/media.js";
+import { VIDEO_EXT, readVideo } from "../board/video.js";
 import type { Op } from "../board/core.js";
 import { liveSessions } from "../board/agentman.js";
 import { agentsNow, bringIn, deliver, deliverBatch, editPending, getComments, markBatchSending, markSending, remove, reply, sendPending, setResolved, startThread, type AnchorInput } from "../board/comments.js";
@@ -353,7 +352,21 @@ function options() {
     colouredArt: COLOURED_ART,
     // Unsplash's photo search has an access key to use (UNSPLASH_ACCESS_KEY).
     unsplashKey: Boolean(process.env.UNSPLASH_ACCESS_KEY?.trim()),
+    ...appIdentity(),
   };
+}
+
+/**
+ * This copy of the app: its name, and the command an agent runs for its MCP server. Inside the
+ * app that's the app itself (`<App>.app/Contents/MacOS/Screenshotter mcp`); from a checkout, this
+ * Node and the built engine.
+ */
+function appIdentity() {
+  const appName = process.env.SCREENSHOTTER_APP_NAME || "Screenshotter";
+  const m = /^(.*\.app)\/Contents\/Helpers\/node$/.exec(process.execPath);
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const mcpCommand = m ? [path.join(m[1], "Contents", "MacOS", "Screenshotter"), "mcp"] : [process.execPath, path.resolve(here, here.includes(`${path.sep}src${path.sep}`) ? "../../dist/index.js" : "../index.js")];
+  return { appName, mcpName: appName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), mcpCommand };
 }
 
 async function route(req: http.IncomingMessage, res: http.ServerResponse, port: number): Promise<void> {
@@ -624,8 +637,8 @@ async function upload(req: http.IncomingMessage, url: URL) {
     throw e;
   }
   if (video) {
-    const info = await mediaInfo(file).catch(() => undefined);
-    return { path: file, poster: await videoStill(file), width: info?.width, height: info?.height, length: info?.length };
+    const { still, info } = await readVideo(file);
+    return { path: file, poster: still, width: info?.width, height: info?.height, length: info?.length };
   }
   if (ext === ".svg") return { path: file, ...(svgSize(readFileSync(file, "utf8")) ?? {}) };
   return { path: file, ...(await imageSize(file).catch(() => ({}))) };

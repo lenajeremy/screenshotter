@@ -19,7 +19,7 @@ import Foundation
     private var logHandle: FileHandle?
 
     static var logURL: URL {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Screenshotter", isDirectory: true)
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/\(AppName.name)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("engine.log")
     }
@@ -52,7 +52,7 @@ import Foundation
             return set(.failed("node"))
         }
         guard let root = Engine.engineRoot(env: shellEnv) else {
-            return set(.failed("Screenshotter's engine is missing from the app. Rebuild it with npm run app:build."))
+            return set(.failed("\(AppName.name)'s engine is missing from the app. Rebuild it with npm run app:build."))
         }
         self.node = node
         var env = shellEnv
@@ -62,6 +62,8 @@ import Foundation
             .joined(separator: ":")
         env["SCREENSHOTTER_OUTPUT_DIR"] = outputFolder
         env["SCREENSHOTTER_APP"] = "1"
+        env["SCREENSHOTTER_APP_NAME"] = AppName.name
+        env["SCREENSHOTTER_STUDIO_FILE"] = AppName.studioFile
         // Unsplash's access key, for photo search (Settings › Photos).
         if let unsplash = Keychain.load("unsplash") { env["UNSPLASH_ACCESS_KEY"] = unsplash }
         // A Figma personal access token, for reading Figma files (Settings).
@@ -110,7 +112,7 @@ import Foundation
             try? await Task.sleep(nanoseconds: 45_000_000_000)
             guard let self, mine == self.generation, self.state == .starting else { return }
             self.stop()
-            self.set(.failed("The engine didn't start within 45 seconds. See ~/Library/Logs/Screenshotter/engine.log."))
+            self.set(.failed("The engine didn't start within 45 seconds. See ~/Library/Logs/\(AppName.name)/engine.log."))
         }
     }
 

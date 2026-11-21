@@ -8,7 +8,7 @@ enum Keychain {
     private static func base(_ account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Screenshotter.AI",
+            kSecAttrService as String: "\(AppName.name).AI",
             kSecAttrAccount as String: account,
         ]
     }

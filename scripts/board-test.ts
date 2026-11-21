@@ -855,9 +855,9 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
 
 // Videos: an agent writes <video>; it's copied into the library with its first frame as its still.
 {
-  const { execFileSync } = await import("node:child_process");
+  const { copyFileSync } = await import("node:fs");
   const clip = path.join(out, "clip.mp4");
-  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip]);
+  copyFileSync(path.join(import.meta.dirname, "fixtures", "clip.mp4"), clip);
   const made = await call("board_write_html", { board, html: `<video data-name="Clip" src="${clip}" autoplay loop muted style="width:320px;height:180px;border-radius:10px"></video>` });
   const vid = made.json.created[0].id;
   const nb = (await import("../src/board/store.js")).getBoard(board);
@@ -869,7 +869,7 @@ check((await call("board_list", {})).json.find((x: any) => x.id === board).worki
   const pic = await call("board_screenshot", { board, nodes: [vid] });
   check(pic.images.length === 1, "board_screenshot draws it (as its still)");
   const clip2 = path.join(mkdtempSync(path.join(tmpdir(), "board-clip-")), "clip2.mp4");
-  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip2]);
+  copyFileSync(path.join(import.meta.dirname, "fixtures", "clip2.mp4"), clip2);
   await call("board_edit", { board, changes: [{ do: "image", id: vid, src: clip2 }] });
   const v2 = (await import("../src/board/store.js")).getBoard(board).nodes[vid];
   check(v2.src !== v.src && v2.src!.startsWith(out) && v2.poster !== v.poster && existsSync(v2.poster!), "board_edit image swaps a video layer's video (copied into the library from outside it), and its still");

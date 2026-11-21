@@ -2,22 +2,24 @@
 /**
  * Check the engine inside build/Screenshotter.app without touching your files: it starts on a free
  * port, serves the app's UI and its assets, makes a board, draws and exports it as a real PNG, takes
- * a video (its still made with the app's ffmpeg) into a temporary folder, and exits by itself when
- * its stdin closes (as it does when the app quits).
- * It runs on the Node and ffmpeg the app carries, with nothing from Homebrew or nvm on its PATH,
+ * a video (its still made by the browser) into a temporary folder, and exits by itself when its
+ * stdin closes (as it does when the app quits).
+ * It runs on the Node the app carries, with nothing from Homebrew or nvm on its PATH,
  * as on a Mac with nothing installed.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 
-const resources = path.resolve("build/Screenshotter.app/Contents/Resources");
-const helpers = path.resolve("build/Screenshotter.app/Contents/Helpers");
+const APP = `build/${process.env.SCREENSHOTTER_APP_NAME || "Screenshotter"}.app`;
+const resources = path.resolve(APP, "Contents/Resources");
+const helpers = path.resolve(APP, "Contents/Helpers");
 const node = path.join(helpers, "node");
-for (const f of [node, path.join(helpers, "ffmpeg")]) assert(existsSync(f), `${f} is missing: the app should carry it`);
+assert(existsSync(node), `${node} is missing: the app should carry it`);
+assert(!existsSync(path.join(helpers, "ffmpeg")), "the app shouldn't carry ffmpeg any more");
 const output = await mkdtemp(path.join(tmpdir(), "screenshotter-bundle-test-"));
 const child = spawn(node, [path.join(resources, "engine/dist/index.js"), "studio", "--port", "0", "--no-open", "--watch-stdin"], {
   cwd: path.join(resources, "engine"),
@@ -64,12 +66,9 @@ try {
   assert.equal(png[0], 137);
   assert.equal(png.readUInt32BE(16), 200);
   pass("draws a board and exports it as a real PNG");
-  const clip = path.join(output, "clip.mp4");
-  const made = spawnSync(path.join(helpers, "ffmpeg"), ["-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x48:d=0.5", "-pix_fmt", "yuv420p", clip]);
-  assert.equal(made.status, 0, String(made.stderr));
-  const video = await post("/api/upload?kind=video&name=clip.mp4", await readFile(clip), true);
-  assert(video.poster && existsSync(video.poster), JSON.stringify(video));
-  pass("takes a video, its still made with the app's own ffmpeg");
+  const video = await post("/api/upload?kind=video&name=clip.mp4", await readFile(path.resolve("scripts/fixtures/clip.mp4")), true);
+  assert(video.poster && existsSync(video.poster) && video.width === 320 && video.height === 180, JSON.stringify(video));
+  pass("takes a video, its size and still read by the browser");
   await post("/api/state", { ui: { theme: "dark", touched: { started: true } } });
   assert.equal((await (await fetch(base + "/api/state")).json()).ui.theme, "dark");
   pass("remembers preferences between launches");

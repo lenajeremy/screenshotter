@@ -15,7 +15,7 @@ import WebKit
     var outputFolder: String {
         if let chosen = UserDefaults.standard.string(forKey: "outputFolder"), !chosen.isEmpty { return chosen }
         if let env = engine.environment["SCREENSHOTTER_OUTPUT_DIR"] ?? ProcessInfo.processInfo.environment["SCREENSHOTTER_OUTPUT_DIR"], !env.isEmpty { return env }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/Screenshotter").path
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures/\(AppName.name)").path
     }
 
     // MARK: Launch
@@ -475,17 +475,17 @@ import WebKit
             main.addItem(holder)
             return m
         }
-        _ = submenu("Screenshotter", [
-            action("About Screenshotter", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+        _ = submenu(AppName.name, [
+            action("About \(AppName.name)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             action("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:)), target: updates),
             .separator(),
             item("Settings…", "settings", ","),
             .separator(),
-            action("Hide Screenshotter", #selector(NSApplication.hide(_:)), "h"),
+            action("Hide \(AppName.name)", #selector(NSApplication.hide(_:)), "h"),
             action("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
             action("Show All", #selector(NSApplication.unhideAllApplications(_:))),
             .separator(),
-            action("Quit Screenshotter", #selector(NSApplication.terminate(_:)), "q"),
+            action("Quit \(AppName.name)", #selector(NSApplication.terminate(_:)), "q"),
         ])
         _ = submenu("File", [
             item("New Board", "newBoard", "n"),
@@ -531,7 +531,7 @@ import WebKit
             action("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             action("Zoom", #selector(NSWindow.performZoom(_:))),
             .separator(),
-            action("Screenshotter", #selector(showMainWindow(_:)), "", target: self),
+            action(AppName.name, #selector(showMainWindow(_:)), "", target: self),
         ])
         NSApp.windowsMenu = win
         let help = submenu("Help", [
@@ -545,14 +545,14 @@ import WebKit
 /// The page shown while the engine starts, or when it can't.
 enum StatusPage {
     static func html(for state: Engine.State, logPath: String) -> String {
-        var title = "Starting Screenshotter"
+        var title = "Starting \(AppName.name)"
         var body = "Warming up the engine…"
         var actions = ""
         var spinner = true
         if case .failed(let reason) = state {
             spinner = false
             if reason == "node" {
-                title = "Screenshotter needs Node.js"
+                title = "\(AppName.name) needs Node.js"
                 body = "Install Node.js 20 or newer (from nodejs.org, or run <code>brew install node</code>), then try again. If it's already installed somewhere unusual, choose it."
                 actions = "<button class='primary' onclick=\"post('restartEngine')\">Try again</button><button onclick=\"post('chooseNode')\">Choose Node.js…</button><button onclick=\"post('openURL',{url:'https://nodejs.org/en/download'})\">Get Node.js</button>"
             } else {

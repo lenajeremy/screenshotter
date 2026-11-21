@@ -3,18 +3,20 @@
  * Build Screenshotter.app: a small AppKit shell (app/) around the Studio engine.
  *
  *   npm run app:build                 → build/Screenshotter.app
+ *   SCREENSHOTTER_APP_NAME=Glassine npm run app:build
+ *                                     → build/Glassine.app: a separate copy, with its own bundle id,
+ *                                       library, settings and Keychain items, that never updates
+ *                                       itself to a Screenshotter release
  *
- * The bundle holds the compiled engine (dist/) and its production dependencies, and the programs
- * it runs on, so it works on a Mac with nothing installed: the Node running this build, and an
- * ffmpeg built from source for it (scripts/build-ffmpeg.mjs; a few minutes the first time), both in
- * Contents/Helpers, with their licences in Contents/Resources/Licenses.
+ * The bundle holds the compiled engine (dist/) and its production dependencies, and the Node it
+ * runs on (the Node running this build, in Contents/Helpers, its licence in
+ * Contents/Resources/Licenses), so it works on a Mac with nothing installed but a Chrome.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ffmpegBuild } from "./build-ffmpeg.mjs";
 import { entitlements, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,6 +25,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FEED_URL = process.env.SCREENSHOTTER_FEED_URL ?? "https://screenshotter-umber.vercel.app/appcast.xml";
 const UPDATE_KEY = "opZoJmL49A5/xAnivPGIucSxtQXaUKtTac3kJGQ2D4k=";
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+const NAME = (process.env.SCREENSHOTTER_APP_NAME || "Screenshotter").replace(/[^A-Za-z0-9 ._-]/g, "");
+const MAIN = NAME === "Screenshotter";
+const BUNDLE_ID = process.env.SCREENSHOTTER_BUNDLE_ID || (MAIN ? "com.screenshotter.studio" : `com.screenshotter.${NAME.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`);
 
 const run = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { cwd: root, stdio: "inherit", ...opts });
@@ -37,9 +42,6 @@ const nodeForeign = nodeLinks.filter((l) => !l.startsWith("/usr/lib/") && !l.sta
 if (nodeForeign.length) throw new Error(`This Node (${process.execPath}) needs libraries other Macs won't have (${nodeForeign.join(", ")}). Build with Node from nodejs.org or nvm.`);
 if (Number(process.versions.node.split(".")[0]) < 20) throw new Error(`The app needs Node 20 or newer; this is ${process.version}.`);
 
-step("Getting ffmpeg ready");
-const ffmpeg = ffmpegBuild();
-
 step("Building the engine and Studio UI");
 run("npm", ["run", "build"]);
 
@@ -47,8 +49,8 @@ step("Compiling the macOS shell");
 run("swift", ["build", "--package-path", "app", "-c", "release"]);
 const bin = execFileSync("swift", ["build", "--package-path", "app", "-c", "release", "--show-bin-path"], { cwd: root, encoding: "utf8" }).trim();
 
-step("Assembling build/Screenshotter.app");
-const app = path.join(root, "build", "Screenshotter.app");
+step(`Assembling build/${NAME}.app`);
+const app = path.join(root, "build", `${NAME}.app`);
 rmSync(app, { recursive: true, force: true }); // only this generated bundle
 const contents = path.join(app, "Contents");
 const resources = path.join(contents, "Resources");
@@ -84,15 +86,13 @@ for (const dir of new Set(prod)) {
     },
   });
 }
-// The programs it runs on, and their licences.
+// The Node it runs on, and its licence.
 const helpers = path.join(contents, "Helpers");
 mkdirSync(helpers, { recursive: true });
 copyFileSync(process.execPath, path.join(helpers, "node"));
-copyFileSync(ffmpeg.bin, path.join(helpers, "ffmpeg"));
-for (const f of ["node", "ffmpeg"]) chmodSync(path.join(helpers, f), 0o755);
+chmodSync(path.join(helpers, "node"), 0o755);
 const licenses = path.join(resources, "Licenses");
-cpSync(ffmpeg.licenses, licenses, { recursive: true });
-copyFileSync(ffmpeg.notice, path.join(licenses, "ffmpeg NOTICE.txt"));
+mkdirSync(licenses, { recursive: true });
 const nodeLicense = path.resolve(process.execPath, "..", "..", "LICENSE");
 if (!existsSync(nodeLicense)) throw new Error(`Node's licence isn't beside it (${nodeLicense}).`);
 copyFileSync(nodeLicense, path.join(licenses, "Node.js.txt"));
@@ -126,9 +126,9 @@ writeFileSync(
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>Screenshotter</string>
-  <key>CFBundleIdentifier</key><string>com.screenshotter.studio</string>
-  <key>CFBundleName</key><string>Screenshotter</string>
-  <key>CFBundleDisplayName</key><string>Screenshotter</string>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
+  <key>CFBundleName</key><string>${NAME}</string>
+  <key>CFBundleDisplayName</key><string>${NAME}</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${pkg.version}</string>
@@ -141,7 +141,7 @@ writeFileSync(
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>SUFeedURL</key><string>${FEED_URL}</string>
   <key>SUPublicEDKey</key><string>${UPDATE_KEY}</string>
-  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUEnableAutomaticChecks</key>${MAIN ? "<true/>" : "<false/>"}
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Image</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
@@ -157,10 +157,9 @@ if (identity) {
   step(`Signing with ${identity}`);
   const ent = entitlements();
   const sign = (target, file) => run("codesign", ["--force", "--options", "runtime", "--timestamp", "--entitlements", file, "--sign", identity, target]);
-  // Inside out: Node and ffmpeg, Sparkle's helpers and Sparkle itself, then the app around them.
+  // Inside out: Node, Sparkle's helpers and Sparkle itself, then the app around them.
   const plain = (target, extra = []) => run("codesign", ["--force", "--options", "runtime", "--timestamp", ...extra, "--sign", identity, target]);
   sign(path.join(helpers, "node"), ent.node);
-  plain(path.join(helpers, "ffmpeg"));
   const sparkle = path.join(frameworks, "Sparkle.framework", "Versions", "B");
   for (const xpc of ["Installer.xpc", "Downloader.xpc"]) {
     const p = path.join(sparkle, "XPCServices", xpc);
@@ -182,7 +181,7 @@ const size = (p) => {
   return execFileSync("du", ["-sk", p], { encoding: "utf8" }).split("\t")[0] * 1024;
 };
 const mb = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
-console.log(`\n✓ Built ${path.relative(root, app)} (${mb(size(app))}: engine ${mb(size(engine))}, Node ${process.version} ${mb(size(path.join(helpers, "node")))}, ffmpeg ${mb(size(path.join(helpers, "ffmpeg")))})`);
+console.log(`\n✓ Built ${path.relative(root, app)} (${mb(size(app))}: engine ${mb(size(engine))}, Node ${process.version} ${mb(size(path.join(helpers, "node")))})`);
 console.log(`  Open it:     npm run app:start`);
-console.log(`  Install it:  cp -R build/Screenshotter.app /Applications/`);
+console.log(`  Install it:  cp -R "build/${NAME}.app" /Applications/`);
 if (!existsSync(path.join(resources, "AppIcon.icns"))) console.warn("  (icon missing)");

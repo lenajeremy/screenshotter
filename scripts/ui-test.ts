@@ -11,7 +11,7 @@
  *
  * Needs Playwright's browsers once: npx playwright install chromium webkit
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium, webkit, type Browser, type Page } from "playwright";
@@ -641,15 +641,11 @@ const CHECKS: Record<string, Check> = {
   async "a video shows its first frame, plays from its button, and stops when let go"(page) {
     const t = await openTestBoard(page);
     // A clip each engine can play: H.264 where it can, else VP8 WebM (Playwright's Chromium has no H.264).
-    const { execFileSync } = await import("node:child_process");
     const mp4 = path.join(LIB, "clip.mp4");
     const webm = path.join(LIB, "clip.webm");
     const still = path.join(LIB, "clip.jpg");
-    if (!existsSync(webm)) {
-      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4]);
-      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=15", "-t", "3", "-c:v", "libvpx", "-b:v", "400k", webm]);
-      execFileSync("ffmpeg", ["-v", "error", "-y", "-i", mp4, "-frames:v", "1", still]);
-    }
+    // Sample clips kept with the tests (made once, so the tests need no ffmpeg).
+    for (const [from, to] of [["clip.mp4", mp4], ["clip.webm", webm], ["clip.jpg", still]]) if (!existsSync(to)) copyFileSync(path.join(import.meta.dirname, "fixtures", from), to);
     const h264 = await S(page, () => document.createElement("video").canPlayType('video/mp4; codecs="avc1.42E01E"'));
     const id = boardCore.newId();
     const phoneId = t.byName("Phone");

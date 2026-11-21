@@ -27,7 +27,7 @@ function Home() {
   return html`<div class="home">
     <aside class="home-side">
       <div class="home-drag" data-drag></div>
-      <div class="home-brand"><div class="brand-mark"></div><span>Screenshotter</span></div>
+      <div class="home-brand"><div class="brand-mark"></div><span>${S.opts?.appName ?? "Screenshotter"}</span></div>
       <label class="home-search"><${Icon} n="search" s=${13} /><input placeholder="Search boards" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} aria-label="Search boards" /></label>
       <nav class="home-nav">
         <button class="on"><${Icon} n="history" s=${15} />Recents</button>
@@ -174,7 +174,7 @@ function Settings() {
         </div>
         <div class="note">Your boards, their pictures and your exports live here, as files.</div>
       </div>
-      ${info?.version && html`<div class="note" style=${{ textAlign: "center" }}>Screenshotter ${info.version} · engine on ${location.host}${info.node ? ` · Node ${info.node}` : ""}</div>`}`}
+      ${info?.version && html`<div class="note" style=${{ textAlign: "center" }}>${s.opts?.appName ?? "Screenshotter"} ${info.version} · engine on ${location.host}${info.node ? ` · Node ${info.node}` : ""}</div>`}`}
     ${tab === "agents" &&
     html`<div class="card"><h4><${Icon} n="code" s=${15} />From your own terminal</h4>
         <div class="note">Agents on this Mac chat with you in each board's Agent tab. To use Screenshotter from an agent you run yourself, add it to that agent once:</div>
@@ -431,6 +431,7 @@ async function boot() {
   try {
     const [opts] = await Promise.all([api("/api/options"), restore()]);
     set({ opts });
+    if (opts.appName) document.title = opts.appName;
     await refreshBoards();
     // The board that was open last time opens again.
     let last = null;

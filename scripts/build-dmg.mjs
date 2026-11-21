@@ -5,9 +5,6 @@
  *
  *   npm run app:dmg                      → build/Screenshotter-<version>.dmg and site/downloads/Screenshotter.dmg
  *
- * The app carries Node and an ffmpeg built from source (see scripts/build-app.mjs). That ffmpeg is
- * GPL, so its exact source goes beside the download too, in site/downloads/sources.
- *
  * With a Developer ID certificate in the keychain, the app and the disk image are signed with it.
  * With notarization credentials saved too, the image is notarized and stapled, so it opens on any
  * Mac without a warning. Save them once with:
@@ -25,7 +22,6 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ffmpegBuild } from "./build-ffmpeg.mjs";
 import { notaryAuth, signingIdentity } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,8 +85,6 @@ if (identity) {
 const site = path.join(root, "site", "downloads");
 mkdirSync(site, { recursive: true });
 copyFileSync(dmg, path.join(site, "Screenshotter.dmg"));
-// The source of the ffmpeg inside, as its licence asks, where the app's notice says it is.
-cpSync(ffmpegBuild({ quiet: true }).sources, path.join(site, "sources"), { recursive: true });
 const mb = (statSync(dmg).size / 1024 / 1024).toFixed(1);
 console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB, ${state}), copied to site/downloads/Screenshotter.dmg`);
 if (identity && state === "signed") {

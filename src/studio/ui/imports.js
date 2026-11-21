@@ -137,20 +137,25 @@ export const FigmaMark = ({ s = 15 }) => html`<svg width=${s * 0.67} height=${s}
 // ---------------------------------------------------------------------------------------------
 // Agents: connecting one, and whether one is connected
 
-export const APP_BIN = "/Applications/Screenshotter.app/Contents/MacOS/Screenshotter";
-const config = JSON.stringify({ command: APP_BIN, args: ["mcp"] });
-export const AGENT_SETUPS = [
-  { id: "claude", label: "Claude Code", cmd: `claude mcp add screenshotter --scope user -- ${APP_BIN} mcp`, how: "Run it in Terminal, then start a new Claude Code session." },
-  { id: "codex", label: "Codex", cmd: `codex mcp add screenshotter -- ${APP_BIN} mcp`, how: "Run it in Terminal, then start Codex again." },
-  {
-    id: "cursor",
-    label: "Cursor",
-    cmd: JSON.stringify({ mcpServers: { screenshotter: { command: APP_BIN, args: ["mcp"] } } }, null, 2),
-    how: "Add it in one click, or put this in ~/.cursor/mcp.json.",
-    link: `cursor://anysphere.cursor-deeplink/mcp/install?name=screenshotter&config=${btoa(config)}`,
-  },
-  { id: "other", label: "Other", cmd: `${APP_BIN} mcp`, how: "Any agent that speaks MCP: add a server that runs this command." },
-];
+/** How to add this copy of the app to an agent: its MCP server's name and command come from the engine. */
+export function agentSetups() {
+  const name = S.opts?.mcpName ?? "screenshotter";
+  const [command, ...args] = S.opts?.mcpCommand ?? ["/Applications/Screenshotter.app/Contents/MacOS/Screenshotter", "mcp"];
+  const line = [command, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ");
+  const config = JSON.stringify({ command, args });
+  return [
+    { id: "claude", label: "Claude Code", cmd: `claude mcp add ${name} --scope user -- ${line}`, how: "Run it in Terminal, then start a new Claude Code session." },
+    { id: "codex", label: "Codex", cmd: `codex mcp add ${name} -- ${line}`, how: "Run it in Terminal, then start Codex again." },
+    {
+      id: "cursor",
+      label: "Cursor",
+      cmd: JSON.stringify({ mcpServers: { [name]: { command, args } } }, null, 2),
+      how: "Add it in one click, or put this in ~/.cursor/mcp.json.",
+      link: `cursor://anysphere.cursor-deeplink/mcp/install?name=${encodeURIComponent(name)}&config=${btoa(config)}`,
+    },
+    { id: "other", label: "Other", cmd: line, how: "Any agent that speaks MCP: add a server that runs this command." },
+  ];
+}
 
 /** The agents connected now, checked every couple of seconds while something shows it. */
 export function useConnectedAgents() {
@@ -198,7 +203,8 @@ export function ConnectAgent({ compact = false }) {
       return "claude";
     }
   });
-  const a = AGENT_SETUPS.find((x) => x.id === pick) ?? AGENT_SETUPS[0];
+  const setups = agentSetups();
+  const a = setups.find((x) => x.id === pick) ?? setups[0];
   const choose = (id) => {
     setPick(id);
     try {
@@ -207,7 +213,7 @@ export function ConnectAgent({ compact = false }) {
   };
   return html`<div class="connect ${compact ? "compact" : ""}">
     <div class="connect-head">
-      <div class="connect-tabs" role="tablist">${AGENT_SETUPS.map((x) => html`<button role="tab" aria-selected=${x.id === a.id} class=${x.id === a.id ? "on" : ""} onClick=${() => choose(x.id)}><${AgentLogo} id=${x.id} s=${13} />${x.label}</button>`)}</div>
+      <div class="connect-tabs" role="tablist">${setups.map((x) => html`<button role="tab" aria-selected=${x.id === a.id} class=${x.id === a.id ? "on" : ""} onClick=${() => choose(x.id)}><${AgentLogo} id=${x.id} s=${13} />${x.label}</button>`)}</div>
       <${AgentStatus} agents=${agents} />
     </div>
     <div class="connect-cmd">

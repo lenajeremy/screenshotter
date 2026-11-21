@@ -1355,8 +1355,6 @@ function CssSection() {
 // ---------------------------------------------------------------------------------------------
 // Nothing selected: the board itself
 
-const MCP_COMMAND = "claude mcp add screenshotter --scope user -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp";
-
 function BoardPanel() {
   const b = useBoard(PANEL_SKIPS);
   const page = currentPage();
@@ -1372,8 +1370,8 @@ function BoardPanel() {
         ${adding && html`<${NewToken} onDone=${(name, value) => (setAdding(false), name && setToken(name, value || "#000000"))} />`}
       <//>
       <${Section} title="Agents">
-        <p class="bd-note">An agent with Screenshotter's tools can design right here while you watch: ask it to “design a sign-up screen on the board ${b.board.name}”. Its changes land as steps you can undo.</p>
-        <button class="btn sm block" onClick=${() => navigator.clipboard.writeText(MCP_COMMAND).then(() => toast({ kind: "ok", icon: "copy", title: "Copied the setup command", text: "Run it in a terminal to give Claude Code the tools.", timeout: 4000 }))}><${Icon} n="copy" s=${13} />Copy the setup command</button>
+        <p class="bd-note">Ask Claude Code, Codex, opencode or Antigravity to design right here while you watch. Its changes land as steps you can undo.</p>
+        <button class="btn sm block" onClick=${() => bset({ rightTab: "agent" })}><${Icon} n="comment" s=${13} />Chat with an agent</button>
       <//>
       <${Section} title="Shortcuts" collapsible open=${false} id="board-keys">
         <dl class="bd-keys">

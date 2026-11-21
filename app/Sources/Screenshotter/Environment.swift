@@ -1,7 +1,7 @@
 import Foundation
 
 /// Apps opened from Finder don't inherit the user's shell setup, so PATH, API keys and tool
-/// locations (node, ffmpeg, claude) are read from a login shell once at launch.
+/// locations (node, claude, codex) are read from a login shell once at launch.
 enum ShellEnvironment {
     static let marker = "__SCREENSHOTTER_ENV__"
 
