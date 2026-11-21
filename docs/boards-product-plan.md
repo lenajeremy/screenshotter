@@ -1,6 +1,13 @@
-# Boards as its own product: plan for review
+# Glassine: Boards as its own product
 
-Status: draft for Jeremiah, 2026-11-21. Nothing here is built yet except where it says so.
+Status: agreed with Jeremiah, 2026-11-21. Nothing here is built yet except where it says so.
+
+**Glassine** is the see-through paper you lay over something real to trace it: Paper's cousin, for
+designing over your running app. No software uses the name (checked 2026-11-21); check the domain
+and trademark before launch. The line: "Paper, free, and your agent never runs out of calls."
+
+**Decided:** $16 per editor per month. What's free is open source; the team server is in a separate
+private repo. First comes shipping the free app; teams follow.
 
 ## 0. Several agents on one board (checked, fixed)
 
@@ -10,16 +17,19 @@ One fault was found and fixed (adad5bd): artboards two agents added at the same 
 
 ## 1. The split: one codebase, two builds
 
-| | Screenshotter (today) | Boards edition (new name and brand) |
+| | Screenshotter (today) | Glassine |
 |---|---|---|
 | App | Studio: screenshots, App Store sets, video | Boards only |
 | MCP tools | all | `board_*`, plus `capture_web`, `capture_screenshot` (simulator) and `capture_mac` (design from your running app) |
 | Bundle, icon, update feed, site | current | new |
 | Code | `src/board` (core, store, MCP, render) is shared | the same, plus `src/server` (teams) |
 
-- **Build switch:** one flag, `EDITION=boards`, picks the app shell, the MCP tool list and the branding. Continuous integration builds both DMGs.
-- **No forked code:** a board fix lands in both builds.
-- **File format:** the same `.json` board files.
+- **Repos:**
+  - `glassine` is public and holds the free app: board core, renderer, MCP, captures and the desktop shell.
+  - Screenshotter (private) uses it as a package for its boards.
+  - `glassine-teams` (private) is the team server.
+- **Licences:** the app is under AGPL-3.0, so its parts can't be lifted into a closed product. The file format and the MCP tool list are under MIT, so any tool can read and write boards.
+- **The moat is the server, not the client:** the team UI can sit in the public app, because without the private server there's nothing to sync with.
 
 ## 2. Free and paid
 
@@ -31,8 +41,6 @@ One fault was found and fixed (adad5bd): artboards two agents added at the same 
 | Captures from simulator, browser, Mac | Version history and restore (beyond local undo) |
 | View-only share links | Shared components and tokens across a workspace's boards |
 | Local background removal (Vision) | AI image generation and similar |
-
-**Price:** $12 per editor, under Paper and pen.dev's $16, would make the pitch sharper. That's yours to decide.
 
 **Cost of free sharing:** a view link stores the board and its pictures on our server, the only thing the free plan costs us. Cap it, for example at 20 shared boards or 1 GB, and stay quiet about the cap until someone reaches it.
 
@@ -73,9 +81,14 @@ Both candidates fit together, and I'd lead with both:
 
 The current README sells nothing. The new edition needs a one-screen pitch before anything else.
 
-## Decisions needed from you
+## Order of work
 
-1. The new name, and whether the Boards edition shows the Screenshotter brand at all.
-2. The price: $12 or $16 per editor.
-3. Open source: format, renderer and MCP only (recommended), or the whole app too.
-4. The first team build: the server with share links, then workspaces and roles. OK?
+Teams need users first: there's no release and no user yet but you.
+
+1. **Ship Glassine free.** About a week of work:
+   - the public repo cut out of this one;
+   - the Glassine shell (boards only);
+   - name, icon and a one-screen site;
+   - a notarised DMG with the MCP built in, and its update feed.
+2. **Share links and clones**, the growth loop: the server on Pier, sign-in, the web viewer, and "Copied from".
+3. **Teams:** workspaces, roles and Stripe at $16, live sync, presence across machines, history, then the shared library.
