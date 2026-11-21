@@ -1513,7 +1513,13 @@ export function freeSpot(board: Board, pageId: string, width: number, gap = 120)
 
 export type Op =
   /** Put new layers (`nodes` holds them and everything inside them) into a frame, or on a page. */
-  | { op: "add"; nodes: Record<string, BoardNode>; ids: string[]; parent: string | null; page?: string; index?: number; sync?: boolean }
+  /**
+   * `place`: new artboards (on the page) go to the free space beside the others, found when the
+   * change is applied (under the board's lock, against the board as it is then), so two agents
+   * adding artboards at once don't put them on top of each other. Their places relative to each
+   * other are kept.
+   */
+  | { op: "add"; nodes: Record<string, BoardNode>; ids: string[]; parent: string | null; page?: string; index?: number; sync?: boolean; place?: boolean }
   /** Change a layer: style properties (null removes one), its name, words, picture, vector, visibility or lock. */
   | {
       op: "set";
@@ -1625,6 +1631,13 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
       case "add": {
         const list = listOf(op.parent, op.page);
         let at = op.index === undefined || op.index < 0 || op.index > list.length ? list.length : op.index;
+        if (op.place && !op.parent) {
+          const pid = op.page ?? board.pages[0]?.id;
+          const roots = op.ids.map((id) => op.nodes[id]).filter(Boolean);
+          const left0 = Math.min(...roots.map((n) => pxValue(n.style.left) ?? 0)), top0 = Math.min(...roots.map((n) => pxValue(n.style.top) ?? 0));
+          const spot = pid ? freeSpot(board, pid, 0) : { left: left0, top: top0 };
+          for (const n of roots) n.style = { ...n.style, left: `${Math.round(spot.left + (pxValue(n.style.left) ?? 0) - left0)}px`, top: `${Math.round(spot.top + (pxValue(n.style.top) ?? 0) - top0)}px` };
+        }
         for (const [id, n] of Object.entries(op.nodes)) {
           if (board.nodes[id]) throw new OpError(`A layer ${id} is already on the board.`);
           board.nodes[id] = n;

@@ -407,7 +407,7 @@ export async function importWebsite(boardId: string | null | undefined, opts: We
   const have = new Set((board.fonts ?? []).map((f) => [f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.unicodeRange ?? ""].join("|")));
   const ops: Op[] = [
     ...snap.fonts.filter((f) => !have.has([f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.unicodeRange ?? ""].join("|"))).map((font) => ({ op: "font" as const, font })),
-    { op: "add", nodes: got.nodes, ids: [root], parent: null, page: pid },
+    { op: "add", nodes: got.nodes, ids: [root], parent: null, page: pid, place: true },
   ];
   changeBoard(id, ops, by);
   progress(1, "Done");

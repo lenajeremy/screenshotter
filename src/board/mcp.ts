@@ -406,7 +406,7 @@ async function shaderChange(b: Board, c: ShaderChange, ops: Op[], need: (id: str
     }
     // A layer of its own: a preset's look (film grain blended over what's below it) is its CSS.
     if (presetOf(spec.preset)?.style && c.blend === undefined) delete spec.blend;
-    ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name ?? presetOf(spec.preset)?.name ?? spec.preset ?? "Shader", parent: where.parent, shader: spec, style, children: [] } }, ids: [id], parent: where.parent, page: where.page, index: where.index });
+    ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name ?? presetOf(spec.preset)?.name ?? spec.preset ?? "Shader", parent: where.parent, shader: spec, style, children: [] } }, ids: [id], parent: where.parent, page: where.page, index: where.index, place: !where.parent && c.x === undefined });
   }
   touched.push(id);
   return {
@@ -609,8 +609,11 @@ export function registerBoardTools(server: McpServer) {
           const pid = page ?? b.pages[0].id;
           const was = mode === "replace" && a.target && !b.nodes[a.target]?.parent ? b.nodes[a.target] : undefined;
           // An artboard being replaced keeps its place; any other new one goes where asked, else beside the others.
+          const auto = a.x === undefined && a.y === undefined && !was;
           let { left, top } =
             a.x !== undefined || a.y !== undefined ? { left: a.x ?? 0, top: a.y ?? 0 } : was ? { left: pxValue(was.style.left) ?? 0, top: pxValue(was.style.top) ?? 0 } : freeSpot(b, pid, 0);
+          // Beside the others: found again when the change lands, against the board as it is then.
+          if (auto) for (const o of made.ops) if (o.op === "add" && !o.parent) o.place = true;
           for (const id of made.roots) {
             const s = made.nodes[id].style;
             s.left = `${Math.round(left)}px`;
@@ -756,7 +759,7 @@ export function registerBoardTools(server: McpServer) {
                   clone.nodes[clone.id].style.left = `${spot.left + k * shift}px`;
                   clone.nodes[clone.id].style.top = n.style.top ?? "0px";
                 }
-                ops.push({ op: "add", nodes: clone.nodes, ids: [clone.id], parent: n.parent, page: n.parent ? undefined : pageOf(b, c.id)?.id, index: at++ });
+                ops.push({ op: "add", nodes: clone.nodes, ids: [clone.id], parent: n.parent, page: n.parent ? undefined : pageOf(b, c.id)?.id, index: at++, place: !n.parent });
                 copies.push(clone.id);
               }
               touched.push(...copies);
@@ -826,7 +829,7 @@ export function registerBoardTools(server: McpServer) {
               const spot = c.x !== undefined || c.y !== undefined ? { left: c.x ?? 0, top: c.y ?? 0 } : freeSpot(b, pid, c.width);
               const id = newId();
               const style = { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", overflow: "hidden", ...Object.fromEntries(Object.entries(normalizeGridStyle(styleOf(c.style ?? {}))).filter(([, v]) => v !== null)), width: `${c.width}px`, height: c.height === "fit-content" ? "fit-content" : `${c.height}px`, left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` } as Record<string, string>;
-              ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, ids: [id], parent: null, page: pid });
+              ops.push({ op: "add", nodes: { [id]: { id, type: "frame", name: c.name, parent: null, style, children: [] } }, ids: [id], parent: null, page: pid, place: c.x === undefined && c.y === undefined });
               touched.push(id);
               results.push({ artboard: id, name: c.name, at: [spot.left, spot.top] });
               break;
@@ -888,7 +891,7 @@ export function registerBoardTools(server: McpServer) {
                 const spot = c.x !== undefined || c.y !== undefined ? { left: c.x ?? 0, top: c.y ?? 0 } : freeSpot(b, page ?? b.pages[0].id, 0);
                 Object.assign(t.nodes[t.id].style, { left: `${Math.round(spot.left)}px`, top: `${Math.round(spot.top)}px` });
               }
-              ops.push({ op: "add", nodes: t.nodes, ids: [t.id], parent, page, index });
+              ops.push({ op: "add", nodes: t.nodes, ids: [t.id], parent, page, index, place: !parent && c.x === undefined && c.y === undefined });
               touched.push(t.id);
               results.push({ copy: t.id, of: c.of });
               break;
@@ -903,7 +906,7 @@ export function registerBoardTools(server: McpServer) {
               if (!where.parent) Object.assign(style, { left: `${Math.round(x ?? freeSpot(b, where.page!, width).left)}px`, top: `${Math.round(y ?? 0)}px` });
               else if (!parentFlex || x !== undefined) Object.assign(style, { position: "absolute", left: `${Math.round(x ?? 0)}px`, top: `${Math.round(y ?? 0)}px` });
               const n: BoardNode = { id, type: "svg", name: name ?? c.type, parent: where.parent, shape, svg: shapeInBox(shape as never, width, height), style };
-              ops.push({ op: "add", nodes: { [id]: n }, ids: [id], parent: where.parent, page: where.page, index: where.index });
+              ops.push({ op: "add", nodes: { [id]: n }, ids: [id], parent: where.parent, page: where.page, index: where.index, place: !where.parent && x === undefined });
               touched.push(id);
               results.push({ shape: id, type: c.type });
               break;
@@ -926,7 +929,7 @@ export function registerBoardTools(server: McpServer) {
               const style: Record<string, string> = { width: `${w}px`, height: `${Math.round(h)}px`, objectFit: "contain", flexShrink: "0" };
               if (!where.parent) Object.assign(style, { left: `${Math.round(c.x ?? freeSpot(b, where.page!, w).left)}px`, top: `${Math.round(c.y ?? 0)}px` });
               else if (c.x !== undefined) Object.assign(style, { position: "absolute", left: `${Math.round(c.x)}px`, top: `${Math.round(c.y ?? 0)}px` });
-              ops.push({ op: "add", nodes: { [id]: { id, type: "image", name: c.device ?? "Device", parent: where.parent, src: img.path, style } }, ids: [id], parent: where.parent, page: where.page, index: where.index });
+              ops.push({ op: "add", nodes: { [id]: { id, type: "image", name: c.device ?? "Device", parent: where.parent, src: img.path, style } }, ids: [id], parent: where.parent, page: where.page, index: where.index, place: !where.parent && c.x === undefined });
               touched.push(id);
               results.push({ device: id, picture: img.path });
               break;
