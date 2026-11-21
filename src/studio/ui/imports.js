@@ -1,7 +1,7 @@
 // Bringing something in: a website or a Figma file, onto a new board (or the open one), with its
 // progress as it goes. After it lands, the next step: what to ask your agent.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { B, openBoard, select } from "./board-state.js";
+import { B, bset, openBoard, select } from "./board-state.js";
 import { fit } from "./board-canvas.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
@@ -28,7 +28,8 @@ export async function runImport(kind, body, onStep = () => undefined) {
     });
     touch("started");
     touch(kind === "figma" ? "figma" : "website");
-    set({ coach: { board: r.board, name: r.name, kind } });
+    // Next: ask an agent to change it.
+    bset({ rightOpen: true, rightTab: "agent" });
     if (r.warnings?.length) toast({ kind: "warn", title: `Brought in ${r.name}`, text: r.warnings[0], timeout: 9000 });
     return r;
   } finally {
@@ -217,35 +218,5 @@ export function ConnectAgent({ compact = false }) {
       </div>
     </div>
     <p class="connect-how">${a.how}</p>
-  </div>`;
-}
-
-// ---------------------------------------------------------------------------------------------
-// The next step, once something's on a board: what to ask your agent.
-
-function promptsFor(c) {
-  const n = `“${c.name}”`;
-  return [
-    `On my board ${n}, redesign the first section in a calmer, more premium style.`,
-    `Make a phone version of ${n} at 390 wide, beside the original.`,
-    `Give ${n} three new colour directions, each as its own artboard.`,
-  ];
-}
-
-export function NextStep() {
-  const s = useStore();
-  const agents = useConnectedAgents();
-  const c = s.coach;
-  if (!c || c.board !== s.boardId) return null;
-  const close = () => set({ coach: null });
-  const connected = agents?.length > 0;
-  return html`<div class="next-step" role="dialog" aria-label="What to do next">
-    <div class="ns-head">
-      <div><b>${c.name} is on the board.</b><span>${connected ? "Now ask your agent. Click one to copy it:" : "Connect your agent, then ask it to change it:"}</span></div>
-      <button class="icon-btn sm" title="Close" onClick=${close}><${Icon} n="x" s=${14} /></button>
-    </div>
-    ${connected
-      ? html`<div class="ns-prompts">${promptsFor(c).map((p) => html`<button class="ns-prompt" onClick=${() => copy(p, "Copied: paste it to your agent")}><${Icon} n="copy" s=${12} /><span>${p}</span></button>`)}</div>`
-      : html`<${ConnectAgent} compact />`}
   </div>`;
 }

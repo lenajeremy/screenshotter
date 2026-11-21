@@ -209,9 +209,7 @@ const themeAudit = async (page: Page) => {
 /** Every screen of the app, one at a time, for the theme check: each a name and how to get there. */
 const store = async (page: Page, patch: Record<string, unknown>) => S(page, async (p: Record<string, unknown>) => (await import("/ui/store.js" as string)).set(p), patch);
 const SCREENS: Array<[string, (page: Page) => Promise<unknown>]> = [
-  ["home-start", (page) => store(page, { homeView: "start", modal: null })],
-  ["home-boards", (page) => store(page, { homeView: "boards" })],
-  ["connect", (page) => store(page, { modal: { kind: "connect" } })],
+  ["home", (page) => store(page, { modal: null })],
   ["confirm", (page) => store(page, { modal: { kind: "confirm", title: "Delete this board?", text: "The board and every artboard on it are removed.", confirm: "Delete", danger: true } })],
   ["menu", (page) => S(page, async () => {
     const st = await import("/ui/store.js" as string);
@@ -918,7 +916,7 @@ const CHECKS: Record<string, Check> = {
       await S(page, async (t: string) => (await import("/ui/store.js" as string)).setTheme(t), theme);
       await S(page, async () => {
         const st = await import("/ui/store.js" as string);
-        st.set({ modal: null, toasts: [], menu: null, homeView: null });
+        st.set({ modal: null, toasts: [], menu: null });
       });
       await page.waitForTimeout(300);
       const look = async (screen: string) => {
@@ -943,6 +941,9 @@ const CHECKS: Record<string, Check> = {
       await look("board-layer");
       await page.click('.bd-left-tabs [data-tab="assets"]').catch(() => undefined);
       await look("board-assets");
+      await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "agent" }));
+      await look("board-agent");
+      await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "design" }));
       await page.click('.bd-left-tabs [data-tab="comments"]').catch(() => undefined);
       await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), sent.thread.id);
       await look("board-comments");
@@ -2514,6 +2515,9 @@ const CHECKS: Record<string, Check> = {
     // The chooser: every preset's still, playing only under the pointer, and a search.
     await page.click("[data-shader-add]");
     await page.waitForSelector("[data-shader-chooser] .bd-shpick-tile canvas");
+    // The pointer off the tiles (where it opened the chooser may be over one).
+    await page.mouse.move(4, 4);
+    await page.waitForTimeout(250);
     await page.waitForTimeout(700);
     const tiles = () => S(page, () => [...document.querySelectorAll("[data-shader-chooser] .bd-shpick-tile canvas")].map((c) => (c as HTMLCanvasElement).dataset.shaderState ?? ""));
     const st0 = await tiles();

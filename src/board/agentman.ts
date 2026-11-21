@@ -207,6 +207,16 @@ export function sessionInFolder(sessions: AgentmanSession[], kind: string, cwd: 
 }
 
 export async function findIdentity(): Promise<AgentIdentity> {
+  // A chat the app started says who it is (its thread, and which agent).
+  const given = process.env.SCREENSHOTTER_AGENT_IDENTITY;
+  if (given) {
+    try {
+      const id = JSON.parse(given) as AgentIdentity;
+      if (id.key && id.name && id.kind) return { key: id.key, name: id.name, kind: id.kind, ...(id.cwd ? { cwd: id.cwd } : {}) };
+    } catch {
+      // Not ours: worked out as usual.
+    }
+  }
   const chain = await ancestors();
   let kind = "agent";
   for (const p of chain) {

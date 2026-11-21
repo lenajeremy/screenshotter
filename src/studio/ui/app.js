@@ -2,135 +2,93 @@
 // sheets, menus and toasts over them. Everything about a board itself is in board*.js.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Seg, html } from "./controls.js";
+import { Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { ContextMenu } from "./menu.js";
 import { BoardApp, boardCommand, importToBoard, pickImages } from "./board.js";
-import { closeBoard, newBoard, openBoard, saved as boardSaved } from "./board-state.js";
+import { bset, closeBoard, newBoard, openBoard, saved as boardSaved } from "./board-state.js";
 import { BoardsGrid, refreshBoards, useBoards } from "./board-library.js";
-import { HomeDemo } from "./home-demo.js";
 import { ImportWebsite, looksLikeUrl, openImportWebsite } from "./web-import.js";
-import { AgentStatus, ConnectAgent, FigmaMark, ImportFigma, NextStep, looksLikeFigma, openImportFigma, runImport, saveFigmaToken, useConnectedAgents } from "./imports.js";
+import { ConnectAgent, FigmaMark, ImportFigma, looksLikeFigma, openImportFigma, saveFigmaToken } from "./imports.js";
+import { AgentLogo } from "./agent-logos.js";
+import { loadAgents } from "./board-agent.js";
 import { S, answerConfirm, answerPrompt, api, dismiss, fail, native, restore, set, setTheme, themeNow, toast, touch, useStore } from "./store.js";
 
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
 const realBoards = (boards) => (boards ?? []).filter((b) => b.id !== "scratchpad");
 
 // =============================================================================================
-// Home
+// Home: your boards, like a design tool's file browser
 
 function Home() {
-  const s = useStore();
   const boards = useBoards();
-  // Getting started until something has been made: then it's your boards (Help › Get Started
-  // shows the start again).
-  const first = s.homeView ? s.homeView === "start" : boards !== null && !realBoards(boards).length && !s.touched.started;
-  return html`<div class="home">
-    <header class="home-bar" data-drag>
-      <div class="home-brand"><div class="brand-mark"></div><span>Screenshotter</span></div>
-      <span class="spacer"></span>
-      <div class="hstack" data-nodrag>
-        ${first && realBoards(boards).length > 0 && html`<button class="btn ghost sm" onClick=${() => set({ homeView: "boards" })}>Your boards<${Icon} n="right" s=${13} /></button>`}
-        ${!first && html`<button class="btn ghost sm" onClick=${() => set({ modal: { kind: "connect" } })} title="Connect an agent"><${AgentChip} /></button>`}
-        <button class="icon-btn" title="Settings (⌘,)" onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${16} /></button>
-      </div>
-    </header>
-    <main class="home-scroll">${boards === null ? html`<div class="sp-empty"><span class="spinner"></span></div>` : first ? html`<${Start} />` : html`<${Library} />`}</main>
-  </div>`;
-}
-
-function AgentChip() {
-  const agents = useConnectedAgents();
-  return html`<${AgentStatus} agents=${agents} />`;
-}
-
-/** The first screen: bring something in (or start blank), and connect your agent. */
-function Start() {
-  return html`<div class="onb">
-    <div class="onb-top">
-    <section class="onb-hero">
-      <h1>Design with your agent.</h1>
-      <p>Bring in your website or a Figma file, then ask your agent to change it. You both work on the same canvas.</p>
-      <${ImportField} autofocus />
-      <div class="onb-alts">
-        <button class="onb-alt" onClick=${() => openImportFigma()}><${FigmaMark} s=${16} /><span><b>Import from Figma</b><small>A file or one frame, as editable layers</small></span></button>
-        <button class="onb-alt" onClick=${() => (touch("started"), newBoard("Untitled board"))}><span class="onb-plus"><${Icon} n="plus" s=${15} w=${2} /></span><span><b>Start blank</b><small>An empty board, for you or your agent</small></span></button>
-      </div>
-    </section>
-    <${HomeDemo} />
-    </div>
-    <${AgentSection} />
-  </div>`;
-}
-
-/** Connecting your agent: the setup until one is connected, then just that it is. */
-function AgentSection() {
-  const agents = useConnectedAgents();
-  const [more, setMore] = useState(false);
-  if (agents?.length && !more)
-    return html`<section class="onb-agent done">
-      <span class="onb-done"><${Icon} n="check" s=${14} w=${2.4} /></span>
-      <div><h2>${[...new Set(agents.map((a) => a.label))].join(" and ")} ${agents.length > 1 ? "are" : "is"} connected</h2><p>Bring something in, then ask it to change it.</p></div>
-      <button class="btn ghost sm" onClick=${() => setMore(true)}>Add another agent</button>
-    </section>`;
-  return html`<section class="onb-agent">
-    <div class="onb-agent-head"><h2>Connect your agent</h2><p>Once, so it can see and change your boards.</p></div>
-    <${ConnectAgent} />
-  </section>`;
-}
-
-/** A website or Figma link to bring in, right here: the link decides which. */
-function ImportField({ autofocus = false }) {
-  const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(null);
-  const field = useRef();
-  useEffect(() => {
-    if (autofocus) field.current?.focus();
-  }, []);
-  const figma = looksLikeFigma(url);
-  const ok = figma || looksLikeUrl(url);
-  const go = async () => {
-    if (!ok || busy) return;
-    if (figma) {
-      // Figma needs a token the first time: its sheet asks for one.
-      const { hasToken } = await api("/api/figma").catch(() => ({ hasToken: false }));
-      if (!hasToken) return openImportFigma({ url: url.trim() });
-    }
-    setBusy({ fraction: 0.02, step: figma ? "Reading the file from Figma" : "Opening the page" });
-    try {
-      await runImport(figma ? "figma" : "website", figma ? { url: url.trim() } : { url: url.trim(), width: 1440, fullPage: true }, (p) => setBusy((b) => ({ fraction: p.fraction ?? b?.fraction ?? 0, step: p.step ?? b?.step })));
-    } catch (e) {
-      setBusy(null);
-      fail(e, figma ? "Couldn't bring the Figma file in" : "Couldn't bring the website in");
-    }
-  };
-  return html`<div class="onb-field ${busy ? "busy" : ""} ${figma ? "figma" : ""}">
-    <form class="onb-url" onSubmit=${(e) => (e.preventDefault(), go())}>
-      ${figma ? html`<${FigmaMark} s=${17} />` : html`<${Icon} n="globe" s=${17} />`}
-      <input ref=${field} class="grow" type="text" inputmode="url" placeholder="yourwebsite.com or a Figma link" spellcheck=${false} autocomplete="off" value=${url} disabled=${Boolean(busy)}
-        onInput=${(e) => setUrl(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} aria-label="Website address or Figma link" />
-      <button class="btn primary" type="submit" disabled=${!ok || Boolean(busy)}>${busy ? html`<span class="spinner dark"></span>Importing` : "Import"}</button>
-    </form>
-    ${busy
-      ? html`<div class="onb-progress" aria-live="polite"><div class="wi-bar"><i style=${{ width: `${Math.round(busy.fraction * 100)}%` }}></i></div><span>${busy.step}…</span></div>`
-      : html`<p class="onb-hint">It comes in as layers you can change: layout, words, pictures and fonts.</p>`}
-  </div>`;
-}
-
-/** Your boards, with the ways to start another. */
-function Library() {
   const [q, setQ] = useState("");
-  return html`<div class="sp-inner lib">
-    <div class="lib-head">
-      <h1>Boards</h1>
-      <label class="lib-search"><${Icon} n="search" s=${14} /><input class="grow" placeholder="Search" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} aria-label="Search boards" /></label>
-      <span class="spacer"></span>
-      <button class="btn sm" onClick=${() => openImportWebsite()}><${Icon} n="globe" s=${14} />Import website</button>
-      <button class="btn sm" onClick=${() => openImportFigma()}><${FigmaMark} s=${13} />Import from Figma</button>
-      <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.2} />New board</button>
-    </div>
-    <${BoardsGrid} q=${q} />
+  const first = boards !== null && !realBoards(boards).length;
+  return html`<div class="home">
+    <aside class="home-side">
+      <div class="home-drag" data-drag></div>
+      <div class="home-brand"><div class="brand-mark"></div><span>Screenshotter</span></div>
+      <label class="home-search"><${Icon} n="search" s=${13} /><input placeholder="Search boards" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} aria-label="Search boards" /></label>
+      <nav class="home-nav">
+        <button class="on"><${Icon} n="history" s=${15} />Recents</button>
+        <button onClick=${() => openBoard("scratchpad")}><${Icon} n="pen" s=${15} />Scratchpad</button>
+      </nav>
+      <p class="home-sec">Agents</p>
+      <${AgentsList} />
+      <span class="grow"></span>
+      <nav class="home-nav"><button onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${15} />Settings</button></nav>
+    </aside>
+    <main class="home-main">
+      <header class="home-head" data-drag>
+        <h1>${first ? "Start a board" : q.trim() ? "Search" : "Recents"}</h1>
+        <span class="spacer"></span>
+        <${ImportButton} />
+        <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.4} />New board</button>
+      </header>
+      <div class="home-scroll">${boards === null ? html`<div class="sp-empty"><span class="spinner"></span></div>` : first ? html`<${StartTiles} />` : html`<${BoardsGrid} q=${q} />`}</div>
+    </main>
   </div>`;
+}
+
+/** The agents on this Mac, each one ready to chat on a board. */
+function AgentsList() {
+  const [agents, setAgents] = useState(null);
+  useEffect(() => {
+    loadAgents().then(setAgents);
+  }, []);
+  if (!agents) return null;
+  if (!agents.length) return html`<nav class="home-nav"><button onClick=${() => set({ modal: { kind: "settings", tab: "agents" } })}><${Icon} n="plus" s=${15} />Add an agent</button></nav>`;
+  return html`<div class="home-agents">${agents.map((a) => html`<span title=${`${a.label} is on this Mac: chat with it on any board, in the Agent tab`}><${AgentLogo} id=${a.id} s=${14} />${a.label}<i></i></span>`)}</div>`;
+}
+
+function ImportButton() {
+  const [open, setOpen] = useState(false);
+  const btn = useRef();
+  const pick = (run) => (setOpen(false), run());
+  return html`<button class="btn sm" ref=${btn} onClick=${() => setOpen(!open)}>Import<${Icon} n="down" s=${11} w=${2.2} /></button>
+    ${open &&
+    html`<${Popover} anchor=${btn.current} onClose=${() => setOpen(false)} width=${220} align="end">
+      <div class="bd-menu">
+        <button class="ctx-item" onClick=${() => pick(() => openImportWebsite())}><span class="ctx-ico"><${Icon} n="globe" s=${14} /></span><span class="ctx-label">A website…</span></button>
+        <button class="ctx-item" onClick=${() => pick(() => openImportFigma())}><span class="ctx-ico"><${FigmaMark} s=${13} /></span><span class="ctx-label">A Figma file…</span></button>
+        <button class="ctx-item" onClick=${() => pick(() => commands.import())}><span class="ctx-ico"><${Icon} n="image" s=${14} /></span><span class="ctx-label">Images…</span></button>
+      </div>
+    <//>`}`;
+}
+
+/** Before anything's been made: the three ways to start, as boards would be. */
+function StartTiles() {
+  const tiles = [
+    { art: html`<${Icon} n="plus" s=${26} w=${1.6} />`, title: "Blank board", text: "Draw, or ask an agent to", run: () => (touch("started"), newBoard("Untitled board")) },
+    { art: html`<${Icon} n="globe" s=${26} w=${1.5} />`, title: "Import a website", text: "A page as layers to change", run: () => openImportWebsite() },
+    { art: html`<${FigmaMark} s=${26} />`, title: "Import from Figma", text: "A file, or one frame", run: () => openImportFigma() },
+  ];
+  return html`<div class="sp-grid home-starts">${tiles.map(
+    (t) => html`<button class="sp-card start-tile" onClick=${t.run}>
+      <div class="sp-thumb"><span class="start-art">${t.art}</span></div>
+      <div class="sp-info"><div class="sp-text"><b>${t.title}</b><span class="sp-meta"><span>${t.text}</span></span></div></div>
+    </button>`,
+  )}</div>`;
 }
 
 // =============================================================================================
@@ -153,13 +111,6 @@ function Sheet({ title, children, width, foot }) {
       ${foot && html`<div class="sheet-foot">${foot}</div>`}
     </div>
   </div>`;
-}
-
-function Connect() {
-  return html`<${Sheet} title="Connect your agent" width=${560}>
-    <p class="note">Your agent sees and changes your boards through Screenshotter's MCP server. Add it once; every new session can use it.</p>
-    <${ConnectAgent} />
-  <//>`;
 }
 
 /** A key kept in the Keychain (in the Mac app), with Save and Remove. */
@@ -225,7 +176,10 @@ function Settings() {
       </div>
       ${info?.version && html`<div class="note" style=${{ textAlign: "center" }}>Screenshotter ${info.version} · engine on ${location.host}${info.node ? ` · Node ${info.node}` : ""}</div>`}`}
     ${tab === "agents" &&
-    html`<div class="card"><h4><${Icon} n="code" s=${15} />Connect an agent</h4><${ConnectAgent} /></div>`}
+    html`<div class="card"><h4><${Icon} n="code" s=${15} />From your own terminal</h4>
+        <div class="note">Agents on this Mac chat with you in each board's Agent tab. To use Screenshotter from an agent you run yourself, add it to that agent once:</div>
+        <${ConnectAgent} />
+      </div>`}
     ${tab === "keys" &&
     html`<div class="card">
         <h4><${FigmaMark} s=${14} />Figma</h4>
@@ -319,7 +273,7 @@ function Toasts() {
   )}</div>`;
 }
 
-const MODALS = { settings: Settings, connect: Connect, confirm: Confirm, prompt: Prompt, importWebsite: ImportWebsite, importFigma: ImportFigma };
+const MODALS = { settings: Settings, confirm: Confirm, prompt: Prompt, importWebsite: ImportWebsite, importFigma: ImportFigma };
 
 // =============================================================================================
 // Root
@@ -330,7 +284,7 @@ function App() {
     return html`<div class="boot"><b>The engine didn't start</b><span>${s.bootError}</span>${native && html`<button class="btn" onClick=${() => native.call("restartEngine")}>Restart the engine</button>`}</div>`;
   if (!s.ready) return html`<div class="boot"><div class="boot-mark"></div></div>`;
   const Modal = s.modal && MODALS[s.modal.kind];
-  return html`${s.boardId ? html`<${BoardApp} key=${s.boardId} /><${NextStep} />` : html`<${Home} />`}
+  return html`${s.boardId ? html`<${BoardApp} key=${s.boardId} />` : html`<${Home} />`}
     ${Modal && html`<${Modal} key=${s.modal.kind} />`}
     ${s.dropping && !s.boardId && html`<div class="drop-veil"><div><${Icon} n="upload" s=${22} /><b>Drop to start a board with these</b></div></div>`}
     <${ContextMenu} />
@@ -370,11 +324,11 @@ const typing = () => {
 
 const commands = {
   newBoard: () => newBoard("Untitled board"),
-  boards: () => (S.boardId && closeBoard(), set({ homeView: null })),
-  start: () => (S.boardId && closeBoard(), set({ homeView: "start", modal: null })),
+  boards: () => S.boardId && closeBoard(),
+  // The open board's Agent tab, or Settings › Agents from Home.
+  connect: () => (S.boardId ? bset({ rightOpen: true, rightTab: "agent" }) : set({ modal: { kind: "settings", tab: "agents" } })),
   settings: () => set({ modal: { kind: "settings" } }),
-  help: () => set({ modal: { kind: "connect" } }),
-  connect: () => set({ modal: { kind: "connect" } }),
+  help: () => set({ modal: { kind: "settings", tab: "agents" } }),
   importWebsite: () => openImportWebsite({ board: S.boardId }),
   importFigma: () => openImportFigma({ board: S.boardId }),
   import: async () => {
@@ -447,14 +401,14 @@ window.addEventListener("drop", (e) => {
 // The draggable title-bar area, for the Mac app's window.
 function reportDragRegions() {
   if (!native) return;
-  const bar = document.querySelector(".home-bar") ?? document.querySelector(".topbar");
-  if (!bar) return;
-  const r = bar.getBoundingClientRect();
-  const holes = [...bar.querySelectorAll("[data-nodrag], button, input")].map((el) => {
+  const bars = [...document.querySelectorAll("[data-drag]")].filter((el) => el.offsetParent || el === document.body);
+  if (!bars.length) return;
+  const rect = (el) => {
     const b = el.getBoundingClientRect();
     return [b.left, b.top, b.width, b.height];
-  });
-  native.call("dragRegions", { regions: [[r.left, r.top, r.width, r.height]], holes }).catch(() => undefined);
+  };
+  const holes = bars.flatMap((bar) => [...bar.querySelectorAll("[data-nodrag], button, input")].map(rect));
+  native.call("dragRegions", { regions: bars.map(rect), holes }).catch(() => undefined);
 }
 let dragTimer = 0;
 new MutationObserver(() => {

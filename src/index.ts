@@ -19,6 +19,8 @@ async function main() {
     }
     await startStudio(port, !rest.includes("--no-open"));
     const stop = async () => {
+      // Agents mid-turn stop with the app.
+      (await import("./agent/chat.js")).stopAll();
       await closeBrowser();
       process.exit(0);
     };

@@ -80,10 +80,6 @@ export const S = {
   busy: null,
   /** First-run steps done (seen Home, imported something, connected an agent…), remembered. */
   touched: {},
-  /** Home's view when chosen ("start" or "boards"); null decides by whether anything's been made. */
-  homeView: null,
-  /** After an import: the next step, shown on that board ({ board, name, kind }). */
-  coach: null,
   /** Files being dragged over Home. */
   dropping: false,
   /** Image quality for generated pictures: "fast" or "best". */

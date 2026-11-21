@@ -16,6 +16,8 @@ import { drawLayers, maskFontsFor, previewDocument } from "../board/render.js";
 import { importWebsite } from "../board/web-import.js";
 import { importFigma } from "../board/figma-import.js";
 import { connectedAgents } from "../board/agents-live.js";
+import { installedAgents, type AgentId } from "../agent/agents.js";
+import { deleteThread, getThread, listThreads, send as sendChat, stop as stopChat } from "../agent/chat.js";
 import { VIDEO_EXT, videoStill } from "../board/video.js";
 import { mediaInfo } from "../util/media.js";
 import type { Op } from "../board/core.js";
@@ -449,6 +451,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   }
   // The agents connected now (onboarding shows when yours is), and whether Figma has a token.
   if (req.method === "GET" && url.pathname === "/api/agents-connected") return send(200, { agents: connectedAgents() });
+  // Chats with agents: the ones on this Mac, a board's chats, and one chat (polled while it runs).
+  if (req.method === "GET" && url.pathname === "/api/agents") return send(200, { agents: installedAgents().map(({ id, label }) => ({ id, label })) });
+  if (req.method === "GET" && url.pathname === "/api/chats") return send(200, { chats: listThreads(url.searchParams.get("board") ?? "") });
+  if (req.method === "GET" && url.pathname === "/api/chat") return send(200, getThread(url.searchParams.get("id") ?? ""));
   if (req.method === "GET" && url.pathname === "/api/figma") return send(200, { hasToken: Boolean(process.env.FIGMA_TOKEN?.trim()) });
   if (req.method === "GET" && url.pathname === "/api/board/rev") return send(200, boardRev(url.searchParams.get("id")));
   if (req.method === "GET" && url.pathname === "/api/board/agents") {
@@ -534,6 +540,20 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const a = z.object({ id: z.string().optional(), url: z.string(), token: z.string().optional(), page: z.string().optional() }).parse(await json(req));
       const progress = jobProgress(url);
       return send(200, await importFigma(a.id || null, { url: a.url, token: a.token, page: a.page }, "studio", (f, step) => progress?.(f, step)));
+    }
+    case "/api/chat/send": {
+      const a = z.object({ thread: z.string().optional(), board: z.string(), agent: z.enum(["claude", "codex", "opencode", "agy"]), text: z.string().min(1).max(20000), page: z.string().optional(), selection: z.array(z.string()).max(200).optional() }).parse(await json(req));
+      return send(200, sendChat({ ...a, agent: a.agent as AgentId }));
+    }
+    case "/api/chat/stop": {
+      const { id } = await json<{ id: string }>(req);
+      stopChat(id);
+      return send(200, { ok: true });
+    }
+    case "/api/chat/delete": {
+      const { id } = await json<{ id: string }>(req);
+      deleteThread(id);
+      return send(200, { ok: true });
     }
     case "/api/figma-token": {
       // The token for this run (the Mac app keeps it in the Keychain for the next).

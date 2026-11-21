@@ -535,8 +535,7 @@ import WebKit
         ])
         NSApp.windowsMenu = win
         let help = submenu("Help", [
-            item("Get Started", "start"),
-            item("Connect an Agent…", "connect"),
+            item("Chat with an Agent", "connect", "j"),
         ])
         NSApp.helpMenu = help
         NSApp.mainMenu = main

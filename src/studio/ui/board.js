@@ -8,6 +8,7 @@ import { maskGroupOps, maskOps, maskRuns } from "./board-core.js";
 import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
+import { AgentDot, AgentPanel, boardOpened } from "./board-agent.js";
 import { AssetsPanel } from "./board-assets.js";
 import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
@@ -38,6 +39,10 @@ export function BoardApp() {
       removeEventListener("paste", onPaste);
     };
   }, []);
+  // The board's chats with agents, when it opens.
+  useEffect(() => {
+    if (b.id) boardOpened(b.id);
+  }, [b.id]);
   if (!b.board) return html`<div class="bd-app"><div class="boot"><div class="boot-mark"></div></div></div>`;
   return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}" style=${{ "--bd-left-w": b.leftW ? b.leftW + "px" : null }}>
     <${BoardTopbar} />
@@ -49,7 +54,12 @@ export function BoardApp() {
     </aside>`}
     ${b.leftOpen && html`<${LeftResizer} />`}
     <main class="bd-stage"><${BoardCanvas} /></main>
-    ${b.rightOpen && html`<aside class="panel bd-right"><${Inspector} /></aside>`}
+    ${b.rightOpen && html`<aside class="panel bd-right">
+      <div class="bd-left-tabs bd-right-tabs" role="tablist">
+        ${[["design", "Design"], ["agent", "Agent"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${(b.rightTab ?? "design") === id} class=${(b.rightTab ?? "design") === id ? "on" : ""} onClick=${() => bset({ rightTab: id })}>${label}${id === "agent" && html`<${AgentDot} />`}</button>`)}
+      </div>
+      ${b.rightTab === "agent" ? html`<${AgentPanel} />` : html`<${Inspector} />`}
+    </aside>`}
   </div>`;
 }
 
