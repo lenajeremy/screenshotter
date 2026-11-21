@@ -1,11 +1,11 @@
 // Bringing a website onto a board: the person gives its address, the engine opens it and reads it
 // as it's drawn, and it lands as an artboard of ordinary layers to change (or have an agent change).
 import { useEffect, useRef, useState } from "preact/hooks";
-import { B, openBoard, select } from "./board-state.js";
-import { fit } from "./board-canvas.js";
+import { B } from "./board-state.js";
+import { runImport } from "./imports.js";
 import { Seg, Switch, html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { S, api, fail, set, toast, useStore } from "./store.js";
+import { fail, set, useStore } from "./store.js";
 
 const WIDTHS = [
   { value: 1440, label: "Desktop" },
@@ -52,33 +52,11 @@ export function ImportWebsite() {
     try {
       localStorage.setItem("board:import-width", String(width));
     } catch {}
-    const job = Math.random().toString(36).slice(2, 12);
     setBusy({ fraction: 0.02, step: "Opening the page" });
-    const poll = setInterval(async () => {
-      try {
-        const p = await api(`/api/progress?job=${job}`);
-        if (p.fraction != null) setBusy((b) => (b ? { fraction: p.fraction, step: p.step ?? b.step } : b));
-      } catch {}
-    }, 400);
     try {
-      const r = await api(`/api/board/import-website?job=${job}`, { id: m.board ?? undefined, url: url.trim(), width, fullPage: whole, page: m.board && B.id === m.board ? B.page : undefined });
-      clearInterval(poll);
+      await runImport("website", { id: m.board ?? undefined, url: url.trim(), width, fullPage: whole, page: m.board && B.id === m.board ? B.page : undefined }, (p) => setBusy((b) => ({ fraction: p.fraction ?? b?.fraction ?? 0, step: p.step ?? b?.step })));
       set({ modal: null });
-      // Opened (or opened again) with the new artboard on it, picked and in view.
-      await openBoard(r.board);
-      requestAnimationFrame(() => {
-        select([r.artboard]);
-        fit([r.artboard]);
-      });
-      toast({
-        kind: r.warnings.length ? "warn" : "ok",
-        icon: "globe",
-        title: `Brought in ${r.name}`,
-        text: [`${r.layers.toLocaleString()} layers`, r.pictures && `${r.pictures} pictures`, r.fonts && `${r.fonts} fonts`].filter(Boolean).join(" · ") + (r.warnings.length ? `. ${r.warnings[0]}` : ". Change it like any artboard, or ask an agent to."),
-        timeout: 9000,
-      });
     } catch (e) {
-      clearInterval(poll);
       setBusy(null);
       fail(e, "Couldn't bring the website in");
     }

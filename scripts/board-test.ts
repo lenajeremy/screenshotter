@@ -813,18 +813,6 @@ const rowHtml = await call("board_read", { board, what: "html", node: row });
 check((rowHtml.text.match(/<svg/g) ?? []).length === 2 && rowHtml.text.includes("currentColor") && !rowHtml.text.includes("sticker:"), "stickers and illustrations in an agent's HTML come in as vectors (one-ink art takes its colour)");
 const shaped = await call("board_edit", { board, changes: [{ do: "shape", type: "burst", width: 120, height: 120, into: row, fill: "#ff3b30", text: "NEW", labelColor: "#fff" }, { do: "shape", type: "arrow", width: 160, height: 90, x: 1200, y: 40, stroke: "#0a84ff", strokeWidth: 5 }] });
 check(shaped.json.results.every((r: any) => r.shape), "an agent adds Screenshotter's shapes, in a frame or on the page");
-const dev = await call("board_edit", { board, changes: [{ do: "device", artboard: second.json.created[0].id, height: 300, x: 1500, y: 0 }] });
-check(dev.json.results[0].device && dev.json.results[0].picture.endsWith(".png"), "an agent puts an artboard in a device frame");
-{
-  // Around the frame is see-through, not white, so the device sits on whatever is behind it.
-  const { readBmp } = await import("../src/util/png.js");
-  const { execFileSync } = await import("node:child_process");
-  const bmp = path.join(out, "device.bmp");
-  execFileSync("sips", ["-s", "format", "bmp", dev.json.results[0].picture, "--out", bmp], { stdio: "ignore" });
-  const f = readBmp(readFileSync(bmp));
-  const alpha = (x: number, y: number) => f.rgba[(y * f.width + x) * 4 + 3];
-  check(alpha(2, 2) === 0 && alpha(f.width - 3, f.height - 3) === 0 && alpha(f.width >> 1, f.height >> 1) === 255, `a device picture is see-through round the frame (corner alpha ${alpha(2, 2)}, middle ${alpha(f.width >> 1, f.height >> 1)})`);
-}
 // In one batch, each change works from the ones before it: a copy placed after its component was restyled has the new style.
 const pillMade = await call("board_write_html", { board, target: art, html: `<div data-name="Pill" style="display:flex;padding:6px 12px;background:#dddddd"><span>Pill</span></div>` });
 const pill = pillMade.json.created[0].id;
@@ -859,7 +847,7 @@ writeFileSync(path.join(out, "welcome.png"), shot.images[0]);
 const close = await call("board_screenshot", { board, nodes: [card], scale: 2 });
 check(close.images.length === 1 && pngSize(close.images[0]).width === 640, "a layer is cut out of its artboard (its 320 px at 2×)");
 const exp = await call("board_export", { board, scale: 1 });
-check(exp.json.files.length === 7 && exp.json.files.every((f: string) => readFileSync(f).length > 100), "every artboard exports");
+check(exp.json.files.length === 6 && exp.json.files.every((f: string) => readFileSync(f).length > 100), "every artboard exports");
 const list = await call("board_list", {});
 check(list.json.find((x: any) => x.id === board).working.length >= 1, "the artboards being worked on are listed");
 await call("board_done", { board });

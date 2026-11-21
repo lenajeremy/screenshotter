@@ -76,7 +76,7 @@ final class StudioWebView: WKWebView, NSDraggingSource {
 
     // MARK: Paste
 
-    // SVGs and GIFs come in as pictures for image blocks (logos, icons, stickers), the rest as screenshots.
+    // Pictures (SVG and GIF too) and videos, which land on the board as layers.
     static let importableTypes: [UTType] = [.png, .jpeg, .webP, .tiff, .heic, .svg, .gif, .mpeg4Movie, .quickTimeMovie]
 
     static func pasteboardHasImport(_ pb: NSPasteboard = .general) -> Bool {
@@ -93,7 +93,7 @@ final class StudioWebView: WKWebView, NSDraggingSource {
     /// the selector and calls WebKit's own version for ordinary text pastes.
     @objc(paste:) func pasteFromMenu(_ sender: Any?) {
         guard StudioWebView.pasteboardHasImport() else { return webKitPaste(sender) }
-        // Text fields keep normal paste; anywhere else an image becomes a new screenshot.
+        // Text fields keep normal paste; anywhere else an image goes onto the board.
         evaluateJavaScript("Boolean(window.studio && window.studio.isTyping())") { [weak self] result, _ in
             guard let self else { return }
             if (result as? Bool) == true, NSPasteboard.general.string(forType: .string) != nil {
@@ -143,12 +143,6 @@ final class StudioWebView: WKWebView, NSDraggingSource {
 /// dark as the person chose in Settings, else as the Mac is.
 final class StudioWindow: NSWindow {
     static let topBarHeight: CGFloat = 52
-
-    /// The window numbers of the Studio windows showing now: captures keep these, and leave out
-    /// the rest of the app (the capture bar, pickers, pill, bubble and panels).
-    @MainActor static func visibleIDs() -> Set<CGWindowID> {
-        Set(NSApp.windows.compactMap { $0 is StudioWindow && $0.isVisible && $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
-    }
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 880),

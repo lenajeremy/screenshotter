@@ -449,7 +449,7 @@ export async function openBoard(id) {
     Object.assign(B, { id, board, page: remembered?.page && board.pages.some((p) => p.id === remembered.page) ? remembered.page : board.pages[0]?.id, sel: [], hover: null, editing: null, renaming: null, past: [], future: [], tool: "move", working: [], drop: null, guides: [], open: new Set(), comments: { rev: 0, threads: [], agents: board.agents ?? {} }, thread: null, draft: null, talk: "", presence: [], presenceAt: "", following: null });
     if (remembered?.view) B.view = remembered.view;
     else B.view = { ...B.view, fitPending: true };
-    set({ boardId: id, scenesPage: false, scenesOpen: false });
+    set({ boardId: id, homeView: null });
     try {
       localStorage.setItem("board:last", id);
     } catch {}
@@ -468,7 +468,7 @@ export function closeBoard({ toLibrary = true } = {}) {
   try {
     localStorage.removeItem("board:last");
   } catch {}
-  set({ boardId: null, ...(toLibrary ? { scenesPage: true, libraryShelf: "boards" } : {}) });
+  set({ boardId: null });
 }
 
 export async function newBoard(name) {

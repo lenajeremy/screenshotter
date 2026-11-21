@@ -98,3 +98,10 @@ export function cacheDir(sub: string): string {
   const base = process.env.SCREENSHOTTER_CACHE_DIR ?? path.join(homedir(), ".cache", "screenshotter");
   return ensureDir(path.join(base, sub));
 }
+
+// The library's folder: the Studio's own output folder. The MCP server points this at the Studio's.
+let library: () => string = outputRoot;
+export function useLibrary(folder: () => string) {
+  library = folder;
+}
+export const libraryFolder = () => library();

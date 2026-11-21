@@ -137,16 +137,13 @@ writeFileSync(
   <key>LSApplicationCategoryType</key><string>public.app-category.graphics-design</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
-  <key>NSHumanReadableCopyright</key><string>Screenshotter — marketing mockups from your app's real screens.</string>
+  <key>NSHumanReadableCopyright</key><string>Screenshotter — design with your agent.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-  <key>NSAppleEventsUsageDescription</key><string>Screenshotter asks other apps about their windows so it can capture the one you pick.</string>
-  <key>NSCameraUsageDescription</key><string>Screenshotter records your camera alongside your screen when you turn it on in the capture bar.</string>
-  <key>NSMicrophoneUsageDescription</key><string>Screenshotter records your voice with your screen recordings when you turn the microphone on in the capture bar.</string>
   <key>SUFeedURL</key><string>${FEED_URL}</string>
   <key>SUPublicEDKey</key><string>${UPDATE_KEY}</string>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>CFBundleDocumentTypes</key><array><dict>
-    <key>CFBundleTypeName</key><string>Screenshot</string>
+    <key>CFBundleTypeName</key><string>Image</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
     <key>LSHandlerRank</key><string>Alternate</string>
     <key>LSItemContentTypes</key><array>${imageTypes.map((t) => `<string>${t}</string>`).join("")}</array>

@@ -1,7 +1,5 @@
-// Assets: what the rest of Screenshotter has, on a board. Shapes, stickers and illustrations, your
-// pictures and screenshots, Apple's devices round a screenshot (or an artboard), backdrops, and the
-// board's own components. Click to add to the selected frame (or the middle of the view), or drag
-// onto the canvas.
+// Assets: shapes, shaders, stickers and illustrations, your pictures, and the board's own components.
+// Click to add to the selected frame (or the middle of the view), or drag onto the canvas.
 import { useEffect, useState } from "preact/hooks";
 import { openImportWebsite } from "./web-import.js";
 import { htmlToNodes, instanceRootOf, newId, pxValue } from "./board-core.js";
@@ -12,7 +10,7 @@ import { Section, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { shapeInBox } from "./shapes.js";
 import { ShaderAssets, shaderAssetLayers } from "./board-shaders.js";
-import { S, api, dismiss, fail, fileUrl, thumbUrl, toast, useStore } from "./store.js";
+import { S, api, fail, fileUrl, thumbUrl, useStore } from "./store.js";
 
 // ---------------------------------------------------------------------------------------------
 // Shapes: rectangles, circles and pills are frames (plain CSS); the rest are drawn by the same
@@ -75,20 +73,6 @@ async function layersFor(a) {
     const k = Math.min(1, (a.max ?? 360) / Math.max(size.width, size.height));
     return [{ id: newId(), type: "image", name: a.path.split("/").pop().replace(/\.[a-z0-9]+$/i, ""), parent: null, src: a.path, style: { width: `${Math.round(size.width * k)}px`, height: `${Math.round(size.height * k)}px`, objectFit: "cover", flexShrink: "0" } }];
   }
-  if (a.kind === "device") {
-    const t = toast({ kind: "info", icon: "phone", title: "Putting it in a device…", timeout: 60000 });
-    try {
-      const r = await api("/api/board/device", a.node ? { board: B.id, node: a.node } : { screenshot: a.path });
-      const k = 460 / r.height;
-      return [{ id: newId(), type: "image", name: a.name ?? "Device", parent: null, src: r.path, style: { width: `${Math.round(r.width * k)}px`, height: `${Math.round(r.height * k)}px`, objectFit: "contain", flexShrink: "0" } }];
-    } finally {
-      dismiss(t);
-    }
-  }
-  if (a.kind === "backdrop") {
-    const r = await api("/api/board/backdrop", { background: a.look, width: 800, height: 1000 });
-    return [{ id: newId(), type: "image", name: a.look, parent: null, src: r.path, style: { width: "400px", height: "500px", objectFit: "cover", flexShrink: "0" } }];
-  }
   return [];
 }
 
@@ -112,20 +96,6 @@ function clickTarget() {
 /** Put an asset on the board: dropped at a point, or clicked (into the selected frame). */
 export async function addAsset(a, { at, into, ev } = {}) {
   if (a.kind === "component") return placeCopy(a.id, into !== undefined ? { into } : {});
-  if (a.kind === "backdrop" && !at) {
-    // With a frame selected, a backdrop is its fill.
-    const s = B.sel.filter((id) => node(id)?.type === "frame");
-    if (s.length) {
-      try {
-        const box = worldBox(s[0]) ?? { width: 800, height: 1000 };
-        const r = await api("/api/board/backdrop", { background: a.look, width: Math.round(box.width * 2), height: Math.round(box.height * 2) });
-        commit(s.map((id) => ({ op: "set", id, style: { backgroundImage: `url("${r.path}")`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" } })), { label: "Backdrop" });
-      } catch (e) {
-        fail(e, "Couldn't make the backdrop");
-      }
-      return;
-    }
-  }
   if (a.kind === "shader" && !at) {
     // With a frame selected, a shader is its fill.
     const s = B.sel.filter((id) => node(id)?.type === "frame");
@@ -198,9 +168,6 @@ export function AssetsPanel() {
     } catch {}
   };
   const mains = Object.values(b.board.nodes).filter((n) => n.isComponent);
-  const shots = (s.files ?? []).filter((f) => ["raw", "uploads", "recordings"].includes(f.kind) && /\.(png|jpe?g|webp)$/i.test(f.path)).slice(0, 24);
-  const one = b.sel.length === 1 ? node(b.sel[0]) : null;
-  const artboard = one && !one.parent && one.type === "frame" ? one : null;
   return html`<div class="bd-assets">
     <${Section} title="Website" collapsible id="bd-a-web">
       <p class="bd-note">Bring a page in as layers to change: its layout, words, pictures and fonts.</p>
@@ -215,13 +182,6 @@ export function AssetsPanel() {
       <div class="bd-asset-grid shapes">${BOARD_SHAPES.map((k) => html`<${ShapeTile} k=${k} tint=${tint} />`)}</div>
     <//>
     <${ShaderAssets} />
-    <${Section} title="Devices" collapsible id="bd-a-devices">
-      <p class="bd-note">A screenshot in Apple's device frame, as a picture on the board.</p>
-      ${artboard && html`<button class="btn sm block" onClick=${() => addAsset({ kind: "device", node: artboard.id, name: `${artboard.name} in a device` })}><${Icon} n="phone" s=${13} />Put “${artboard.name}” in a device</button>`}
-      ${shots.length
-        ? html`<div class="bd-asset-grid pics">${shots.map((f) => html`<${Tile} a=${{ kind: "device", path: f.path, name: "Device" }} title="Put this screenshot in a device"><img loading="lazy" draggable=${false} src=${thumbUrl(f.path, 160)} alt="" /><//>`)}</div>`
-        : html`<p class="bd-note">Take or bring in a screenshot first (Screenshots, in the design editor).</p>`}
-    <//>
     <${Section} title="Stickers" count=${s.opts?.stickers?.length} collapsible id="bd-a-stickers">
       <div class="bd-asset-grid icons">${(s.opts?.stickers ?? []).map((n) => html`<${Tile} a=${{ kind: "sticker", name: n }} title=${n}><img loading="lazy" draggable=${false} src=${`/ui/stickers/${n}.svg`} alt="" /><//>`)}</div>
     <//>
@@ -233,13 +193,5 @@ export function AssetsPanel() {
     html`<${Section} title="Your pictures" count=${pictures.length} collapsible id="bd-a-pics">
       <div class="bd-asset-grid pics">${pictures.slice(0, 36).map((p) => html`<${Tile} a=${{ kind: "picture", path: p.path }} title=${p.path.split("/").pop()}><img loading="lazy" draggable=${false} src=${thumbUrl(p.path, 160)} alt="" /><//>`)}</div>
     <//>`}
-    ${shots.length > 0 &&
-    html`<${Section} title="Screenshots" count=${shots.length} collapsible open=${false} id="bd-a-shots">
-      <div class="bd-asset-grid pics">${shots.map((f) => html`<${Tile} a=${{ kind: "picture", path: f.path, max: 420 }} title=${f.path.split("/").pop()}><img loading="lazy" draggable=${false} src=${thumbUrl(f.path, 160)} alt="" /><//>`)}</div>
-    <//>`}
-    <${Section} title="Backdrops" collapsible open=${false} id="bd-a-backdrops">
-      <p class="bd-note">With a frame selected, a backdrop becomes its fill; otherwise it's added as a picture.</p>
-      <div class="bd-asset-grid pics">${(s.opts?.looks ?? []).slice(0, 40).map((l) => html`<${Tile} a=${{ kind: "backdrop", look: l.name }} title=${l.description ?? l.name}><img loading="lazy" draggable=${false} src=${`/api/look-thumb?name=${encodeURIComponent(l.name)}`} alt="" /><//>`)}</div>
-    <//>
   </div>`;
 }

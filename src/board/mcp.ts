@@ -50,7 +50,6 @@ import {
   type AgentTouch,
 } from "./core.js";
 import { drawLayers } from "./render.js";
-import { deviceImage } from "./device.js";
 import { builtinSvg, stickerNames, artNames } from "../render/images.js";
 import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
@@ -59,6 +58,7 @@ import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photo
 import { adoptCssPictures, adoptImage, adoptImages, changeBoard, createBoard, findBoard, getBoard, listBoards, scratchPage, summarizeBoard } from "./store.js";
 import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
+import { importFigma } from "./figma-import.js";
 import { importWebsite } from "./web-import.js";
 import { describeAnchor, getComments, keysOf, reply, sentOnly, startThread, threadForAgent } from "./comments.js";
 import { SHADER_PRESETS, cleanShaderCode, cleanShaderParams, cleanShaderSpec, parseShaderParams, presetOf, shaderCatalog, shaderCode, shaderKey, shaderPresetName, shaderUsers, shaderValues, type ShaderSpec } from "./core.js";
@@ -82,13 +82,14 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens, scale: a layer bigger or smaller with its type and spacing) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
+- A Figma file: board_import_figma brings its frames (or one frame, from its link) onto a board as layers.
 - An existing website: board_import_website brings a page onto a board as an artboard of ordinary layers (its layout, words, pictures and fonts, read as the browser draws it at the width you give), ready to change with board_edit like anything else. Use it to redesign or extend a real site from where it is, rather than rebuilding it by hand.
 - Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
 - Masks, as in Figma: a layer used as a mask isn't drawn; the layers above it in its frame (after it, up to the next mask) show only where it is. Write one with data-mask on the element, at the back, with the layers to mask after it: <div style="position:relative;width:320px;height:320px"><div data-mask style="position:absolute;left:0;top:0;width:320px;height:320px;border-radius:50%;background:#000"></div><img style="position:absolute;left:0;top:0;width:320px;height:320px;object-fit:cover" src="…"></div>. Any layer can be the mask: a frame (its corners and fills: a gradient to transparent fades what's above it), a picture (its see-through parts), an svg, or words (the photo shows through the letters). data-mask="vector" masks by its outline, data-mask="luminance" by its brightness (white shows, black hides); plain data-mask is alpha. A mask and what it masks are placed by hand (position:absolute, left, top, width, height): in a flex or grid frame they go in a frame of their own (a mask group), which is one item of the layout. board_edit mask makes one from existing layers (several ids: a new mask group, the one at the back masking the rest), changes its type, or removes it; board_read tree marks masks and what each masks; hiding a mask shows its layers whole.
 - Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
-- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" (list_mockup_options names them) for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
+- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
 - Shaders: live graphics drawn by the GPU (WebGL fragment shaders), as a frame's fill: a moving hero backdrop, a texture, or a finish laid over a picture. Any frame can have one, drawn over its CSS fills and behind its layers, so a shader frame lays out like any frame (a grid cell, an item in a stack) and holds words and pictures over its shader. Built-in presets: ${SHADER_PRESETS.map((p) => p.id).join(", ")} (film-grain is see-through: as a fill it blends as Overlay with the frame's fills under it, a photo say). In HTML: <section data-shader="aurora" data-params='{"intensity":1.3}' style="display:flex;flex-direction:column;justify-content:center;padding:64px;height:560px;border-radius:24px"><h1 style="color:#fff">…</h1></section>, or one with nothing in it as a layer of its own (<div data-shader="mesh-gradient" style="width:400px;height:300px"></div>; <canvas data-shader="…"> works too); data-blend="overlay" mixes it with the frame's own fills. board_edit { do: "shader", id: aFrame, preset: "mesh-gradient", params: { color1: "var(--brand)", warp: 1.2 } } gives a frame one (or changes it; remove: true takes it away); without id it adds a new frame with one (into, width, height). board_read what "shaders" lists every preset's params (numbers with their ranges, colours, choices). It plays on the canvas and in Preview; board_screenshot and exports show it frozen at its time (time / data-time, in seconds): pick a moment that looks good. Writing your own: board_edit { do: "shader", code } or <canvas data-shader="custom"><script type="x-shader/x-fragment">…</script></canvas>. It's GLSL ES 1.00 (or "#version 300 es" first): a main() that sets gl_FragColor (Shadertoy's mainImage, iTime and iResolution work too), given uniform float uTime (seconds), vec2 uRes (the size drawn, in pixels) and float uPx (pixels per design pixel: gl_FragCoord.xy / uPx is in the design's px); precision is set for you. Declare each parameter as a uniform with a comment and the person gets a slider, a colour picker (with the board's tokens) or a choice for it: "uniform float uWarp; // @param 0..2 = 1", "uniform float uSpacing; // @param 4..40 = 12 px" (a length in design px, given to you in drawn px), "uniform vec3 uTint; // @color = #ff5a1f", "uniform int uMode; // @choice soft|hard = soft"; its key in params is its name without the u (warp, tint). Your code is compiled as you write it and errors come back with their line numbers: fix them and send the code again (until then the layer shows the error). savePreset keeps a good one on the board to place again by name. Keep shaders light (a few noise octaves, short loops): one too slow to play is stopped at its still and says so.
 - Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. The person usually sends several at once, as one numbered list: make every change it asks for with the tools above, then answer each in its thread (board_comment's \`replies\` answers them all in one call); the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
@@ -259,19 +260,6 @@ const ChangeSchema = z.discriminatedUnion("do", [
     bend: z.number().min(-1).max(1).optional(),
     sketch: z.boolean().optional().describe("Hand-drawn."),
     name: z.string().optional(),
-  }),
-  z.object({
-    do: z.literal("device"),
-    screenshot: z.string().optional().describe("A screenshot to put in Apple's device frame (the model is detected from its size, or give `device`)."),
-    artboard: z.string().optional().describe("Or an artboard on this board: it's drawn at 3× as the device's screen."),
-    device: z.string().optional().describe('e.g. "iPhone 17 Pro".'),
-    color: z.string().optional(),
-    height: z.number().positive().optional().describe("The picture's height in px. Default 460."),
-    into: z.string().optional(),
-    before: z.string().optional(),
-    after: z.string().optional(),
-    x: z.number().optional(),
-    y: z.number().optional(),
   }),
   z.object({
     do: z.literal("mask"),
@@ -657,7 +645,7 @@ export function registerBoardTools(server: McpServer) {
     {
       title: "Change layers on a board",
       description:
-        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), device (a screenshot or one of the board's artboards in Apple's device frame, as a picture), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again), mask (Figma's Use as mask: a layer masks the layers above it in its frame; several go into a mask group; remove undoes it), shader (a live GPU shader as a frame's fill: given to a frame with id, or a new frame with one; a preset or code of its own, or a change to its preset, code, params, speed, time, paused or blend; remove takes it away; its own code comes back compiled, errors by line). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
+        "Change a board in one go: a list of `changes`, applied together (the person can undo them as one step). Each is one of: style (set CSS on layers; null removes a property), text (a text layer's words, or an SVG <text>'s), vector (SVG attributes of a vector's parts: fill, stroke, d, cx…), scale (layers bigger or smaller with everything in them, type, padding, gaps, corners, borders and shadows too, as Figma's Scale tool does; style width/height only resizes the box; the top left stays put), split / flatten (a vector into a layer for each part, and back), rename, delete, duplicate (the copy goes right after the original; returns its id), move (into a frame or the page, or before/after a layer), visibility, lock, image (an image layer's picture), artboard (a new empty one, placed beside the others unless x/y), page (add a page, or rename/delete one by id), token (a CSS custom property for var(--name)), shape (one of Screenshotter's shapes, drawn to a box: arrows, stars, badges, laurels, ratings, ribbons…), component (make a frame a component), copy (a copy of a component, which follows it: change the component and every copy changes, except what was changed in that copy), detach (a copy becomes ordinary layers), reset (a copy matches its component again), mask (Figma's Use as mask: a layer masks the layers above it in its frame; several go into a mask group; remove undoes it), shader (a live GPU shader as a frame's fill: given to a frame with id, or a new frame with one; a preset or code of its own, or a change to its preset, code, params, speed, time, paused or blend; remove takes it away; its own code comes back compiled, errors by line). Layers inside a copy can be restyled, retyped or hidden, not added, moved or deleted. Returns what each change did.",
       inputSchema: { board: BoardRef, changes: z.array(ChangeSchema).min(1).max(200) },
     },
     (a) =>
@@ -911,29 +899,6 @@ export function registerBoardTools(server: McpServer) {
               results.push({ shape: id, type: c.type });
               break;
             }
-            case "device": {
-              let shot = c.screenshot;
-              if (!shot && c.artboard) {
-                need(c.artboard);
-                const { images } = await drawLayers(b, [c.artboard], { scale: 3, format: "png", transparent: false });
-                if (!images[c.artboard]) throw new Error("That artboard has no size to draw.");
-                shot = path.join(cacheDir("board-artboards"), `${b.id}-${c.artboard}-${b.rev}.png`);
-                writeFileSync(shot, images[c.artboard]);
-              }
-              if (!shot) throw new Error("A device needs a `screenshot` or an `artboard`.");
-              const img = await deviceImage(resolveUserPath(shot), { device: c.device, color: c.color });
-              const h = c.height ?? 460;
-              const w = Math.round((img.width / img.height) * h);
-              const where = placeFor(b, c, need);
-              const id = newId();
-              const style: Record<string, string> = { width: `${w}px`, height: `${Math.round(h)}px`, objectFit: "contain", flexShrink: "0" };
-              if (!where.parent) Object.assign(style, { left: `${Math.round(c.x ?? freeSpot(b, where.page!, w).left)}px`, top: `${Math.round(c.y ?? 0)}px` });
-              else if (c.x !== undefined) Object.assign(style, { position: "absolute", left: `${Math.round(c.x)}px`, top: `${Math.round(c.y ?? 0)}px` });
-              ops.push({ op: "add", nodes: { [id]: { id, type: "image", name: c.device ?? "Device", parent: where.parent, src: img.path, style } }, ids: [id], parent: where.parent, page: where.page, index: where.index, place: !where.parent && c.x === undefined });
-              touched.push(id);
-              results.push({ device: id, picture: img.path });
-              break;
-            }
             case "mask": {
               for (const id of c.ids) need(id);
               if (c.remove) {
@@ -1117,6 +1082,28 @@ export function registerBoardTools(server: McpServer) {
         const r = await importWebsite(b?.id ?? null, { url: a.url, width: a.width, fullPage: a.fullPage, page: a.page }, "agent");
         changeBoard(r.board, workingOps(getBoard(r.board), [r.artboard], me, "import"), "agent");
         return [text({ ...r, note: `It's on the board as the artboard ${r.artboard}. board_read it (tree) to find the layers, board_screenshot it to see it.` })];
+      }),
+  );
+
+  server.registerTool(
+    "board_import_figma",
+    {
+      title: "Bring a Figma file onto a board",
+      description:
+        "Put a Figma file's frames (its first page's, up to 12) or one frame (a link to it: right-click › Copy link to selection) on a board as artboards of ordinary layers: auto layout as flex, fills, strokes, radii, shadows, text with its styles, pictures, and vectors and icons as SVG. Needs a Figma personal access token: the person adds it in the app (Settings › Figma), or the FIGMA_TOKEN environment variable. Takes 5–60 seconds.",
+      inputSchema: {
+        url: z.string().describe("The Figma link: figma.com/design/<key>/… (a frame's link has ?node-id=…)."),
+        board: BoardRef.optional().describe("The board to put it on; left out, a new board named after the file."),
+        page: z.string().optional().describe("The page of the board to put it on (its id); default the first."),
+      },
+    },
+    (a) =>
+      guard(async () => {
+        const b = a.board ? findBoard(a.board) : null;
+        const me = await whoAmI();
+        const r = await importFigma(b?.id ?? null, { url: a.url, page: a.page }, "agent");
+        changeBoard(r.board, workingOps(getBoard(r.board), r.artboards.map((x) => x.id), me, "import"), "agent");
+        return [text({ ...r, note: `On the board as ${r.artboards.length} artboard${r.artboards.length === 1 ? "" : "s"}. board_read it (tree) to find the layers, board_screenshot an artboard to see it.` })];
       }),
   );
 

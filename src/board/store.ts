@@ -6,8 +6,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { libraryFolder } from "../studio/scenes.js";
 import { ensureDir, resolveUserPath } from "../util/files.js";
+import { libraryFolder } from "../util/files.js";
 import { applyOps, emptyBoard, expandOps, mapCssUrls, mapSvgImages, newId, pxValue, reconcileOps, sizeWord, svgImageAttrs, upgradeBoard, type Board, type BoardNode, type Op } from "./core.js";
 
 const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));

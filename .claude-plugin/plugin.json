@@ -1,7 +1,7 @@
 {
   "name": "screenshotter",
   "version": "0.2.0",
-  "description": "Capture real app, web and Mac screens and turn them into App Store screenshots, device mockups, how-to images and product videos, designed with an art-direction guide.",
+  "description": "Design with your agent on boards: artboards of real HTML and CSS you both edit, with websites and Figma files brought in as layers.",
   "mcpServers": {
     "screenshotter": {
       "command": "node",

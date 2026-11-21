@@ -34,7 +34,7 @@ import Foundation
         return bundled
     }
 
-    func start(outputFolder: String, apiKey: String?) {
+    func start(outputFolder: String) {
         stop()
         generation += 1
         let mine = generation
@@ -42,11 +42,11 @@ import Foundation
         Task.detached(priority: .userInitiated) {
             let env = ShellEnvironment.resolve()
             let node = NodeLocator.find(env: env)
-            await MainActor.run { self.launch(mine: mine, env: env, node: node, outputFolder: outputFolder, apiKey: apiKey) }
+            await MainActor.run { self.launch(mine: mine, env: env, node: node, outputFolder: outputFolder) }
         }
     }
 
-    private func launch(mine: Int, env shellEnv: [String: String], node: NodeLocator.Found?, outputFolder: String, apiKey: String?) {
+    private func launch(mine: Int, env shellEnv: [String: String], node: NodeLocator.Found?, outputFolder: String) {
         guard mine == generation else { return }
         guard let node else {
             return set(.failed("node"))
@@ -62,11 +62,10 @@ import Foundation
             .joined(separator: ":")
         env["SCREENSHOTTER_OUTPUT_DIR"] = outputFolder
         env["SCREENSHOTTER_APP"] = "1"
-        // The app itself, which draws recordings' videos on the GPU for the engine's export.
-        if let me = Bundle.main.executablePath { env["SCREENSHOTTER_NATIVE"] = me }
-        if let apiKey, !apiKey.isEmpty { env["ANTHROPIC_API_KEY"] = apiKey }
         // Unsplash's access key, for photo search (Settings › Photos).
         if let unsplash = Keychain.load("unsplash") { env["UNSPLASH_ACCESS_KEY"] = unsplash }
+        // A Figma personal access token, for reading Figma files (Settings).
+        if let figma = Keychain.load("figma") { env["FIGMA_TOKEN"] = figma }
         env.removeValue(forKey: "SCREENSHOTTER_STUDIO_PORT")
         environment = env
 

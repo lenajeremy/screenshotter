@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
- * Check the engine inside build/Screenshotter.app without touching the simulator or your files:
- * it starts on a free port, serves the Studio UI and its assets, renders a real PNG and MP4 into
- * a temporary folder, and exits by itself when its stdin closes (as it does when the app quits).
+ * Check the engine inside build/Screenshotter.app without touching your files: it starts on a free
+ * port, serves the app's UI and its assets, makes a board, draws and exports it as a real PNG, takes
+ * a video (its still made with the app's ffmpeg) into a temporary folder, and exits by itself when
+ * its stdin closes (as it does when the app quits).
  * It runs on the Node and ffmpeg the app carries, with nothing from Homebrew or nvm on its PATH,
  * as on a Mac with nothing installed.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { encodePng } from "../dist/util/png.js";
 
 const resources = path.resolve("build/Screenshotter.app/Contents/Resources");
 const helpers = path.resolve("build/Screenshotter.app/Contents/Helpers");
@@ -47,33 +47,32 @@ try {
     assert.equal(res.status, 200, JSON.stringify(json));
     return json;
   };
-  for (const p of ["/", "/ui/app.js", "/ui/styles.css", "/ui/vendor/preact.js", "/ui/vendor/hooks.js", "/ui/vendor/htm.js", "/ui/icon.svg", "/docs"]) {
+  for (const p of ["/", "/ui/app.js", "/ui/imports.js", "/ui/home-demo.js", "/ui/board.js", "/ui/board-core.js", "/ui/shapes.js", "/ui/styles.css", "/ui/vendor/preact.js", "/ui/vendor/hooks.js", "/ui/vendor/htm.js", "/ui/icon.svg"]) {
     assert.equal((await fetch(base + p)).status, 200, p);
   }
-  pass("Studio UI, vendored Preact/htm and docs are served from the bundle");
+  pass("the app's UI and vendored Preact/htm are served from the bundle");
   const opts = await (await fetch(base + "/api/options")).json();
-  assert(opts.looks.length > 10 && opts.ai && typeof opts.ai.available === "boolean");
-  pass("options include looks and AI status");
-  const upload = await post("/api/upload?name=sample%26test.png", encodePng({ width: 100, height: 200, rgba: Buffer.alloc(100 * 200 * 4, 245) }), true);
-  const request = { devices: [{ screenshot: upload.path, frame: "card" }], canvas: "400x600", background: "pastel", headline: "Bundled engine", preview: false };
-  const preview = await post("/api/mockup", { ...request, quality: "preview" });
-  assert.equal(preview.width, 200);
-  assert.equal((await readFile(preview.path))[0], 137);
-  pass("renders a real PNG");
-  assert.equal((await fetch(`${base}/thumb?path=${encodeURIComponent(upload.path)}&w=120`)).headers.get("content-type"), "image/jpeg");
-  pass("library thumbnails");
-  const bg = await fetch(`${base}/api/bg-preview?bg=${encodeURIComponent(JSON.stringify("pastel"))}&w=90&h=120`);
-  assert.equal(bg.status, 200);
-  pass("backdrop previews");
-  const video = await post("/api/video", { ...request, quality: "preview", format: "mp4", video: { duration: 0.5, fps: 12, motion: "subtle" } });
-  assert((await readFile(video.path)).length > 100);
-  pass("exports an MP4 with the app's own ffmpeg");
-  const webm = await post("/api/video", { ...request, quality: "preview", format: "webm", video: { duration: 0.5, fps: 12, motion: "subtle" } });
-  assert((await readFile(webm.path)).length > 100);
-  pass("exports a WebM (VP9) with it too");
-  await post("/api/state", { scene: request, sceneName: "check" });
-  assert.equal((await (await fetch(base + "/api/state")).json()).sceneName, "check");
-  pass("remembers the design between launches");
+  assert(opts.stickers.length > 10 && opts.art.length > 10 && opts.outputRoot);
+  pass("options list the built-in stickers and illustrations");
+  assert.deepEqual(await (await fetch(base + "/api/agents-connected")).json(), { agents: [] });
+  pass("no agent connected yet");
+  const board = await post("/api/board/new", { name: "Bundle check" });
+  const page = board.pages[0].id;
+  await post("/api/board/ops", { id: board.id, ops: [{ op: "add", page, parent: null, ids: ["a1"], nodes: { a1: { id: "a1", type: "frame", name: "Card", parent: null, children: ["t1"], style: { left: "0px", top: "0px", width: "200px", height: "120px", background: "#2f6fed", display: "flex", alignItems: "center", justifyContent: "center" } }, t1: { id: "t1", type: "text", name: "Words", parent: "a1", text: "Bundled engine", style: { color: "#fff", fontSize: "18px" } } } }] });
+  const exported = await post("/api/board/export", { id: board.id, nodes: ["a1"], scale: 1, format: "png" });
+  const png = await readFile(exported.files[0]);
+  assert.equal(png[0], 137);
+  assert.equal(png.readUInt32BE(16), 200);
+  pass("draws a board and exports it as a real PNG");
+  const clip = path.join(output, "clip.mp4");
+  const made = spawnSync(path.join(helpers, "ffmpeg"), ["-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x48:d=0.5", "-pix_fmt", "yuv420p", clip]);
+  assert.equal(made.status, 0, String(made.stderr));
+  const video = await post("/api/upload?kind=video&name=clip.mp4", await readFile(clip), true);
+  assert(video.poster && existsSync(video.poster), JSON.stringify(video));
+  pass("takes a video, its still made with the app's own ffmpeg");
+  await post("/api/state", { ui: { theme: "dark", touched: { started: true } } });
+  assert.equal((await (await fetch(base + "/api/state")).json()).ui.theme, "dark");
+  pass("remembers preferences between launches");
   const exited = new Promise((resolve) => child.once("exit", resolve));
   child.stdin.end();
   await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error("engine kept running after its stdin closed")), 8000))]);

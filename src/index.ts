@@ -35,13 +35,16 @@ async function main() {
   }
 
   if (process.platform !== "darwin") {
-    console.error("screenshotter-mcp needs macOS with Xcode for simulator capture; mockup rendering still works.");
+    console.error("Screenshotter is made for macOS; boards may still work here.");
   }
   const server = createServer();
+  // The app shows the agent as connected once it has introduced itself.
+  const { noteConnected, noteGone } = await import("./board/agents-live.js");
+  server.server.oninitialized = () => noteConnected(server.server.getClientVersion());
   await server.connect(new StdioServerTransport());
-  (await import("./native/ocr.js")).warmUpOcr();
 
   const shutdown = async () => {
+    noteGone();
     await closeBrowser();
     process.exit(0);
   };

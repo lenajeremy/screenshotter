@@ -40,7 +40,6 @@ const agentman = await fakeAgentman(AM_SOCKET, [
 const { startStudio } = await import("../src/studio/server.js");
 const { encodePng } = await import("../src/util/png.js");
 const { decodePng, pixelAt } = await import("../src/util/png.js");
-const { renderHtml } = await import("../src/render/mockup.js");
 const { closeBrowser } = await import("../src/render/browser.js");
 const boards = await import("../src/board/store.js");
 const boardCore = await import("../src/board/core.js");
@@ -69,10 +68,7 @@ const flat = (file: string, w: number, h: number, [r, g, b]: number[]) => {
 
 /** The library as each engine's run starts: a phone screenshot, an iPad one and two pictures. */
 async function fixtures() {
-  if (!existsSync(shot)) {
-    const rows = Array.from({ length: 8 }, (_, i) => `<div style="height:52px;margin:0 16px 8px;border-radius:14px;background:#fff;display:flex;align-items:center;padding:0 14px">Row ${i + 1}</div>`).join("");
-    await renderHtml(`<!doctype html><body style="margin:0;width:402px;height:874px;background:#f2f2f7;font:17px -apple-system"><div style="height:120px"></div>${rows}</body>`, shot, 402, 874, { scale: 3, format: "png", transparent: false, outWidth: 1206, outHeight: 2622 });
-  }
+  if (!existsSync(shot)) flat(shot, 1206, 2622, [242, 242, 247]);
   if (!existsSync(ipad)) flat(ipad, 2064, 2752, [230, 240, 250]);
   flat(unused, 400, 400, [20, 120, 220]);
   flat(used, 400, 400, [220, 60, 90]);
@@ -128,7 +124,7 @@ const themeAudit = async (page: Page) => {
   await page.evaluate("globalThis.__name = globalThis.__name || ((f) => f)");
   return S(page, () => {
     const theme = document.documentElement.dataset.theme;
-    const DESIGN = ".artboard, .bd-world, .bd-card .art, .sp-thumb, .sp-mini, .shot, .look, .image-tile, .scene-thumb, .tl-clip, .clip-frames, .bezel-set, .sticker-grid, .recipe-img, .set-template, .frame-opt, .shape-prev, .work-shot, .stp-shot, .bd-asset, .bd-swatch, .chip-color, .swatch, .cp-sv, .cp-hue, .cp-presets, .tint, .bd-tints, iframe, video, canvas, img, svg";
+    const DESIGN = ".artboard, .demo-ab, .bd-world, .bd-card .art, .sp-thumb, .sp-mini, .shot, .look, .image-tile, .scene-thumb, .tl-clip, .clip-frames, .bezel-set, .sticker-grid, .recipe-img, .set-template, .frame-opt, .shape-prev, .work-shot, .stp-shot, .bd-asset, .bd-swatch, .chip-color, .swatch, .cp-sv, .cp-hue, .cp-presets, .tint, .bd-tints, iframe, video, canvas, img, svg";
     const rgba = (c: string): number[] | null => {
       const m = /rgba?\(([^)]+)\)/.exec(c);
       if (!m) return null;
@@ -211,89 +207,35 @@ const themeAudit = async (page: Page) => {
 };
 
 /** Every screen of the app, one at a time, for the theme check: each a name and how to get there. */
+const store = async (page: Page, patch: Record<string, unknown>) => S(page, async (p: Record<string, unknown>) => (await import("/ui/store.js" as string)).set(p), patch);
 const SCREENS: Array<[string, (page: Page) => Promise<unknown>]> = [
-  ["welcome", (page) => setDesign(page, { shots: null, groups: null, sceneId: null, scene: { devices: [], background: "meadow-motion" }, starting: false })],
-  ["start-picker", (page) => setDesign(page, { shots: null, groups: null, sceneId: null, scene: phone(), starting: true })],
-  ["confirm", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ starting: false, modal: { kind: "confirm", title: "Delete this design?", text: "It goes to the Bin, with its screenshots.", confirm: "Delete", danger: true } }))],
-  ["editor", (page) => setDesign(page, { modal: null, shots: null, groups: null, sceneId: null, sceneName: "Theme check", scene: phone({ headline: "Say what it **does**" }), leftTab: "captures", leftOpen: true, rightOpen: true, selected: null })],
-  ["editor-device", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "device-1" }))],
-  ["editor-caption", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "caption" }))],
-  ["colour-picker", async (page) => {
-    await page.locator(".panel.right .color-btn").first().click();
-    await page.waitForTimeout(200);
-  }],
-  ["dropdown", async (page) => {
-    await page.keyboard.press("Escape");
-    await page.locator(".panel.right .dd-btn").first().click();
-    await page.waitForTimeout(200);
-  }],
-  ["designs-tab", async (page) => {
-    await page.keyboard.press("Escape");
-    await S(page, async () => (await import("/ui/store.js" as string)).set({ leftTab: "designs", selected: null }));
-  }],
-  ["json", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ jsonOpen: true }))],
-  ["backgrounds-tab", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ jsonOpen: false, leftTab: "backgrounds" }))],
-  ["elements-tab", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ leftTab: "elements" }))],
-  ["images-tab", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ leftTab: "images" }))],
-  ["export", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ exportOpen: true }))],
-  ["timeline", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ exportOpen: false, timelineOpen: true }))],
-  ["ask-ai", (page) => S(page, async () => {
-    const st = await import("/ui/store.js" as string);
-    st.set({ timelineOpen: false, ai: { ...st.S.ai, open: true, docked: true, thread: [{ role: "user", text: "Make the headline bigger" }, { role: "assistant", text: "Done: the headline is **bigger** now." }] } });
-  })],
-  ["ask-ai-floating", (page) => S(page, async () => {
-    const st = await import("/ui/store.js" as string);
-    st.set({ ai: { ...st.S.ai, docked: false } });
-  })],
+  ["home-start", (page) => store(page, { homeView: "start", modal: null })],
+  ["home-boards", (page) => store(page, { homeView: "boards" })],
+  ["connect", (page) => store(page, { modal: { kind: "connect" } })],
+  ["confirm", (page) => store(page, { modal: { kind: "confirm", title: "Delete this board?", text: "The board and every artboard on it are removed.", confirm: "Delete", danger: true } })],
   ["menu", (page) => S(page, async () => {
     const st = await import("/ui/store.js" as string);
-    st.set({ ai: { ...st.S.ai, open: false, docked: true } });
+    st.set({ modal: null });
     (await import("/ui/menu.js" as string)).openMenu(400, 300, [{ label: "Duplicate", icon: "duplicate", kbd: "⌘D", run: () => undefined }, "-", { label: "Delete", icon: "trash", danger: true, run: () => undefined }]);
   })],
   ["toasts", (page) => S(page, async () => {
     const st = await import("/ui/store.js" as string);
     st.set({ menu: null });
-    st.toast({ kind: "ok", title: "Exported 3 screenshots", text: "In Pictures/Screenshotter", timeout: 0 });
+    st.toast({ kind: "ok", title: "Exported 3 images", text: "In the library's exports", timeout: 0 });
     st.toast({ kind: "err", title: "Couldn't export", text: "The disk is full", timeout: 0 });
   })],
-  ["settings", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ toasts: [], modal: { kind: "settings" } }))],
-  ["settings-ai", (page) => S(page, async () => {
-    // The sheet takes its tab as it opens.
-    const st = await import("/ui/store.js" as string);
-    st.set({ modal: null });
-    await new Promise((r) => setTimeout(r, 50));
-    st.set({ modal: { kind: "settings", tab: "ai" } });
-  })],
-  ["settings-devices", (page) => S(page, async () => {
-    // The sheet takes its tab as it opens.
-    const st = await import("/ui/store.js" as string);
-    st.set({ modal: null });
-    await new Promise((r) => setTimeout(r, 50));
-    st.set({ modal: { kind: "settings", tab: "art" } });
-  })],
-  ["settings-photos", (page) => S(page, async () => {
-    // The sheet takes its tab as it opens.
-    const st = await import("/ui/store.js" as string);
-    st.set({ modal: null });
-    await new Promise((r) => setTimeout(r, 50));
-    st.set({ modal: { kind: "settings", tab: "photos" } });
-  })],
+  ...(["general", "agents", "keys", "shortcuts"] as const).map((tab): [string, (page: Page) => Promise<unknown>] => [
+    `settings-${tab}`,
+    (page) => S(page, async (t: string) => {
+      // The sheet takes its tab as it opens.
+      const st = await import("/ui/store.js" as string);
+      st.set({ toasts: [], modal: null });
+      await new Promise((r) => setTimeout(r, 50));
+      st.set({ modal: { kind: "settings", tab: t } });
+    }, tab),
+  ]),
   ["import-website", (page) => S(page, async () => (await import("/ui/web-import.js" as string)).openImportWebsite({ url: "example.com" }))],
-  ["help", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "help" } }))],
-  ["whats-new", (page) => S(page, async () => (await import("/ui/app.js" as string)).openWhatsNew(true))],
-  ["store-page", (page) => S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }))],
-  ["my-designs", (page) => S(page, async () => {
-    const st = await import("/ui/store.js" as string);
-    st.set({ modal: null, libraryShelf: "designs" });
-    (await import("/ui/scenes.js" as string)).openScenesPage();
-  })],
-  ["boards-library", (page) => S(page, async () => {
-    const st = await import("/ui/store.js" as string);
-    st.set({ scenesPage: false });
-    await new Promise((r) => setTimeout(r, 100));
-    st.set({ libraryShelf: "boards" });
-    (await import("/ui/scenes.js" as string)).openScenesPage();
-  })],
+  ["import-figma", (page) => S(page, async () => (await import("/ui/imports.js" as string)).openImportFigma({ url: "https://www.figma.com/design/abc/Landing" }))],
 ];
 
 /** A board with one phone artboard (a column of three rows and a button), open on the page. */
@@ -498,27 +440,6 @@ const CHECKS: Record<string, Check> = {
     const rects = Object.values(boards.getBoard(t.id).nodes).filter((n) => /^Rectangle/.test(n.name)).length;
     const msg = await toasts(page);
     return rects === 1 ? "ok" : `no rectangle drawn (sel ${st.sel}); toasts: ${msg.slice(0, 160)}`;
-  },
-  // From the 0.14 review of the board editor.
-  async "board review: opening a design from My designs while a board is open shows the design"(page) {
-    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Design to open", scene: phone({ headline: "Design to open" }) });
-    await S(page, async () => (await import("/ui/store.js" as string)).saveSceneNow());
-    await page.waitForTimeout(500);
-    const sid = await S(page, async () => (await import("/ui/store.js" as string)).S.sceneId);
-    // A second design on screen, so opening the first isn't a no-op.
-    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Other", scene: phone({ headline: "Other" }) });
-    await openTestBoard(page);
-    await page.keyboard.press("Meta+Shift+o");
-    await page.waitForTimeout(1500);
-    const onLib = await S(page, async () => (await import("/ui/store.js" as string)).S.scenesPage);
-    const card = page.locator(`[data-scene="${sid}"], .sp-card:has-text("Design to open")`).first();
-    const found = await card.count();
-    if (found) await card.click();
-    else await S(page, async (id: string) => (await import("/ui/actions.js" as string)).openScene(id), sid);
-    await page.waitForTimeout(1200);
-    const st = await S(page, async () => { const s = (await import("/ui/store.js" as string)).S; return { boardId: Boolean(s.boardId), scenesPage: s.scenesPage, sceneId: s.sceneId, headline: s.scene?.headline }; });
-    const boardShown = await S(page, () => Boolean(document.querySelector(".bd-app")));
-    return !boardShown ? "ok" : `library open: ${onLib}, card clicked: ${found > 0}; after opening design ${sid}: the board is on screen (${JSON.stringify(st)})`;
   },
   // From the 0.14 review of the board editor.
   async "board review: a layer copied out of a component's copy and pasted on the page no longer follows the component"(page) {
@@ -899,58 +820,6 @@ const CHECKS: Record<string, Check> = {
     const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
     return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
   },
-  async "a website comes onto a new board from My designs, and a pasted address offers to bring one in"(page) {
-    const http = await import("node:http");
-    const site = http.createServer((_q, r) => {
-      r.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      r.end(`<!doctype html><html><head><title>Tiny site</title><meta name="viewport" content="width=device-width"></head><body style="margin:0;font-family:-apple-system,sans-serif"><header style="display:flex;justify-content:space-between;padding:20px 40px;background:#111;color:#fff"><b>Tiny</b><span>Menu</span></header><main style="padding:60px 40px"><h1 style="font-size:44px;margin:0">A tiny site</h1><p>Brought in by a test.</p></main></body></html>`);
-    });
-    await new Promise<void>((done) => site.listen(0, "127.0.0.1", done));
-    const siteUrl = `http://127.0.0.1:${(site.address() as import("node:net").AddressInfo).port}/`;
-    let answer = "";
-    page.on("response", (res) => {
-      if (res.url().includes("/api/board/import-website")) res.text().then((t) => (answer = `${res.status()} ${t.slice(0, 300)}`), () => undefined);
-    });
-    try {
-      await S(page, async () => (await import("/ui/scenes.js" as string)).openScenesPage());
-      await page.locator(".sp-start", { hasText: "Import a website" }).click();
-      await page.waitForSelector(".web-import input");
-      await page.locator(".web-import .wi-url input").fill(siteUrl);
-      await page.waitForTimeout(200);
-      await picture(page, "import-sheet");
-      await page.keyboard.press("Enter");
-      await page.waitForFunction(() => document.querySelector(".web-import .wi-progress"), null, { timeout: 5000 }).catch(() => undefined);
-      const landed = await page.waitForFunction(() => (!document.querySelector(".web-import") && document.querySelector(".bd-world [data-bid]")) || document.querySelector(".toast.err"), null, { timeout: 90_000 }).then(() => true, () => false);
-      if (!landed || (await S(page, () => Boolean(document.querySelector(".toast.err"))))) return `the import didn't land: ${answer || (await toasts(page))}`;
-      await page.waitForTimeout(600);
-      await picture(page, "import-done");
-      const got = await S(page, async () => {
-        const m = await import("/ui/board-state.js" as string);
-        const b = m.B.board;
-        const art = b.nodes[m.B.sel[0]];
-        const words = Object.values(b.nodes as Record<string, { type: string; text?: string }>).filter((n) => n.type === "text").map((n) => (n.text ?? "").replace(/<[^>]+>/g, ""));
-        return { name: b.name, sel: m.B.sel.length, root: art && !art.parent, width: art?.style.width, words };
-      });
-      const toast = await toasts(page);
-      if (got.name !== "Tiny site" || got.sel !== 1 || !got.root || got.width !== "1440px") return `the board is ${JSON.stringify({ ...got, words: undefined })}`;
-      if (!got.words.includes("A tiny site") || !got.words.includes("Menu")) return `its words are ${got.words.join(" | ")}`;
-      if (!/Brought in Tiny site/.test(toast)) return `the toast says "${toast}"`;
-      // On a board, a pasted address is pasted as words and offers to bring the site in.
-      await S(page, async (u: string) => {
-        const dt = new DataTransfer();
-        dt.setData("text/plain", u);
-        window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-      }, "https://example.com/pricing");
-      const offer = await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((t) => /Import this website\?/.test(t.textContent ?? "")), null, { timeout: 4000 }).then(() => true, () => false);
-      if (!offer) return "pasting an address didn't offer to import it";
-      await page.locator(".toast button", { hasText: "Import" }).first().click();
-      const filled = await page.waitForFunction(() => (document.querySelector(".web-import .wi-url input") as HTMLInputElement | null)?.value, null, { timeout: 4000 }).then((h) => h.jsonValue(), () => "");
-      await page.keyboard.press("Escape");
-      return filled === "https://example.com/pricing" ? "ok" : `the sheet opened with "${filled}"`;
-    } finally {
-      site.close();
-    }
-  },
   async "an agent's cursor goes to what it touches, and following it brings its changes into view, at your zoom, until you look away"(page) {
     const t = await openTestBoard(page);
     const phone = t.byName("Phone");
@@ -1029,7 +898,7 @@ const CHECKS: Record<string, Check> = {
     const served = /data-theme-pref="(\w+)"/.exec(await (await fetch(BASE)).text())?.[1];
     await page.reload({ waitUntil: "domcontentloaded" });
     const first = await S(page, () => document.documentElement.dataset.theme);
-    await page.waitForSelector(".topbar, .app, .app-board", { timeout: 15000 });
+    await page.waitForSelector(".topbar, .home", { timeout: 15000 });
     // System: whatever the Mac is, as it changes.
     await S(page, async () => (await import("/ui/store.js" as string)).setTheme("system"));
     await page.emulateMedia({ colorScheme: "light" });
@@ -1041,7 +910,7 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(900);
     const servedAfter = /data-theme-pref="(\w+)"/.exec(await (await fetch(BASE)).text())?.[1];
     const got = { picked, bg, served, first, sysLight, sysDark, servedAfter };
-    return picked === "light" && bg === "rgb(231, 231, 234)" && served === "light" && first === "light" && sysLight === "light" && sysDark === "dark" && servedAfter === "system" ? "ok" : JSON.stringify(got);
+    return picked === "light" && bg === "rgb(239, 239, 241)" && served === "light" && first === "light" && sysLight === "light" && sysDark === "dark" && servedAfter === "system" ? "ok" : JSON.stringify(got);
   },
   async "light and dark: on every screen the words read, and nothing is left in the other theme's colours"(page) {
     const problems: string[] = [];
@@ -1049,7 +918,7 @@ const CHECKS: Record<string, Check> = {
       await S(page, async (t: string) => (await import("/ui/store.js" as string)).setTheme(t), theme);
       await S(page, async () => {
         const st = await import("/ui/store.js" as string);
-        st.set({ scenesPage: false, modal: null, toasts: [], menu: null, boardId: null });
+        st.set({ modal: null, toasts: [], menu: null, homeView: null });
       });
       await page.waitForTimeout(300);
       const look = async (screen: string) => {
@@ -1062,7 +931,7 @@ const CHECKS: Record<string, Check> = {
         await look(screen);
       }
       // A board: its editor, a layer picked, the comments, a thread and the bar that sends them.
-      await S(page, async () => (await import("/ui/scenes.js" as string)).closeScenesPage?.());
+      await store(page, { modal: null });
       const t = await openTestBoard(page);
       boards.changeBoard(t.id, [{ op: "agent", agent: { key: AGENT, session: AGENT, how: "process", kind: "claude", name: "Design agent", cwd: tmp }, artboards: [t.byName("Phone")], at: new Date().toISOString() }], "agent");
       talk.startThread(t.id, { layer: t.byName("Row One") }, { text: "Row one is too tight", by: "person", pending: true });
@@ -1411,20 +1280,21 @@ const CHECKS: Record<string, Check> = {
     const steps = (await past()) - before;
     return boards.getBoard(t.id).nodes[phone].style.width === "300px" && steps === 1 ? "ok" : `Enter: width ${boards.getBoard(t.id).nodes[phone].style.width}, ${steps} undo steps`;
   },
-  async "with a board open, a paste goes onto the board, and a capture's Edit opens the design"(page) {
+  async "a paste goes onto the open board; on Home it starts a board with it"(page) {
     const t = await openTestBoard(page);
+    const cmd = (p: string) => S(page, (p: string) => (window as unknown as { studio: { command: (n: string, a: unknown) => unknown } }).studio.command("imported", [{ path: p, width: 390, height: 844 }]), p);
     // A paste in the Mac app (or a file opened from Finder) arrives as `imported`.
-    await S(page, (p: string) => (window as unknown as { studio: { command: (n: string, a: unknown) => unknown } }).studio.command("imported", [{ path: p, width: 390, height: 844 }]), shot);
+    await cmd(shot);
     await page.waitForTimeout(1500);
     const onBoard = Object.values(boards.getBoard(t.id).nodes).some((n) => n.type === "image" && n.src === shot);
-    // The corner card's Edit after a screenshot: the board makes way for the design.
-    await S(page, (p: string) => (window as unknown as { studio: { command: (n: string, a: unknown) => unknown } }).studio.command("openRecording", { image: p, width: 1206, height: 2622 }), shot);
+    // On Home: a new board, open, with the picture on it.
+    await S(page, async () => (await import("/ui/board-state.js" as string)).closeBoard());
+    await page.waitForTimeout(300);
+    await cmd(used);
     await page.waitForTimeout(1800);
-    const st = await S(page, async () => {
-      const s = (await import("/ui/store.js" as string)).S;
-      return { board: Boolean(s.boardId), shown: Boolean(document.querySelector(".bd-app")), devices: (s.scene.devices ?? []).map((d: { screenshot?: string }) => d.screenshot) };
-    });
-    return onBoard && !st.board && !st.shown && st.devices.includes(shot) ? "ok" : `pasted onto the board: ${onBoard}; after Edit: ${JSON.stringify(st)}`;
+    const opened = await S(page, async () => (await import("/ui/store.js" as string)).S.boardId as string | null);
+    const started = Boolean(opened && opened !== t.id && Object.values(boards.getBoard(opened).nodes).some((n) => n.type === "image" && n.src === used));
+    return onBoard && started ? "ok" : `pasted onto the board: ${onBoard}; on Home, a board started with it: ${started} (${opened})`;
   },
   async "on a board, a save the engine misses is tried again, and one it refuses leaves undo"(page) {
     const t = await openTestBoard(page);
@@ -1846,263 +1716,6 @@ const CHECKS: Record<string, Check> = {
     if (count !== "2×") return `the token list says ${count} layers use it`;
     return picked === "Row One,Row Two" ? "ok" : `a click on the count selected ${picked || "nothing"}`;
   },
-  async "the Images panel's grids fit the panel"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone(), leftTab: "images", leftOpen: true });
-    await page.waitForTimeout(1200);
-    return S(page, () => {
-      const bad: string[] = [];
-      for (const g of document.querySelectorAll(".panel.left .sticker-grid, .panel.left .image-grid")) {
-        const r = g.getBoundingClientRect();
-        for (const t of g.querySelectorAll(":scope > button, :scope > .image-tile")) {
-          const k = t.getBoundingClientRect();
-          if (k.right > r.right + 1 || k.left < r.left - 1) bad.push(`${g.className}: a tile runs past the edge`);
-        }
-        const next = g.parentElement?.nextElementSibling?.getBoundingClientRect();
-        if (next && next.top < r.bottom - 1) bad.push(`${g.className}: overlaps what follows`);
-      }
-      return bad.length ? [...new Set(bad)].join("; ") : "ok";
-    });
-  },
-  async "clicking a sticker, an illustration and a picture adds each"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone(), leftTab: "images", leftOpen: true });
-    await page.waitForTimeout(1200);
-    for (const sel of [".sticker-grid:not(.art-grid) button >> nth=2", ".art-grid button >> nth=4", ".image-grid .image-tile > button:first-child >> nth=0"]) {
-      await page.locator(sel).scrollIntoViewIfNeeded();
-      await page.locator(sel).click();
-      await page.waitForTimeout(800);
-    }
-    await page.waitForTimeout(1000);
-    const n = await S(page, async () => ((await import("/ui/store.js" as string)).S.scene.images ?? []).length);
-    const shown = await shownOnCanvas(page);
-    return n === 3 && shown === 3 ? "ok" : `${n} added, ${shown} shown`;
-  },
-  async "dragging a sticker, an illustration and a picture onto a blank screen of a square set lands each"(page) {
-    const full = phone({ canvas: "1:1", layout: "custom", headline: "Hi" });
-    const blank = { devices: [], background: "cream-grain", canvas: "1:1", layout: "custom" };
-    await setDesign(page, { shots: [full, full, blank].map((scene) => ({ scene })), shot: 2, groups: null, scene: blank, leftTab: "images", leftOpen: true });
-    await page.waitForTimeout(1800);
-    for (const sel of [".sticker-grid:not(.art-grid) button >> nth=5", ".art-grid button >> nth=2", ".image-grid .image-tile > button:first-child >> nth=0"]) await dragToCanvas(page, sel);
-    await page.waitForTimeout(1000);
-    const imgs = await S(page, async () => ((await import("/ui/store.js" as string)).S.scene.images ?? []) as Array<{ x: number; y: number; src: string }>);
-    const shown = await shownOnCanvas(page);
-    const inside = imgs.every((b) => b.x > 0 && b.x < 1 && b.y > 0 && b.y < 1);
-    const builtIns = imgs.slice(0, 2).every((b) => /^(sticker|art):/.test(b.src));
-    const ghost = await S(page, () => Boolean(document.querySelector(".shape-ghost")));
-    return imgs.length === 3 && shown === 3 && inside && builtIns && !ghost ? "ok" : `${imgs.length} added (${imgs.map((b) => b.src.split("/").pop()).join(", ")}), ${shown} shown, inside ${inside}, ghost left ${ghost}`;
-  },
-  async "an illustration takes its colour"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ images: [{ src: "art:blob-1", x: 0.3, y: 0.3, height: 0.2, tint: "#ff0000" }] }) });
-    await page.waitForTimeout(1500);
-    return S(page, () => {
-      const t = document.querySelector(".stage .artboard .image-body .tinted");
-      if (!t) return "no coloured layer";
-      const cs = getComputedStyle(t);
-      const mask = cs.webkitMaskImage || cs.maskImage || "";
-      return /255, 0, 0/.test(cs.backgroundColor) && mask.includes("url") && t.getBoundingClientRect().width > 4 ? "ok" : `colour ${cs.backgroundColor}, mask ${mask.slice(0, 40)}`;
-    });
-  },
-  async "the squiggly underline draws, and Wavy underline is the headline's Accent"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Say it **wavy**", textStyle: { accentMark: "squiggle", accentColor: "#e0662a" } }), selected: "caption", rightOpen: true });
-    await page.waitForTimeout(1500);
-    return S(page, () => {
-      const mark = [...document.querySelectorAll<HTMLElement>(".stage .artboard .mark")].some((x) => (x.style.backgroundImage || "").includes("svg"));
-      // Accent is a dropdown now: its button shows the mark in use.
-      const wavy = [...document.querySelectorAll(".panel.right .dd-btn")].some((b) => b.textContent?.trim() === "Wavy underline");
-      return mark && wavy ? "ok" : `mark ${mark}, Wavy underline shown ${wavy}`;
-    });
-  },
-  async "the store page's app icon can be chosen, and is still there after a reload"(page) {
-    await setDesign(page, { shots: null, groups: null, sceneName: "Icon test", appIcon: null, scene: phone({ headline: "Hi" }) });
-    await page.waitForTimeout(800);
-    await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }));
-    await page.waitForTimeout(700);
-    await page.locator(".stp-icon").click();
-    await page.waitForTimeout(700);
-    await page.locator(".stp-icon-menu .pics button >> nth=0").click();
-    await page.waitForTimeout(700);
-    const before = await S(page, () => ((document.querySelector(".stp-icon img") as HTMLImageElement | null)?.naturalWidth ?? 0) > 0);
-    await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      st.set({ modal: null });
-      await st.flushPersist?.();
-      await st.saveSceneNow();
-    });
-    await page.waitForTimeout(1000);
-    await page.reload({ waitUntil: "networkidle" });
-    await page.waitForTimeout(1500);
-    await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }));
-    await page.waitForTimeout(900);
-    const after = await S(page, () => ((document.querySelector(".stp-icon img") as HTMLImageElement | null)?.naturalWidth ?? 0) > 0);
-    return before && after ? "ok" : `shown ${before}, after a reload ${after}`;
-  },
-  async "deleting an unused picture deletes it; Undo brings it back"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone(), appIcon: null, leftTab: "images", leftOpen: true });
-    await page.waitForTimeout(900);
-    await S(page, async (p: string) => (await import("/ui/actions.js" as string)).deletePicture(p), unused);
-    await page.waitForTimeout(700);
-    const gone = !existsSync(unused) && !(await listed(unused));
-    await undoToast(page);
-    await page.waitForTimeout(700);
-    const back = existsSync(unused) && (await listed(unused));
-    return gone && back ? "ok" : `deleted ${gone}, back ${back}`;
-  },
-  async "deleting a picture the open design uses keeps it on the design; Undo lists it again"(page) {
-    await setDesign(page, { shots: null, groups: null, sceneId: null, scene: phone({ images: [{ src: used, x: 0.5, y: 0.2, height: 0.1 }] }), leftTab: "images", leftOpen: true });
-    await page.waitForTimeout(1400);
-    await S(page, async (p: string) => (await import("/ui/actions.js" as string)).deletePicture(p), used);
-    await page.waitForTimeout(1400);
-    const inList = await listed(used);
-    const said = await toasts(page);
-    const shown = await S(page, () => [...document.querySelectorAll<HTMLImageElement>(".stage .artboard .image-body img")].some((i) => i.naturalWidth > 0));
-    await undoToast(page);
-    await page.waitForTimeout(700);
-    const relisted = await listed(used);
-    return existsSync(used) && !inList && shown && /Removed/.test(said) && relisted ? "ok" : `file ${existsSync(used)}, listed ${inList}, on the design ${shown}, "${said.slice(0, 70)}", listed after Undo ${relisted}`;
-  },
-  async "a design of just words and doodles starts, exports and shows its finished look"(page) {
-    await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
-    await page.waitForTimeout(1000);
-    const welcome = await S(page, () => Boolean(document.querySelector(".welcome")));
-    await page.locator(".welcome-alt .alt", { hasText: "Start with text" }).click();
-    await page.waitForTimeout(1600);
-    const r = await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      const a = await import("/ui/actions.js" as string);
-      const exportOn = !([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Export") as HTMLButtonElement | undefined)?.disabled;
-      // Its headline is the stand-in, so Export asks first; going ahead exports it as it is.
-      const going = a.exportImage();
-      await new Promise((r) => setTimeout(r, 400));
-      const asked = st.S.modal?.kind === "confirm" && /placeholder/i.test(st.S.modal.title);
-      ([...document.querySelectorAll(".sheet-foot button")].find((b) => b.textContent?.includes("Export anyway")) as HTMLButtonElement | undefined)?.click();
-      await going;
-      for (let i = 0; i < 100 && st.S.rendering; i++) await new Promise((r) => setTimeout(r, 400));
-      const exported = asked && st.S.toasts.some((t: { title: string }) => /exported/i.test(t.title));
-      // The editor stays put; the finished look settles over the design.
-      let finished = false;
-      for (let i = 0; i < 60 && !finished; i++) {
-        await new Promise((r) => setTimeout(r, 400));
-        finished = Boolean(document.querySelector(".stage .artboard > img.finished.on"));
-      }
-      return { exportOn, exported, finished, stayed: !st.S.modal, layout: Boolean(st.S.layout) };
-    });
-    return welcome && r.exportOn && r.exported && r.finished && r.stayed && r.layout ? "ok" : `start screen ${welcome}, ${JSON.stringify(r)}`;
-  },
-  async "the first screenshot of a new design offers starting designs; picking one goes to the editor"(page) {
-    await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
-    await page.waitForTimeout(800);
-    await S(page, async (p: string) => (await import("/ui/actions.js" as string)).addDevice(p), shot);
-    await page.locator(".start-pick .pick-card").first().waitFor({ timeout: 20000 });
-    const cards = await page.locator(".start-pick .pick-card").count();
-    await page.waitForFunction(() => !(window as any).studio.state.designing, null, { timeout: 30000 });
-    await page.locator(".start-pick .pick-card", { hasText: "Tilted" }).click();
-    await page.waitForFunction(() => !(window as any).studio.state.starting, null, { timeout: 30000 });
-    await page.waitForTimeout(800);
-    const r = await S(page, () => ({ canvas: Boolean(document.querySelector(".stage .artboard")), pick: Boolean(document.querySelector(".start-pick")), tilted: (window as any).studio.state.scene.layout === "tilted" }));
-    return cards >= 6 && r.canvas && !r.pick && r.tilted ? "ok" : `${cards} cards, ${JSON.stringify(r)}`;
-  },
-  async "a design of just words comes back after a reload"(page) {
-    await S(page, async () => (await import("/ui/actions.js" as string)).newScene());
-    await page.waitForTimeout(800);
-    await page.locator(".welcome-alt .alt", { hasText: "Start with text" }).click();
-    await page.waitForTimeout(1400);
-    await S(page, async () => (await import("/ui/store.js" as string)).flushPersist?.());
-    await page.waitForTimeout(900);
-    await page.reload({ waitUntil: "networkidle" });
-    await page.waitForTimeout(1800);
-    return S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      const welcome = Boolean(document.querySelector(".welcome"));
-      return st.S.scene.headline && st.S.layout && !welcome ? "ok" : `headline ${Boolean(st.S.scene.headline)}, laid out ${Boolean(st.S.layout)}, start screen ${welcome}`;
-    });
-  },
-  async "a set with a phone screen, a words screen and a blank screen exports, and a words screen exports as a video"(page) {
-    const words = { devices: [], background: "cream-grain", canvas: "1:1", layout: "custom", headline: "Just **words**", textStyle: { accentMark: "squiggle" }, images: [{ src: "art:arrow-loop", x: 0.3, y: 0.6, height: 0.1 }] };
-    const blank = { devices: [], background: "cream-grain", canvas: "1:1", layout: "custom" };
-    await setDesign(page, { sceneName: "Set export", shots: [phone({ canvas: "1:1", layout: "custom", headline: "One" }), words, blank].map((scene) => ({ scene })), shot: 1, groups: null, scene: words });
-    await page.waitForTimeout(1400);
-    await S(page, async () => (await import("/ui/actions.js" as string)).exportWholeSet());
-    await waitIdle(page);
-    const set = await toasts(page);
-    await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      st.set({ toasts: [], exportOpts: { ...st.S.exportOpts, video: { ...st.S.exportOpts.video, screens: "this" } } });
-      await (await import("/ui/actions.js" as string)).exportVideo();
-    });
-    await waitIdle(page);
-    const video = await toasts(page);
-    const ok = /export/i.test(set) && !/nothing to export|couldn/i.test(set) && /video exported/i.test(video);
-    return ok ? "ok" : `set: "${set.slice(0, 90)}", video: "${video.slice(0, 90)}"`;
-  },
-  async "a whole-set template keeps a square set square; iPad screenshots on an iPhone canvas get the iPad canvas"(page) {
-    const sq = phone({ canvas: "1:1", layout: "custom" });
-    await setDesign(page, { shots: [sq, sq].map((scene) => ({ scene })), shot: 0, groups: null, scene: sq });
-    await page.waitForTimeout(700);
-    const apply = (id: string) => S(page, async (id: string) => {
-      const st = await import("/ui/store.js" as string);
-      await (await import("/ui/actions.js" as string)).applySetTemplate(id);
-      await new Promise((r) => setTimeout(r, 1200));
-      return [st.S.scene.canvas, st.S.shots?.length];
-    }, id);
-    const square = await apply("clean");
-    await setDesign(page, { shots: null, groups: null, scene: { devices: [{ screenshot: ipad }], background: "cream-grain", canvas: "iphone-6.9" } });
-    await page.waitForTimeout(700);
-    const tablet = await apply("tablet");
-    return square[0] === "1:1" && square[1] === 5 && tablet[0] === "ipad-13" ? "ok" : `square set → ${square}, iPad screenshots → ${tablet}`;
-  },
-  async "the Templates panel's set previews load, with the ones made for the screenshot first"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: { devices: [{ screenshot: ipad }], background: "cream-grain", canvas: "ipad-13" }, leftTab: "designs", leftOpen: true });
-    // Which screenshot it is (iPad here) comes from the engine: give it a moment to reorder them.
-    let first = "";
-    const f0 = Date.now();
-    while (!/iPad spread/.test(first) && Date.now() - f0 < 15_000) {
-      await page.waitForTimeout(250);
-      first = await S(page, () => document.querySelector(".set-template b")?.textContent ?? "");
-    }
-    if (process.env.UI_TEST_TIMES) console.log(`    (made-for order: ${Date.now() - f0} ms)`);
-    // Each preview draws five screens, and all sixteen are asked for at once: give them time.
-    const t0 = Date.now();
-    let loaded = 0;
-    while (loaded < 2 && Date.now() - t0 < 150_000) {
-      await page.waitForTimeout(1000);
-      loaded = await S(page, () => [...document.querySelectorAll<HTMLImageElement>(".set-template .strip img")].slice(0, 3).filter((i) => i.naturalWidth > 0).length);
-    }
-    if (process.env.UI_TEST_TIMES) console.log(`    (previews: ${Math.round((Date.now() - t0) / 1000)} s)`);
-    return /iPad spread/.test(first) && loaded >= 2 ? "ok" : `first "${first}", ${loaded} previews loaded in ${Math.round((Date.now() - t0) / 1000)} s`;
-  },
-  async "a device dragged onto a seam sits across both screens; dragged onto the next screen it moves there"(page) {
-    const scenes = [0, 1, 2].map((i) => ({ devices: i === 1 ? [{ screenshot: shot, x: 0.5, y: 0.55, height: 0.7, anchor: "center" }] : [], background: "cream-grain", canvas: "iphone-6.9", layout: "custom", headline: `Screen ${i + 1}` }));
-    await setDesign(page, { shots: scenes.map((scene) => ({ scene })), shot: 1, groups: null, scene: scenes[1], leftOpen: false, selected: null });
-    await page.waitForTimeout(2000);
-    const state = () => S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      const shots = st.allShots() as Array<{ scene: { devices: Array<{ x: number }>; spill?: Array<{ x: number }> } }>;
-      return { shot: st.S.shot, devices: shots.map((x) => x.scene.devices.map((d) => d.x)), spill: shots.map((x) => (x.scene.spill ?? []).map((d) => d.x)) };
-    });
-    /** Drag the device on the canvas by a share of the screen's width, reading the seam label just before letting go. */
-    const drag = async (by: number) => {
-      const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
-      const board = (await page.locator(".stage .artboard").first().boundingBox())!;
-      const sx = dev.x + dev.width / 2;
-      const sy = dev.y + dev.height / 2;
-      await page.mouse.move(sx, sy);
-      await page.mouse.down();
-      for (let k = 1; k <= 14; k++) await page.mouse.move(sx + board.width * by * (k / 14), sy);
-      await page.waitForTimeout(150);
-      const label = await S(page, () => document.querySelector(".seam-label")?.textContent ?? "");
-      await page.mouse.up();
-      await page.waitForTimeout(1800);
-      return label;
-    };
-    // Near the left seam (not exactly on it): it's pulled across it, and says so.
-    const label = await drag(-0.47);
-    const across = await state();
-    const onSeam = across.shot === 1 && across.devices[1][0] === 0 && across.spill[0].some((x) => Math.abs(x - 1) < 0.01);
-    // Now well onto the next screen: it moves there, and that screen opens with it.
-    await drag(1.45);
-    const moved = await state();
-    const handed = moved.shot === 2 && moved.devices[1].length === 0 && moved.devices[2].length === 1 && Math.abs(moved.devices[2][0] - 0.5) < 0.15;
-    return /Across 1 & 2/.test(label) && onSeam && handed ? "ok" : `label "${label}", across ${JSON.stringify(across)}, moved ${JSON.stringify(moved)}`;
-  },
   // Smoothness: what moves with the pointer redraws, and nothing else does.
   async "on a board, panning, pinching and the pointer redraw the canvas, not the panels"(page) {
     const t = await openTestBoard(page);
@@ -2220,407 +1833,6 @@ const CHECKS: Record<string, Check> = {
     const saved = boards.getBoard(t.id).nodes[phone].style.left;
     if (saved !== `${shown}px`) return `the panel shows X ${shown}, the board has ${saved}`;
     return saves.length >= 1 && saves.length <= 12 ? "ok" : `scrubbing saved the board ${saves.length} times`;
-  },
-  async "on the canvas, a burst of trackpad events in one frame all count, and screenshots load at the engine's sizes"(page) {
-    await page.evaluate("globalThis.__name = (f) => f");
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
-    await page.waitForTimeout(1500);
-    const r = await S(page, async () => {
-      const { canvasApi } = await import("/ui/canvas.js" as string);
-      const vp = document.querySelector(".stage .viewport")!;
-      const b = vp.getBoundingClientRect();
-      const frames = () => new Promise((f) => requestAnimationFrame(() => requestAnimationFrame(f)));
-      const worldX = () => new DOMMatrix(getComputedStyle(document.querySelector(".stage .world")!).transform).m41;
-      const s0 = canvasApi.scale as number;
-      // Five pinch steps and four scrolls, each burst within one frame.
-      for (let i = 0; i < 5; i++) vp.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, ctrlKey: true, deltaY: -10 }));
-      await frames();
-      const s1 = canvasApi.scale as number;
-      const x1 = worldX();
-      for (let i = 0; i < 4; i++) vp.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: b.left + 10, clientY: b.top + 10, deltaX: 10 }));
-      await frames();
-      const widths = [...document.querySelectorAll(".stage .artboard .ent-device img")].map((i) => Number(new URL((i as HTMLImageElement).src).searchParams.get("w"))).filter(Boolean);
-      return { want: s0 * Math.exp(0.012 * 10 * 5), s1, dx: worldX() - x1, widths };
-    });
-    if (Math.abs(r.s1 - r.want) > r.want * 1e-6) return `five pinch steps zoomed to ${r.s1}, not ${r.want}`;
-    if (Math.abs(r.dx + 40) > 0.01) return `four scrolls of 10 px moved the design ${r.dx} px`;
-    if (!r.widths.length || r.widths.some((w) => w % 40)) return `the screenshot was asked for at ${r.widths.join(", ")} px wide (the engine makes them in steps of 40)`;
-    return "ok";
-  },
-  async "on the canvas, the pointer over an item redraws the canvas, not the panels"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
-    await page.waitForTimeout(1500);
-    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
-    const draws = await drawsDuring(page, ["App", "Topbar", "Rail", "LeftPanel", "Inspector", "CanvasView"], async () => {
-      await page.mouse.move(dev.x + dev.width / 2, dev.y + dev.height / 2);
-      await page.waitForTimeout(150);
-    });
-    if (draws.App || draws.Topbar || draws.Rail || draws.LeftPanel || draws.Inspector || !draws.CanvasView) return `the pointer drew ${JSON.stringify(draws)}`;
-    const shown = await S(page, async ({ x, y }: { x: number; y: number }) => {
-      for (let i = 0; i < 20 && !document.querySelector(".stage .hover-box"); i++) await new Promise((r) => setTimeout(r, 50));
-      const hover = (await import("/ui/store.js" as string)).S.hover;
-      return { box: Boolean(document.querySelector(".stage .hover-box")), hover, under: document.elementFromPoint(x, y)?.className };
-    }, { x: dev.x + dev.width / 2, y: dev.y + dev.height / 2 });
-    return shown.box && shown.hover === "device-1" ? "ok" : `the pointer over the device shows ${JSON.stringify(shown)}`;
-  },
-  async "on the timeline, a fast scrub and a fast bar drag end where they're let go"(page) {
-    await page.evaluate("globalThis.__name = (f) => f");
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi", animations: [{ targets: "caption", at: 0.5, enter: "slide-up" }, { targets: "device-1", at: 1, enter: "zoom" }] }), timelineOpen: true });
-    await page.waitForSelector(".tl-ruler");
-    await page.waitForTimeout(1500);
-    const r = await S(page, async () => {
-      const tl = await import("/ui/timeline.js" as string);
-      const st = await import("/ui/store.js" as string);
-      const pe = (type: string, el: EventTarget, x: number, y: number) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: "mouse", button: 0, buttons: type === "pointerup" ? 0 : 1 }));
-      const ruler = document.querySelector(".tl-ruler")!;
-      const tracks = document.querySelector(".tl-tracks")!.getBoundingClientRect();
-      const y = ruler.getBoundingClientRect().top + 4;
-      const total = tl.videoLength() as number;
-      // Several moves within one frame, then let go: the playhead is where the pointer let go.
-      pe("pointerdown", ruler, tracks.left + tracks.width * 0.1, y);
-      for (const f of [0.3, 0.8, 0.5, 0.62]) pe("pointermove", document.body, tracks.left + tracks.width * f, y);
-      pe("pointerup", document.body, tracks.left + tracks.width * 0.62, y);
-      const scrub = { t: tl.playhead.t as number, want: total * 0.62 };
-      // A bar dragged the same way starts where it was let go.
-      const bar = [...document.querySelectorAll(".tl-bar")].find((b) => !b.classList.contains("ambient"))!;
-      const bb = bar.getBoundingClientRect();
-      const before = st.S.scene.animations.map((a: { at: number }) => a.at);
-      const pps = tracks.width / total;
-      pe("pointerdown", bar, bb.left + 4, bb.top + bb.height / 2);
-      for (const dx of [10, 140, 20, 70]) pe("pointermove", document.body, bb.left + 4 + dx, bb.top + bb.height / 2);
-      pe("pointerup", document.body, bb.left + 74, bb.top + bb.height / 2);
-      const after = st.S.scene.animations.map((a: { at: number }) => a.at);
-      return { scrub, before, after, want: 70 / pps };
-    });
-    if (Math.abs(r.scrub.t - r.scrub.want) > 0.02) return `the scrub let go at ${r.scrub.want.toFixed(2)} s, the playhead is at ${r.scrub.t.toFixed(2)} s`;
-    const moved = r.after.map((a: number, i: number) => a - r.before[i]).filter((d: number) => d);
-    if (moved.length !== 1 || Math.abs(moved[0] - r.want) > 0.051) return `the bar moved ${JSON.stringify(moved)} s, not ${r.want.toFixed(2)} s (from ${r.before} to ${r.after})`;
-    return "ok";
-  },
-  async "polling the library for scenes, files and boards redraws nothing when nothing changed"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
-    await page.waitForTimeout(1500);
-    // One poll of each: which lists the store was given again though they hadn't changed.
-    const poll = () =>
-      S(page, async () => {
-        const st = await import("/ui/store.js" as string);
-        const was = { scenes: st.S.scenes, files: st.S.files, boards: st.S.boards };
-        const text = JSON.stringify([was.scenes.map(({ at, ...x }: { at: number }) => x), was.files, was.boards]);
-        await st.refreshScenes();
-        await st.refreshFiles();
-        await (await import("/ui/board-library.js" as string)).refreshBoards();
-        const same = JSON.stringify([st.S.scenes.map(({ at, ...x }: { at: number }) => x), st.S.files, st.S.boards]) === text;
-        return { same, replaced: Object.entries(was).filter(([k, v]) => st.S[k] !== v).map(([k]) => k) };
-      });
-    await poll();
-    await page.waitForTimeout(300);
-    // Nothing new: the lists are kept as they were, and the app isn't redrawn for them. (Other
-    // things can redraw it meanwhile, such as an engine drawing a board's thumbnail: tried thrice.)
-    let redrawn = 0;
-    for (let i = 0; i < 3; i++) {
-      let got: { same: boolean; replaced: string[] } | undefined;
-      const draws = await drawsDuring(page, ["App"], async () => (got = await poll()));
-      if (got!.same && got!.replaced.length) return `polling with nothing new replaced ${got!.replaced.join(", ")}`;
-      redrawn = draws.App;
-      if (!redrawn) break;
-      await page.waitForTimeout(500);
-    }
-    if (redrawn) return `polling with nothing new redrew the app ${redrawn} times, three times over`;
-    // Something new does show.
-    const fresh = path.join(LIB, "raw", "poll-new.png");
-    mkdirSync(path.dirname(fresh), { recursive: true });
-    writeFileSync(fresh, readFileSync(unused));
-    const next = await drawsDuring(page, ["App"], poll);
-    rmSync(fresh, { force: true });
-    return next.App ? "ok" : "a new capture in the library didn't redraw the app";
-  },
-  async "the scratchpad comes first among the boards, and stays"(page) {
-    boards.createBoard("A newer board", "studio");
-    await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      st.set({ libraryShelf: "boards" });
-      (await import("/ui/scenes.js" as string)).openScenesPage();
-    });
-    await page.locator('.sp-shelves [role="tab"]', { hasText: "Boards" }).click();
-    await page.waitForSelector(".bd-card");
-    const first = await S(page, () => {
-      const c = document.querySelector(".bd-card")!;
-      return `${c.getAttribute("data-board")} ${c.querySelector(".sp-badge.scratch")?.textContent ?? ""}`;
-    });
-    if (first !== "scratchpad Scratchpad") return `the first board is "${first}"`;
-    await page.locator('.bd-card[data-board="scratchpad"] .sp-more').click();
-    await page.waitForTimeout(200);
-    const items = await S(page, () => [...document.querySelectorAll(".ctx-item .ctx-label")].map((x) => x.textContent).join(","));
-    await page.keyboard.press("Escape");
-    return items === "Open,Rename,Duplicate" ? "ok" : `its menu has ${items}`;
-  },
-  async "My designs' list lines up in columns, and the store page keeps its own layout"(page) {
-    // Two saved designs, so the list has rows.
-    for (const name of ["List test A", "List test B"]) {
-      await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: name, scene: phone({ headline: name }) });
-      await S(page, async () => (await import("/ui/store.js" as string)).saveSceneNow());
-      await page.waitForTimeout(500);
-    }
-    await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      st.set({ scenesPrefs: { ...st.S.scenesPrefs, layout: "list" } });
-      (await import("/ui/scenes.js" as string)).openScenesPage();
-    });
-    await page.waitForTimeout(1800);
-    const list = await S(page, () => {
-      const rows = [...document.querySelectorAll(".sp-list .sp-row")];
-      if (rows.length < 3) return `only ${rows.length} rows`;
-      if (getComputedStyle(rows[0]).display !== "grid") return `rows are laid out as ${getComputedStyle(rows[0]).display}, not a grid`;
-      // Each column starts where its heading does, on every row.
-      const lefts = rows.map((r) => [...r.children].map((c) => Math.round(c.getBoundingClientRect().left)));
-      const off = lefts.slice(1).find((row) => row.some((x, i) => Math.abs(x - lefts[0][i]) > 2));
-      return off ? `columns don't line up: heading ${lefts[0]} vs row ${off}` : "ok";
-    });
-    const heading = await S(page, () => {
-      const h = document.querySelector(".sp-head");
-      return h ? getComputedStyle(h).display : "none";
-    });
-    await S(page, async () => (await import("/ui/scenes.js" as string)).closeScenesPage());
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }) });
-    await page.waitForTimeout(600);
-    await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "storePage" } }));
-    await page.waitForTimeout(800);
-    const store = await S(page, () => {
-      const row = document.querySelector(".store-page .stp-row");
-      const head = document.querySelector(".store-page .stp-head");
-      return row && head && getComputedStyle(row).display === "flex" && getComputedStyle(head).display === "flex" ? "ok" : "the store page lost its layout";
-    });
-    return list === "ok" && heading !== "flex" && store === "ok" ? "ok" : `list: ${list}; Scenes heading laid out as ${heading}; store: ${store}`;
-  },
-  async "moving between the screens of a set, every screen keeps its device"(page) {
-    const sc = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `S${i}` });
-    await setDesign(page, { shots: [0, 1, 2, 3].map((i) => ({ scene: sc(i) })), shot: 0, groups: null, scene: sc(0), leftOpen: false });
-    await page.waitForTimeout(2200);
-    for (const to of [2, 3, 0]) {
-      await S(page, async (to: number) => (await import("/ui/actions.js" as string)).goToShot(to), to);
-      await page.waitForTimeout(1100);
-    }
-    const counts = await S(page, () => [...document.querySelectorAll(".ghost-wrap.set")].map((g) => g.querySelectorAll("img").length));
-    return counts.length === 3 && counts.every((c) => c > 0) ? "ok" : `pictures on the other screens: ${counts}`;
-  },
-  async "typing in a slider's box uses the units it shows, and words that aren't a value keep it"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", texts: [{ text: "Hello", x: 0.5, y: 0.2, size: 0.05 }] }), selected: "text-1", rightOpen: true });
-    await page.waitForTimeout(1500);
-    const field = page.locator(".panel.right .row", { has: page.locator("label", { hasText: /^Size$/ }) }).locator("input.val").first();
-    const size = () => S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      return { size: st.S.scene.texts?.[0]?.size as number, h: st.S.layout.canvas.height as number };
-    });
-    // Shown in pixels: 100 is 100 px, not the most the slider goes to.
-    await field.fill("100");
-    await field.press("Enter");
-    await page.waitForTimeout(500);
-    const a = await size();
-    const shown = await field.inputValue();
-    // Words that aren't a size leave it as it was.
-    await field.fill("bigger");
-    await field.press("Enter");
-    await page.waitForTimeout(500);
-    const b = await size();
-    const back = await field.inputValue();
-    const px = Math.round(a.size * a.h);
-    return Math.abs(px - 100) <= 2 && shown === `${px} px` && b.size === a.size && back === shown ? "ok" : `typing 100 made it ${px} px (box "${shown}"); "bigger" left ${Math.round(b.size * b.h)} px (box "${back}")`;
-  },
-  async "after undoing an added shape nothing stays selected, and Delete on a stale selection is safe"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone() });
-    await page.waitForTimeout(1000);
-    const r = await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      (await import("/ui/actions.js" as string)).addShape("box");
-      await new Promise((r) => setTimeout(r, 300));
-      const picked = st.S.selected;
-      st.undo();
-      await new Promise((r) => setTimeout(r, 300));
-      return { picked, after: st.S.selected, shapes: (st.S.scene.shapes ?? []).length };
-    });
-    await page.keyboard.press("Delete");
-    // Even a selection left pointing at nothing (set by hand here) doesn't make Delete throw.
-    await S(page, async () => (await import("/ui/store.js" as string)).set({ selected: "image-3" }));
-    await page.waitForTimeout(100);
-    await page.keyboard.press("Delete");
-    await page.waitForTimeout(300);
-    const devices = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.length);
-    return String(r.picked).startsWith("shape-") && r.after === null && r.shapes === 0 && devices === 1 ? "ok" : `added ${r.picked}, after undo selected ${r.after} with ${r.shapes} shapes, ${devices} devices left`;
-  },
-  async "Escape mid-drag puts a device back, Delete waits for the drag, and a lost mouse-up ends it"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", devices: [{ screenshot: shot, x: 0.5, y: 0.55, height: 0.6, anchor: "center" }] }) });
-    await page.waitForTimeout(1500);
-    const xs = () => S(page, async () => (await import("/ui/store.js" as string)).S.scene.devices.map((d: { x: number }) => d.x) as number[]);
-    const board = (await page.locator(".stage .artboard").first().boundingBox())!;
-    const dev = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
-    const [sx, sy] = [dev.x + dev.width / 2, dev.y + dev.height / 2];
-    const x0 = (await xs())[0];
-    // Escape: nothing is written, and the device stays selected.
-    await page.mouse.move(sx, sy);
-    await page.mouse.down();
-    await page.mouse.move(sx + 60, sy, { steps: 6 });
-    await page.keyboard.press("Escape");
-    await page.mouse.move(sx + 120, sy, { steps: 4 });
-    await page.mouse.up();
-    await page.waitForTimeout(600);
-    const esc = await xs();
-    const sel = await S(page, async () => (await import("/ui/store.js" as string)).S.selected);
-    if (esc[0] !== x0 || sel !== "device-1") return `after Escape the device is at ${esc[0]} (was ${x0}), selected ${sel}`;
-    // Delete mid-drag: ignored; the device lands where it's let go.
-    await page.mouse.move(sx, sy);
-    await page.mouse.down();
-    await page.mouse.move(sx + 60, sy, { steps: 6 });
-    await page.keyboard.press("Delete");
-    await page.mouse.up();
-    await page.waitForTimeout(800);
-    const del = await xs();
-    if (del.length !== 1 || del[0] <= x0) return `Delete mid-drag left ${del.length} device(s), at ${del}`;
-    // The window loses focus mid-drag (⌘Tab), so the mouse-up never comes: the drag ends there.
-    const d2 = (await page.locator(".stage .artboard .ent-device").first().boundingBox())!;
-    const [tx, ty] = [d2.x + d2.width / 2, d2.y + d2.height / 2];
-    await page.mouse.move(tx, ty);
-    await page.mouse.down();
-    await page.mouse.move(tx - 40, ty, { steps: 5 });
-    await S(page, () => window.dispatchEvent(new Event("blur")));
-    await page.mouse.move(tx - 160, ty, { steps: 5 });
-    await page.waitForTimeout(300);
-    const lost = await xs();
-    await page.mouse.up();
-    const by = (lost[0] - del[0]) * board.width;
-    return by < -15 && by > -90 ? "ok" : `after a lost mouse-up the device moved ${Math.round(by)} px (by 40 when the window lost focus, 160 by the end)`;
-  },
-  async "Space and Tab are the canvas's only while no control has the keyboard"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ headline: "Hi" }), selected: null });
-    await page.waitForTimeout(1500);
-    const st = () => S(page, async () => {
-      const s = (await import("/ui/store.js" as string)).S;
-      return { sel: s.selected as string | null, ids: s.layout.entities.map((e: { id: string }) => e.id) as string[], space: Boolean(document.querySelector(".viewport.space")), zoom: document.querySelector(".zoom-ctl .pct")?.textContent ?? "" };
-    });
-    // Nothing focused: Tab steps through the canvas's items, and past the last one lets go of them.
-    await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.press("Tab");
-    const first = await st();
-    for (let i = 1; i < first.ids.length; i++) await page.keyboard.press("Tab");
-    const last = await st();
-    await page.keyboard.press("Tab");
-    const out = await st();
-    if (first.sel !== first.ids[0] || last.sel !== first.ids[first.ids.length - 1] || out.sel !== null) return `Tab selected ${first.sel}, then ${last.sel}, then ${out.sel} (items ${first.ids})`;
-    // A button with the keyboard keeps Space (it presses it, rather than panning) and Tab (focus moves on).
-    await S(page, async () => {
-      (document.activeElement as HTMLElement | null)?.blur();
-      (await import("/ui/store.js" as string)).set({ selected: "device-1" });
-    });
-    await page.keyboard.press("Shift");
-    await page.focus('.zoom-ctl button[title^="Zoom in"]');
-    const visible = await S(page, () => document.activeElement!.matches(":focus-visible"));
-    const z0 = await st();
-    await page.keyboard.down("Space");
-    const held = await st();
-    await page.keyboard.up("Space");
-    await page.waitForTimeout(200);
-    const z1 = await st();
-    await page.keyboard.press("Tab");
-    const tabbed = await st();
-    if (!visible) return "the zoom button, focused after a key, isn't :focus-visible";
-    if (held.space || z1.zoom === z0.zoom) return `with the zoom button focused, Space ${held.space ? "panned" : "didn't pan"} and the zoom went ${z0.zoom} → ${z1.zoom}`;
-    if (tabbed.sel !== "device-1") return `with a button focused, Tab changed the selection to ${tabbed.sel}`;
-    // A button that has focus only because it was clicked leaves Space to the canvas: it pans,
-    // rather than pressing the button again.
-    await page.locator('.zoom-ctl button[title^="Zoom in"]').click();
-    await page.waitForTimeout(200);
-    const c0 = await st();
-    await page.keyboard.down("Space");
-    const clickedHeld = await st();
-    await page.keyboard.up("Space");
-    await page.waitForTimeout(200);
-    const c1 = await st();
-    if (!clickedHeld.space || c1.zoom !== c0.zoom) return `after clicking the zoom button, Space ${clickedHeld.space ? "panned" : "didn't pan"} and the zoom went ${c0.zoom} → ${c1.zoom}`;
-    // Nothing focused again: Space pans, and switching to another app mid-pan lets go of it.
-    await S(page, () => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.down("Space");
-    await page.waitForTimeout(100);
-    const panning = await st();
-    await S(page, () => window.dispatchEvent(new Event("blur")));
-    await page.waitForTimeout(100);
-    const after = await st();
-    await page.keyboard.up("Space");
-    return panning.space && !after.space ? "ok" : `Space with nothing focused: pan ${panning.space}; after the window lost focus: still ${after.space}`;
-  },
-  async "Enter while composing Japanese keeps the text being edited, and emptying a text lets go of it"(page) {
-    await setDesign(page, { shots: null, groups: null, scene: phone({ layout: "custom", texts: [{ text: "First", x: 0.5, y: 0.2 }, { text: "Second", x: 0.5, y: 0.35 }] }), selected: "text-1" });
-    await page.waitForTimeout(1500);
-    await S(page, async () => (await import("/ui/canvas.js" as string)).canvasApi.editText("text-1"));
-    await page.waitForSelector(".stage .editing[contenteditable]");
-    // The Enter that confirms a word in an input method: isComposing, or Safari's keyCode 229.
-    await S(page, () => {
-      const el = document.querySelector(".stage .editing[contenteditable]")!;
-      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
-      const safari = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
-      Object.defineProperty(safari, "keyCode", { value: 229 });
-      el.dispatchEvent(safari);
-    });
-    await page.waitForTimeout(200);
-    const still = await S(page, () => Boolean(document.querySelector(".stage .editing[contenteditable]")));
-    // Emptied (its words are all selected as editing starts) and finished: it goes, and nothing is left selected.
-    await page.keyboard.press("Backspace");
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(600);
-    const r = await S(page, async () => {
-      const s = (await import("/ui/store.js" as string)).S;
-      return { texts: (s.scene.texts ?? []).map((t: { text: string }) => t.text).join(), sel: s.selected };
-    });
-    return still && r.texts === "Second" && r.sel === null ? "ok" : `editing after a composing Enter: ${still}; texts "${r.texts}", selected ${r.sel}`;
-  },
-  async "the set row never draws another design's screens, and says when it can't draw one"(page) {
-    const a = (i: number) => phone({ canvas: "1:1", layout: "custom", headline: `A${i}` });
-    await setDesign(page, { shots: [0, 1, 2].map((i) => ({ scene: a(i) })), shot: 0, groups: null, scene: a(0), leftOpen: false });
-    await page.waitForTimeout(2200);
-    const drawn = await S(page, () => document.querySelectorAll(".ghost-wrap.set img").length);
-    // The next design's other screens can't be laid out (the engine is away for them).
-    await page.route("**/api/layout", (route) => (/"B[12]"/.test(route.request().postData() ?? "") ? route.abort() : route.continue()));
-    const b = (i: number) => ({ devices: [{ screenshot: unused }], background: "cream-grain", canvas: "1:1", layout: "custom", headline: `B${i}` });
-    await setDesign(page, { shots: [0, 1, 2].map((i) => ({ scene: b(i) })), shot: 0, groups: null, scene: b(0) });
-    await page.waitForTimeout(2200);
-    const r = await S(page, () => ({ stale: [...document.querySelectorAll<HTMLImageElement>(".ghost-wrap.set img")].filter((i) => i.src.includes("phone.png")).length, tiles: document.querySelectorAll(".set-unshown").length }));
-    await page.unroute("**/api/layout");
-    if (!drawn) return "the first design's other screens weren't drawn";
-    return !r.stale && r.tiles === 2 ? "ok" : `${r.stale} pictures of the first design's screens in the row, ${r.tiles} "couldn't show" tiles`;
-  },
-  async "an agent's save of the open design isn't written over by the Studio's next save"(page) {
-    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Agent race", scene: phone({ headline: "Mine" }) });
-    const id = await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      await st.saveSceneNow();
-      return st.S.sceneId as string;
-    });
-    const { saveScene, getScene } = await import("../src/studio/scenes.js");
-    // An agent replaces it (save_scene with replace), and the person edits it before the Studio has looked.
-    saveScene({ id, scene: phone({ headline: "Agent's" }), by: "agent" });
-    await S(page, async () => (await import("/ui/store.js" as string)).edit((d: { headline: string }) => (d.headline = "Mine again")));
-    await page.waitForTimeout(2500);
-    const kept = getScene(id).scene.headline;
-    const shown = await S(page, async () => (await import("/ui/store.js" as string)).S.scene.headline);
-    const said = await toasts(page);
-    // Undo brings the person's edit back, and that one is saved.
-    await S(page, async () => (await import("/ui/store.js" as string)).undo());
-    await page.waitForTimeout(2000);
-    const mine = getScene(id).scene.headline;
-    return kept === "Agent's" && shown === "Agent's" && /agent updated/i.test(said) && mine === "Mine again" ? "ok" : `on disk "${kept}", on the canvas "${shown}", toasts "${said.slice(0, 80)}", after undo on disk "${mine}"`;
-  },
-  async "closing the window saves a design too big for a keepalive request"(page) {
-    await setDesign(page, { shots: null, groups: null, sceneId: null, sceneName: "Long chat", scene: phone({ headline: "Before" }) });
-    const id = await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      await st.saveSceneNow();
-      // A long Ask AI conversation: well past the 64 KB a keepalive request may carry.
-      st.set({ ai: { ...st.S.ai, thread: Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: `${i} ${"words ".repeat(400)}` })) } });
-      st.edit((d: { headline: string }) => (d.headline = "After"));
-      await st.flushPersist();
-      return st.S.sceneId as string;
-    });
-    const { getScene } = await import("../src/studio/scenes.js");
-    const s = getScene(id);
-    return s.scene.headline === "After" && s.chat?.length === 60 ? "ok" : `saved: "${s.scene.headline}", ${s.chat?.length ?? 0} messages`;
   },
   async "the colour picker keeps transparency, ⌘B keeps line breaks, one Escape closes one popover, popovers follow scrolling, and a menu works by keyboard"(page) {
     // tsx keeps the names of the functions written below, through a helper of its own the page needs too.

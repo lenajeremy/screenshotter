@@ -1,12 +1,9 @@
-/** Small helpers the Studio UI needs: thumbnails, look previews, Unsplash search, saved state. */
+/** Small helpers the app needs: thumbnails, Unsplash search, saved state. */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { LOOKS } from "../render/looks.js";
-import { createMockup } from "../render/mockup.js";
 import { run } from "../util/exec.js";
 import { cacheDir, outputRoot } from "../util/files.js";
-import { encodePng } from "../util/png.js";
 import { unsplashResults } from "../render/photos.js";
 
 const hash = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 16);
@@ -33,43 +30,6 @@ export async function thumbnail(file: string, edge: number): Promise<string> {
     renameSync(tmp, out);
     return out;
   });
-}
-
-let blank: string | undefined;
-function blankScreenshot(): string {
-  blank ??= path.join(cacheDir("looks"), "blank.png");
-  if (!existsSync(blank)) writeFileSync(blank, encodePng({ width: 8, height: 8, rgba: Buffer.alloc(8 * 8 * 4, 0) }));
-  return blank;
-}
-
-/**
- * A small render of a background on its own (photo, treatment, gradient or look), for the look
- * gallery and the canvas backdrop. Cached by the background's JSON and the size.
- */
-export async function backgroundPreview(background: unknown, width: number, height: number): Promise<string> {
-  const w = Math.max(64, Math.min(1200, Math.round(width)));
-  const h = Math.max(64, Math.min(1600, Math.round(height)));
-  if (typeof background === "string" && !LOOKS.some((l) => l.name === background) && !background.trim()) throw new Error("Empty background");
-  const out = path.join(cacheDir("backgrounds"), `${hash(JSON.stringify(background))}-${w}x${h}.jpg`);
-  if (existsSync(out)) return out;
-  return once(out, async () => {
-    await createMockup({
-      devices: [{ screenshot: blankScreenshot(), frame: "none", height: 0.02, x: -2, y: -2, shadow: "none" }],
-      canvas: { width: w, height: h },
-      layout: "custom",
-      background: background as never,
-      format: "jpeg",
-      jpegQuality: 84,
-      preview: false,
-      output: out,
-    });
-    return out;
-  });
-}
-
-export function lookThumbnail(name: string): Promise<string> {
-  if (!LOOKS.some((l) => l.name === name)) throw new Error(`Unknown look ${name}`);
-  return backgroundPreview(name, 360, 300);
 }
 
 export interface UnsplashHit {

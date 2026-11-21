@@ -6,8 +6,6 @@ import WebKit
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
     let engine = Engine()
     var window: StudioWindow!
-    /// The capture bar, the menu bar icon and the screenshots and recordings they make.
-    var capture: CaptureCoordinator!
     var web: StudioWebView!
     /// Updates: checks the feed on the site once a day (SUFeedURL in Info.plist), and on demand.
     let updates = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
@@ -23,16 +21,14 @@ import WebKit
     // MARK: Launch
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        // The Studio window follows the theme chosen in Settings (or the Mac's); the capture
-        // overlays keep their own dark look.
+        // The Studio window follows the theme chosen in Settings (or the Mac's).
         buildMenu()
 
         let config = WKWebViewConfiguration()
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "native")
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
         config.websiteDataStore = .nonPersistent()
-        // The editor plays a recording's sound (and pieces of it moved on the timeline) as the
-        // playhead reaches them, not only on a click.
+        // Videos on a board play on their own, with sound, without a click first.
         config.mediaTypesRequiringUserActionForPlayback = []
         web = StudioWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
@@ -52,20 +48,10 @@ import WebKit
         engine.onChange = { [weak self] state in self?.engineChanged(state) }
         startEngine()
 
-        // Opening Screenshotter shows the capture bar; the canvas loads behind it, ready for when
-        // it's wanted (Open Screenshotter, Edit in Screenshotter, the Dock icon, a file opened with it).
-        capture = CaptureCoordinator(
-            library: { [weak self] in URL(fileURLWithPath: self?.outputFolder ?? NSHomeDirectory()) },
-            openStudio: { [weak self] in self?.showStudio() },
-            editInStudio: { [weak self] file, poster, size in self?.edit(file, poster: poster, size: size) },
-            openRecording: { [weak self] spec in self?.openRecording(spec) })
-        if let log = ProcessInfo.processInfo.environment["SCREENSHOTTER_CAPTURE_SELFTEST"] {
-            capture.selfTest(log: URL(fileURLWithPath: log))
-        } else if pendingOpen.isEmpty { capture.showBar() } else { showStudio() }
-        NSApp.activate(ignoringOtherApps: true)
+        showStudio()
     }
 
-    /// The canvas window, in front.
+    /// The Studio window, in front.
     func showStudio() {
         window.makeKeyAndOrderFront(nil)
         window.layoutTrafficLights()
@@ -73,97 +59,40 @@ import WebKit
         DispatchQueue.main.async { [weak self] in self?.window.layoutTrafficLights() }
     }
 
-    /// A capture from the bar, onto the canvas (it's in the library already, so nothing is copied).
-    func edit(_ file: URL, poster: URL?, size: CGSize?) {
-        showStudio()
-        var item: [String: Any] = ["path": file.path]
-        if let poster { item["poster"] = poster.path }
-        if let size {
-            item["width"] = Int(size.width)
-            item["height"] = Int(size.height)
-        }
-        if pageReady { sendImports([item]) } else { pendingImports.append(item) }
-    }
-    private var pendingImports: [[String: Any]] = []
-    private var pendingRecording: [String: Any]?
-
-    /// A recording from the capture bar, opened in the Studio as a design of its own, with its timeline open.
-    func openRecording(_ spec: [String: Any]) {
-        showStudio()
-        if pageReady { sendRecording(spec) } else { pendingRecording = spec }
-    }
-    private func sendRecording(_ spec: [String: Any]) {
-        web.callAsyncJavaScript("if (window.studio) { await window.studio.command('openRecording', spec); }",
-                                arguments: ["spec": spec], in: nil, in: .page) { _ in }
-    }
-    /// A capture from the bar starts a design of its own (the one open is saved as usual).
-    private func sendImports(_ items: [[String: Any]]) {
-        web.callAsyncJavaScript("if (window.studio) { await window.studio.command('newScene'); await window.studio.command('imported', items); }",
-                                arguments: ["items": items], in: nil, in: .page) { _ in }
-    }
-
     func startEngine() {
         showStatus(.starting)
-        engine.start(outputFolder: outputFolder, apiKey: Keychain.load())
+        engine.start(outputFolder: outputFolder)
     }
 
-    /// Closing the canvas keeps Screenshotter running: the capture bar is a click away in the menu bar.
+    /// Closing the window keeps Screenshotter (and its engine) running; the Dock icon or
+    /// Window › Screenshotter brings the window back.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// Opening Screenshotter again (the Dock icon, Spotlight, Launchpad, Finder) shows the capture
-    /// bar, as launching it does; the bar's Open Screenshotter is the way to the canvas.
+    /// Opening Screenshotter again (the Dock icon, Spotlight, Launchpad, Finder) shows its window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        capture.showBar()
+        showStudio()
         return false
     }
     func applicationWillTerminate(_ note: Notification) { engine.stop() }
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    /// Before quitting: a recording under way is stopped and saved (an unfinished file doesn't
-    /// play), and the page gets a moment to save an edit it hasn't written yet (it saves half a
-    /// second after each change). Each has a time limit, so quitting never hangs.
+    /// Before quitting, the page gets a moment to save an edit it hasn't written yet (it saves half
+    /// a second after each change). That has a time limit, so quitting never hangs.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Asked again while waiting (⌘Q twice): quit now, unless a recording is still being saved.
-        if quitting { return savingRecording ? .terminateCancel : .terminateNow }
-        let recording = capture?.needsTimeToQuit == true
-        guard pageReady || recording else { return .terminateNow }
+        // Asked again while waiting (⌘Q twice): quit now.
+        if quitting { return .terminateNow }
+        guard pageReady else { return .terminateNow }
         quitting = true
-        if pageReady {
-            flushing = true
-            web.callAsyncJavaScript("await window.studio?.command('flush')", arguments: [:], in: nil, in: .page) { [weak self] _ in
-                self?.flushed()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.flushed() }
+        web.callAsyncJavaScript("await window.studio?.command('flush')", arguments: [:], in: nil, in: .page) { [weak self] _ in
+            self?.flushed()
         }
-        if recording {
-            savingRecording = true
-            Task { [weak self] in
-                await self?.capture.finishBeforeQuit()
-                self?.recordingSaved()
-            }
-            // Closing its files takes a moment; making the finished video can take longer.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-                guard let self, self.savingRecording else { return }
-                self.capture.abandonSaving()
-                self.recordingSaved()
-            }
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.flushed() }
         return .terminateLater
     }
     private var quitting = false
     private var quitAnswered = false
-    private var flushing = false
-    private var savingRecording = false
     private func flushed() {
-        flushing = false
-        finishQuit()
-    }
-    private func recordingSaved() {
-        savingRecording = false
-        finishQuit()
-    }
-    private func finishQuit() {
-        guard !quitAnswered, !flushing, !savingRecording else { return }
+        guard !quitAnswered else { return }
         quitAnswered = true
         NSApp.reply(toApplicationShouldTerminate: true)
     }
@@ -173,7 +102,7 @@ import WebKit
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         let urls = filenames.map { URL(fileURLWithPath: $0) }
         if pageReady { upload(urls) } else { pendingOpen += urls }
-        // Files opened with Screenshotter go straight onto the canvas.
+        // Files opened with Screenshotter go straight onto the board.
         if window != nil { showStudio() }
         sender.reply(toOpenOrPrint: .success)
     }
@@ -188,15 +117,6 @@ import WebKit
             let urls = pendingOpen
             pendingOpen = []
             upload(urls)
-        }
-        if let spec = pendingRecording {
-            pendingRecording = nil
-            sendRecording(spec)
-        }
-        if !pendingImports.isEmpty {
-            let items = pendingImports
-            pendingImports = []
-            sendImports(items)
         }
     }
 
@@ -234,7 +154,7 @@ import WebKit
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { return decisionHandler(.cancel) }
         if url.scheme == "about" || url.scheme == "data" { return decisionHandler(.allow) }
-        if let base = engine.baseURL, url.host == base.host, url.port == base.port, url.path != "/docs" {
+        if let base = engine.baseURL, url.host == base.host, url.port == base.port {
             return decisionHandler(.allow)
         }
         NSWorkspace.shared.open(url)
@@ -250,9 +170,7 @@ import WebKit
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = false
-        // The page's file pickers also open shared templates (.screenshotter-template, JSON inside).
-        let template = UTType(filenameExtension: "screenshotter-template", conformingTo: .json)
-        panel.allowedContentTypes = StudioWebView.importableTypes + [.json] + (template.map { [$0] } ?? [])
+        panel.allowedContentTypes = StudioWebView.importableTypes + [.json]
         panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
     }
 
@@ -291,18 +209,27 @@ import WebKit
             replyHandler(true, nil)
         case "getSettings":
             replyHandler([
-                "hasApiKey": Keychain.load() != nil,
                 "hasUnsplashKey": Keychain.load("unsplash") != nil,
+                "hasFigmaToken": Keychain.load("figma") != nil,
                 "outputFolder": outputFolder,
                 "version": AppDelegate.version,
                 "node": engine.node?.version ?? "",
                 "nodePath": engine.node?.path ?? "",
             ], nil)
-        case "setApiKey", "setUnsplashKey":
+        case "setUnsplashKey":
+            // An empty key removes the saved one. The engine restarts to pick it up.
             do {
-                try Keychain.save(body["key"] as? String ?? "", account: cmd == "setUnsplashKey" ? "unsplash" : "anthropic")
+                try Keychain.save(body["key"] as? String ?? "", account: "unsplash")
                 replyHandler(true, nil)
                 restartSoon()
+            } catch { replyHandler(nil, error.localizedDescription) }
+        case "setFigmaToken":
+            // An empty token removes the saved one. No restart: the page hands the token to the
+            // running engine itself (a restart would cut off an import under way); the engine gets
+            // it as FIGMA_TOKEN when it next starts.
+            do {
+                try Keychain.save(body["key"] as? String ?? "", account: "figma")
+                replyHandler(true, nil)
             } catch { replyHandler(nil, error.localizedDescription) }
         case "chooseOutputFolder":
             let panel = NSOpenPanel()
@@ -310,7 +237,7 @@ import WebKit
             panel.canChooseFiles = false
             panel.canCreateDirectories = true
             panel.prompt = "Use Folder"
-            panel.message = "Captures, imports and exports will be saved here."
+            panel.message = "Imports and exports will be saved here."
             panel.directoryURL = URL(fileURLWithPath: outputFolder)
             panel.beginSheetModal(for: window) { [weak self] response in
                 guard response == .OK, let url = panel.url else { return replyHandler(["path": NSNull()], nil) }
@@ -320,10 +247,6 @@ import WebKit
             }
         case "openURL":
             if let s = body["url"] as? String, let url = URL(string: s) { NSWorkspace.shared.open(url) }
-            replyHandler(true, nil)
-        case "showBar":
-            // The start screen's Record your screen and Screenshot your Mac: the capture bar.
-            capture.showBar((body["mode"] as? String) == "record" ? .record : .screenshot)
             replyHandler(true, nil)
         case "dragFile":
             guard let path = body["path"] as? String, FileManager.default.fileExists(atPath: path) else { return replyHandler(nil, "The file isn't there any more.") }
@@ -363,7 +286,7 @@ import WebKit
             replyHandler(true, nil)
             chooseNode()
         case "choosePaths":
-            // Files or folders (e.g. an opened bezel disk image) for the page to import.
+            // Files or folders for the page to import.
             let panel = NSOpenPanel()
             panel.canChooseFiles = true
             panel.canChooseDirectories = true
@@ -433,9 +356,9 @@ import WebKit
         send(urls.filter(takes).map { .file($0) }, refused: urls.filter { !takes($0) }.map(\.lastPathComponent))
     }
 
-    /// Off the main thread (a long recording is gigabytes): each file goes to the engine, its
-    /// answer ({path, poster?, width?, height?}) to the page as is, so recordings can be matched
-    /// to a device by shape; any that couldn't be added are named in a notice.
+    /// Off the main thread (a long video is gigabytes): each file goes to the engine, its answer
+    /// ({path, poster?, width?, height?}) to the page as is; any that couldn't be added are named
+    /// in a notice.
     private func send(_ uploads: [Upload], refused: [String] = []) {
         guard let base = engine.baseURL, !uploads.isEmpty || !refused.isEmpty else { return }
         Task {
@@ -493,7 +416,7 @@ import WebKit
         let answer: Data
         switch body {
         case .data(_, let data): (answer, _) = try await URLSession.shared.upload(for: req, from: data)
-        // Sent from the file as it's read: a recording isn't loaded into memory first.
+        // Sent from the file as it's read: a video isn't loaded into memory first.
         case .file(let u): (answer, _) = try await URLSession.shared.upload(for: req, fromFile: u)
         }
         let json = (try? JSONSerialization.jsonObject(with: answer)) as? [String: Any]
@@ -516,7 +439,7 @@ import WebKit
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = StudioWebView.importableTypes
-        panel.message = "Choose screenshots or screen recordings to add."
+        panel.message = "Choose images or videos to add to the board."
         panel.beginSheetModal(for: window) { [weak self] r in if r == .OK { self?.upload(panel.urls) } }
     }
     @objc func revealOutput(_ sender: Any?) {
@@ -525,11 +448,7 @@ import WebKit
         NSWorkspace.shared.open(url)
     }
     @objc func restartEngine(_ sender: Any?) { startEngine() }
-    @objc func showCaptureBar(_ sender: Any?) { capture.showBar(.screenshot) }
-    @objc func showRecordBar(_ sender: Any?) { capture.showBar(.record) }
-    @objc func openDocs(_ sender: Any?) {
-        if let base = engine.baseURL { NSWorkspace.shared.open(base.appendingPathComponent("docs")) }
-    }
+    @objc func showMainWindow(_ sender: Any?) { showStudio() }
     @objc func reloadUI(_ sender: Any?) { web.reload() }
 
     private func item(_ title: String, _ command: String, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
@@ -569,19 +488,17 @@ import WebKit
             action("Quit Screenshotter", #selector(NSApplication.terminate(_:)), "q"),
         ])
         _ = submenu("File", [
-            item("New Design", "newScene", "n"),
-            item("My Designs", "scenes", "o", [.command, .shift]),
+            item("New Board", "newBoard", "n"),
+            item("All Boards", "boards", "o", [.command, .shift]),
             item("Save", "save", "s"),
             .separator(),
-            action("Import Screenshots…", #selector(openFilesPanel(_:)), "o", target: self),
-            .separator(),
-            action("Take a Screenshot…", #selector(showCaptureBar(_:)), "", target: self),
-            action("Record the Screen…", #selector(showRecordBar(_:)), "", target: self),
+            item("Import Website…", "importWebsite", "i", [.command, .shift]),
+            item("Import from Figma…", "importFigma", "f", [.command, .shift]),
+            action("Import Images…", #selector(openFilesPanel(_:)), "o", target: self),
             .separator(),
             item("Export Image", "exportImage", "e"),
-            item("Export Video", "exportVideo", "e", [.command, .shift]),
             .separator(),
-            action("Show Output Folder", #selector(revealOutput(_:)), "", target: self),
+            action("Show Library in Finder", #selector(revealOutput(_:)), "", target: self),
             action("Restart Engine", #selector(restartEngine(_:)), "", target: self),
             .separator(),
             action("Close Window", #selector(NSWindow.performClose(_:)), "w"),
@@ -599,9 +516,6 @@ import WebKit
             item("Use as Mask", "mask", "m", [.command, .control]),
         ])
         _ = submenu("View", [
-            item("Timeline", "timeline", "t"),
-            item("Show the Finished Look Now", "preview", "r"),
-            .separator(),
             item("Zoom In", "zoomIn", "="),
             item("Zoom Out", "zoomOut", "-"),
             item("Zoom to Fit", "fit", "0"),
@@ -609,21 +523,20 @@ import WebKit
             item("Show or Hide the Left Panel", "toggleLeft", "s", [.command, .option]),
             item("Show or Hide the Right Panel", "toggleRight", "i", [.command, .option]),
             item("Focus Mode", "focus", "\\"),
-            item("Design as JSON", "json", "j", [.command, .option]),
             .separator(),
             action("Reload Interface", #selector(reloadUI(_:)), "r", [.command, .option, .shift], target: self),
             action("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ])
-        _ = submenu("AI", [item("Ask AI…", "ai", "k")])
         let win = submenu("Window", [
             action("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             action("Zoom", #selector(NSWindow.performZoom(_:))),
+            .separator(),
+            action("Screenshotter", #selector(showMainWindow(_:)), "", target: self),
         ])
         NSApp.windowsMenu = win
         let help = submenu("Help", [
-            item("How Screenshotter Works", "help"),
-            item("What's New in Screenshotter", "whatsNew"),
-            action("Documentation", #selector(openDocs(_:)), "?", target: self),
+            item("Get Started", "start"),
+            item("Connect an Agent…", "connect"),
         ])
         NSApp.helpMenu = help
         NSApp.mainMenu = main

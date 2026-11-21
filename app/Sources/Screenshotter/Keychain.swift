@@ -1,9 +1,9 @@
 import Foundation
 import Security
 
-/// The optional keys: Anthropic's for AI Edit ("anthropic"), Unsplash's for photo search
-/// ("unsplash"). Each is handed to the engine as an environment variable and never shown to the
-/// web UI.
+/// The optional keys: Unsplash's for photo search ("unsplash") and a Figma personal access token
+/// for reading Figma files ("figma"). Each is handed to the engine as an environment variable and
+/// never shown to the web UI.
 enum Keychain {
     private static func base(_ account: String) -> [String: Any] {
         [
@@ -13,7 +13,7 @@ enum Keychain {
         ]
     }
 
-    static func load(_ account: String = "anthropic") -> String? {
+    static func load(_ account: String) -> String? {
         var q = base(account)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -23,7 +23,7 @@ enum Keychain {
         return key.isEmpty ? nil : key
     }
 
-    static func save(_ key: String, account: String = "anthropic") throws {
+    static func save(_ key: String, account: String) throws {
         let base = base(account)
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {

@@ -109,7 +109,7 @@ function BoardTopbar() {
   return html`<header class="topbar bd-topbar" data-drag>
     <div class="brand">
       <div class="brand-mark"></div>
-      <button class="btn ghost sm bd-back" data-nodrag title="Back to My designs" onClick=${() => closeBoard()}><${Icon} n="left" s=${14} />My designs</button>
+      <button class="btn ghost sm bd-back" data-nodrag title="All boards (⇧⌘O)" onClick=${() => closeBoard()}><${Icon} n="left" s=${14} />Boards</button>
       <span class="crumb-sep" aria-hidden="true">/</span>
       <input class="scene-name" data-nodrag value=${b.board.name} spellcheck=${false} title="Rename this board"
         onKeyDown=${(e) => {
@@ -184,7 +184,6 @@ function ExportPopover({ anchor, onClose }) {
       <div class="row"><label>Format</label><${Seg} value=${format} options=${[{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPEG" }]} onChange=${setFormat} /></div>
       <button class="btn primary block" disabled=${busy || !ids.length} onClick=${run}>${busy ? html`<span class="spinner"></span>Exporting…` : "Export"}</button>
       <button class="btn ghost block sm" onClick=${() => (copyHtml(ids), onClose())}><${Icon} n="code" s=${13} />Copy as HTML</button>
-      <button class="btn ghost block sm" title="Make a Screenshotter design with this artboard as the screen in a device frame" onClick=${() => (onClose(), artboardToDesign(B.sel.length ? undefined : ids))}><${Icon} n="phone" s=${13} />Put in a device frame</button>
     </div>
   <//>`;
 }
@@ -996,7 +995,7 @@ export const isVideoFile = (f) => /^video\/(mp4|quicktime|webm|x-m4v)$/.test(f.t
 export const isMedia = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name ?? "") || isVideoFile(f);
 export const MEDIA_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/quicktime,video/webm,.mp4,.m4v,.mov,.webm";
 
-function pickImages() {
+export function pickImages() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = MEDIA_ACCEPT;
@@ -1060,20 +1059,6 @@ function placeMedia(uploaded, { at, into, after, ev } = {}) {
 // =============================================================================================
 // From a board to a design: an artboard drawn at 3× becomes the screen in a device frame, ready to
 // be an App Store screenshot.
-
-export async function artboardToDesign(ids = selectedArtboards()) {
-  const roots = ids.filter((id) => node(id) && !node(id).parent).slice(0, 3);
-  if (!roots.length) return toast({ kind: "info", title: "Pick an artboard first", timeout: 2400 });
-  try {
-    const r = await api("/api/board/export", { id: B.id, nodes: roots, scale: 3, format: "png" });
-    const { addDevice, newScene } = await import("./actions.js");
-    closeBoard({ toLibrary: false });
-    await newScene();
-    for (const f of r.files) await addDevice(f);
-  } catch (e) {
-    fail(e, "Couldn't make a design from it");
-  }
-}
 
 // =============================================================================================
 // Components
@@ -1292,7 +1277,6 @@ export function openLayerMenu(x, y, { stack = [] } = {}) {
     any && { label: s.every((id) => node(id).locked) ? "Unlock" : "Lock", icon: "lock", kbd: "⇧⌘L", run: () => toggleAll("locked") },
     any && "-",
     any && { label: "Export…", icon: "export", run: () => document.querySelector(".bd-topbar .btn.primary")?.click() },
-    any && !vectors && { label: "Put in a device frame", icon: "phone", run: () => artboardToDesign() },
     any && { label: "Delete", icon: "trash", kbd: "⌫", danger: true, run: deleteSelection },
   ]);
 }

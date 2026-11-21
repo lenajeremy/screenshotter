@@ -1,6 +1,6 @@
 # Glassine: Boards as its own product
 
-Status: agreed with Jeremiah, 2026-11-21. Nothing here is built yet except where it says so.
+Status: agreed with Jeremiah, 2026-11-21. **Changed the same day:** no split and no second repo. Everything stays in this one, and the app itself became boards only (branch `glassine`): screenshots, App Store sets, video editing and recording are gone, and onboarding is new (import a website or a Figma file, connect an agent). The name stays Screenshotter until the rename is decided. Sections 1 and 3 onwards below still describe the original plan.
 
 **Glassine** is the see-through paper you lay over something real to trace it: Paper's cousin, for
 designing over your running app. No software uses the name (checked 2026-11-21); check the domain
