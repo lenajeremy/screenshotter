@@ -49,7 +49,7 @@ try {
     assert.equal(res.status, 200, JSON.stringify(json));
     return json;
   };
-  for (const p of ["/", "/ui/app.js", "/ui/imports.js", "/ui/home-demo.js", "/ui/board.js", "/ui/board-core.js", "/ui/shapes.js", "/ui/styles.css", "/ui/vendor/preact.js", "/ui/vendor/hooks.js", "/ui/vendor/htm.js", "/ui/icon.svg"]) {
+  for (const p of ["/", "/ui/app.js", "/ui/imports.js", "/ui/board-agent.js", "/ui/agent-logos.js", "/ui/board.js", "/ui/board-core.js", "/ui/shapes.js", "/ui/styles.css", "/ui/vendor/preact.js", "/ui/vendor/hooks.js", "/ui/vendor/htm.js", "/ui/icon.svg"]) {
     assert.equal((await fetch(base + p)).status, 200, p);
   }
   pass("the app's UI and vendored Preact/htm are served from the bundle");
