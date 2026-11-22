@@ -1389,12 +1389,15 @@ await fake.close();
     .fade { opacity: 0; transition: opacity .3s; font-size: 30px; }
     .fade.on { opacity: 1; }
     .cookie { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 16px; }
+    .reveal::after { content: ""; display: block; height: 100vh; }
   </style></head><body>
     <div class="intro"><h1>Story<br>time</h1><div style="display:contents"><div style="display:contents"><span>Deep contents</span></div></div></div>
     <section class="runway"><div class="stick"><p class="fade">Shown in the pinned part</p></div></section>
     <div class="after"><p class="fade">Shown when scrolled to</p></div>
     <div style="padding: 20px 40px 60px"><a href="#" style="display:inline-flex;padding:20px;background:#0a0e27;color:#fff">Create a free account</a></div>
     <div style="margin-top:-150px;padding-top:160px;background:#fff">The next section, pulled up over the button</div>
+    <section style="height:1400px"><div style="position:sticky;top:0;height:300px;background:#0a0a1f"><div style="width:min(600px, calc(100% - 100px));margin-inline:auto;position:relative;height:100%"><h2 style="position:absolute;left:0;top:20px;margin:0;color:#fff">Send your way</h2></div></div></section>
+    <div class="reveal" style="position:relative;display:flow-root"><div style="position:relative;z-index:2;height:200px;background:#fff">The last section</div><footer style="position:sticky;top:0;margin-top:-900px;height:300px;background:#00000f;color:#fff">Footer links</footer></div>
     <div class="cookie">We use cookies to improve your experience. <button>Accept</button> <button>Reject</button></div>
     <script>
       const io = new IntersectionObserver((es) => es.forEach((e) => e.target.classList.toggle("on", e.isIntersecting)));
@@ -1480,12 +1483,17 @@ await fake.close();
     check(Boolean(words("Shown in the pinned part")) && Number(words("Shown in the pinned part")!.style.opacity ?? 1) > 0.9, "words that fade in inside a pinned section come in shown");
     check(Boolean(words("Shown when scrolled to")) && Number(words("Shown when scrolled to")!.style.opacity ?? 1) > 0.9, "words that fade in when scrolled to, and out when scrolled back, come in shown");
     const tall = parseFloat(sroot.style.minHeight ?? sroot.style.height ?? "0");
-    check(tall > 1900 && tall < 2600, `a pinned section keeps its own height, not the room it scrolls through (${tall}px, the page is 4300)`);
+    check(tall > 2700 && tall < 3400, `pinned sections keep their own height, not the room they scroll through (${tall}px; the page is 6400)`);
     check(!words("We use cookies") && sr.warnings.some((w) => /cookie/.test(w)), "a cookie banner is left out, and that's said");
     const cta = words("Create a free account");
     // Lifted: the layer itself, its frame, or the button inside its words (a link kept as styled text).
     const lifted = (n?: { style: Record<string, string>; parent?: string | null; text?: string }) => n?.style.position === "relative" || /position:\s*relative/.test(n?.text ?? "") || (n?.parent ? sb.nodes[n.parent]?.style.position === "relative" : false);
     check(lifted(cta), "a button a later section is pulled up over (negative margin, white background) stays on top, as in the page");
+    const send = words("Send your way");
+    const holder = send?.parent ? sb.nodes[send.parent] : undefined;
+    const even = holder && ((holder.style.marginLeft === "auto" && holder.style.marginRight === "auto") || (parseFloat(holder.style.marginLeft ?? "0") > 0 && holder.style.marginLeft === holder.style.marginRight));
+    check(even, `a centred box in a pinned section stays centred (margins ${holder?.style.marginLeft} ${holder?.style.marginRight})`);
+    check(Boolean(words("Footer links")) && Boolean(words("The last section")), "a footer revealed from under the last section comes in whole, after it (and its scroll room doesn't)");
   }
   // Agents bring sites in too, onto a new board named after it.
   const viaAgent = await call("board_import_website", { url: siteUrl, width: 390, fullPage: false });

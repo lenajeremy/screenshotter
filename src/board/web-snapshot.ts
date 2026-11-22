@@ -188,6 +188,34 @@ export const SNAPSHOT = String.raw`(function (opts) {
       if (cl && (cl.contains("pin-spacer") || cl.contains("scrollmagic-pin-spacer"))) runways.push([e, true]);
       else if (getComputedStyle(e).position === "sticky" && e.parentElement && e.parentElement !== document.body) runways.push([e.parentElement, false]);
     }
+    // A footer revealed from under the section before it (sticky, pulled up beneath it by a negative
+    // margin, uncovered as the page scrolls on): it's shown whole, after that section. And an empty
+    // ::before or ::after that only makes room to scroll through (a spacer as tall as the window).
+    var hide = [];
+    runways.forEach(function (rw, n) {
+      if (rw[1]) return;
+      ["before", "after"].forEach(function (which) {
+        var pcs = getComputedStyle(rw[0], "::" + which);
+        var empty = pcs.content === '""' || pcs.content === "''";
+        var bare = /rgba\(0, 0, 0, 0\)|transparent/.test(pcs.backgroundColor) && pcs.backgroundImage === "none" && pcs.borderTopStyle === "none" && pcs.boxShadow === "none";
+        if (empty && bare && parseFloat(pcs.height) > window.innerHeight * 0.3) {
+          rw[0].setAttribute("data-ss-spacer", (rw[0].getAttribute("data-ss-spacer") || "") + which + " ");
+          hide.push("[data-ss-spacer~=" + which + "]::" + which);
+        }
+      });
+    });
+    if (hide.length) {
+      var sp = document.createElement("style");
+      sp.textContent = hide.join(", ") + " { display: none !important; }";
+      document.head.appendChild(sp);
+    }
+    runways.forEach(function (rw) {
+      if (rw[1]) return;
+      for (var k = 0; k < rw[0].children.length; k++) {
+        var st = rw[0].children[k];
+        if (getComputedStyle(st).position === "sticky" && parseFloat(getComputedStyle(st).marginTop) < 0) st.style.setProperty("margin-top", "0px", "important");
+      }
+    });
     runways.forEach(function (rw) {
       var p = rw[0], before = p.getBoundingClientRect().height, old = p.getAttribute("style");
       p.style.setProperty("height", "auto", "important");
@@ -399,8 +427,15 @@ export const SNAPSHOT = String.raw`(function (opts) {
       var need = bottom - rect.top + px(cs.paddingBottom) + px(cs.borderBottomWidth);
       if (h - need > 2) style["min-height"] = up(ch) + "px";
     }
-    // Centred with auto margins: kept centred, not at today's pixels.
-    if (!out && !inlineLevel(disp) && style.width && px(cs.marginLeft) > 1 && Math.abs(px(cs.marginLeft) - px(cs.marginRight)) < 1.5) { style["margin-left"] = "auto"; style["margin-right"] = "auto"; }
+    // Centred with auto margins: kept centred, not at today's pixels. Told by where it sits (an
+    // equal gap each side of its holder), as the browser can report auto margins as 0.
+    if (!out && !inFlex && !inlineLevel(disp) && style.width && el.parentElement && parentCs) {
+      var hr = el.parentElement.getBoundingClientRect();
+      var gapL = rect.left - (hr.left + px(parentCs.paddingLeft) + px(parentCs.borderLeftWidth));
+      var gapR = hr.right - px(parentCs.paddingRight) - px(parentCs.borderRightWidth) - rect.right;
+      if (gapL > 1 && Math.abs(gapL - gapR) < 1.5) { style["margin-left"] = "auto"; style["margin-right"] = "auto"; }
+      else if (gapL > px(cs.marginLeft) + 1 && cs.getPropertyValue("transform") === "none" && px(cs.left) === 0) style["margin-left"] = r1(gapL) + "px";
+    }
   }
 
   var positioned = [{ x: 0, y: 0, bt: 0, bl: 0 }];
