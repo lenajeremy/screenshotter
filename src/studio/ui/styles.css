@@ -970,6 +970,8 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .bd-canvas.tool-text { cursor: text; }
 .bd-canvas.tool-hand, .bd-canvas.panning { cursor: grab; }
 .bd-canvas.grabbing { cursor: grabbing; }
+/* The camera: a layer the GPU keeps, moved and scaled over the world as drawn (see board-canvas.js). */
+.bd-camera { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .bd-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .bd-world, .bd-world * { box-sizing: border-box; }
 .bd-world img { display: block; }
@@ -1159,7 +1161,6 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .bd-app ::-webkit-scrollbar-thumb:hover { background: rgb(var(--ink) / 0.24) padding-box; }
 .bd-app ::-webkit-scrollbar-track, .bd-app ::-webkit-scrollbar-corner { background: transparent; }
 .bd-row, .bd-page, .icon-btn { transition: background-color 80ms ease, color 80ms ease; }
-.bd-canvas.moving .bd-world { will-change: transform; }
 .bd-app .bd-rows, .bd-app .bd-assets, .bd-app .panel-body, .bd-app .bd-pages { overscroll-behavior: contain; }
 .bd-canvas { overscroll-behavior: none; }
 /* A long layer list costs nothing out of sight: rows scrolled away skip layout and painting. */

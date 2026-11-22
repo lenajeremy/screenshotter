@@ -59,12 +59,21 @@ export function screenBox(id) {
  * ease-out). Scrolling and pinching move it directly.
  */
 let glide = 0;
+/** The zoom a glide is zooming out to, while it does (see the camera). */
+let gliding = null;
 function setView(to, animate, ms = 220) {
   cancelAnimationFrame(glide);
+  gliding = null;
   if (!animate) return bset({ view: to });
   const from = { ...B.view };
   const t0 = performance.now();
-  canvasEl.current?.classList.add("moving");
+  // Zooming out: drawn at the zoom it ends at from the start, so the glide only scales a picture
+  // that's sharp when it lands (zooming in, it's drawn sharp again as it goes; see the camera).
+  if (to.z < from.z) {
+    drawAtZoom(to);
+    gliding = to.z;
+    applyView();
+  }
   const step = (now) => {
     const t = Math.min(1, (now - t0) / ms);
     // A quick ease-out for the zoom commands; a longer glide (following an agent) eases in and out.
@@ -76,11 +85,73 @@ function setView(to, animate, ms = 220) {
     const a = mid(from);
     const b = mid(to);
     const m = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
-    bset({ view: { z, x: c.width / 2 - m.x * z, y: c.height / 2 - m.y * z } });
+    bset({ view: t < 1 ? { z, x: c.width / 2 - m.x * z, y: c.height / 2 - m.y * z } : { x: to.x, y: to.y, z: to.z } });
     if (t < 1) glide = requestAnimationFrame(step);
-    else canvasEl.current?.classList.remove("moving");
+    else (glide = 0), (gliding = null);
   };
   glide = requestAnimationFrame(step);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The camera: how the view reaches the screen
+//
+// The world (every artboard, as HTML) is drawn at a zoom of its own inside the camera, a layer the
+// GPU keeps: panning moves that layer and zooming scales it, so neither draws the design again.
+// It's drawn again, sharp, at the view's zoom once a zoom stops (and on the way, when the zoom is
+// far enough from the drawn one that the picture would look soft, or cost too much to fill in).
+
+/** The camera and the world in it, as drawn now. */
+const cam = { el: null, world: null };
+/** The view the world is drawn at (its x and y only the part of a pixel the camera can't move by). */
+let drawn = null;
+/** The view last put on screen. */
+let shown = null;
+let sharpenSoon = 0;
+/** How far the camera scales the drawn world before it's drawn again: up (softer), down (more to fill in). */
+const SOFTEST = 1.5;
+const SMALLEST = 0.5;
+
+const px = (v) => Math.round(v * devicePixelRatio) / devicePixelRatio;
+const offPixel = (v) => Math.abs(px(v) - v) > 1e-3;
+
+/** Draw the world at a view's zoom, the camera making up the rest. */
+function drawAtZoom(v) {
+  if (!cam.world) return;
+  // The camera moves by whole screen pixels (a layer moved by part of one looks soft); the world
+  // takes the rest, drawn exactly.
+  drawn = { x: v.x - px(v.x), y: v.y - px(v.y), z: v.z };
+  cam.world.style.transform = `translate(${drawn.x}px, ${drawn.y}px) scale(${drawn.z})`;
+  shown = null;
+}
+
+/** Put the view on screen: the camera moved and scaled over the world as drawn. */
+export function applyView() {
+  if (!cam.el?.isConnected || !cam.world) return false;
+  const v = B.view;
+  if (shown && shown.x === v.x && shown.y === v.y && shown.z === v.z && drawn) return false;
+  let s = drawn ? v.z / drawn.z : 0;
+  // A glide zooming out to where it's drawn already only grows sharper on the way.
+  if (!drawn || (s > SOFTEST && drawn.z !== gliding) || s < SMALLEST) {
+    drawAtZoom(v);
+    s = 1;
+  }
+  shown = { x: v.x, y: v.y, z: v.z };
+  cam.el.style.transform = `translate(${v.x - s * drawn.x}px, ${v.y - s * drawn.y}px) scale(${s})`;
+  clearTimeout(sharpenSoon);
+  // Off the drawn zoom (or off whole pixels): drawn again, sharp, once the view stops.
+  if (s !== 1 || offPixel(v.x - drawn.x) || offPixel(v.y - drawn.y)) sharpenSoon = setTimeout(sharpen, 140);
+  return true;
+}
+const camRef = (el) => {
+  if (cam.el !== el) (cam.el = el), (shown = null);
+};
+const worldRef = (el) => {
+  if (cam.world !== el) (cam.world = el), (drawn = shown = null);
+};
+
+function sharpen() {
+  drawn = null;
+  applyView();
 }
 
 export function zoomTo(z, at, { animate = false } = {}) {
@@ -362,6 +433,8 @@ export function BoardCanvas() {
   useMaskFonts(b.board);
   useLayoutEffect(() => {
     canvasEl.current = ref.current;
+    // A camera just made (the board opened): what's drawn over the design measures again with it.
+    if (applyView()) notify();
   });
   // A board opens fitted to its first page.
   useLayoutEffect(() => {
@@ -372,16 +445,8 @@ export function BoardCanvas() {
   }, [b.id, b.page]);
   useEffect(() => {
     const el = ref.current;
-    // While the view moves, the design is kept on the GPU (and redrawn sharp once it stops).
-    let still = 0;
-    const moving = () => {
-      el.classList.add("moving");
-      clearTimeout(still);
-      still = setTimeout(() => el.classList.remove("moving"), 160);
-    };
     const wheel = (e) => {
       e.preventDefault();
-      moving();
       const r = el.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), { x: e.clientX - r.left, y: e.clientY - r.top });
       else bset({ view: { ...B.view, x: B.view.x - e.deltaX, y: B.view.y - e.deltaY } });
@@ -394,7 +459,6 @@ export function BoardCanvas() {
     };
     const gc = (e) => {
       e.preventDefault();
-      moving();
       const r = el.getBoundingClientRect();
       zoomBy(e.scale / g0, { x: e.clientX - r.left, y: e.clientY - r.top });
       g0 = e.scale;
@@ -411,15 +475,18 @@ export function BoardCanvas() {
       document.fonts.removeEventListener?.("loadingdone", fonts);
     };
   }, []);
+  // The view goes on screen before what's drawn over the design measures where things are.
+  applyView();
   if (!b.board || !page) return html`<div class="bd-canvas" ref=${ref}></div>`;
-  const { x, y, z } = b.view;
   const tokens = Object.fromEntries(b.board.tokens.map((t) => [t.name, t.value]));
   return html`<div class="bd-canvas tool-${b.tool} ${spaceDown ? "panning" : ""}" ref=${ref}
       onPointerDown=${down} onDblClick=${dblclick} onContextMenu=${contextMenu} onPointerMove=${hoverMove} onPointerLeave=${() => (B.hover && bset({ hover: null }), B.live && sendLivePresence({ cursor: null }, { immediate: true }))}
       onClickCapture=${(e) => e.target.closest("a") && e.preventDefault()}
       onDragOver=${(e) => e.preventDefault()} onDrop=${dropFiles}>
-    <div class="bd-world" style=${{ transform: `translate(${x}px, ${y}px) scale(${z})`, ...tokens }}>
-      ${page.children.map((id) => html`<${Layer} key=${id} n=${b.board.nodes[id]} root editing=${b.editing} />`)}
+    <div class="bd-camera" ref=${camRef}>
+      <div class="bd-world" ref=${worldRef} style=${tokens}>
+        ${page.children.map((id) => html`<${Layer} key=${id} n=${b.board.nodes[id]} root editing=${b.editing} />`)}
+      </div>
     </div>
     <${Overlay} />
     <${Presence} />
