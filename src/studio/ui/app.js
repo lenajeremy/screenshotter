@@ -12,40 +12,79 @@ import { ImportWebsite, looksLikeUrl, openImportWebsite } from "./web-import.js"
 import { ConnectAgent, FigmaMark, ImportFigma, importFigFile, isFigFile, isFigmaClipboard, looksLikeFigma, openImportFigma, pasteFigma, saveFigmaToken } from "./imports.js";
 import { AgentLogo } from "./agent-logos.js";
 import { loadAgents } from "./board-agent.js";
+import { CreateTeamModal, MoveToTeamModal, SignInModal, TeamBoardsGrid, TeamMembersModal, newTeamBoard, refreshAccount, signOutAccount } from "./cloud.js";
 import { S, answerConfirm, answerPrompt, api, dismiss, fail, native, restore, set, setTheme, themeNow, toast, touch, useStore } from "./store.js";
 
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
-const realBoards = (boards) => (boards ?? []).filter((b) => b.id !== "scratchpad");
+const realBoards = (boards) => (boards ?? []).filter((b) => b.id !== "scratchpad" && !b.teamId);
 
 // =============================================================================================
 // Home: your boards, like a design tool's file browser
 
 function Home() {
+  const s = useStore();
   const boards = useBoards();
   const [q, setQ] = useState("");
-  const first = boards !== null && !realBoards(boards).length;
+  const cloud = s.cloud ?? {};
+  const activeTeam = s.homeView !== "recents" ? (cloud.teams ?? []).find((t) => t.id === s.homeView) : null;
+  const first = !activeTeam && boards !== null && !realBoards(boards).length;
   return html`<div class="home">
     <aside class="home-side">
       <div class="home-drag" data-drag></div>
-      <div class="home-brand"><div class="brand-mark"></div><span>${S.opts?.appName ?? "Screenshotter"}</span></div>
+      <div class="home-brand"><div class="brand-mark"></div><span>${s.opts?.appName ?? "Screenshotter"}</span></div>
       <label class="home-search"><${Icon} n="search" s=${13} /><input placeholder="Search boards" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} aria-label="Search boards" /></label>
       <nav class="home-nav">
-        <button class="on"><${Icon} n="history" s=${15} />Recents</button>
+        <button class=${!activeTeam ? "on" : ""} onClick=${() => set({ homeView: "recents" })}><${Icon} n="history" s=${15} />Recents</button>
         <button onClick=${() => openBoard("scratchpad")}><${Icon} n="pen" s=${15} />Scratchpad</button>
+      </nav>
+      <div class="home-sec-row">
+        <p class="home-sec">Teams</p>
+        ${cloud.signedIn && html`<button class="icon-btn xs" title="New team" onClick=${() => set({ modal: { kind: "createTeam" } })}><${Icon} n="plus" s=${13} /></button>`}
+      </div>
+      <nav class="home-nav home-teams">
+        ${cloud.signedIn
+          ? cloud.teams.length
+            ? cloud.teams.map(
+                (t) => html`<button key=${t.id} class=${activeTeam?.id === t.id ? "on" : ""} onClick=${() => set({ homeView: t.id })}>
+                  <${Icon} n="users" s=${15} /><span class="grow ellipsis">${t.name}</span>
+                </button>`,
+              )
+            : html`<button onClick=${() => set({ modal: { kind: "createTeam" } })}><${Icon} n="plus" s=${15} />Create a team</button>`
+          : html`<button onClick=${() => set({ modal: { kind: "signIn" } })}><${Icon} n="users" s=${15} />Sign in to collaborate</button>`}
       </nav>
       <p class="home-sec">Agents</p>
       <${AgentsList} />
       <span class="grow"></span>
-      <nav class="home-nav"><button onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${15} />Settings</button></nav>
+      ${cloud.signedIn && cloud.user &&
+      html`<button class="home-account" title=${cloud.user.email} onClick=${() => set({ modal: { kind: "settings", tab: "account" } })}>
+        <span class="cloud-av sm">${(cloud.user.name || cloud.user.email)[0].toUpperCase()}</span>
+        <span class="home-account-t"><b>${cloud.user.name || cloud.user.email}</b><span>${cloud.offline ? "Offline" : cloud.user.email}</span></span>
+      </button>`}
+      <nav class="home-nav">
+        ${!cloud.signedIn && html`<button onClick=${() => set({ modal: { kind: "signIn" } })}><${Icon} n="user" s=${15} />Sign in</button>`}
+        <button onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${15} />Settings</button>
+      </nav>
     </aside>
     <main class="home-main">
       <header class="home-head" data-drag>
-        <h1>${first ? "Start a board" : q.trim() ? "Search" : "Recents"}</h1>
+        <h1>${activeTeam ? activeTeam.name : first ? "Start a board" : q.trim() ? "Search" : "Recents"}</h1>
+        ${activeTeam && html`<span class="cloud-role">${activeTeam.role}</span>`}
         <span class="spacer"></span>
-        <${ImportButton} />
-        <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.4} />New board</button>
+        ${activeTeam
+          ? html`<button class="btn sm" onClick=${() => set({ modal: { kind: "teamMembers", teamId: activeTeam.id } })}><${Icon} n="users" s=${13} />Members</button>
+              <button class="btn primary sm" onClick=${() => newTeamBoard(activeTeam)}><${Icon} n="plus" s=${13} w=${2.4} />New team board</button>`
+          : html`<${ImportButton} />
+              <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.4} />New board</button>`}
       </header>
-      <div class="home-scroll">${boards === null ? html`<div class="sp-empty"><span class="spinner"></span></div>` : first ? html`<${StartTiles} />` : html`<${BoardsGrid} q=${q} />`}</div>
+      <div class="home-scroll">
+        ${activeTeam
+          ? html`<${TeamBoardsGrid} key=${activeTeam.id} team=${activeTeam} q=${q} />`
+          : boards === null
+            ? html`<div class="sp-empty"><span class="spinner"></span></div>`
+            : first
+              ? html`<${StartTiles} />`
+              : html`<${BoardsGrid} q=${q} />`}
+      </div>
     </main>
   </div>`;
 }
@@ -147,12 +186,46 @@ function Settings() {
   useEffect(load, []);
   const TABS = [
     { value: "general", label: "General" },
+    { value: "account", label: "Account" },
     { value: "agents", label: "Agents" },
     { value: "keys", label: "Figma & photos" },
     { value: "shortcuts", label: "Shortcuts" },
   ];
+  const [serverDraft, setServerDraft] = useState(s.cloud?.serverUrl || "");
+  useEffect(() => {
+    if (s.cloud?.serverUrl && !serverDraft) setServerDraft(s.cloud.serverUrl);
+  }, [s.cloud?.serverUrl]);
   return html`<${Sheet} title="Settings">
     <div class="settings-tabs"><${Seg} value=${tab} options=${TABS} onChange=${setTab} /></div>
+    ${tab === "account" &&
+    html`<div class="card">
+        <h4><${Icon} n="user" s=${15} />Account</h4>
+        ${s.cloud?.signedIn && s.cloud.user
+          ? html`<div class="cloud-member" style=${{ padding: "4px 0 8px" }}>
+              <span class="cloud-av">${(s.cloud.user.name || s.cloud.user.email)[0].toUpperCase()}</span>
+              <div class="cloud-member-info"><b>${s.cloud.user.name || s.cloud.user.email}</b><span>${s.cloud.user.email}</span></div>
+              <button class="btn sm" onClick=${() => signOutAccount().then(() => set({ modal: null }))}><${Icon} n="logout" s=${13} />Sign out</button>
+            </div>
+            <div class="note">${s.cloud.teams.length ? `In ${s.cloud.teams.length} team${s.cloud.teams.length === 1 ? "" : "s"}: ${s.cloud.teams.map((t) => t.name).join(", ")}.` : "Not in any team yet. Create one from the Teams section on Home."}</div>`
+          : html`<div class="note" style=${{ marginBottom: "10px" }}>Sign in to create teams, share boards and edit live with teammates.</div>
+            <button class="btn primary sm" onClick=${() => set({ modal: { kind: "signIn" } })}>Sign in</button>`}
+      </div>
+      <div class="card">
+        <h4><${Icon} n="globe" s=${15} />Collaboration server</h4>
+        <div class="hstack">
+          <input class="input grow mono" value=${serverDraft} placeholder="https://glassine.thesunset.live" spellcheck=${false} onInput=${(e) => setServerDraft(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
+          <button class="btn sm" disabled=${!serverDraft.trim() || serverDraft.trim() === s.cloud?.serverUrl} onClick=${async () => {
+            try {
+              await api("/api/cloud/server", { serverUrl: serverDraft.trim() });
+              await refreshAccount();
+              toast({ kind: "ok", title: "Server updated" });
+            } catch (e) {
+              fail(e, "Couldn't update server");
+            }
+          }}>Save</button>
+        </div>
+        <div class="note">Accounts, teams and live sync connect to this server.</div>
+      </div>`}
     ${tab === "general" &&
     html`<div class="card">
         <h4><${Icon} n=${themeNow() === "light" ? "sun" : "moon"} s=${15} />Appearance</h4>
@@ -273,7 +346,17 @@ function Toasts() {
   )}</div>`;
 }
 
-const MODALS = { settings: Settings, confirm: Confirm, prompt: Prompt, importWebsite: ImportWebsite, importFigma: ImportFigma };
+const MODALS = {
+  settings: Settings,
+  confirm: Confirm,
+  prompt: Prompt,
+  importWebsite: ImportWebsite,
+  importFigma: ImportFigma,
+  signIn: () => html`<${SignInModal} Sheet=${Sheet} />`,
+  createTeam: () => html`<${CreateTeamModal} Sheet=${Sheet} />`,
+  teamMembers: () => html`<${TeamMembersModal} Sheet=${Sheet} />`,
+  moveToTeam: () => html`<${MoveToTeamModal} Sheet=${Sheet} />`,
+};
 
 // =============================================================================================
 // Root
@@ -461,6 +544,7 @@ async function boot() {
     const [opts] = await Promise.all([api("/api/options"), restore()]);
     set({ opts });
     if (opts.appName) document.title = opts.appName;
+    void refreshAccount();
     await refreshBoards();
     // The board that was open last time opens again.
     let last = null;

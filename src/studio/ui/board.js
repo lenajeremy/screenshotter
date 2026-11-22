@@ -5,7 +5,7 @@ import { looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, isGrid, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { maskGroupOps, maskOps, maskRuns } from "./board-core.js";
-import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, undo, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, sendLivePresence, undo, useBoard } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AgentDot, AgentPanel, boardOpened } from "./board-agent.js";
@@ -16,7 +16,7 @@ import { pageHtml } from "./board-shaders.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
 import { gridShortcut, intoGridStyle, setLayout, wrapInGrid } from "./board-grid.js";
-import { S, api, fail, native, toast } from "./store.js";
+import { S, api, fail, native, set, toast, useStore } from "./store.js";
 
 const mod = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
 
@@ -111,11 +111,13 @@ const TOOLS = [
 
 function BoardTopbar() {
   // It shows the zoom, so it follows the view (not the pointer).
-  const b = useBoard(["hover", "guides", "drop", "words"]);
+  const b = useBoard(["hover", "guides", "drop", "words", "peers"]);
+  const s = useStore();
   const exportBtn = useRef();
   const zoomBtn = useRef();
   const [exporting, setExporting] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const liveLabel = b.live?.status === "connected" ? (b.live.teamName || "Team") : b.live?.status === "reconnecting" ? "Reconnecting…" : b.live?.status === "offline" ? "Offline" : "Connecting…";
   return html`<header class="topbar bd-topbar" data-drag>
     <div class="brand">
       <div class="brand-mark"></div>
@@ -133,6 +135,7 @@ function BoardTopbar() {
           if (name && name !== B.board.name) commit([{ op: "rename", name }], { label: "Rename" });
           else e.target.value = B.board.name;
         }} />
+      ${b.live && html`<button class="bd-team-pill ${b.live.status}" data-nodrag title="Team board · click for members and invites" onClick=${() => set({ modal: { kind: "teamMembers", teamId: b.live.teamId } })}><i></i>${liveLabel}</button>`}
     </div>
     <div class="topbar-center bd-tools" data-nodrag role="toolbar" aria-label="Tools">
       ${TOOLS.map((t) => html`<button class="icon-btn ${b.tool === t.id ? "on" : ""}" title=${`${t.label} (${t.key})`} aria-pressed=${b.tool === t.id}
@@ -141,6 +144,7 @@ function BoardTopbar() {
     <span class="spacer"></span>
     <div class="hstack" data-nodrag>
       ${b.working.length > 0 && html`<span class="bd-agent-pill" title="An agent is changing this board: you'll see each change as it lands"><i></i>Agent at work</span>`}
+      ${!b.live && b.id !== "scratchpad" && s.cloud?.signedIn && html`<button class="btn ghost sm" title="Move this board into a team to edit live together" onClick=${() => set({ modal: { kind: "moveToTeam", boardId: b.id, boardName: b.board.name } })}><${Icon} n="users" s=${13} />Move to team</button>`}
       <button class="icon-btn" title="Undo (⌘Z)" disabled=${!b.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!b.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
       <button class="btn ghost sm bd-zoom" ref=${zoomBtn} title="Zoom" onClick=${() => setZoomOpen(!zoomOpen)}>${Math.round(b.view.z * 100)}%<${Icon} n="down" s=${12} /></button>
@@ -219,7 +223,7 @@ function PagesList() {
   };
   return html`<section class="bd-pages">
     <div class="bd-head"><h3>Pages</h3><button class="icon-btn sm" title="Add a page" onClick=${add}><${Icon} n="plus" s=${14} /></button></div>
-    ${b.board.pages.map((p) => html`<div key=${p.id} class="bd-page ${p.id === (b.page ?? b.board.pages[0].id) ? "on" : ""}" onClick=${() => p.id !== B.page && bset({ page: p.id, sel: [], hover: null, view: { ...B.view, fitPending: true } })} onDblClick=${() => setRenaming(p.id)} onContextMenu=${(e) => menu(e, p)}>
+    ${b.board.pages.map((p) => html`<div key=${p.id} class="bd-page ${p.id === (b.page ?? b.board.pages[0].id) ? "on" : ""}" onClick=${() => p.id !== B.page && (bset({ page: p.id, sel: [], hover: null, view: { ...B.view, fitPending: true } }), B.live && sendLivePresence({ page: p.id, selection: [] }, { immediate: true }))} onDblClick=${() => setRenaming(p.id)} onContextMenu=${(e) => menu(e, p)}>
         <${Icon} n="page" s=${14} />
         ${renaming === p.id
           ? html`<${NameInput} value=${p.name} onDone=${(v) => (setRenaming(null), v && v !== p.name && commit([{ op: "setPage", id: p.id, name: v }], { label: "Rename page" }))} />`

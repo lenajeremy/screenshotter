@@ -10,7 +10,9 @@ import { setImageQuality } from "../render/photos.js";
 import { run } from "../util/exec.js";
 import { cacheDir, ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { noteStudioFolder } from "../util/studio.js";
-import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplicateBoard, getBoard, listBoards, summarizeBoard, validBoardId, workingNow } from "../board/store.js";
+import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplicateBoard, getBoard, getSyncMeta, isTeamBoard, listBoards, summarizeBoard, validBoardId, workingNow } from "../board/store.js";
+import { CloudError, cancelDeviceSignIn, cancelTeamInvitation, createTeam, createTeamBoard, deleteTeamBoard, deviceSignInStatus, downloadTeamAsset, getAccount, getTeamDetails, inviteToTeam, listTeamBoards, moveLocalBoardToTeam, renameTeamBoard, setServerUrl, signOut, startDeviceSignIn } from "../cloud/client.js";
+import { closeAllLiveRooms, closeLiveRoom, openTeamBoard, pushTeamOps, sendLivePresence, subscribeLive, type PeerPresence } from "../cloud/sync.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers, maskFontsFor, previewDocument } from "../board/render.js";
 import { importWebsite } from "../board/web-import.js";
@@ -449,7 +451,37 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     for (const b of list) if (!b.damaged && (!b.thumb || Date.parse(b.updatedAt) > (b.thumbAt ?? 0))) scheduleBoardThumb(b.id, 400);
     return send(200, list);
   }
-  if (req.method === "GET" && url.pathname === "/api/board") return send(200, getBoard(url.searchParams.get("id")));
+  if (req.method === "GET" && url.pathname === "/api/board") {
+    const id = url.searchParams.get("id");
+    const board = getBoard(id);
+    const sync = id ? getSyncMeta(id) : null;
+    return send(200, sync ? { ...board, _team: { teamId: sync.teamId, teamName: sync.teamName } } : board);
+  }
+  const teamAsset = req.method === "GET" ? /^\/api\/assets\/([^/]+)\/([a-f0-9]{16,64})$/i.exec(url.pathname) : null;
+  if (teamAsset) {
+    const hit = await downloadTeamAsset(decodeURIComponent(teamAsset[1]), teamAsset[2]);
+    const stat = statSync(hit.file);
+    res.writeHead(200, { "Content-Type": hit.mime, "Content-Length": stat.size, "Cache-Control": "private, max-age=31536000, immutable" });
+    stream(res, hit.file);
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/cloud/account") return send(200, await getAccount());
+  if (req.method === "GET" && url.pathname === "/api/cloud/signin/status") return send(200, deviceSignInStatus(url.searchParams.get("consume") === "1"));
+  if (req.method === "GET" && url.pathname === "/api/cloud/teams/boards") {
+    const team = url.searchParams.get("team") ?? "";
+    if (!team) throw new HttpError(400, "Missing team id");
+    return send(200, { boards: await listTeamBoards(team) });
+  }
+  if (req.method === "GET" && url.pathname === "/api/cloud/teams/details") {
+    const team = url.searchParams.get("team") ?? "";
+    if (!team) throw new HttpError(400, "Missing team id");
+    return send(200, await getTeamDetails(team));
+  }
+  if (req.method === "GET" && url.pathname === "/api/cloud/live/stream") {
+    const boardId = url.searchParams.get("board") ?? "";
+    if (!subscribeLive(boardId, res)) throw new HttpError(404, "That board isn't synced with a team.");
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/board/preview") {
     // A frame as a web page, to open in a browser: /board/preview?board=…&node=…&w=<its width on the canvas>
     const b = getBoard(url.searchParams.get("board"));
@@ -459,7 +491,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       res.end(body);
     };
     if (!b.nodes[id]) return page(404, `<!doctype html><html><head><meta charset="utf-8"><title>Preview</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;font:14px system-ui;color:#666;background:#e9e9ec">That frame isn't on the board any more.</body></html>`);
-    const src = (s: string) => (/^(https?:|data:|blob:)/i.test(s) ? s : `/file?path=${encodeURIComponent(s.replace(/^file:\/\//, ""))}`);
+    const src = (s: string) => (/^(https?:|data:|blob:|\/api\/assets\/)/i.test(s) ? s : `/file?path=${encodeURIComponent(s.replace(/^file:\/\//, ""))}`);
     await maskFontsFor(b);
     return page(200, previewDocument(b, id, { width: Number(url.searchParams.get("w")) || undefined, src }));
   }
@@ -540,8 +572,75 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       // The Studio sends steps with components' copies already worked out.
       // A copy placed meanwhile (by an agent) that they didn't know of is brought in line too.
       const changed = changeBoard(b.id, b.ops, "studio", b.base, { expand: false, reconcile: true });
-      if (!b.ops.every((o) => o.op === "working" || o.op === "agent")) scheduleBoardThumb(b.id);
+      if (!b.ops.every((o) => o.op === "working" || o.op === "agent")) {
+        scheduleBoardThumb(b.id);
+        if (isTeamBoard(b.id)) void pushTeamOps(b.id, changed.applied).catch((e) => console.error("[cloud] push", e));
+      }
       return send(200, { rev: changed.board.rev, updatedAt: changed.board.updatedAt, stale: changed.stale || Boolean(changed.repaired) });
+    }
+    case "/api/cloud/signin/start": {
+      const a = await json<{ serverUrl?: string }>(req);
+      return send(200, await startDeviceSignIn(a.serverUrl));
+    }
+    case "/api/cloud/signin/cancel": {
+      cancelDeviceSignIn();
+      return send(200, { ok: true });
+    }
+    case "/api/cloud/signout": {
+      closeAllLiveRooms();
+      await signOut();
+      return send(200, { ok: true });
+    }
+    case "/api/cloud/server": {
+      const a = await json<{ serverUrl: string }>(req);
+      return send(200, { serverUrl: setServerUrl(a.serverUrl) });
+    }
+    case "/api/cloud/teams/create": {
+      const a = z.object({ name: z.string().trim().min(1).max(120) }).parse(await json(req));
+      return send(200, await createTeam(a.name));
+    }
+    case "/api/cloud/teams/invite": {
+      const a = z.object({ teamId: z.string().min(1), email: z.string().trim().email(), role: z.enum(["member", "admin"]).optional() }).parse(await json(req));
+      return send(200, await inviteToTeam(a.teamId, a.email, a.role ?? "member"));
+    }
+    case "/api/cloud/teams/cancel-invite": {
+      const a = z.object({ invitationId: z.string().min(1) }).parse(await json(req));
+      await cancelTeamInvitation(a.invitationId);
+      return send(200, { ok: true });
+    }
+    case "/api/cloud/teams/boards/new": {
+      const a = z.object({ teamId: z.string().min(1), teamName: z.string().optional(), name: z.string().trim().min(1).max(200).optional() }).parse(await json(req));
+      const made = await createTeamBoard(a.teamId, a.name ?? "Untitled board");
+      return send(200, await openTeamBoard(made.id, a.teamName));
+    }
+    case "/api/cloud/boards/open": {
+      const a = z.object({ id: z.string().min(1), teamName: z.string().optional() }).parse(await json(req));
+      return send(200, await openTeamBoard(a.id, a.teamName));
+    }
+    case "/api/cloud/boards/close": {
+      const a = await json<{ id?: string }>(req);
+      if (a.id) closeLiveRoom(a.id);
+      return send(200, { ok: true });
+    }
+    case "/api/cloud/boards/rename": {
+      const a = z.object({ id: z.string().min(1), name: z.string().trim().min(1).max(200) }).parse(await json(req));
+      return send(200, await renameTeamBoard(a.id, a.name));
+    }
+    case "/api/cloud/boards/delete": {
+      const a = z.object({ id: z.string().min(1) }).parse(await json(req));
+      closeLiveRoom(a.id);
+      await deleteTeamBoard(a.id);
+      return send(200, { ok: true });
+    }
+    case "/api/cloud/boards/move": {
+      const a = z.object({ id: z.string().min(1), teamId: z.string().min(1), teamName: z.string().optional() }).parse(await json(req));
+      const moved = await moveLocalBoardToTeam(a.id, a.teamId, a.teamName);
+      return send(200, await openTeamBoard(moved.id, a.teamName));
+    }
+    case "/api/cloud/live/presence": {
+      const a = await json<{ id: string; p: PeerPresence }>(req);
+      if (a.id && a.p) sendLivePresence(a.id, a.p);
+      return send(200, { ok: true });
     }
     case "/api/board/import-website": {
       // A website onto a board (a new one, without `id`), as layers: it takes a while, so it says how far it's got.
@@ -665,12 +764,13 @@ async function upload(req: http.IncomingMessage, url: URL) {
 export async function startStudio(port = Number(process.env.SCREENSHOTTER_STUDIO_PORT ?? 4545), open = true): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     route(req, res, port).catch((e) => {
-      const status = e instanceof HttpError ? e.status : e instanceof z.ZodError ? 400 : 500;
+      const status = e instanceof HttpError ? e.status : e instanceof CloudError ? (e.status || 502) : e instanceof z.ZodError ? 400 : 500;
       const message = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message;
       if (!res.headersSent) res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: message }));
     });
   });
+  server.on("close", () => closeAllLiveRooms());
   server.requestTimeout = 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`Invalid port "${port}". Use --port <0-65535> (0 picks a free port).`);
   await new Promise<void>((resolve, reject) => {

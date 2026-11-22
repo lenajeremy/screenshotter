@@ -1735,3 +1735,48 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .fg-more:hover { color: var(--text); }
 .fg-link { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .fg-progress { padding: 18px 2px; }
+
+/* Teams, account & live collaboration */
+.home-sec-row { display: flex; align-items: center; justify-content: space-between; margin: 22px 4px 6px 8px; }
+.home-sec-row .home-sec { margin: 0; }
+.home-teams { margin-top: 0; }
+.icon-btn.xs { width: 22px; height: 22px; border-radius: 6px; }
+.home-account { display: flex; align-items: center; gap: 9px; padding: 6px 8px; margin-bottom: 4px; border: 0; border-radius: 8px; background: none; color: var(--text); text-align: left; width: 100%; }
+.home-account:hover { background: rgb(var(--ink) / 0.05); }
+.home-account-t { display: flex; flex-direction: column; min-width: 0; }
+.home-account-t b { font-size: 12.5px; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-account-t span { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cloud-signin { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 10px 4px 6px; text-align: center; }
+.cloud-code { font: 650 28px/1 var(--mono); letter-spacing: 0.14em; padding: 14px 22px; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px var(--line-2); color: var(--text); user-select: text; }
+.cloud-wait { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.cloud-err { color: var(--danger-strong); font-size: 12.5px; }
+.cloud-server-box { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; }
+.cloud-server-box .row { width: 100%; }
+
+.cloud-list { display: flex; flex-direction: column; gap: 8px; }
+.cloud-member { display: flex; align-items: center; gap: 10px; }
+.cloud-member-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.cloud-member-info b { font-size: 12.5px; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-member-info span { font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-av { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--iris); color: #fff; font: 650 11.5px var(--sans); }
+.cloud-av.sm { width: 24px; height: 24px; font-size: 10.5px; }
+.cloud-av.dim { background: rgb(var(--ink) / 0.1); color: var(--text-2); }
+.cloud-role { font-size: 11px; font-weight: 550; text-transform: capitalize; color: var(--text-3); padding: 2px 7px; border-radius: 99px; background: rgb(var(--ink) / 0.06); }
+
+.cloud-team-pick { display: flex; flex-direction: column; gap: 6px; }
+.cloud-team-opt { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 0; border-radius: 9px; background: var(--panel); box-shadow: 0 0 0 1px var(--line-2); color: var(--text); text-align: left; }
+.cloud-team-opt:hover { background: rgb(var(--ink) / 0.05); }
+.cloud-team-opt.on { box-shadow: 0 0 0 1.5px var(--iris); background: rgb(var(--ink) / 0.06); }
+
+.sp-badge.team { background: rgb(0 0 0 / 0.62); color: #fff; }
+.bd-team-pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; margin-left: 4px; border: 0; border-radius: 99px; background: rgb(var(--ink) / 0.06); color: var(--text-2); font: 550 11.5px var(--sans); }
+.bd-team-pill:hover { background: rgb(var(--ink) / 0.1); color: var(--text); }
+.bd-team-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.bd-team-pill.connecting i, .bd-team-pill.reconnecting i { background: #e8890c; }
+.bd-team-pill.offline i { background: var(--text-4); }
+
+.bd-peer-cursor { transition: left 0.08s linear, top 0.08s linear; }
+.bd-peer-sel { position: absolute; border: calc(1.5px * var(--inv)) solid var(--c); border-radius: calc(2px * var(--inv)); box-sizing: border-box; pointer-events: none; }
+.bd-peer-tag { position: absolute; left: calc(-1.5px * var(--inv)); bottom: 100%; transform: scale(var(--inv)); transform-origin: 0 100%; padding: 1px 6px; border-radius: 4px 4px 4px 0; background: var(--c); color: #fff; font: 600 10.5px var(--sans); white-space: nowrap; }
+.bd-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }

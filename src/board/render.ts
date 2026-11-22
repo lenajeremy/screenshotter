@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { newPage } from "../render/browser.js";
+import { ensureBoardTeamAssets } from "../cloud/client.js";
 import { BOARD_CSS, fontFaceCss, fontFamilies, fontLinks, nodeHtml, pxValue, rootOf, styleText, tokenCss, type Board } from "./core.js";
 import { loadMaskFonts, subtree } from "./core.js";
 
@@ -61,15 +62,19 @@ export interface Box {
   rows?: string;
 }
 
-const srcUrl = (src: string) => (/^(https?:|data:|blob:|file:)/i.test(src) ? src : pathToFileURL(src).href);
+const srcUrl = (src: string, teamAssets?: Map<string, string>) => {
+  const mapped = teamAssets?.get(src) ?? src;
+  return /^(https?:|data:|blob:|file:)/i.test(mapped) ? mapped : pathToFileURL(mapped).href;
+};
 
 /** A page of HTML with one artboard at the top left, as the canvas draws it. */
-export function artboardDocument(board: Board, rootId: string): string {
+export function artboardDocument(board: Board, rootId: string, teamAssets?: Map<string, string>): string {
+  const resolve = (s: string) => srcUrl(s, teamAssets);
   const links = fontLinks(fontFamilies(board, [rootId]), board.fonts)
     .map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
-  const art = nodeHtml(board, rootId, { ids: true, src: srcUrl, still: true, code: true });
-  return `<!doctype html><html><head><meta charset="utf-8">${shaderScript(board, [rootId], "still")}${links}<style>${fontFaceCss(board, srcUrl)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
+  const art = nodeHtml(board, rootId, { ids: true, src: resolve, still: true, code: true });
+  return `<!doctype html><html><head><meta charset="utf-8">${shaderScript(board, [rootId], "still")}${links}<style>${fontFaceCss(board, resolve)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-root{position:absolute;left:0;top:0}#bd-root>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-root">${art}</div></body></html>`;
 }
 
 /** What a layer takes from the layers around it, so a frame previewed by itself still looks as it does in place. */
@@ -125,8 +130,9 @@ interface Drawn {
 export async function drawArtboard(board: Board, rootId: string, ids: string[], opts: { scale?: number; maxEdge?: number; format?: "png" | "jpeg"; quality?: number; transparent?: boolean } = {}): Promise<Drawn> {
   const dir = await mkdtemp(path.join(tmpdir(), "screenshotter-board-"));
   const file = path.join(dir, "board.html");
+  const teamAssets = await ensureBoardTeamAssets(board).catch(() => new Map<string, string>());
   await maskFontsFor(board);
-  await writeFile(file, artboardDocument(board, rootId));
+  await writeFile(file, artboardDocument(board, rootId, teamAssets));
   const page = await newPage();
   try {
     await page.setViewport({ width: 1600, height: 1000, deviceScaleFactor: 1 });

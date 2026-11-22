@@ -4,7 +4,7 @@
  * applied to the latest file under a lock: neither overwrites what the other just did.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { ensureDir, resolveUserPath } from "../util/files.js";
 import { libraryFolder } from "../util/files.js";
@@ -14,7 +14,44 @@ const dir = () => ensureDir(path.join(libraryFolder(), ".studio", "boards"));
 export const boardFile = (id: string) => path.join(dir(), `${id}.json`);
 export const boardThumb = (id: string) => path.join(dir(), `${id}.jpg`);
 export const assetDir = () => ensureDir(path.join(dir(), "assets"));
+export const syncDir = () => ensureDir(path.join(dir(), ".sync"));
+export const syncMetaFile = (id: string) => path.join(syncDir(), `${id}.json`);
+export const syncOutboxFile = (id: string) => path.join(syncDir(), `${id}.outbox.jsonl`);
 export const validBoardId = (id: unknown): id is string => typeof id === "string" && /^[a-z0-9]{6,32}$/.test(id);
+
+export interface SyncMeta {
+  boardId: string;
+  teamId: string;
+  teamName?: string;
+  serverUrl: string;
+  syncedRev: number;
+}
+
+export function getSyncMeta(id: string): SyncMeta | null {
+  if (!validBoardId(id)) return null;
+  try {
+    const raw = readFileSync(syncMetaFile(id), "utf8");
+    const m = JSON.parse(raw) as SyncMeta;
+    return m && typeof m.boardId === "string" && typeof m.teamId === "string" ? m : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSyncMeta(meta: SyncMeta): void {
+  const f = syncMetaFile(meta.boardId);
+  const tmp = `${f}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(meta));
+  renameSync(tmp, f);
+}
+
+export function clearSyncMeta(id: string): void {
+  if (!validBoardId(id)) return;
+  rmSync(syncMetaFile(id), { force: true });
+  rmSync(syncOutboxFile(id), { force: true });
+}
+
+export const isTeamBoard = (id: string): boolean => getSyncMeta(id) !== null;
 
 /** A board's file that's there but can't be read (cut short, edited by hand, not a board). */
 export class DamagedBoard extends Error {
@@ -151,6 +188,9 @@ export interface BoardSummary {
   /** Its file is there but can't be read: it can be deleted, or the file recovered by hand. */
   damaged?: boolean;
   file?: string;
+  /** Set when this board is synced with a team on the collaboration server. */
+  teamId?: string;
+  teamName?: string;
 }
 
 export const WORKING_MS = 60_000;
@@ -158,6 +198,7 @@ export const WORKING_MS = 60_000;
 export function summarizeBoard(b: Board): BoardSummary {
   const thumb = boardThumb(b.id);
   const now = Date.now();
+  const sync = getSyncMeta(b.id);
   return {
     id: b.id,
     name: b.name,
@@ -176,6 +217,7 @@ export function summarizeBoard(b: Board): BoardSummary {
     thumb: existsSync(thumb) ? thumb : undefined,
     thumbAt: existsSync(thumb) ? statSync(thumb).mtimeMs : undefined,
     working: workingNow(b.working, now),
+    ...(sync ? { teamId: sync.teamId, ...(sync.teamName ? { teamName: sync.teamName } : {}) } : {}),
   };
 }
 
@@ -288,6 +330,8 @@ export function createBoard(name: string | undefined, by: "agent" | "studio"): B
 export interface Changed {
   board: Board;
   inverse: Op[];
+  /** Operations actually applied (after component expansion and reconciliation), for live sync. */
+  applied: Op[];
   /** Someone else changed the board since `base`: the caller should load it again. */
   stale: boolean;
   /** Copies were brought in line with their components in the same save (load it again too). */
@@ -303,7 +347,9 @@ export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?
   return withLock(id, () => {
     const current = read(id);
     if (!current) throw new Error("That board doesn't exist (it may have been deleted).");
-    let { board, inverse } = applyOps(current, expand ? expandOps(current, ops) : ops);
+    const expanded = expand ? expandOps(current, ops) : ops;
+    let { board, inverse } = applyOps(current, expanded);
+    let applied: Op[] = expanded;
     // Steps worked out elsewhere (the Studio's, its copies already followed) may predate a copy
     // someone else placed meanwhile: whatever they missed is put right here, in the same save.
     let repaired = false;
@@ -313,6 +359,7 @@ export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?
         const r = applyOps(board, fix);
         board = r.board;
         inverse = [...r.inverse, ...inverse];
+        applied = [...applied, ...fix];
         repaired = true;
       }
     }
@@ -320,7 +367,56 @@ export function changeBoard(id: string, ops: Op[], by: "agent" | "studio", base?
     const onlyWorking = ops.every((o) => o.op === "working" || o.op === "agent");
     const next: Board = onlyWorking ? board : { ...board, rev: current.rev + 1, updatedAt: new Date().toISOString(), by };
     write(next);
-    return { board: next, inverse, stale: base !== undefined && base !== current.rev, repaired };
+    // An agent (MCP, another process) changed a synced team board: queue its ops for the Studio to push live.
+    if (by === "agent" && !onlyWorking && isTeamBoard(id)) {
+      const designOps = applied.filter((o) => o.op !== "working" && o.op !== "agent");
+      if (designOps.length) {
+        const agentStep = ops.find((o): o is Extract<Op, { op: "agent" }> => o.op === "agent");
+        const agentName = agentStep?.agent?.name || Object.values(next.agents ?? {}).sort((a, b) => b.lastAt.localeCompare(a.lastAt))[0]?.name || "Agent";
+        appendFileSync(syncOutboxFile(id), `${JSON.stringify({ ops: designOps, agent: agentName })}\n`);
+      }
+    }
+    return { board: next, inverse, applied, stale: base !== undefined && base !== current.rev, repaired };
+  });
+}
+
+/** Write a team board snapshot received from the collaboration server under its file lock. */
+export function writeSyncedBoard(board: Board): void {
+  if (!validBoardId(board.id)) throw new Error("Unknown board");
+  withLock(board.id, () => write(upgradeBoard(board)));
+}
+
+/** Apply remote team operations received over WebSockets to the local file without queuing them back out. */
+export function applyRemoteOpsToDisk(id: string, ops: Op[], serverRev: number): Board {
+  if (!validBoardId(id)) throw new Error("Unknown board");
+  return withLock(id, () => {
+    const current = read(id);
+    if (!current) throw new Error("That board doesn't exist.");
+    const res = applyOps(current, ops);
+    const next: Board = { ...res.board, rev: Math.max(current.rev + 1, serverRev), updatedAt: new Date().toISOString(), by: "studio" };
+    write(next);
+    return next;
+  });
+}
+
+/** Read and clear any ops written by external MCP agents for a synced team board. */
+export function drainSyncOutbox(id: string): Array<{ ops: Op[]; agent?: string }> {
+  if (!validBoardId(id)) return [];
+  const file = syncOutboxFile(id);
+  if (!existsSync(file)) return [];
+  return withLock(id, () => {
+    if (!existsSync(file)) return [];
+    const raw = readFileSync(file, "utf8");
+    rmSync(file, { force: true });
+    const out: Array<{ ops: Op[]; agent?: string }> = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { ops?: Op[]; agent?: string };
+        if (Array.isArray(parsed.ops) && parsed.ops.length) out.push({ ops: parsed.ops, agent: parsed.agent });
+      } catch {}
+    }
+    return out;
   });
 }
 
@@ -332,6 +428,7 @@ export function deleteBoard(id: unknown) {
     rmSync(boardFile(id), { force: true });
     rmSync(boardThumb(id), { force: true });
   });
+  clearSyncMeta(id);
   rmSync(commentsFile(id), { force: true });
 }
 

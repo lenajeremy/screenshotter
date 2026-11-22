@@ -215,6 +215,7 @@ import WebKit
             replyHandler([
                 "hasUnsplashKey": Keychain.load("unsplash") != nil,
                 "hasFigmaToken": Keychain.load("figma") != nil,
+                "hasCloudToken": Keychain.load("cloud") != nil,
                 "outputFolder": outputFolder,
                 "version": AppDelegate.version,
                 "node": engine.node?.version ?? "",
@@ -233,6 +234,12 @@ import WebKit
             // it as FIGMA_TOKEN when it next starts.
             do {
                 try Keychain.save(body["key"] as? String ?? "", account: "figma")
+                replyHandler(true, nil)
+            } catch { replyHandler(nil, error.localizedDescription) }
+        case "setCloudToken":
+            // Collaboration session token: kept in Keychain so it survives restarts without restarting the engine now.
+            do {
+                try Keychain.save(body["key"] as? String ?? "", account: "cloud")
                 replyHandler(true, nil)
             } catch { replyHandler(nil, error.localizedDescription) }
         case "chooseOutputFolder":

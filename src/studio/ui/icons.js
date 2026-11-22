@@ -139,6 +139,10 @@ const P = {
   padX: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5" opacity=".42"/><rect x="9.5" y="8.5" width="5" height="7" rx="1.2"/><path d="M5.6 12h2M16.4 12h2"/>',
   padY: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5" opacity=".42"/><rect x="8.5" y="9.5" width="7" height="5" rx="1.2"/><path d="M12 5.6v2M12 16.4v2"/>',
   mask: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="12" cy="12" r="4.6"/><path d="M12 7.4a4.6 4.6 0 0 1 0 9.2z" fill="currentColor" stroke="none"/>',
+  users: '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.6-3.1 2.8-4.8 5.5-4.8s4.9 1.7 5.5 4.8"/><circle cx="16.5" cy="9.5" r="2.3"/><path d="M16.5 14.5c2 .2 3.5 1.6 4 4.2"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c.8-3.6 3.5-5.5 7-5.5s6.2 1.9 7 5.5"/>',
+  logout: '<path d="M9.5 4.5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3.5"/><path d="M15.5 8l4 4-4 4"/><path d="M19.5 12H9.5"/>',
+  cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .8-7.9A5.5 5.5 0 0 0 7.6 9.2 3.8 3.8 0 0 0 7 18.5z"/>',
 };
 
 export function Icon({ n, s = 16, w = 1.7, style, class: cls }) {

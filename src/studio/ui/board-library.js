@@ -30,14 +30,15 @@ export function BoardsGrid({ q }) {
   const boards = useBoards();
   const [renaming, setRenaming] = useState(null);
   if (!boards) return html`<div class="sp-empty"><span class="spinner"></span></div>`;
-  if (!boards.length)
+  const local = boards.filter((b) => !b.teamId);
+  if (!local.length)
     return html`<div class="sp-empty big">
       <div class="art"><${Icon} n="frame" s=${24} /></div>
       <b>No boards yet</b>
       <span>A board is a canvas of artboards made of real HTML and CSS. Draw on it yourself, or have an agent design screens there while you watch.</span>
       <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.2} />New board</button>
     </div>`;
-  const list = boards.filter((b) => matches(b, q));
+  const list = local.filter((b) => matches(b, q));
   if (!list.length) return html`<div class="sp-empty"><${Icon} n="search" s=${22} /><b>No boards match “${q.trim()}”</b></div>`;
   return html`<div class="sp-grid">${list.map((b) => html`<${BoardCard} key=${b.id} b=${b} renaming=${renaming === b.id} onRename=${setRenaming} />`)}</div>`;
 }
@@ -63,6 +64,7 @@ function BoardCard({ b, renaming, onRename }) {
       { label: "Open", icon: "right", run: () => openBoard(b.id) },
       { label: "Rename", icon: "text", run: () => onRename(b.id) },
       { label: "Duplicate", icon: "duplicate", run: () => api("/api/board/duplicate", { id: b.id }).then(refreshBoards).catch((err) => fail(err, "Couldn't duplicate")) },
+      ...(S.cloud?.signedIn ? [{ label: scratch ? "Copy to team…" : "Move to team…", icon: "users", run: () => set({ modal: { kind: "moveToTeam", boardId: b.id, boardName: b.name } }) }] : []),
       ...(scratch ? [] : ["-", { label: "Delete", icon: "trash", danger: true, run: () => removeBoard(b) }]),
     ]);
   };

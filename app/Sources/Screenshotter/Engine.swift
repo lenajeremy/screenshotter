@@ -68,6 +68,8 @@ import Foundation
         if let unsplash = Keychain.load("unsplash") { env["UNSPLASH_ACCESS_KEY"] = unsplash }
         // A Figma personal access token, for reading Figma files (Settings).
         if let figma = Keychain.load("figma") { env["FIGMA_TOKEN"] = figma }
+        // Collaboration server session token, for teams and live team boards.
+        if let cloud = Keychain.load("cloud") { env["GLASSINE_AUTH_TOKEN"] = cloud }
         env.removeValue(forKey: "SCREENSHOTTER_STUDIO_PORT")
         environment = env
 

@@ -7,7 +7,7 @@ import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, in
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
 import { mapSvgImages, shaderBoxStyle, svgImageAttrs } from "./board-core.js";
 import { CANVAS_ONLY } from "./board-state.js";
-import { B, bset, commit, currentPage, node, notify, preview, select, useBoard, useMeasure } from "./board-state.js";
+import { B, bset, commit, currentPage, node, notify, preview, select, sendLivePresence, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { fileUrl, toast } from "./store.js";
@@ -18,7 +18,7 @@ import { ShaderCanvas } from "./board-shaders.js";
 
 export const canvasEl = { current: null };
 
-export const srcUrl = (src) => (!src ? "" : /^(https?:|data:|blob:)/i.test(src) ? src : fileUrl(src));
+export const srcUrl = (src) => (!src ? "" : /^(https?:|data:|blob:|\/api\/assets\/)/i.test(src) ? src : fileUrl(src));
 
 // ---------------------------------------------------------------------------------------------
 // Where things are
@@ -415,7 +415,7 @@ export function BoardCanvas() {
   const { x, y, z } = b.view;
   const tokens = Object.fromEntries(b.board.tokens.map((t) => [t.name, t.value]));
   return html`<div class="bd-canvas tool-${b.tool} ${spaceDown ? "panning" : ""}" ref=${ref}
-      onPointerDown=${down} onDblClick=${dblclick} onContextMenu=${contextMenu} onPointerMove=${hoverMove} onPointerLeave=${() => B.hover && bset({ hover: null })}
+      onPointerDown=${down} onDblClick=${dblclick} onContextMenu=${contextMenu} onPointerMove=${hoverMove} onPointerLeave=${() => (B.hover && bset({ hover: null }), B.live && sendLivePresence({ cursor: null }, { immediate: true }))}
       onClickCapture=${(e) => e.target.closest("a") && e.preventDefault()}
       onDragOver=${(e) => e.preventDefault()} onDrop=${dropFiles}>
     <div class="bd-world" style=${{ transform: `translate(${x}px, ${y}px) scale(${z})`, ...tokens }}>
@@ -704,6 +704,10 @@ for (const [type, deep] of [["keydown", true], ["keyup", false]])
 
 function hoverMove(e) {
   pointer = { x: e.clientX, y: e.clientY };
+  if (B.live && canvasEl.current) {
+    const w = toWorld(e.clientX, e.clientY);
+    sendLivePresence({ cursor: { x: Math.round(w.x), y: Math.round(w.y) }, page: B.page, tool: B.tool });
+  }
   if (e.buttons || (!picking() && B.tool !== "comment") || spaceDown) return;
   const hit = e.target.closest?.("[data-bid]");
   const label = e.target.closest?.("[data-label]");

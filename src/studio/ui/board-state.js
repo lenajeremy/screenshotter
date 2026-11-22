@@ -60,6 +60,10 @@ export const B = {
   showResolved: false,
   /** Changes when the comments or the board's agents do (from the server's poll answer). */
   talk: "",
+  /** Live team sync state when this board belongs to a team, else null. */
+  live: null,
+  /** Live teammates currently in this team board room. */
+  peers: [],
 };
 
 // Each component that draws from the board, and the keys of B it doesn't draw from (null: it
@@ -95,7 +99,7 @@ export function bset(patch) {
  * What (nearly) only the canvas draws from, changing many times a second as the pointer moves:
  * keys of B, and "words", the words picked in a text being typed in (for the inspector).
  */
-export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "words", "presence", "following"];
+export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "words", "presence", "peers", "following"];
 /**
  * Redraw the calling component whenever the board changes, except for changes to only the keys it
  * says it `ignore`s.
@@ -362,6 +366,7 @@ async function reload({ quiet = false, agent = false } = {}) {
   if (!B.id) return;
   const fresh = await api(`/api/board?id=${encodeURIComponent(B.id)}`);
   if (fresh.id !== B.id) return;
+  delete fresh._team;
   // Changes not sent yet go on top of it.
   let board = fresh;
   const pending = pendingHere();
@@ -440,31 +445,197 @@ function startPolling() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Live team sync (SSE from engine ← WebSocket to collaboration server)
+
+let liveStream = null;
+let presenceDraft = {};
+let presenceTimer = 0;
+
+function stopLiveStream() {
+  if (liveStream) {
+    liveStream.close();
+    liveStream = null;
+  }
+  clearTimeout(presenceTimer);
+  presenceTimer = 0;
+  presenceDraft = {};
+}
+
+/** Send our live cursor, selection or page to teammates on the open team board. */
+export function sendLivePresence(patch, { immediate = false } = {}) {
+  if (!B.id || !B.live) return;
+  presenceDraft = { ...presenceDraft, ...patch };
+  const fire = () => {
+    presenceTimer = 0;
+    if (!B.id || !B.live) return;
+    const p = { ...presenceDraft, page: B.page, selection: B.sel };
+    fetch("/api/cloud/live/presence", {
+      method: "POST",
+      headers: { "x-screenshotter": "studio", "Content-Type": "application/json" },
+      body: JSON.stringify({ id: B.id, p }),
+    }).catch(() => undefined);
+  };
+  if (immediate) {
+    clearTimeout(presenceTimer);
+    fire();
+  } else if (!presenceTimer) {
+    presenceTimer = setTimeout(fire, 55);
+  }
+}
+
+function connectLive(boardId, teamInfo) {
+  stopLiveStream();
+  B.live = { teamId: teamInfo?.teamId ?? "", teamName: teamInfo?.teamName ?? "", status: "connecting", you: null };
+  B.peers = [];
+  const es = new EventSource(`/api/cloud/live/stream?board=${encodeURIComponent(boardId)}`);
+  liveStream = es;
+  es.onmessage = (ev) => {
+    if (B.id !== boardId) return;
+    let m;
+    try {
+      m = JSON.parse(ev.data);
+    } catch {
+      return;
+    }
+    if (m.t === "state" || m.t === "welcome") {
+      B.live = {
+        teamId: m.teamId || B.live?.teamId || "",
+        teamName: m.teamName || B.live?.teamName || "",
+        status: m.status || "connected",
+        you: m.you ?? B.live?.you ?? null,
+      };
+      B.peers = Array.isArray(m.peers) ? m.peers : [];
+      if (m.board && (!B.board || m.board.rev > B.board.rev)) {
+        B.board = m.board;
+        keepSelection();
+        notify();
+      } else {
+        notify(["live", "peers"]);
+      }
+      if (m.status === "connected" || m.t === "welcome") sendLivePresence({ page: B.page, selection: B.sel }, { immediate: true });
+    } else if (m.t === "status") {
+      if (B.live) B.live = { ...B.live, status: m.status };
+      notify(["live"]);
+    } else if (m.t === "ops") {
+      if (!B.board || !Array.isArray(m.ops)) return;
+      try {
+        const res = applyOps(B.board, m.ops);
+        B.board = { ...res.board, rev: Math.max(B.board.rev + 1, m.rev ?? B.board.rev + 1), updatedAt: m.updatedAt || new Date().toISOString() };
+        keepSelection();
+        notify();
+      } catch {
+        reload({ quiet: true });
+      }
+    } else if (m.t === "ack") {
+      if (B.board && typeof m.rev === "number" && m.rev > B.board.rev) {
+        B.board = { ...B.board, rev: m.rev };
+      }
+    } else if (m.t === "reject" || m.t === "sync") {
+      if (m.board) {
+        B.board = m.board;
+        B.future = [];
+        keepSelection();
+        notify();
+      }
+      if (m.t === "reject") toast({ kind: "info", title: "Board updated", text: m.reason || "A change conflicted with a teammate's edit.", timeout: 6000 });
+    } else if (m.t === "joined" && m.peer) {
+      B.peers = [...B.peers.filter((p) => p.id !== m.peer.id), m.peer];
+      notify(["peers"]);
+    } else if (m.t === "left" && m.peer) {
+      B.peers = B.peers.filter((p) => p.id !== m.peer);
+      if (B.following === `peer:${m.peer}`) B.following = null;
+      notify(["peers", "following"]);
+    } else if (m.t === "presence" && m.peer && m.p) {
+      B.peers = B.peers.map((p) => (p.id === m.peer ? { ...p, presence: m.p } : p));
+      notify(["peers"]);
+    }
+  };
+  es.onerror = () => {
+    if (B.id === boardId && B.live) {
+      B.live = { ...B.live, status: "reconnecting" };
+      notify(["live"]);
+    }
+  };
+}
+
+function hydrateBoard(board, teamInfo) {
+  const id = board.id;
+  const remembered = rememberedView(id);
+  const clean = { ...board };
+  const team = teamInfo || clean._team || null;
+  delete clean._team;
+  Object.assign(B, {
+    id,
+    board: clean,
+    page: remembered?.page && clean.pages.some((p) => p.id === remembered.page) ? remembered.page : clean.pages[0]?.id,
+    sel: [],
+    hover: null,
+    editing: null,
+    renaming: null,
+    past: [],
+    future: [],
+    tool: "move",
+    working: [],
+    drop: null,
+    guides: [],
+    open: new Set(),
+    comments: { rev: 0, threads: [], agents: clean.agents ?? {} },
+    thread: null,
+    draft: null,
+    talk: "",
+    presence: [],
+    presenceAt: "",
+    peers: [],
+    live: null,
+    following: null,
+  });
+  if (remembered?.view) B.view = remembered.view;
+  else B.view = { ...B.view, fitPending: true };
+  set({ boardId: id });
+  try {
+    localStorage.setItem("board:last", id);
+  } catch {}
+  startPolling();
+  loadComments();
+  if (team) connectLive(id, team);
+  else stopLiveStream();
+  notify();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Opening and closing
 
 export async function openBoard(id) {
   try {
     const board = await api(`/api/board?id=${encodeURIComponent(id)}`);
-    const remembered = rememberedView(id);
-    Object.assign(B, { id, board, page: remembered?.page && board.pages.some((p) => p.id === remembered.page) ? remembered.page : board.pages[0]?.id, sel: [], hover: null, editing: null, renaming: null, past: [], future: [], tool: "move", working: [], drop: null, guides: [], open: new Set(), comments: { rev: 0, threads: [], agents: board.agents ?? {} }, thread: null, draft: null, talk: "", presence: [], presenceAt: "", following: null });
-    if (remembered?.view) B.view = remembered.view;
-    else B.view = { ...B.view, fitPending: true };
-    set({ boardId: id });
-    try {
-      localStorage.setItem("board:last", id);
-    } catch {}
-    startPolling();
-    loadComments();
-    notify();
+    hydrateBoard(board, board._team);
   } catch (e) {
     fail(e, "Couldn't open the board");
   }
 }
 
+export function openTeamBoardResult(res) {
+  if (!res?.board) return;
+  hydrateBoard(res.board, res.live);
+}
+
+export async function openTeamBoard(id, teamName) {
+  try {
+    const res = await api("/api/cloud/boards/open", { id, teamName });
+    hydrateBoard(res.board, res.live);
+  } catch (e) {
+    fail(e, "Couldn't open the team board");
+  }
+}
+
 export function closeBoard({ toLibrary = true } = {}) {
+  const closingId = B.id;
+  const wasLive = Boolean(B.live);
   rememberView();
   clearInterval(poll);
-  Object.assign(B, { id: null, board: null, sel: [], editing: null, past: [], future: [], thread: null, draft: null, comments: { rev: 0, threads: [], agents: {} } });
+  stopLiveStream();
+  if (closingId && wasLive) api("/api/cloud/boards/close", { id: closingId }).catch(() => undefined);
+  Object.assign(B, { id: null, board: null, sel: [], editing: null, past: [], future: [], thread: null, draft: null, comments: { rev: 0, threads: [], agents: {} }, live: null, peers: [] });
   try {
     localStorage.removeItem("board:last");
   } catch {}
@@ -517,6 +688,7 @@ export function select(ids, { add = false, toggle = false } = {}) {
     }
   }
   bset({ sel, editing: B.editing && sel.includes(B.editing) ? B.editing : null, open });
+  if (B.live) sendLivePresence({ selection: sel, page: B.page }, { immediate: true });
 }
 
 /** The artboards the selection is on (or all of the page's when nothing is selected). */

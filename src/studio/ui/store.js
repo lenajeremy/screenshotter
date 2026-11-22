@@ -84,6 +84,12 @@ export const S = {
   dropping: false,
   /** Image quality for generated pictures: "fast" or "best". */
   imageQuality: "fast",
+  /** Collaboration account & teams (loaded from /api/cloud/account). */
+  cloud: { loaded: false, signedIn: false, serverUrl: "", user: null, teams: [], offline: false },
+  /** Home view: "recents" or a team id. */
+  homeView: "recents",
+  /** Cached team boards by team id, so switching teams is instant. */
+  teamBoards: {},
 };
 
 const listeners = new Map();

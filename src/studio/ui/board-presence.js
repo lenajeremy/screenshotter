@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { pageOf, rootOf } from "./board-core.js";
 import { B, bset } from "./board-state.js";
-import { canvasEl, elOf, followGliding, frameBox, worldBox } from "./board-canvas.js";
+import { canvasEl, centerOn, elOf, followGliding, frameBox, worldBox } from "./board-canvas.js";
 import { html } from "./controls.js";
 
 /** After its last move, an agent Agentman can't vouch for stays this long (it may be thinking). */
@@ -124,19 +124,47 @@ function watching(p) {
   return seen >= box.width * z * box.height * z * 0.15 || seen >= c.width * c.height * 0.25;
 }
 
+/** Display name for a live teammate peer. */
+function peerName(p) {
+  const n = p.user?.name?.trim();
+  if (n) return n.split(/\s+/)[0];
+  return (p.user?.email ?? "Teammate").split("@")[0];
+}
+const peerFull = (p) => (p.user?.name ? `${p.user.name} (${p.user.email})` : p.user?.email ?? "Teammate");
+
+function bringPeerIntoView(p) {
+  const pr = p.presence;
+  if (!pr) return;
+  if (pr.page && pr.page !== B.page && B.board?.pages.some((pg) => pg.id === pr.page)) {
+    bset({ page: pr.page, sel: [], hover: null });
+    requestAnimationFrame(() => requestAnimationFrame(() => bringPeerIntoView(p)));
+    return;
+  }
+  if (pr.cursor) return centerOn(pr.cursor);
+  const firstSel = (pr.selection ?? []).map(worldBox).find(Boolean);
+  if (firstSel) frameBox(firstSel, { zoom: followZoom });
+}
+
 export function follow(key) {
   followZoom = null;
   bset({ following: key });
+  if (String(key).startsWith("peer:")) {
+    const id = String(key).slice(5);
+    const peer = (B.peers ?? []).find((x) => x.id === id);
+    if (peer) bringPeerIntoView(peer);
+    return;
+  }
   const p = (B.presence ?? []).find((x) => x.key === key);
   if (p) bringIntoView(p);
 }
 export const unfollow = () => B.following && bset({ following: null });
 
-/** The cursors, in the board's own space (so panning and zooming carry them), each gliding when its agent moves. */
+/** The cursors, in the board's own space (so panning and zooming carry them), each gliding when its agent or teammate moves. */
 export function Presence() {
   const b = B;
   const [, tick] = useState(0);
   const agents = activeAgents();
+  const peers = b.peers ?? [];
   // A move that touched several layers: the cursor steps through them, so the work reads as it was done.
   const stepping = agents.some((p) => (p.ids?.length ?? 0) > 1 && since(p) < (p.ids.length + 1) * stepOf(p));
   useEffect(() => {
@@ -156,6 +184,13 @@ export function Presence() {
         { duration: 380, delay: Math.max(0, i * st - since(p)), easing: "cubic-bezier(0.16, 1, 0.3, 1)", fill: "backwards" }));
     }
   }, [agents.map((p) => p.at).join()]);
+  // Following a teammate: follow their cursor or page changes.
+  const followedPeer = String(b.following ?? "").startsWith("peer:") ? peers.find((p) => p.id === String(b.following).slice(5)) : null;
+  const fpCur = followedPeer?.presence?.cursor ? `${followedPeer.presence.page ?? ""}:${followedPeer.presence.cursor.x},${followedPeer.presence.cursor.y}` : followedPeer?.presence?.page ?? "";
+  useEffect(() => {
+    if (!followedPeer) return;
+    bringPeerIntoView(followedPeer);
+  }, [followedPeer?.id, fpCur]);
   // Following: each new move of that agent is framed; an agent that has finished stops it; you taking over stops it.
   const followed = (b.presence ?? []).find((p) => p.key === b.following);
   useEffect(() => {
@@ -191,9 +226,27 @@ export function Presence() {
     addEventListener("keydown", key, true);
     return () => removeEventListener("keydown", key, true);
   }, [b.following]);
-  if (!b.board || !agents.length) return null;
+  const visiblePeers = peers.filter((p) => p.presence && (!p.presence.page || p.presence.page === b.page));
+  if (!b.board || (!agents.length && !visiblePeers.length)) return null;
   const { x, y, z } = b.view;
   return html`<div class="bd-presence" aria-hidden="true" style=${{ transform: `translate(${x}px, ${y}px) scale(${z})` }}>
+    ${visiblePeers.map((p) => {
+      const c = p.color || colourOf(p.user?.id || p.id);
+      const selBoxes = (p.presence?.selection ?? []).map((id) => [id, worldBox(id)]).filter(([, r]) => r);
+      const cur = p.presence?.cursor;
+      const label = peerName(p);
+      return html`<div key=${`peer-${p.id}`} class="bd-peer-mark" style=${{ "--c": c, "--inv": 1 / z }}>
+        ${selBoxes.map(([id, r], i) => html`<div key=${id} class="bd-peer-sel" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}>
+          ${i === 0 && html`<span class="bd-peer-tag">${label}</span>`}
+        </div>`)}
+        ${cur && html`<div class="bd-cursor bd-peer-cursor" data-peer=${p.id} style=${{ left: cur.x + "px", top: cur.y + "px" }}>
+          <div class="bd-cursor-in">
+            <svg width="18" height="20" viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z" fill="var(--c)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+            <span class="bd-cursor-name"><b>${label}</b>${p.agent && html`<span class="bd-cursor-doing">${p.agent}</span>`}</span>
+          </div>
+        </div>`}
+      </div>`;
+    })}
     ${agents.map((p) => {
       const ids = drawn(p);
       const boxes = ids.map((id) => [id, worldBox(id)]).filter(([, r]) => r);
@@ -220,19 +273,34 @@ export function Presence() {
   </div>`;
 }
 
-/** The agents at work as avatars over the canvas: click one to follow it, again to stop. */
+/** The teammates and agents on the board as avatars over the canvas: click one to follow, again to stop. */
 export function PresenceBar() {
   const b = B;
   const agents = activeAgents();
-  const followedP = (b.presence ?? []).find((p) => p.key === b.following);
-  const following = b.following && followedP;
-  if (!b.board || (!agents.length && !following)) return null;
-  const here = following && agents.some((p) => p.key === followedP.key);
-  return html`${following && html`<div class="bd-follow-frame" style=${{ "--c": colourOf(followedP.key) }}></div>`}<div class="bd-presence-bar" onPointerDown=${(e) => e.stopPropagation()}>
+  const peers = b.peers ?? [];
+  const followedAgent = (b.presence ?? []).find((p) => p.key === b.following);
+  const followedPeer = String(b.following ?? "").startsWith("peer:") ? peers.find((p) => p.id === String(b.following).slice(5)) : null;
+  const following = Boolean(b.following && (followedAgent || followedPeer));
+  if (!b.board || (!agents.length && !peers.length && !following)) return null;
+  const here = followedAgent && agents.some((p) => p.key === followedAgent.key);
+  const followColor = followedPeer ? followedPeer.color || colourOf(followedPeer.user?.id || followedPeer.id) : followedAgent ? colourOf(followedAgent.key) : "#7c6cff";
+  return html`${following && html`<div class="bd-follow-frame" style=${{ "--c": followColor }}></div>`}<div class="bd-presence-bar" onPointerDown=${(e) => e.stopPropagation()}>
     ${following &&
-    html`<span class="bd-following" style=${{ "--c": colourOf(followedP.key) }}>
-      <span class="bd-following-t">Following <b>${followedP.name}</b><span class="bd-following-doing">${here ? doingNow(followedP) : "waiting for its next move"}</span></span>
+    html`<span class="bd-following" style=${{ "--c": followColor }}>
+      <span class="bd-following-t">Following <b>${followedPeer ? peerName(followedPeer) : followedAgent.name}</b>
+        ${followedAgent && html`<span class="bd-following-doing">${here ? doingNow(followedAgent) : "waiting for its next move"}</span>`}</span>
       <button class="bd-link" onClick=${unfollow}>Stop</button></span>`}
+    ${peers.map((p) => {
+      const fkey = `peer:${p.id}`;
+      const c = p.color || colourOf(p.user?.id || p.id);
+      const label = peerFull(p);
+      return html`<button key=${fkey} class="bd-avatar ${b.following === fkey ? "on" : ""}" style=${{ "--c": c }}
+        title=${`${label}. ${b.following === fkey ? "Click to stop following" : "Click to follow"}`}
+        aria-label=${b.following === fkey ? `Stop following ${label}` : `Follow ${label}`} aria-pressed=${b.following === fkey}
+        onClick=${() => (b.following === fkey ? unfollow() : follow(fkey))}>
+        ${p.user?.image ? html`<img src=${p.user.image} alt="" />` : (peerName(p)[0] ?? "?").toUpperCase()}
+      </button>`;
+    })}
     ${agents.map((p) => html`<button key=${p.key} class="bd-avatar ${p.key === b.following ? "on" : ""} ${phaseOf(p)}" style=${{ "--c": colourOf(p.key) }}
         title=${`${describe(p)}. ${p.key === b.following ? "Click to stop following" : "Click to follow"}`}
         aria-label=${p.key === b.following ? `Stop following ${p.name}` : `Follow ${p.name}`} aria-pressed=${p.key === b.following}
