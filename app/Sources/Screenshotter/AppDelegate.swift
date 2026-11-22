@@ -167,11 +167,15 @@ import WebKit
     }
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = StudioWebView.importableTypes + [.json]
-        panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
+        // The kinds of file this picker takes, from its <input accept> (the page notes it when it's clicked).
+        webView.evaluateJavaScript("window.__pickerAccept || ''") { [weak self] result, _ in
+            guard let self else { return completionHandler(nil) }
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.canChooseDirectories = false
+            panel.allowedContentTypes = StudioWebView.contentTypes(forAccept: result as? String ?? "")
+            panel.beginSheetModal(for: self.window) { response in completionHandler(response == .OK ? panel.urls : nil) }
+        }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {

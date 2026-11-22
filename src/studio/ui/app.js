@@ -362,6 +362,18 @@ const commands = {
   flush: () => boardSaved(),
   error: (message) => toast({ kind: "err", title: "Something went wrong", text: message }),
 };
+// The Mac app's file picker asks which kinds of file the picker being opened takes (its accept
+// list): noted when one is clicked, or opened from code (most are, without being on the page).
+const noteAccept = (el) => el instanceof HTMLInputElement && el.type === "file" && (window.__pickerAccept = el.accept || "");
+document.addEventListener("click", (e) => noteAccept(e.target), true);
+for (const m of ["click", "showPicker"]) {
+  const own = HTMLInputElement.prototype[m];
+  if (own)
+    HTMLInputElement.prototype[m] = function (...a) {
+      noteAccept(this);
+      return own.apply(this, a);
+    };
+}
 window.studio = { command: (name, arg) => (S.boardId && boardCommand(name, arg) ? undefined : commands[name]?.(arg)), isTyping: () => typing(), state: S };
 
 // Home's own keys (a board has its own).

@@ -81,6 +81,21 @@ final class StudioWebView: WKWebView, NSDraggingSource {
 
     static func isFigFile(_ u: URL) -> Bool { u.pathExtension.lowercased() == "fig" }
 
+    /// File types for a file picker from an <input accept> list (".fig", "image/*", "application/json"…);
+    /// pictures, videos and JSON when it names none.
+    static func contentTypes(forAccept accept: String) -> [UTType] {
+        var out: [UTType] = []
+        for raw in accept.split(separator: ",") {
+            let t = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            if t.isEmpty { continue }
+            if t == "image/*" { out.append(.image) }
+            else if t == "video/*" { out.append(.movie) }
+            else if t.hasPrefix(".") { if let u = UTType(filenameExtension: String(t.dropFirst())) { out.append(u) } }
+            else if let u = UTType(mimeType: t) { out.append(u) }
+        }
+        return out.isEmpty ? importableTypes + [.json] : out
+    }
+
     static func pasteboardHasImport(_ pb: NSPasteboard = .general) -> Bool {
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            urls.contains(where: { u in isFigFile(u) || importableTypes.contains { UTType(filenameExtension: u.pathExtension)?.conforms(to: $0) == true } }) {
