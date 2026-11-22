@@ -604,8 +604,9 @@ export const canPickColor = Boolean(native || window.EyeDropper);
 /** Sample a colour from anywhere on screen. Resolves to #rrggbb, or null if cancelled. */
 export async function pickScreenColor() {
   try {
-    if (native) return normalizeColor((await native.call("pickColor"))?.hex) || null;
+    // The browser's own eyedropper where there is one (Chromium, Electron); the Swift app's web view asks the Mac's.
     if (window.EyeDropper) return normalizeColor((await new window.EyeDropper().open()).sRGBHex);
+    if (native) return normalizeColor((await native.call("pickColor"))?.hex) || null;
   } catch {
     // Escape / cancelled.
   }

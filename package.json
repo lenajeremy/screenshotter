@@ -25,6 +25,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "studio": "node dist/index.js studio",
     "studio:dev": "tsx src/index.ts studio",
+    "desktop": "npm run build && electron desktop/main.js",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:dmg": "node scripts/build-dmg.mjs --electron",
+    "desktop:check": "tsx scripts/desktop-check.ts",
     "app:build": "node scripts/build-app.mjs",
     "app:start": "open build/Screenshotter.app",
     "app:test": "swift test --package-path app",
@@ -38,7 +42,8 @@
     "test:agents": "npm run build && tsx scripts/agents-test.ts",
     "test:fig": "tsx scripts/fig-test.ts",
     "test:server": "cd server && npm test",
-    "test:teams": "npm run build && tsx scripts/teams-test.ts"
+    "test:teams": "npm run build && tsx scripts/teams-test.ts",
+    "test:mips": "npm run build && tsx scripts/mip-check.ts && tsx scripts/mip-check.ts webkit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
@@ -49,7 +54,10 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@neon/config": "^1.14.6",
+    "@neon/env": "^2.1.9",
     "@types/node": "^22.20.4",
+    "electron": "^45.4.1",
     "htm": "^3.1.1",
     "playwright": "^1.63.0",
     "preact": "^10.29.8",

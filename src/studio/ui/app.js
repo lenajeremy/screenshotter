@@ -512,7 +512,8 @@ window.addEventListener("drop", (e) => {
 
 // The draggable title-bar area, for the Mac app's window.
 function reportDragRegions() {
-  if (!native) return;
+  // Electron drags the window by CSS (styles.css, -webkit-app-region): only the Swift app needs this.
+  if (!native || window.glassine) return;
   const bars = [...document.querySelectorAll("[data-drag]")].filter((el) => el.offsetParent || el === document.body);
   if (!bars.length) return;
   const rect = (el) => {
@@ -523,10 +524,11 @@ function reportDragRegions() {
   native.call("dragRegions", { regions: bars.map(rect), holes }).catch(() => undefined);
 }
 let dragTimer = 0;
-new MutationObserver(() => {
-  clearTimeout(dragTimer);
-  dragTimer = setTimeout(reportDragRegions, 120);
-}).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
+if (native && !window.glassine)
+  new MutationObserver(() => {
+    clearTimeout(dragTimer);
+    dragTimer = setTimeout(reportDragRegions, 120);
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
 window.addEventListener("resize", () => {
   clearTimeout(dragTimer);
   dragTimer = setTimeout(reportDragRegions, 60);

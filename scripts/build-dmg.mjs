@@ -4,6 +4,7 @@
  * Download button.
  *
  *   npm run app:dmg                      → build/Screenshotter-<version>.dmg and site/downloads/Screenshotter.dmg
+ *   npm run desktop:dmg                  the same with the Electron app (scripts/build-desktop.mjs)
  *
  * With a Developer ID certificate in the keychain, the app and the disk image are signed with it.
  * With notarization credentials saved too, the image is notarized and stapled, so it opens on any
@@ -52,9 +53,13 @@ if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
   }
 }
 
-run("node", ["scripts/build-app.mjs", ...process.argv.slice(2)]);
+// --electron: the desktop app made with Electron (scripts/build-desktop.mjs) instead of the Swift one.
+const ELECTRON = process.argv.includes("--electron");
+run("node", [ELECTRON ? "scripts/build-desktop.mjs" : "scripts/build-app.mjs", ...process.argv.slice(2).filter((a) => a !== "--electron")]);
 const app = path.join(root, "build", "Screenshotter.app");
 if (!existsSync(app)) throw new Error("build/Screenshotter.app is missing");
+// The Electron app, as built, on a throwaway library: it starts, its calls answer, it quits.
+if (ELECTRON && process.env.SCREENSHOTTER_SKIP_TESTS !== "1") run("npx", ["tsx", "scripts/desktop-check.ts", "--app"]);
 // Stage the app next to an Applications shortcut, so the window says what to do.
 const stage = path.join(mkdtempSync(path.join(tmpdir(), "screenshotter-dmg-")), "Screenshotter");
 mkdirSync(stage, { recursive: true });

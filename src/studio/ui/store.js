@@ -27,9 +27,9 @@ export const fileUrl = (p, bust) => `/file?path=${encodeURIComponent(p)}${bust ?
 export const thumbUrl = (p, w = 360, bust) => `/thumb?path=${encodeURIComponent(p)}&w=${w}${bust ? `&t=${bust}` : ""}`;
 
 // ---------------------------------------------------------------------------------------------
-// Desktop bridge (present only inside the Mac app)
+// Desktop bridge (present only inside the desktop app: Electron's preload, or the older Swift app's web view)
 
-const handler = window.webkit?.messageHandlers?.native;
+const handler = window.glassine?.native ?? window.webkit?.messageHandlers?.native;
 export const native = handler
   ? {
       call: async (cmd, args = {}) => {
@@ -40,6 +40,8 @@ export const native = handler
     }
   : null;
 if (native) document.documentElement.classList.add("native");
+// In Electron the window is dragged by the page's own top bar (styles.css: -webkit-app-region).
+if (window.glassine) document.documentElement.classList.add("electron");
 
 // ---------------------------------------------------------------------------------------------
 // Light or dark: the person's choice, or the Mac's ("system", following it as it changes)

@@ -21,7 +21,11 @@ const { version } = JSON.parse(readFileSync(path.join(root, "package.json"), "ut
 const dmg = path.join(root, "build", `Screenshotter-${version}.dmg`);
 if (!existsSync(dmg)) throw new Error(`No ${path.relative(root, dmg)}: run npm run app:dmg first.`);
 const signer = path.join(root, "app", ".build", "artifacts", "sparkle", "Sparkle", "bin", "sign_update");
-if (!existsSync(signer)) throw new Error("Sparkle's sign_update isn't there: build the app first (npm run app:build).");
+// The Electron app (npm run desktop:dmg) has a feed of its own (below); the Swift app's Sparkle
+// feed offers it too, so people on the Swift app move over with their next update.
+const appPath = path.join(root, "build", "Screenshotter.app");
+const electron = existsSync(path.join(appPath, "Contents", "Frameworks", "Electron Framework.framework"));
+if (!existsSync(signer)) throw new Error("Sparkle's sign_update isn't there: build the Swift app once (npm run app:build), which fetches it.");
 
 // The versioned copy the feed points at; the newest two stay, so a cached feed still works.
 const downloads = path.join(root, "site", "downloads");
@@ -65,3 +69,15 @@ const xml = `<?xml version="1.0" encoding="utf-8"?>
 `;
 writeFileSync(path.join(root, "site", "appcast.xml"), xml);
 console.log(`✓ site/appcast.xml offers ${version} (site/downloads/${name}, signed). Deploy the site to publish it.`);
+
+// Electron's updater (desktop/main.js) takes the app zipped, from site/desktop-feed.json; it checks
+// the new app is signed as the running one is.
+if (electron) {
+  const zipName = `Screenshotter-${version}-mac.zip`;
+  rmSync(path.join(downloads, zipName), { force: true });
+  execFileSync("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, path.join(downloads, zipName)]);
+  for (const f of readdirSync(downloads).filter((f) => /^Screenshotter-\d+\.\d+\.\d+-mac\.zip$/.test(f) && f !== zipName).sort((a, b) => statSync(path.join(downloads, b)).mtimeMs - statSync(path.join(downloads, a)).mtimeMs).slice(1)) rmSync(path.join(downloads, f));
+  const feed = { currentRelease: version, releases: [{ version, updateTo: { version, name: version, notes: section, pub_date: new Date().toISOString(), url: `${SITE}/downloads/${zipName}` } }] };
+  writeFileSync(path.join(root, "site", "desktop-feed.json"), JSON.stringify(feed, null, 2) + "\n");
+  console.log(`✓ site/desktop-feed.json offers ${version} (site/downloads/${zipName}) to the Electron app.`);
+}

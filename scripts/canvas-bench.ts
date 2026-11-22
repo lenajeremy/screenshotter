@@ -26,7 +26,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { chromium, webkit, type Browser, type BrowserContext, type Page } from "playwright";
+import { _electron, chromium, webkit, type Browser, type BrowserContext, type ElectronApplication, type Page } from "playwright";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -36,8 +36,9 @@ const opt = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const ENGINES = { webkit, chromium } as const;
-type EngineName = keyof typeof ENGINES;
-const asked = args.filter((a) => a in ENGINES) as EngineName[];
+/** "electron": the desktop app itself (desktop/main.js), in a real window, its own engine and all. */
+type EngineName = keyof typeof ENGINES | "electron";
+const asked = args.filter((a) => a in ENGINES || a === "electron") as EngineName[];
 const engines: EngineName[] = asked.length ? asked : ["webkit", "chromium"];
 const only = opt("only") ? new RegExp(opt("only")!, "i") : null;
 const label = opt("label") ?? (args.includes("--stress") ? "stress" : "latest");
@@ -276,7 +277,7 @@ async function undo(page: Page) {
   await sleep(500);
 }
 
-type Ctx = { page: Page; browser: Browser; engine: EngineName; side: Side };
+type Ctx = { page: Page; browser: Browser | null; engine: EngineName; side: Side };
 type Scenario = { name: string; board: "screens" | "website"; prep: (c: Ctx) => Promise<unknown>; run: (c: Ctx) => Promise<unknown>; after?: (c: Ctx) => Promise<unknown> };
 
 const center = async (page: Page) => {
@@ -741,11 +742,36 @@ async function look(pages: Array<{ b: Side; page: Page }>, engine: string) {
 
 try {
   for (const name of engines) {
-    const browser = await ENGINES[name].launch(name === "chromium" ? { channel: "chromium", headless: !HEADED } : { headless: !HEADED });
+    const browser = name === "electron" ? null : await ENGINES[name].launch(name === "chromium" ? { channel: "chromium", headless: !HEADED } : { headless: !HEADED });
     // A page for each side, in contexts of their own: only one is driven at a time.
     const pages: Array<{ b: Side; page: Page; open: string; errors: string[] }> = [];
-    for (const b of sides) {
-      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: "dark" });
+    let electronApps: ElectronApplication[] = [];
+    if (name === "electron") {
+      // The app built here (the other side has no desktop app), in a window on the Mac's own screen
+      // (the fastest one), shown without taking the focus.
+      const b = sides[sides.length - 1];
+      const tmp = path.join(tmpRoot, `${b.name}-electron`);
+      const eapp = await _electron.launch({
+        args: [path.join(b.root, "desktop", "main.js")],
+        env: { ...process.env, ...sideEnv[b.name].env, SCREENSHOTTER_APP_NAME: "Glassine Bench", GLASSINE_USER_DATA: path.join(tmp, "user-data"), GLASSINE_LOG_DIR: path.join(tmp, "logs"), SCREENSHOTTER_NO_SHELL_ENV: "1", GLASSINE_BACKGROUND: "1" },
+      });
+      electronApps = [eapp];
+      const page = await eapp.firstWindow();
+      for (let i = 0; i < 200 && !page.url().startsWith("http"); i++) await sleep(100);
+      await eapp.evaluate(({ BrowserWindow, screen }) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        const d = screen.getAllDisplays().find((x) => x.internal) ?? screen.getPrimaryDisplay();
+        w.setBounds({ x: d.workArea.x + 20, y: d.workArea.y + 20, width: 1440, height: 900 });
+        w.setContentSize(1440, 900);
+      });
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.addInitScript(RECORDER);
+      await page.reload({ waitUntil: "networkidle" });
+      pages.push({ b, page, open: "", errors });
+      results[b.name][name] = {};
+    } else for (const b of sides) {
+      const context: BrowserContext = await browser!.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: "dark" });
       await context.addInitScript(RECORDER);
       const page = await context.newPage();
       const errors: string[] = [];
@@ -758,14 +784,14 @@ try {
     if (flag("look")) {
       console.log(`\n${name}: the canvas at rest, before against after`);
       await look(pages, name);
-      await browser.close();
+      await browser?.close();
       continue;
     }
     console.log(`\n${name} (${screens.layers} + ${site.layers} layers)${AB ? ": before → after" : ""}`);
     // A display slower than 60 Hz holds WebKit to its rate: then the frames' work says more than fps.
     const hz = await E<number, void>(pages[0].page, () => new Promise<number>((done) => { const t: number[] = []; const f = (x: number) => (t.push(x), t.length < 31 ? requestAnimationFrame(f) : done(Math.round(30000 / (t[30] - t[0])))); requestAnimationFrame(f); }));
     if (hz < 55) console.log(`(this engine draws at ${hz} Hz here: the display it follows is slower than 60 Hz, so fps can't pass ${hz}; "work" still shows what fits 60)`);
-    console.log(AB ? `${"interaction".padEnd(34)} ${"fps".padStart(13)} ${"p95 ms".padStart(13)} ${"work p95".padStart(13)} ${"work max".padStart(13)} ${">14ms".padStart(9)}` : `${"interaction".padEnd(34)} ${"fps".padStart(5)} ${"p50".padStart(6)} ${"p95".padStart(6)} ${"max".padStart(6)} ${"drop".padStart(5)} ${"slow".padStart(5)}   work: p50   p95    max >14  long tasks${TRACE ? "   main-thread ms (trace)" : ""}`);
+    console.log(AB && name !== "electron" ? `${"interaction".padEnd(34)} ${"fps".padStart(13)} ${"p95 ms".padStart(13)} ${"work p95".padStart(13)} ${"work max".padStart(13)} ${">14ms".padStart(9)}` : `${"interaction".padEnd(34)} ${"fps".padStart(5)} ${"p50".padStart(6)} ${"p95".padStart(6)} ${"max".padStart(6)} ${"drop".padStart(5)} ${"slow".padStart(5)}   work: p50   p95    max >14  long tasks${TRACE ? "   main-thread ms (trace)" : ""}`);
     for (const sc of flag("lab") ? LAB_SCENARIOS : SCENARIOS) {
       if (only && !only.test(sc.name)) continue;
       const runs = new Map<string, Result[]>(pages.map((x) => [x.b.name, []]));
@@ -780,7 +806,7 @@ try {
             }
             const ctx = { page, browser, engine: name, side: b };
             await sc.prep(ctx);
-            if (TRACE && name === "chromium") await browser.startTracing(page, { categories: TRACE_CATS });
+            if (TRACE && name === "chromium") await browser!.startTracing(page, { categories: TRACE_CATS });
             await E(page, () => (window as unknown as { __bench: { start(): void } }).__bench.start());
             await sc.run(ctx);
             await sleep(120);
@@ -788,7 +814,7 @@ try {
             const r = summarize(raw.frames, raw.long, raw.work);
             // --frames: each frame's length, to see where the slow ones fall.
             if (flag("frames")) console.log(`  ${b.name} frames: ` + raw.frames.slice(1).map((t, i) => Math.round(t - raw.frames[i])).join(" "));
-            if (TRACE && name === "chromium") r.trace = traceSummary(await browser.stopTracing());
+            if (TRACE && name === "chromium") r.trace = traceSummary(await browser!.stopTracing());
             runs.get(b.name)!.push(r);
             await sc.after?.(ctx);
           }
@@ -816,7 +842,8 @@ try {
         failures++;
         console.log(`page errors (${p.b.name}): ${[...new Set(p.errors)].slice(0, 3).join(" | ")}`);
       }
-    await browser.close();
+    await browser?.close();
+    for (const e of electronApps) await e.close().catch(() => undefined);
   }
 } finally {
   for (const b of sides) b.engine.kill("SIGTERM");
