@@ -814,10 +814,10 @@ function drawAtZoom(v) {
     drawn = { x: v.x - px(v.x), y: v.y - px(v.y), z: v.z, huge: false };
     cam.world.style.transform = `translate(${drawn.x}px, ${drawn.y}px) scale(${drawn.z})`;
   }
-  // At ultra-wide overview zoom (< 5%, e.g. fitting a 100,000px Figma arena), will-change:transform
-  // forces Blink to split every blurred/masked child into its own RenderPass; at working zoom (>= 5%)
-  // will-change keeps .bd-camera GPU-pinned so pan/pinch never stall on frame 1.
-  if (cam.el) cam.el.style.willChange = v.z >= 0.05 ? "transform" : "auto";
+  // Never set will-change: transform on .bd-camera: in Chromium's GPU compositor (cc),
+  // has_will_change_transform_hint locks PictureLayer raster scale to its initial ~1x scale and
+  // makes zoomed text & vectors blurry until repainted. translate3d() on .bd-camera already keeps
+  // the layer GPU-promoted for 120 fps pan/pinch while letting Blink re-rasterize crisp at any zoom.
   shown = null;
 }
 
