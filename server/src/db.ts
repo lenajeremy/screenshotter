@@ -8,7 +8,9 @@ import pg from "pg";
 import type { Auth } from "./auth.js";
 
 export function makePool(url: string): pg.Pool {
-  return new pg.Pool({ connectionString: url, max: 10 });
+  const pool = new pg.Pool({ connectionString: url, max: 10 });
+  pool.on("error", (err) => console.error("[db] idle client error:", err.message));
+  return pool;
 }
 
 const OWN = `

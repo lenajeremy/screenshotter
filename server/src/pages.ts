@@ -48,6 +48,15 @@ export function pageRoutes(auth: Auth, config: Config) {
     return c.html(page(APP_NAME, u ? `<h1>You're signed in</h1><p>As ${esc(u.email)}. Open ${esc(APP_NAME)} on your Mac to design with your team.</p><form method="post" action="/signout"><button class="quiet">Sign out</button></form>` : `<h1>Design with your team</h1><p>Sign in to work on boards together, live.</p><a class="button" href="/signin">Sign in</a>`));
   });
 
+  app.get("/privacy", (c) =>
+    c.html(
+      page(
+        "Privacy",
+        `<h1>Privacy</h1><p>${esc(APP_NAME)} uses your name, email address and profile picture solely to sign you in, identify you in teams, and show your cursor while collaborating on boards.</p><p>Your boards and uploaded assets are stored to sync them with your team and are never sold or shared with third parties.</p><p class="small">Questions? Contact the workspace administrator.</p>`,
+      ),
+    ),
+  );
+
   app.post("/signout", async (c) => {
     const r = await auth.api.signOut({ headers: c.req.raw.headers, asResponse: true });
     const out = c.redirect("/");
