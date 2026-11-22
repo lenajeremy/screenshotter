@@ -1714,7 +1714,7 @@ const CHECKS: Record<string, Check> = {
     return picked === "Row One,Row Two" ? "ok" : `a click on the count selected ${picked || "nothing"}`;
   },
   // Smoothness: what moves with the pointer redraws, and nothing else does.
-  async "on a board, panning, pinching and the pointer redraw the canvas, not the panels"(page) {
+  async "on a board, panning, pinching and the pointer move the camera and redraw what's over the design, not the layers or the panels"(page) {
     const t = await openTestBoard(page);
     await sel(page, [t.byName("Two")]);
     await page.waitForTimeout(300);
@@ -1732,8 +1732,9 @@ const CHECKS: Record<string, Check> = {
     });
     if (hovered.BoardApp || hovered.PagesList || hovered.Inspector || !hovered.LayersList || hovered.Row !== 1) return `the pointer drew ${JSON.stringify(hovered)}`;
     if (!shown.hover || !shown.box || !shown.row) return `hovering a layer shows ${JSON.stringify(shown)}`;
-    // Two-finger scrolls and pinches: the canvas and the zoom in the bar follow; the panels stay.
-    const moved = await drawsDuring(page, [...PANELS, "BoardCanvas", "BoardTopbar"], () =>
+    // Two-finger scrolls and pinches: the camera moves the design (its layers aren't drawn again),
+    // what's over it (labels, selection) and the zoom in the bar follow; the panels stay.
+    const moved = await drawsDuring(page, [...PANELS, "BoardCanvas", "BoardTopbar", "Overlay", "ZoomLabel"], () =>
       S(page, async () => {
         const c = document.querySelector(".bd-canvas")!;
         const r = c.getBoundingClientRect();
@@ -1745,7 +1746,21 @@ const CHECKS: Record<string, Check> = {
         }
       }),
     );
-    if (PANELS.some((n) => moved[n]) || !moved.BoardCanvas || !moved.BoardTopbar) return `panning and pinching drew ${JSON.stringify(moved)}`;
+    if (PANELS.some((n) => moved[n]) || moved.BoardCanvas || moved.BoardTopbar || !moved.Overlay || !moved.ZoomLabel) return `panning and pinching drew ${JSON.stringify(moved)}`;
+    // Where the camera put the artboard is where the view says it is, while it's still and once
+    // it's drawn sharp again.
+    for (const wait of [0, 400]) {
+      await page.waitForTimeout(wait);
+      const off = await S(page, async (id: string) => {
+        const { B } = await import("/ui/board-state.js" as string);
+        const n = B.board.nodes[id];
+        const c = document.querySelector(".bd-canvas")!.getBoundingClientRect();
+        const r = document.querySelector(`.bd-world [data-bid="${id}"]`)!.getBoundingClientRect();
+        const { x, y, z } = B.view;
+        return Math.max(Math.abs(r.left - (c.left + x + (parseFloat(n.style.left) || 0) * z)), Math.abs(r.top - (c.top + y + (parseFloat(n.style.top) || 0) * z)), Math.abs(r.width - parseFloat(n.style.width) * z));
+      }, t.byName("Phone"));
+      if (off > 1) return `the artboard is ${off.toFixed(2)} px from where the view puts it${wait ? " once still" : ""}`;
+    }
     const zoom = await S(page, async () => ({ shown: document.querySelector(".bd-zoom")?.textContent?.trim(), z: (await import("/ui/board-state.js" as string)).B.view.z as number }));
     if (zoom.shown !== `${Math.round(zoom.z * 100)}%`) return `the bar shows ${zoom.shown} at a zoom of ${zoom.z}`;
     return "ok";
@@ -1755,7 +1770,7 @@ const CHECKS: Record<string, Check> = {
     const two = t.byName("Two");
     await S(page, async (id: string) => (await import("/ui/board.js" as string)).startTextEdit(id), two);
     await page.waitForTimeout(400);
-    const draws = await drawsDuring(page, ["BoardApp", "PagesList", "LayersList", "BoardTopbar", "Inspector", "BoardCanvas"], () =>
+    const draws = await drawsDuring(page, ["BoardApp", "PagesList", "LayersList", "BoardTopbar", "Inspector", "Overlay"], () =>
       S(page, async (id: string) => {
         const text = document.querySelector(`.bd-world [data-bid="${id}"]`)!.firstChild!;
         for (let i = 1; i <= 2; i++) {
@@ -1768,7 +1783,8 @@ const CHECKS: Record<string, Check> = {
         }
       }, two),
     );
-    if (draws.BoardApp || draws.PagesList || draws.LayersList || draws.BoardTopbar || !draws.Inspector || !draws.BoardCanvas) return `picking words drew ${JSON.stringify(draws)}`;
+    // The selection's outline over the canvas follows the words (the text box grows as it's typed in).
+    if (draws.BoardApp || draws.PagesList || draws.LayersList || draws.BoardTopbar || !draws.Inspector || !draws.Overlay) return `picking words drew ${JSON.stringify(draws)}`;
     // The panel's word buttons follow: picked words can be made bold.
     const bold = await S(page, () => [...document.querySelectorAll(".bd-right .bd-word")].some((b) => !(b as HTMLButtonElement).disabled));
     return bold ? "ok" : "with words picked, the panel's word buttons stay off";
