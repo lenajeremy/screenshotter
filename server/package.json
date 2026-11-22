@@ -1,0 +1,32 @@
+{
+  "name": "glassine-server",
+  "private": true,
+  "type": "module",
+  "description": "Accounts, teams and live team boards for the app: sign-in, teams and invites, and multiplayer editing over WebSockets.",
+  "scripts": {
+    "dev": "node scripts/shared.mjs && tsx watch src/main.ts",
+    "start": "node --import tsx src/main.ts",
+    "test": "node scripts/shared.mjs && tsx test/server-test.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "shared": "node scripts/shared.mjs",
+    "deploy": "node scripts/shared.mjs --check && pier deploy --prod"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "better-auth": "^1.7.27",
+    "hono": "^4.13.20",
+    "pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "ws": "^8.23.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2"
+  }
+}
