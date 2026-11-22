@@ -21,37 +21,293 @@ export const canvasEl = { current: null };
 export const srcUrl = (src) => (!src ? "" : /^(https?:|data:|blob:|\/api\/assets\/)/i.test(src) ? src : fileUrl(src));
 
 // ---------------------------------------------------------------------------------------------
-// Where things are
+// Resolution-scaled image mipmaps: keep GPU decode memory tiny on image-heavy boards (like Figma
+// files with hundreds of 4K PNGs), and upgrade visible images seamlessly once zooming settles.
 
-/** The element drawing a layer. */
-export const elOf = (id) => canvasEl.current?.querySelector(`[data-bid="${id}"]`);
+const MIP_BUCKETS = [256, 512, 1024, 2048];
+const mipRank = (w) => (w === 0 ? Infinity : w);
+const neededMip = (px) => MIP_BUCKETS.find((b) => b >= px) ?? 0;
+function withMip(url, w) {
+  if (!w || !url) return url;
+  if (!/^(\/file\?path=|\/api\/assets\/)/.test(url)) return url;
+  if (/\.(svg|gif)(?:[?&]|$)/i.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}w=${w}`;
+}
+/**
+ * Whether a smaller copy can stand in for a layer's picture without changing how it's laid out: a
+ * picture with no size of its own takes the file's (a 512 px copy would shrink it), and so does a
+ * background sized `auto`.
+ */
+function mipSafe(n, kind) {
+  const st = n.style ?? {};
+  if (kind === "img") return pxValue(st.width) !== undefined && pxValue(st.height) !== undefined && !/^(none|scale-down)$/.test(st.objectFit ?? "");
+  const size = (st.backgroundSize ?? "").trim();
+  if (!size) return false;
+  return size.split(/,(?![^(]*\))/).every((part) => !/^(auto(\s+auto)?)$/.test(part.trim()));
+}
+/**
+ * The longest edge a layer's picture is drawn at, in screen pixels, in a box of `sw` by `sh`: more
+ * than the box when it's cropped (object-fit: cover, a 250% background). `aspect` is the file's
+ * width over height, once it's known; until then a cropped one is taken to be twice the box.
+ */
+function drawnEdge(entry, sw, sh) {
+  const a = entry.aspect;
+  const cover = () => {
+    if (!a) return Math.max(sw, sh) * 2;
+    const w = Math.max(sw, sh * a);
+    return Math.max(w, w / a);
+  };
+  if (entry.kind === "img") return (entry.fit ?? "fill") === "cover" ? cover() : Math.max(sw, sh);
+  let edge = 0;
+  for (const part of (entry.size ?? "").split(/,(?![^(]*\))/)) {
+    const t = part.trim();
+    if (t === "cover") edge = Math.max(edge, cover());
+    else if (t === "contain") edge = Math.max(edge, sw, sh);
+    else {
+      const [x, y] = t.split(/\s+/);
+      const len = (v, box) => (!v || v === "auto" ? undefined : v.endsWith("%") ? (parseFloat(v) / 100) * box : parseFloat(v) * (B.view.z || 1));
+      let w = len(x, sw), h = len(y, sh);
+      if (w === undefined && h === undefined) return Infinity;
+      if (w === undefined) w = a ? h * a : h * 2;
+      if (h === undefined) h = a ? w / a : w * 2;
+      edge = Math.max(edge, w, h);
+    }
+  }
+  return edge || Math.max(sw, sh);
+}
+function initialMipFor(n) {
+  const w = pxValue(n.style?.width) ?? 0;
+  const h = pxValue(n.style?.height) ?? 0;
+  const maxDim = Math.max(w, h);
+  const dpr = typeof devicePixelRatio === "number" ? devicePixelRatio : 2;
+  if (maxDim > 0 && maxDim * dpr <= 256) return 256;
+  return 512;
+}
+/** Mounted raster image / background-image layers eligible for progressive mip upgrades. */
+const mipNodes = new Map();
+let mipUpgradesInFlight = 0;
+const mipUpgradeQueue = [];
+const pendingMipCommits = [];
+let gestureUntil = 0;
+let aspectSoon = 0;
+
+function flushMipCommits() {
+  if (performance.now() < gestureUntil || !pendingMipCommits.length) return;
+  while (pendingMipCommits.length) {
+    const job = pendingMipCommits.shift();
+    const cur = mipNodes.get(job.id);
+    if (cur && cur.el === job.el && cur.el.isConnected && mipRank(job.target) > mipRank(cur.mip)) {
+      cur.mip = job.target;
+      cur.upgrading = null;
+      if (cur.kind === "img") cur.el.src = job.nextUrl;
+      else cur.el.style.backgroundImage = mapCssUrls(cur.orig, (u) => withMip(srcUrl(u), job.target));
+    }
+  }
+}
+
+function pumpMipQueue() {
+  if (performance.now() < gestureUntil) return;
+  flushMipCommits();
+  while (mipUpgradesInFlight < 4 && mipUpgradeQueue.length) {
+    const job = mipUpgradeQueue.shift();
+    if (!job) break;
+    const entry = mipNodes.get(job.id);
+    if (!entry || entry.el !== job.el || !entry.el.isConnected || mipRank(job.target) <= mipRank(entry.mip)) continue;
+    mipUpgradesInFlight++;
+    const nextUrl = job.kind === "img" ? withMip(srcUrl(job.orig), job.target) : null;
+    const urls = [];
+    if (nextUrl) urls.push(nextUrl);
+    else mapCssUrls(job.orig, (u) => {
+      const m = withMip(srcUrl(u), job.target);
+      urls.push(m);
+      return m;
+    });
+    Promise.all(
+      urls.map(
+        (u) =>
+          new Promise((done) => {
+            const im = new Image();
+            im.decoding = "async";
+            im.onload = () => (im.decode ? im.decode().then(done, done) : done());
+            im.onerror = done;
+            im.src = u;
+          }),
+      ),
+    ).finally(() => {
+      mipUpgradesInFlight--;
+      // Never mutate DOM inside .bd-world mid-gesture: queue the swap until panning/pinching settles.
+      pendingMipCommits.push({ id: job.id, el: job.el, target: job.target, nextUrl });
+      if (performance.now() >= gestureUntil) flushMipCommits();
+      pumpMipQueue();
+    });
+  }
+}
+
+function upgradeVisibleImages() {
+  if (performance.now() < gestureUntil || !canvasEl.current) return;
+  flushMipCommits();
+  if (!mipNodes.size) return;
+  const cr = getCanvasRect();
+  if (!cr.width || !cr.height) return;
+  const v = B.view;
+  const dpr = typeof devicePixelRatio === "number" ? devicePixelRatio : 2;
+  for (const [id, entry] of mipNodes) {
+    if (entry.mip === 0 || !entry.el.isConnected) continue;
+    const wb = worldRects.get(id);
+    let sx, sy, sw, sh;
+    if (wb) {
+      sx = wb.x * v.z + v.x;
+      sy = wb.y * v.z + v.y;
+      sw = wb.width * v.z;
+      sh = wb.height * v.z;
+    } else {
+      const r = entry.el.getBoundingClientRect();
+      sx = r.left - cr.left;
+      sy = r.top - cr.top;
+      sw = r.width;
+      sh = r.height;
+    }
+    if (sw <= 0 || sh <= 0) continue;
+    if (sx + sw < -100 || sx > cr.width + 100 || sy + sh < -100 || sy > cr.height + 100) continue;
+    if (!entry.aspect) {
+      if (entry.kind === "img" && entry.el.naturalWidth && entry.el.naturalHeight) entry.aspect = entry.el.naturalWidth / entry.el.naturalHeight;
+      else if (entry.kind === "bg" && !entry.probing && /cover|auto/.test(entry.size ?? "")) {
+        // A background's shape isn't readable from its element: the copy already loaded says.
+        entry.probing = true;
+        let first = "";
+        mapCssUrls(entry.orig, (u) => ((first ||= withMip(srcUrl(u), entry.mip)), u));
+        const im = new Image();
+        im.onload = () => {
+          if (im.naturalWidth && im.naturalHeight) entry.aspect = im.naturalWidth / im.naturalHeight;
+          clearTimeout(aspectSoon);
+          aspectSoon = setTimeout(upgradeVisibleImages, 60);
+        };
+        im.src = first;
+      }
+    }
+    const target = neededMip(drawnEdge(entry, sw, sh) * dpr);
+    if (mipRank(target) <= mipRank(entry.mip)) continue;
+    if (entry.upgrading === target) continue;
+    entry.upgrading = target;
+    mipUpgradeQueue.push({ id, el: entry.el, kind: entry.kind, orig: entry.orig, target });
+  }
+  pumpMipQueue();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Where things are (O(1) element index, cached canvas rect, cached world bounds)
+
+const nodeEls = new Map();
+function bindEl(id, el) {
+  if (el) nodeEls.set(id, el);
+  else nodeEls.delete(id);
+}
+
+/** The element drawing a layer (O(1) map lookup, querySelector fallback). */
+export const elOf = (id) => {
+  const hit = nodeEls.get(id);
+  if (hit?.isConnected) return hit;
+  return canvasEl.current?.querySelector(`[data-bid="${id}"]`) ?? null;
+};
+
+let canvasRect = null;
+function refreshCanvasRect() {
+  canvasRect = canvasEl.current?.isConnected ? canvasEl.current.getBoundingClientRect() : null;
+  return canvasRect;
+}
+function getCanvasRect() {
+  return canvasRect ?? refreshCanvasRect() ?? { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+}
+
+/** World-space boxes cached after layout so pan/zoom overlays do zero DOM reads. */
+const worldRects = new Map();
+let rootsDirty = true;
+
+function invalidateWorldCache(onlyIds) {
+  if (onlyIds) {
+    for (const id of onlyIds) worldRects.delete(id);
+    return;
+  }
+  worldRects.clear();
+  rootsDirty = true;
+}
+
+function measureRoots() {
+  rootsDirty = false;
+  const board = B.board;
+  const page = currentPage();
+  if (!board || !page || !canvasEl.current) return;
+  const cr = refreshCanvasRect();
+  const v = shown ?? B.view;
+  if (!cr || !cr.width || !v.z) return;
+  for (const id of page.children) {
+    const n = board.nodes[id];
+    if (!n || n.hidden) continue;
+    const el = elOf(id);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    worldRects.set(id, {
+      x: (r.left - cr.left - v.x) / v.z,
+      y: (r.top - cr.top - v.y) / v.z,
+      width: r.width / v.z,
+      height: r.height / v.z,
+    });
+  }
+}
 
 /** A screen point (client px) on the canvas, in board units. */
 export function toWorld(clientX, clientY) {
-  const r = canvasEl.current.getBoundingClientRect();
+  const r = getCanvasRect();
   const { x, y, z } = B.view;
   return { x: (clientX - r.left - x) / z, y: (clientY - r.top - y) / z };
 }
 
+/** A drag moves more than what's dragged (what's inside it, what flows after it): once it ends, every box is measured again. */
+let wasDragging = false;
+function afterDrag() {
+  if (wasDragging && !B.dragging) invalidateWorldCache();
+  wasDragging = Boolean(B.dragging);
+}
+
 /** A layer's box in board units (as drawn), or null if it isn't drawn. */
 export function worldBox(id) {
+  afterDrag();
+  if (!B.dragging && B.editing !== id) {
+    const cached = worldRects.get(id);
+    if (cached) return cached;
+  }
   const el = elOf(id);
   if (!el) return null;
   const r = el.getBoundingClientRect();
-  const c = canvasEl.current.getBoundingClientRect();
+  const c = getCanvasRect();
   const { x, y, z } = B.view;
-  return { x: (r.left - c.left - x) / z, y: (r.top - c.top - y) / z, width: r.width / z, height: r.height / z };
+  const box = { x: (r.left - c.left - x) / z, y: (r.top - c.top - y) / z, width: r.width / z, height: r.height / z };
+  if (!B.dragging && B.editing !== id) worldRects.set(id, box);
+  return box;
 }
 
 useMeasure((id) => worldBox(id));
 
 /** A layer's box on screen, relative to the canvas. */
 export function screenBox(id) {
+  afterDrag();
+  if (!B.dragging && B.editing !== id) {
+    const wb = worldRects.get(id);
+    if (wb) {
+      const { x, y, z } = B.view;
+      return { x: wb.x * z + x, y: wb.y * z + y, width: wb.width * z, height: wb.height * z };
+    }
+  }
   const el = elOf(id);
   if (!el) return null;
   const r = el.getBoundingClientRect();
-  const c = canvasEl.current.getBoundingClientRect();
-  return { x: r.left - c.left, y: r.top - c.top, width: r.width, height: r.height };
+  const c = getCanvasRect();
+  const box = { x: r.left - c.left, y: r.top - c.top, width: r.width, height: r.height };
+  if (!B.dragging && B.editing !== id) {
+    const { x, y, z } = B.view;
+    worldRects.set(id, { x: (box.x - x) / z, y: (box.y - y) / z, width: box.width / z, height: box.height / z });
+  }
+  return box;
 }
 
 /**
@@ -80,7 +336,7 @@ function setView(to, animate, ms = 220) {
     const k = ms > 300 ? (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2) : 1 - (1 - t) ** 3;
     const z = from.z * (to.z / from.z) ** k;
     // The point under the middle of the canvas travels in a straight line while the zoom changes evenly.
-    const c = canvasEl.current?.getBoundingClientRect() ?? { width: 0, height: 0 };
+    const c = getCanvasRect();
     const mid = (v) => ({ x: (c.width / 2 - v.x) / v.z, y: (c.height / 2 - v.y) / v.z });
     const a = mid(from);
     const b = mid(to);
@@ -95,32 +351,65 @@ function setView(to, animate, ms = 220) {
 // ---------------------------------------------------------------------------------------------
 // The camera: how the view reaches the screen
 //
-// The world (every artboard, as HTML) is drawn at a zoom of its own inside the camera, a layer the
-// GPU keeps: panning moves that layer and zooming scales it, so neither draws the design again.
-// It's drawn again, sharp, at the view's zoom once a zoom stops (and on the way, when the zoom is
-// far enough from the drawn one that the picture would look soft, or cost too much to fill in).
+// The world (every artboard, as HTML) is drawn centered around the viewport center at a zoom of
+// its own (`translate(cx, cy) scale(z) translate(-wx, -wy)`), keeping transformed coordinates near
+// (0, 0) so even 256,000% zoom on a 100,000px artboard never hits fixed-point overflow.
+// During a pan or pinch, .bd-camera carries the delta transform cheaply; when zooming stops,
+// sharpen() commits the exact zoom to .bd-world and resets .bd-camera to `transform: none` so text
+// and vectors render natively at full resolution without compositing-scale capping.
 
-/** The camera and the world in it, as drawn now. */
-const cam = { el: null, world: null };
-/** The view the world is drawn at (its x and y only the part of a pixel the camera can't move by). */
+/** Zoom range: 0.2% (fits 200,000px Figma arenas) up to 256,000% (razor-sharp vectors & text). */
+const MIN_ZOOM = 0.002;
+const MAX_ZOOM = 2560;
+
+/** The camera, world and pixel grid elements. */
+const cam = { el: null, world: null, grid: null };
+/** The view .bd-world is currently drawn at. */
 let drawn = null;
 /** The view last put on screen. */
 let shown = null;
 let sharpenSoon = 0;
-/** How far the camera scales the drawn world before it's drawn again: up (softer), down (more to fill in). */
-const SOFTEST = 1.5;
-const SMALLEST = 0.5;
+/** How far .bd-camera scales the drawn world mid-pinch before re-rasterizing .bd-world. */
+const SOFTEST = 2.0;
+const SMALLEST = 0.45;
+const px = (v) => Math.round(v * (typeof devicePixelRatio === "number" ? devicePixelRatio : 1)) / (typeof devicePixelRatio === "number" ? devicePixelRatio : 1);
 
-const px = (v) => Math.round(v * devicePixelRatio) / devicePixelRatio;
-const offPixel = (v) => Math.abs(px(v) - v) > 1e-3;
+function updatePixelGrid(v) {
+  const g = cam.grid;
+  if (!g) return;
+  if (v.z < 8) {
+    if (g.style.display !== "none") g.style.display = "none";
+    return;
+  }
+  g.style.display = "block";
+  g.style.backgroundSize = `${v.z}px ${v.z}px`;
+  g.style.backgroundPosition = `${((v.x % v.z) + v.z) % v.z}px ${((v.y % v.z) + v.z) % v.z}px`;
+  g.style.opacity = String(Math.min(1, (v.z - 8) / 8));
+}
 
-/** Draw the world at a view's zoom, the camera making up the rest. */
+/** Draw the world at view `v`'s exact zoom, .bd-camera carrying only the delta. */
 function drawAtZoom(v) {
   if (!cam.world) return;
-  // The camera moves by whole screen pixels (a layer moved by part of one looks soft); the world
-  // takes the rest, drawn exactly.
-  drawn = { x: v.x - px(v.x), y: v.y - px(v.y), z: v.z };
-  cam.world.style.transform = `translate(${drawn.x}px, ${drawn.y}px) scale(${drawn.z})`;
+  // At extreme zooms (> 64x) or huge pan offsets, center the transform around the viewport so
+  // coordinates stay near (0, 0) and never overflow Blink's 32-bit fixed-point LayoutUnit limit.
+  const huge = v.z > 64 || Math.abs(v.x) > 500_000 || Math.abs(v.y) > 500_000;
+  if (huge) {
+    const cr = getCanvasRect();
+    const cx = Math.round(cr.width / 2);
+    const cy = Math.round(cr.height / 2);
+    const wx = (cx - v.x) / v.z;
+    const wy = (cy - v.y) / v.z;
+    drawn = { x: v.x, y: v.y, z: v.z, huge: true };
+    cam.world.style.transform = `translate(${cx}px, ${cy}px) scale(${v.z}) translate(${-wx}px, ${-wy}px)`;
+  } else {
+    // Sub-pixel remainder stays on .bd-world so .bd-camera translates by whole screen pixels.
+    drawn = { x: v.x - px(v.x), y: v.y - px(v.y), z: v.z, huge: false };
+    cam.world.style.transform = `translate(${drawn.x}px, ${drawn.y}px) scale(${drawn.z})`;
+  }
+  // At ultra-wide overview zoom (< 5%, e.g. fitting a 100,000px Figma arena), will-change:transform
+  // forces Blink to split every blurred/masked child into its own RenderPass; at working zoom (>= 5%)
+  // will-change keeps .bd-camera GPU-pinned so pan/pinch never stall on frame 1.
+  if (cam.el) cam.el.style.willChange = v.z >= 0.05 ? "transform" : "auto";
   shown = null;
 }
 
@@ -130,16 +419,26 @@ export function applyView() {
   const v = B.view;
   if (shown && shown.x === v.x && shown.y === v.y && shown.z === v.z && drawn) return false;
   let s = drawn ? v.z / drawn.z : 0;
+  const tx0 = drawn ? v.x - s * drawn.x : 0;
+  const ty0 = drawn ? v.y - s * drawn.y : 0;
+  const needHuge = v.z > 64 || Math.abs(v.x) > 500_000 || Math.abs(v.y) > 500_000;
   // A glide zooming out to where it's drawn already only grows sharper on the way.
-  if (!drawn || (s > SOFTEST && drawn.z !== gliding) || s < SMALLEST) {
+  if (!drawn || (s > SOFTEST && drawn.z !== gliding) || s < SMALLEST || drawn.huge !== needHuge || (drawn.huge && (Math.abs(tx0) > 16000 || Math.abs(ty0) > 16000))) {
     drawAtZoom(v);
     s = 1;
   }
   shown = { x: v.x, y: v.y, z: v.z };
-  cam.el.style.transform = `translate(${v.x - s * drawn.x}px, ${v.y - s * drawn.y}px) scale(${s})`;
+  const tx = v.x - s * drawn.x;
+  const ty = v.y - s * drawn.y;
+  gestureUntil = performance.now() + 180;
+  // Keep .bd-camera permanently promoted (never toggle transform:none) so frame 1 of pan/pinch
+  // never stalls to allocate a new GPU backing layer.
+  cam.el.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${s})`;
+  updatePixelGrid(v);
   clearTimeout(sharpenSoon);
-  // Off the drawn zoom (or off whole pixels): drawn again, sharp, once the view stops.
-  if (s !== 1 || offPixel(v.x - drawn.x) || offPixel(v.y - drawn.y)) sharpenSoon = setTimeout(sharpen, 140);
+  // Only re-rasterize .bd-world when the zoom actually changed (s !== 1), never after a pure pan.
+  if (s !== 1) sharpenSoon = setTimeout(sharpen, 130);
+  else sharpenSoon = setTimeout(upgradeVisibleImages, 220);
   return true;
 }
 const camRef = (el) => {
@@ -148,18 +447,22 @@ const camRef = (el) => {
 const worldRef = (el) => {
   if (cam.world !== el) (cam.world = el), (drawn = shown = null);
 };
+const gridRef = (el) => {
+  if (cam.grid !== el) cam.grid = el;
+};
 
 function sharpen() {
   drawn = null;
   applyView();
+  upgradeVisibleImages();
 }
 // The view goes on screen at each frame it changes, without drawing the canvas's layers again.
 onBoard(() => applyView());
 
 export function zoomTo(z, at, { animate = false } = {}) {
-  const c = canvasEl.current?.getBoundingClientRect();
-  if (!c) return;
-  const nz = Math.min(64, Math.max(0.02, z));
+  const c = getCanvasRect();
+  if (!c.width) return;
+  const nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
   const p = at ?? { x: c.width / 2, y: c.height / 2 };
   const { x, y, z: oz } = B.view;
   setView({ x: p.x - ((p.x - x) / oz) * nz, y: p.y - ((p.y - y) / oz) * nz, z: nz }, animate);
@@ -168,8 +471,8 @@ export const zoomBy = (k, at, opts) => zoomTo(B.view.z * k, at, opts);
 
 /** Glide a point on the board (board units) to the middle of the canvas, `dx` px to one side, at the same zoom. */
 export function centerOn(p, { dx = 0 } = {}) {
-  const c = canvasEl.current?.getBoundingClientRect();
-  if (!c) return;
+  const c = getCanvasRect();
+  if (!c.width) return;
   const z = B.view.z;
   setView({ z, x: c.width / 2 + dx - p.x * z, y: c.height / 2 - p.y * z }, true);
 }
@@ -185,13 +488,13 @@ let followGlideUntil = 0;
 /** Whether the view is moving because it's following an agent (not because the person moved it). */
 export const followGliding = () => performance.now() < followGlideUntil;
 export function frameBox(box, { ms = 650, zoom, focus } = {}) {
-  const c = canvasEl.current?.getBoundingClientRect();
-  if (!c || !box) return;
+  const c = getCanvasRect();
+  if (!c.width || !box) return;
   const pad = 96, top = 56;
   const W = c.width - pad * 2, H = c.height - pad * 2 - top;
   // Show at least a third of the canvas's worth around a small layer, so its place reads too.
   const w = Math.max(box.width, (W / 1.5) * 0.34), h = Math.max(box.height, (H / 1.5) * 0.34);
-  const z = zoom ? Math.max(0.02, Math.min(64, zoom)) : Math.max(0.05, Math.min(1.5, W / w, H / h));
+  const z = zoom ? Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)) : Math.max(MIN_ZOOM, Math.min(1.5, W / w, H / h));
   const { x, y, z: oz } = B.view;
   const s = { left: box.x * oz + x, top: box.y * oz + y, right: (box.x + box.width) * oz + x, bottom: (box.y + box.height) * oz + y };
   const inView = s.left >= 24 && s.top >= top && s.right <= c.width - 24 && s.bottom <= c.height - 24;
@@ -207,9 +510,9 @@ export function frameBox(box, { ms = 650, zoom, focus } = {}) {
 
 /** Fit layers (default: everything on the page) in the canvas, gliding there unless `instant`. */
 export function fit(ids, { instant = false } = {}) {
-  const c = canvasEl.current?.getBoundingClientRect();
+  const c = refreshCanvasRect();
   const page = currentPage();
-  if (!c || !page) return;
+  if (!c || !c.width || !page) return;
   const list = ids?.length ? ids : page.children;
   const boxes = list.map(worldBox).filter(Boolean);
   if (!boxes.length) return setView({ x: c.width / 2 - 200, y: 120, z: 1 }, !instant);
@@ -218,7 +521,7 @@ export function fit(ids, { instant = false } = {}) {
   const maxX = Math.max(...boxes.map((b) => b.x + b.width));
   const maxY = Math.max(...boxes.map((b) => b.y + b.height));
   const pad = 72;
-  const z = Math.min(ids?.length ? 4 : 1, (c.width - pad * 2) / Math.max(1, maxX - minX), (c.height - pad * 2 - 24) / Math.max(1, maxY - minY));
+  const z = Math.max(MIN_ZOOM, Math.min(ids?.length ? 4 : 1, (c.width - pad * 2) / Math.max(1, maxX - minX), (c.height - pad * 2 - 24) / Math.max(1, maxY - minY)));
   setView({ z, x: (c.width - (maxX - minX) * z) / 2 - minX * z, y: (c.height - (maxY - minY) * z) / 2 - minY * z + 12 }, !instant);
 }
 
@@ -264,23 +567,90 @@ const svgProps = (attrs) => Object.fromEntries(cleanAttrs(attrs));
  * Panning, zooming and dragging something else leave it alone.
  */
 class Layer extends Component {
+  el = null;
+  mipInfo = null;
+  setRef = (el) => {
+    const id = this.props.n?.id;
+    if (this.el && this.el !== el && id && nodeEls.get(id) === this.el) nodeEls.delete(id);
+    this.el = el;
+    if (id && el) {
+      bindEl(id, el);
+      this.syncMip();
+    } else if (id) {
+      mipNodes.delete(id);
+    }
+  };
+  syncMip() {
+    const id = this.props.n?.id;
+    if (!id || !this.el) return;
+    if (!this.mipInfo) {
+      mipNodes.delete(id);
+      return;
+    }
+    const cur = mipNodes.get(id);
+    if (cur && cur.el === this.el && cur.orig === this.mipInfo.orig && cur.kind === this.mipInfo.kind) {
+      cur.fit = this.mipInfo.fit;
+      cur.size = this.mipInfo.size;
+      return;
+    }
+    mipNodes.set(id, { el: this.el, kind: this.mipInfo.kind, orig: this.mipInfo.orig, mip: this.mipInfo.mip, fit: this.mipInfo.fit, size: this.mipInfo.size, upgrading: null });
+  }
+  componentDidUpdate() {
+    this.syncMip();
+  }
+  componentWillUnmount() {
+    const id = this.props.n?.id;
+    if (id) {
+      if (nodeEls.get(id) === this.el) nodeEls.delete(id);
+      mipNodes.delete(id);
+    }
+    this.el = null;
+  }
   shouldComponentUpdate(next) {
     return next.n !== this.props.n || next.editing !== this.props.editing || next.root !== this.props.root;
   }
   render({ n, root, editing }) {
+    this.mipInfo = null;
     if (!n || n.hidden) return null;
-    const style = {};
-    for (const [k, v] of Object.entries(n.style)) style[k] = v.includes("url(") ? mapCssUrls(v, srcUrl) : v;
-    if (root) style.position = "absolute";
     const id = n.id;
+    const existingMip = mipNodes.get(id);
+    const style = {};
+    for (const [k, v] of Object.entries(n.style)) {
+      if (v.includes("url(")) {
+        if (k === "backgroundImage") {
+          const mip = !mipSafe(n, "bg") ? 0 : existingMip && existingMip.kind === "bg" && existingMip.orig === v ? existingMip.mip : initialMipFor(n);
+          let hasRaster = false;
+          style[k] = mapCssUrls(v, (u) => {
+            const full = srcUrl(u);
+            const m = withMip(full, mip);
+            if (m !== full) hasRaster = true;
+            return m;
+          });
+          if (hasRaster || (existingMip && existingMip.kind === "bg" && existingMip.orig === v)) {
+            this.mipInfo = { kind: "bg", orig: v, mip: hasRaster ? mip : 0, size: n.style.backgroundSize };
+          }
+        } else {
+          style[k] = mapCssUrls(v, srcUrl);
+        }
+      } else {
+        style[k] = v;
+      }
+    }
+    if (root) style.position = "absolute";
     // A mask isn't drawn (its look masks the layers above it), but it's still there to pick; its words show faintly while typed.
     if (n.mask && maskActive(B.board, id)) style.opacity = editing === id ? "0.4" : "0";
-    const attrs = { "data-bid": id, style };
+    const attrs = { "data-bid": id, style, ref: this.setRef };
     if (n.type === "text") {
       if (editing === id) return html`<${EditableText} id=${id} style=${style} />`;
       return html`<div ...${attrs} dangerouslySetInnerHTML=${{ __html: n.text ?? "" }}></div>`;
     }
-    if (n.type === "image") return html`<img ...${attrs} src=${srcUrl(n.src)} alt="" draggable=${false} />`;
+    if (n.type === "image") {
+      const full = srcUrl(n.src);
+      const mip = !mipSafe(n, "img") ? 0 : existingMip && existingMip.kind === "img" && existingMip.orig === n.src ? existingMip.mip : initialMipFor(n);
+      const scaled = withMip(full, mip);
+      if (scaled !== full) this.mipInfo = { kind: "img", orig: n.src, mip, fit: n.style.objectFit };
+      return html`<img ...${attrs} src=${scaled} decoding="async" alt="" draggable=${false} />`;
+    }
     // Its first frame (the still) until it's played: videos don't play on their own on the canvas.
     if (n.type === "video") return html`<video ...${attrs} src=${n.src ? srcUrl(n.src) : undefined} poster=${n.poster ? srcUrl(n.poster) : undefined} preload="metadata" playsinline draggable=${false}></video>`;
     const nodes = B.board.nodes;
@@ -296,7 +666,7 @@ class Layer extends Component {
     }
     if (n.type === "vector") {
       const Tag = vectorTag(n.tag);
-      const props = { ...svgProps(svgImageAttrs(Tag, n.attrs, srcUrl)), "data-bid": id, style };
+      const props = { ...svgProps(svgImageAttrs(Tag, n.attrs, srcUrl)), "data-bid": id, style, ref: this.setRef };
       if (Tag !== "g") return html`<${Tag} ...${props} dangerouslySetInnerHTML=${{ __html: mapSvgImages(n.text ?? "", srcUrl) }}></${Tag}>`;
       return html`<g ...${props}>${(n.children ?? []).map((c) => html`<${Layer} key=${c} n=${nodes[c]} editing=${editing} />`)}</g>`;
     }
@@ -371,7 +741,7 @@ function EditableText({ id, style }) {
       words.range = null;
     };
   }, [id]);
-  return html`<div data-bid=${id} ref=${ref} style=${{ ...style, outline: "none", cursor: "text" }} contenteditable="true" spellcheck=${false}
+  return html`<div data-bid=${id} ref=${(el) => { ref.current = el; bindEl(id, el); }} style=${{ ...style, outline: "none", cursor: "text" }} contenteditable="true" spellcheck=${false}
     onBlur=${(e) => !e.relatedTarget?.closest?.(".bd-words") && finishText(id, ref.current)}
     onPointerDown=${(e) => e.stopPropagation()}
     onKeyDown=${(e) => {
@@ -431,25 +801,64 @@ export function BoardCanvas() {
   // The layers redraw for what they show: the view (the camera) and the pointer (the overlay) follow on their own.
   const b = useBoard(CANVAS_ONLY);
   const page = currentPage();
+  const prevRef = useRef({ id: null, page: null, board: null });
   useFonts(b.board, page);
   useMaskFonts(b.board);
   useLayoutEffect(() => {
     canvasEl.current = ref.current;
+    refreshCanvasRect();
+    const prev = prevRef.current;
+    const switched = prev.id !== b.id || prev.page !== b.page;
+    const mutated = prev.board !== b.board;
+    prevRef.current = { id: b.id, page: b.page, board: b.board };
+    if (switched) {
+      drawn = shown = null;
+      invalidateWorldCache();
+    } else if (mutated) {
+      if (B.dragging) {
+        // Dragging a layer: only clear cached boxes for the moved/resized layers, never all cullables.
+        const touched = [];
+        for (const id of B.sel) {
+          touched.push(id, ...ancestors(b.board, id));
+        }
+        invalidateWorldCache(touched);
+      } else {
+        invalidateWorldCache();
+      }
+    }
     // A camera just made (the board opened): what's drawn over the design measures again with it.
-    if (applyView()) notify();
+    const moved = applyView();
+    if (rootsDirty && b.board && page) measureRoots();
+    if (moved) notify();
+    if (switched) setTimeout(upgradeVisibleImages, 260);
   });
-  // A board opens fitted to its first page.
+  // A board opens fitted to its first page (computed before first paint when layout is ready,
+  // avoiding a wasted raster pass at the default zoom on huge 100,000px boards).
   useLayoutEffect(() => {
     if (B.view.fitPending) {
       B.view = { ...B.view, fitPending: false };
-      requestAnimationFrame(() => fit(undefined, { instant: true }));
+      if (ref.current?.getBoundingClientRect().width) {
+        fit(undefined, { instant: true });
+        applyView();
+      } else {
+        requestAnimationFrame(() => fit(undefined, { instant: true }));
+      }
     }
   }, [b.id, b.page]);
   useEffect(() => {
     const el = ref.current;
+    let ro = null;
+    const onResize = () => {
+      refreshCanvasRect();
+    };
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(onResize);
+      ro.observe(el);
+    }
+    window.addEventListener("resize", onResize);
     const wheel = (e) => {
       e.preventDefault();
-      const r = el.getBoundingClientRect();
+      const r = getCanvasRect();
       if (e.ctrlKey || e.metaKey) zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), { x: e.clientX - r.left, y: e.clientY - r.top });
       else bset({ view: { ...B.view, x: B.view.x - e.deltaX, y: B.view.y - e.deltaY } });
     };
@@ -461,20 +870,42 @@ export function BoardCanvas() {
     };
     const gc = (e) => {
       e.preventDefault();
-      const r = el.getBoundingClientRect();
+      const r = getCanvasRect();
       zoomBy(e.scale / g0, { x: e.clientX - r.left, y: e.clientY - r.top });
       g0 = e.scale;
     };
     el.addEventListener("wheel", wheel, { passive: false });
     el.addEventListener("gesturestart", gs);
     el.addEventListener("gesturechange", gc);
-    const fonts = () => notify();
+    const fonts = () => {
+      invalidateWorldCache();
+      notify();
+    };
     document.fonts.addEventListener?.("loadingdone", fonts);
+    // A picture sized by its file moves what's around it when it arrives.
+    let loadedSoon = 0;
+    const loaded = (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLImageElement) || (t.style.width && t.style.height)) return;
+      clearTimeout(loadedSoon);
+      loadedSoon = setTimeout(() => (invalidateWorldCache(), notify()), 50);
+    };
+    el.addEventListener("load", loaded, true);
     return () => {
+      el.removeEventListener("load", loaded, true);
+      clearTimeout(loadedSoon);
+      ro?.disconnect();
+      window.removeEventListener("resize", onResize);
       el.removeEventListener("wheel", wheel);
       el.removeEventListener("gesturestart", gs);
       el.removeEventListener("gesturechange", gc);
       document.fonts.removeEventListener?.("loadingdone", fonts);
+      canvasRect = null;
+      invalidateWorldCache();
+      nodeEls.clear();
+      mipNodes.clear();
+      mipUpgradeQueue.length = 0;
+      pendingMipCommits.length = 0;
     };
   }, []);
   // The view goes on screen before what's drawn over the design measures where things are.
@@ -490,6 +921,7 @@ export function BoardCanvas() {
         ${page.children.map((id) => html`<${Layer} key=${id} n=${b.board.nodes[id]} root editing=${b.editing} />`)}
       </div>
     </div>
+    <div class="bd-pxgrid" ref=${gridRef}></div>
     <${Overlay} />
     <${Presence} />
     <${PresenceBar} />
@@ -533,10 +965,11 @@ function Overlay() {
   const group = movable.length > 1 ? unionOf(movable.map(screenBox).filter(Boolean)) : null;
   // Each agent marks the artboard it's on now (its latest move), in its own colour and with its name.
   const onIt = agentArtboards();
+  const cr = getCanvasRect();
   return html`<div class="bd-overlay">
     ${roots.map((id) => {
       const r = screenBox(id);
-      if (!r) return null;
+      if (!r || r.x + r.width < -60 || r.x > cr.width + 60 || r.y + r.height < -60 || r.y - 26 > cr.height + 60) return null;
       const agent = onIt.get(id);
       const writing = agent && !["look", "read"].includes(agent.doing);
       return html`<div key=${id} class="bd-label ${b.sel.includes(id) ? "on" : ""} ${agent ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px", "--c": agent ? colourOf(agent.key) : undefined }} data-label=${id}>

@@ -970,9 +970,12 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .bd-canvas.tool-text { cursor: text; }
 .bd-canvas.tool-hand, .bd-canvas.panning { cursor: grab; }
 .bd-canvas.grabbing { cursor: grabbing; }
-/* The camera: a layer the GPU keeps, moved and scaled over the world as drawn (see board-canvas.js). */
-.bd-camera { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+/* The camera: GPU-promoted via translate3d() without will-change:transform (which forces Blink to
+   explode large blurred/masked artboards into hundreds of RenderPasses on every frame). */
+.bd-camera { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .bd-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+/* Pixel grid at high zoom (800%+), pure CSS, updated in applyView without Preact redraws. */
+.bd-pxgrid { position: absolute; inset: 0; pointer-events: none; z-index: 1; display: none; background-image: linear-gradient(to right, rgb(var(--ink) / 0.1) 1px, transparent 1px), linear-gradient(to bottom, rgb(var(--ink) / 0.1) 1px, transparent 1px); }
 .bd-world, .bd-world * { box-sizing: border-box; }
 .bd-world img { display: block; }
 /* A design's own default type, as a fresh web page has it (the app's UI font never leaks in). */
@@ -1780,4 +1783,9 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .bd-peer-cursor { transition: left 0.08s linear, top 0.08s linear; }
 .bd-peer-sel { position: absolute; border: calc(1.5px * var(--inv)) solid var(--c); border-radius: calc(2px * var(--inv)); box-sizing: border-box; pointer-events: none; }
 .bd-peer-tag { position: absolute; left: calc(-1.5px * var(--inv)); bottom: 100%; transform: scale(var(--inv)); transform-origin: 0 100%; padding: 1px 6px; border-radius: 4px 4px 4px 0; background: var(--c); color: #fff; font: 600 10.5px var(--sans); white-space: nowrap; }
+
+/* The desktop app (Electron): the top bars move the window, as the title bar would; what's in them
+   that takes a click (buttons, fields, anything marked data-nodrag) doesn't. */
+.electron [data-drag] { -webkit-app-region: drag; }
+.electron [data-drag] :is([data-nodrag], button, input, select, textarea, a, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
 .bd-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }

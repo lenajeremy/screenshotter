@@ -111,7 +111,10 @@ const TOOLS = [
 
 /** The zoom, as a percentage: redrawn when that number changes, not at every frame of a pan. */
 function ZoomLabel() {
-  return useBoardPick((b) => Math.round(b.view.z * 100)) + "%";
+  return useBoardPick((b) => {
+    const pct = b.view.z * 100;
+    return pct < 1 ? `${Math.round(pct * 10) / 10}%` : `${Math.round(pct)}%`;
+  });
 }
 
 function BoardTopbar() {
@@ -283,10 +286,11 @@ export function layerIcon(n, b = B.board) {
 
 function LayersList() {
   // Its rows show the layer under the pointer and where a dragged one would go, not the view.
-  const b = useBoard(["view", "guides", "words", "presence", "following"]);
+  const b = useBoard(["view", "guides", "words", "presence", "peers", "following"]);
   const page = currentPage();
   const ref = useRef();
   const [room, setRoom] = useState(236);
+  const [scroll, setScroll] = useState({ top: 0, h: 600 });
   const rows = [];
   const picked = new Set(b.sel);
   let deepest = 0;
@@ -301,19 +305,44 @@ function LayersList() {
   };
   for (const id of page?.children ?? []) walk(id, 0);
   const { step, width } = indentFor(deepest, room);
+  const ROW_H = 28;
+  const virtual = rows.length > 150;
+  const firstIdx = virtual ? Math.max(0, Math.floor(scroll.top / ROW_H) - 16) : 0;
+  const lastIdx = virtual ? Math.min(rows.length, Math.ceil((scroll.top + scroll.h) / ROW_H) + 16) : rows.length;
+  const visibleRows = virtual ? rows.slice(firstIdx, lastIdx) : rows;
   // The room the rows have, as the panel is dragged wider or narrower.
   useEffect(() => {
     const list = ref.current?.querySelector(".bd-rows");
-    if (!list || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setRoom(list.clientWidth - 12));
-    ro.observe(list);
-    return () => ro.disconnect();
+    if (!list) return;
+    const sync = () => setScroll((s) => (s.top === list.scrollTop && s.h === list.clientHeight ? s : { top: list.scrollTop, h: list.clientHeight || 600 }));
+    list.addEventListener("scroll", sync, { passive: true });
+    let ro;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => {
+        setRoom(list.clientWidth - 12);
+        sync();
+      });
+      ro.observe(list);
+    }
+    return () => {
+      list.removeEventListener("scroll", sync);
+      ro?.disconnect();
+    };
   }, []);
   // Keep the selected layer in sight, however deep it is.
   useLayoutEffect(() => {
     const list = ref.current?.querySelector(".bd-rows");
-    const row = list?.querySelector(".bd-row.on");
-    if (row) reveal(list, row);
+    if (!list) return;
+    const row = list.querySelector(".bd-row.on");
+    if (row) return reveal(list, row);
+    if (virtual && b.sel.length) {
+      const idx = rows.findIndex((r) => r.on);
+      if (idx >= 0) {
+        const target = Math.max(0, idx * ROW_H - list.clientHeight / 2 + ROW_H / 2);
+        list.scrollTop = target;
+        setScroll({ top: target, h: list.clientHeight || 600 });
+      }
+    }
   }, [b.sel.join()]);
   // A group just opened brings its first layer into sight.
   useLayoutEffect(() => {
@@ -326,7 +355,13 @@ function LayersList() {
   return html`<section class="bd-layers" ref=${ref}>
     <div class="bd-head"><h3>Layers</h3></div>
     <div class="bd-rows" style=${{ "--step": step + "px", "--row-w": width + "px" }} onPointerDown=${layerDown}>
-      ${rows.length ? rows.map((r) => html`<${Row} key=${r.id} ...${r} />`) : html`<p class="bd-hint">Layers you draw, paste or an agent writes appear here.</p>`}
+      ${rows.length
+        ? virtual
+          ? html`<div style=${{ paddingTop: `${firstIdx * ROW_H}px`, paddingBottom: `${Math.max(0, (rows.length - lastIdx) * ROW_H)}px` }}>
+              ${visibleRows.map((r) => html`<${Row} key=${r.id} ...${r} />`)}
+            </div>`
+          : visibleRows.map((r) => html`<${Row} key=${r.id} ...${r} />`)
+        : html`<p class="bd-hint">Layers you draw, paste or an agent writes appear here.</p>`}
       ${b.drop?.layer && html`<div class="bd-row-drop ${b.drop.layer.inside ? "inside" : ""}" style=${{ top: b.drop.layer.y + "px", left: b.drop.layer.x + "px", width: b.drop.layer.w + "px" }}></div>`}
     </div>
   </section>`;

@@ -26,7 +26,7 @@ import type { Op } from "../board/core.js";
 import { liveSessions } from "../board/agentman.js";
 import { agentsNow, bringIn, deliver, deliverBatch, editPending, getComments, markBatchSending, markSending, remove, reply, sendPending, setResolved, startThread, type AnchorInput } from "../board/comments.js";
 import { imageSize } from "../util/image.js";
-import { loadState, saveState, searchUnsplash, thumbnail } from "./assets.js";
+import { loadState, saveState, scaledImage, searchUnsplash, thumbnail } from "./assets.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -366,9 +366,14 @@ function options() {
  */
 function appIdentity() {
   const appName = process.env.SCREENSHOTTER_APP_NAME || "Screenshotter";
-  const m = /^(.*\.app)\/Contents\/Helpers\/node$/.exec(process.execPath);
+  const swift = /^(.*\.app)\/Contents\/Helpers\/node$/.exec(process.execPath);
+  const electron = /^(.*\.app)\/Contents\/MacOS\/[^/]+$/.exec(process.execPath);
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const mcpCommand = m ? [path.join(m[1], "Contents", "MacOS", "Screenshotter"), "mcp"] : [process.execPath, path.resolve(here, here.includes(`${path.sep}src${path.sep}`) ? "../../dist/index.js" : "../index.js")];
+  const mcpCommand = electron
+    ? [process.execPath, "mcp"]
+    : swift
+      ? [path.join(swift[1], "Contents", "MacOS", "Screenshotter"), "mcp"]
+      : [process.execPath, path.resolve(here, here.includes(`${path.sep}src${path.sep}`) ? "../../dist/index.js" : "../index.js")];
   return { appName, mcpName: appName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), mcpCommand };
 }
 
@@ -460,9 +465,18 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   const teamAsset = req.method === "GET" ? /^\/api\/assets\/([^/]+)\/([a-f0-9]{16,64})$/i.exec(url.pathname) : null;
   if (teamAsset) {
     const hit = await downloadTeamAsset(decodeURIComponent(teamAsset[1]), teamAsset[2]);
-    const stat = statSync(hit.file);
-    res.writeHead(200, { "Content-Type": hit.mime, "Content-Length": stat.size, "Cache-Control": "private, max-age=31536000, immutable" });
-    stream(res, hit.file);
+    const w = Number(url.searchParams.get("w") ?? 0);
+    let file = hit.file;
+    let mime = hit.mime;
+    if (w > 0 && /^image\/(png|jpeg|webp|heic)$/i.test(hit.mime)) {
+      try {
+        file = await scaledImage(hit.file, w);
+        mime = MIME[path.extname(file).toLowerCase()] ?? hit.mime;
+      } catch {}
+    }
+    const stat = statSync(file);
+    res.writeHead(200, { "Content-Type": mime, "Content-Length": stat.size, "Cache-Control": "private, max-age=31536000, immutable" });
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/cloud/account") return send(200, await getAccount());
@@ -520,8 +534,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
   if (req.method === "GET" && url.pathname === "/file") {
     const p = url.searchParams.get("path") ?? "";
     if (!allowedFile(p) || !existsSync(p)) throw new HttpError(404, "Not found");
-    const stat = statSync(p);
-    const type = MIME[path.extname(p).toLowerCase()] ?? "application/octet-stream";
+    const w = Number(url.searchParams.get("w") ?? 0);
+    let file = p;
+    if (w > 0 && !req.headers.range && /\.(png|jpe?g|webp|heic)$/i.test(p)) {
+      try {
+        file = await scaledImage(p, w);
+      } catch {
+        // Fall back to the original if sips can't read it.
+      }
+    }
+    const stat = statSync(file);
+    const type = MIME[path.extname(file).toLowerCase()] ?? "application/octet-stream";
     // One range: "bytes=10-20", "bytes=10-" (to the end) or "bytes=-500" (the last 500). Several, or
     // a malformed one, get the whole file.
     const range = req.headers.range && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range.trim());
@@ -535,11 +558,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
         return;
       }
       res.writeHead(206, { "Content-Type": type, "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1 });
-      stream(res, p, { start, end });
+      stream(res, file, { start, end });
       return;
     }
-    res.writeHead(200, { "Content-Type": type, "Content-Length": stat.size, "Accept-Ranges": "bytes", "Cache-Control": "no-cache" });
-    stream(res, p);
+    res.writeHead(200, { "Content-Type": type, "Content-Length": stat.size, "Accept-Ranges": "bytes", "Cache-Control": w > 0 ? "public, max-age=86400" : "no-cache" });
+    stream(res, file);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/options") return send(200, options());
