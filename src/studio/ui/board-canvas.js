@@ -3,14 +3,14 @@
 import { Component } from "preact";
 import { Presence, PresenceBar, agentArtboards, colourOf } from "./board-presence.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, rootOf, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
 import { mapSvgImages, shaderBoxStyle, svgImageAttrs } from "./board-core.js";
 import { CANVAS_ONLY } from "./board-state.js";
 import { B, bset, commit, currentPage, node, notify, onBoard, preview, select, sendLivePresence, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
-import { fileUrl, toast } from "./store.js";
+import { api, fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
 import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
@@ -244,15 +244,411 @@ function measureRoots() {
     const n = board.nodes[id];
     if (!n || n.hidden) continue;
     const el = elOf(id);
-    if (!el) continue;
+    if (!el || el.dataset.virtual === "1" || el.dataset.lod === "1") {
+      const b = rootBoxOf(board, id);
+      if (b) worldRects.set(id, { x: b.x, y: b.y, width: b.width, height: b.height });
+      continue;
+    }
     const r = el.getBoundingClientRect();
-    worldRects.set(id, {
+    const box = {
       x: (r.left - cr.left - v.x) / v.z,
       y: (r.top - cr.top - v.y) / v.z,
       width: r.width / v.z,
       height: r.height / v.z,
-    });
+    };
+    worldRects.set(id, box);
+    if (box.width > 0 && box.height > 0) knownRootBoxes.set(id, { ...box, nodeRef: n });
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Off-screen artboard virtualization + zoomed-out Bitmap LOD (Level of Detail)
+//
+// Multi-artboard pages with thousands to tens of thousands of layers only keep artboards near the
+// viewport live in the DOM:
+//   - "virtual": far off-screen artboards collapse to a single placeholder <div> (1 DOM node).
+//   - "lod":     on-screen artboards zoomed tiny (<= 320 CSS px on 2x Retina) swap to a cached
+//                server-rendered WebP snapshot (1 DOM node + <img>), hydrating seamlessly back to
+//                live HTML/CSS DOM as soon as you zoom in, select, click, or an agent edits them.
+// Transitions are deferred until gestures settle (with generous viewport & zoom hysteresis) so
+// panning and pinching never pay DOM mount/unmount costs mid-frame.
+
+const LOD_MAX_EDGE = 768;
+const LOD_ENTER_PX = 640;
+const LOD_LEAVE_PX = 768;
+const LOD_MIN_DESCENDANTS = 12;
+const COLD_LIVE_NODE_BUDGET = 4500;
+const VIRT_ENTER_PAD = 0.85;
+const VIRT_LEAVE_PAD = 1.45;
+
+/** Measured world boxes of root artboards, kept across virtual/LOD transitions. */
+const knownRootBoxes = new Map();
+/** Server LOD metadata + client decode status per root artboard. */
+const lodEntries = new Map();
+/** Current display mode per root artboard: "live" | "lod" | "virtual". */
+const rootModes = new Map();
+/** Roots explicitly pinned live (e.g. double-clicked while in LOD, or targeted by fit()). */
+const forceLiveRoots = new Set();
+const lodWarmQueue = [];
+let lodWarmInFlight = 0;
+let lodMetaGen = 0;
+let lodMetaSoon = 0;
+let virtSoon = 0;
+let lastReconcileView = null;
+let lastCatchupAt = 0;
+let virtListener = null;
+let virtPageKey = "";
+
+/** Read-only virtualization & LOD telemetry for diagnostics and tests. */
+export const virtStats = { active: false, totalRoots: 0, live: 0, lod: 0, virtual: 0, totalNodes: 0, liveNodes: 0 };
+if (typeof window !== "undefined") window.__glassineVirt = virtStats;
+
+let pageVirtCache = null;
+function countSubtree(nodes, id) {
+  let n = 0;
+  const stack = [id];
+  while (stack.length) {
+    const cur = nodes[stack.pop()];
+    if (!cur || cur.hidden) continue;
+    n++;
+    if (cur.children) for (let i = 0; i < cur.children.length; i++) stack.push(cur.children[i]);
+  }
+  return n;
+}
+function getPageVirtInfo(board, page) {
+  if (pageVirtCache && pageVirtCache.board === board && pageVirtCache.page === page) return pageVirtCache;
+  const descCount = new Map();
+  let totalNodes = 0;
+  if (board && page) {
+    for (const id of page.children) {
+      const c = countSubtree(board.nodes, id);
+      descCount.set(id, c);
+      totalNodes += c;
+    }
+  }
+  const rootCount = page?.children.length ?? 0;
+  const active = rootCount >= 12 || (rootCount >= 4 && totalNodes >= 1200);
+  pageVirtCache = { board, page, active, totalNodes, descCount };
+  return pageVirtCache;
+}
+
+/** Exact (or best-known) world box for a root artboard without forcing DOM layout. */
+function rootBoxOf(board, id) {
+  const n = board?.nodes?.[id];
+  if (!n || n.hidden) return null;
+  const lx = pxValue(n.style?.left);
+  const ty = pxValue(n.style?.top);
+  const live = worldRects.get(id);
+  const el = nodeEls.get(id);
+  if (live && el?.isConnected && el.dataset.virtual !== "1" && el.dataset.lod !== "1") {
+    return { x: lx ?? live.x, y: ty ?? live.y, width: live.width, height: live.height, exact: true };
+  }
+  const known = knownRootBoxes.get(id);
+  if (known && known.width > 0 && known.height > 0) {
+    return { x: lx ?? known.x, y: ty ?? known.y, width: known.width, height: known.height, exact: true };
+  }
+  const lod = lodEntries.get(id);
+  if (lod && lod.width > 0 && lod.height > 0) {
+    return { x: lx ?? 0, y: ty ?? 0, width: lod.width, height: lod.height, exact: true };
+  }
+  const sw = pxValue(n.style?.width);
+  const sh = pxValue(n.style?.height);
+  if (sw && sw > 0 && sh && sh > 0) {
+    return { x: lx ?? 0, y: ty ?? 0, width: sw, height: sh, exact: true };
+  }
+  const w = sw && sw > 0 ? sw : 400;
+  const h = sh && sh > 0 ? sh : Math.round(w * 1.5);
+  return { x: lx ?? 0, y: ty ?? 0, width: w, height: h, exact: false };
+}
+
+function resetVirtualization() {
+  clearTimeout(lodMetaSoon);
+  clearTimeout(virtSoon);
+  lodMetaGen++;
+  knownRootBoxes.clear();
+  lodEntries.clear();
+  rootModes.clear();
+  forceLiveRoots.clear();
+  lodWarmQueue.length = 0;
+  lastReconcileView = null;
+  pageVirtCache = null;
+  virtPageKey = "";
+}
+
+function isFreshLod(board, id, entry) {
+  if (!entry || entry.failed) return false;
+  const n = board.nodes[id];
+  return Boolean(n && entry.nodeRef === n && entry.tokensRef === board.tokens && entry.fontsRef === board.fonts && entry.shadersRef === board.shaders);
+}
+
+function applyLodMetaItems(snapBoard, items) {
+  let updated = false;
+  for (const [id, item] of Object.entries(items ?? {})) {
+    const n = snapBoard.nodes[id];
+    if (!n) continue;
+    const prev = lodEntries.get(id);
+    const sameHash = prev && prev.hash === item.hash;
+    const next = {
+      hash: item.hash,
+      url: item.url,
+      width: item.width ?? (sameHash ? prev.width : 0),
+      height: item.height ?? (sameHash ? prev.height : 0),
+      ready: Boolean(item.ready || (sameHash && prev.ready)),
+      warming: Boolean(sameHash && prev.warming && !item.ready),
+      failed: false,
+      nodeRef: n,
+      tokensRef: snapBoard.tokens,
+      fontsRef: snapBoard.fonts,
+      shadersRef: snapBoard.shaders,
+    };
+    lodEntries.set(id, next);
+    if (next.width > 0 && next.height > 0 && !knownRootBoxes.has(id)) {
+      knownRootBoxes.set(id, { x: pxValue(n.style?.left) ?? 0, y: pxValue(n.style?.top) ?? 0, width: next.width, height: next.height, nodeRef: n });
+      updated = true;
+    }
+    if (!sameHash || next.ready !== Boolean(prev?.ready)) updated = true;
+  }
+  return updated;
+}
+
+function syncLodMeta(board, page) {
+  if (!board || !page) return;
+  const info = getPageVirtInfo(board, page);
+  if (!info.active) return;
+  const roots = page.children.filter((id) => {
+    const n = board.nodes[id];
+    return n && !n.hidden && n.type === "frame" && (info.descCount.get(id) ?? 0) >= LOD_MIN_DESCENDANTS;
+  });
+  if (!roots.length) return;
+  const gen = ++lodMetaGen;
+  const snapBoard = board;
+  api("/api/board/lod/meta", { id: board.id, roots, w: LOD_MAX_EDGE })
+    .then((res) => {
+      if (gen !== lodMetaGen || B.board !== snapBoard) return;
+      if (applyLodMetaItems(snapBoard, res.items)) {
+        if (performance.now() >= gestureUntil && !B.dragging) reconcileArtboardModes();
+        else {
+          clearTimeout(virtSoon);
+          virtSoon = setTimeout(() => reconcileArtboardModes(), 190);
+        }
+      }
+    })
+    .catch(() => {
+      if (gen !== lodMetaGen || B.board !== snapBoard) return;
+      for (const id of roots) {
+        const n = snapBoard.nodes[id];
+        if (!n) continue;
+        lodEntries.set(id, { hash: "", url: "", width: 0, height: 0, ready: false, warming: false, failed: true, nodeRef: n, tokensRef: snapBoard.tokens, fontsRef: snapBoard.fonts, shadersRef: snapBoard.shaders });
+      }
+      reconcileArtboardModes(true);
+    });
+}
+
+function queueLodWarm(id, entry) {
+  if (!entry || entry.ready || entry.warming || entry.failed) return;
+  entry.warming = true;
+  lodWarmQueue.push(id);
+}
+
+function pumpLodWarm() {
+  if (performance.now() < gestureUntil || B.dragging || !B.board) return;
+  while (lodWarmInFlight < 2 && lodWarmQueue.length) {
+    const snapBoard = B.board;
+    const gen = lodMetaGen;
+    const batch = [];
+    while (batch.length < 24 && lodWarmQueue.length) {
+      const id = lodWarmQueue.shift();
+      const entry = lodEntries.get(id);
+      if (entry && !entry.ready && !entry.failed && isFreshLod(snapBoard, id, entry)) batch.push(id);
+    }
+    if (!batch.length) continue;
+    lodWarmInFlight++;
+    api("/api/board/lod/warm", { id: snapBoard.id, roots: batch, w: LOD_MAX_EDGE })
+      .then((res) => {
+        if (gen !== lodMetaGen || B.board !== snapBoard) return;
+        const items = res.items ?? {};
+        for (const id of batch) {
+          const e = lodEntries.get(id);
+          if (e) e.warming = false;
+          if (e && !items[id]?.ready) e.failed = true;
+        }
+        applyLodMetaItems(snapBoard, items);
+        if (performance.now() >= gestureUntil && !B.dragging) reconcileArtboardModes();
+        else {
+          clearTimeout(virtSoon);
+          virtSoon = setTimeout(() => reconcileArtboardModes(), 190);
+        }
+      })
+      .catch(() => {
+        for (const id of batch) {
+          const e = lodEntries.get(id);
+          if (e) (e.warming = false), (e.failed = true);
+        }
+      })
+      .finally(() => {
+        lodWarmInFlight--;
+        pumpLodWarm();
+      });
+  }
+}
+
+function pinnedRootsFor(board) {
+  const pinned = new Set(forceLiveRoots);
+  if (!board) return pinned;
+  for (const id of B.sel) if (board.nodes[id]) pinned.add(rootOf(board, id));
+  if (B.editing && board.nodes[B.editing]) pinned.add(rootOf(board, B.editing));
+  if (B.drop?.into && board.nodes[B.drop.into]) pinned.add(rootOf(board, B.drop.into));
+  const anchor = B.draft ?? (B.thread && (B.comments?.threads ?? []).find((t) => t.id === B.thread));
+  if (anchor?.artboard && board.nodes[anchor.artboard]) pinned.add(rootOf(board, anchor.artboard));
+  if (anchor?.layer && board.nodes[anchor.layer]) pinned.add(rootOf(board, anchor.layer));
+  for (const id of agentArtboards().keys()) pinned.add(id);
+  return pinned;
+}
+
+/**
+ * Recompute each root artboard's display mode ("live" | "lod" | "virtual"). Returns true when any
+ * root's mode or displayed LOD bitmap state changed (meaning BoardCanvas should re-render).
+ */
+function computeRootModes(board, page, view) {
+  const info = getPageVirtInfo(board, page);
+  if (!info.active || !board || !page) {
+    const had = rootModes.size > 0;
+    rootModes.clear();
+    Object.assign(virtStats, { active: false, totalRoots: page?.children.length ?? 0, live: page?.children.length ?? 0, lod: 0, virtual: 0, totalNodes: info.totalNodes, liveNodes: info.totalNodes });
+    return had;
+  }
+  const cr = getCanvasRect();
+  const W = cr.width || 1440;
+  const H = cr.height || 900;
+  const dpr = typeof devicePixelRatio === "number" ? devicePixelRatio : 2;
+  const pinned = pinnedRootsFor(board);
+  const enterL = -W * VIRT_ENTER_PAD, enterR = W * (1 + VIRT_ENTER_PAD);
+  const enterT = -H * VIRT_ENTER_PAD, enterB = H * (1 + VIRT_ENTER_PAD);
+  const leaveL = -W * VIRT_LEAVE_PAD, leaveR = W * (1 + VIRT_LEAVE_PAD);
+  const leaveT = -H * VIRT_LEAVE_PAD, leaveB = H * (1 + VIRT_LEAVE_PAD);
+
+  let changed = false;
+  let liveCount = 0, lodCount = 0, virtCount = 0, liveNodes = 0;
+  const activeIds = new Set();
+  // On massive boards (> 1.5x live node budget), zoomed-out LOD artboards go straight to LOD
+  // silhouettes while their server batches render — never mounting thousands of cold DOM nodes.
+  const massive = info.totalNodes > COLD_LIVE_NODE_BUDGET * 1.5;
+
+  for (const id of page.children) {
+    const n = board.nodes[id];
+    if (!n || n.hidden) continue;
+    activeIds.add(id);
+    const prev = rootModes.get(id);
+    const desc = info.descCount.get(id) ?? 1;
+    let next = prev ?? "live";
+
+    if (pinned.has(id) || n.type !== "frame") {
+      next = "live";
+    } else if (B.dragging && prev) {
+      // Never churn DOM mounts/unmounts mid-drag.
+      next = prev;
+    } else {
+      const box = rootBoxOf(board, id);
+      const sx = box.x * view.z + view.x;
+      const sy = box.y * view.z + view.y;
+      const sw = box.width * view.z;
+      const sh = box.height * view.z;
+      const wasMounted = prev === "live" || prev === "lod";
+      const padL = wasMounted ? leaveL : enterL;
+      const padR = wasMounted ? leaveR : enterR;
+      const padT = wasMounted ? leaveT : enterT;
+      const padB = wasMounted ? leaveB : enterB;
+      const onScreen = sx + sw >= padL && sx <= padR && sy + sh >= padT && sy <= padB;
+
+      if (!onScreen && (box.exact || massive || liveNodes + desc > COLD_LIVE_NODE_BUDGET)) {
+        next = "virtual";
+      } else {
+        const maxScreenPx = Math.max(sw, sh) * dpr;
+        const lodLimit = prev === "lod" ? LOD_LEAVE_PX : LOD_ENTER_PX;
+        const entry = lodEntries.get(id);
+        const fresh = isFreshLod(board, id, entry);
+        if (desc >= LOD_MIN_DESCENDANTS && maxScreenPx <= lodLimit && fresh) {
+          if (entry.ready) {
+            next = "lod";
+          } else {
+            queueLodWarm(id, entry);
+            // Small/medium boards stay live while warming so there's zero blank flash; massive
+            // boards (or artboards already in LOD) stay in lightweight LOD silhouettes.
+            next = !massive && prev !== "lod" && liveNodes + desc <= COLD_LIVE_NODE_BUDGET ? "live" : "lod";
+          }
+        } else if (desc >= LOD_MIN_DESCENDANTS && maxScreenPx <= lodLimit && !entry && (massive || liveNodes + desc > COLD_LIVE_NODE_BUDGET)) {
+          next = "lod";
+        } else {
+          next = "live";
+        }
+      }
+    }
+
+    if (next === "live") {
+      liveCount++;
+      liveNodes += desc;
+    } else if (next === "lod") {
+      lodCount++;
+    } else {
+      virtCount++;
+    }
+
+    const lodReadyKey = next === "lod" ? (lodEntries.get(id)?.ready ? lodEntries.get(id).url : "") : "";
+    const prevKey = rootModes.get(`lod:${id}`);
+    if (prev !== next || prevKey !== lodReadyKey) {
+      rootModes.set(id, next);
+      rootModes.set(`lod:${id}`, lodReadyKey);
+      changed = true;
+    }
+  }
+
+  for (const k of [...rootModes.keys()]) {
+    if (k.startsWith("lod:")) {
+      if (!activeIds.has(k.slice(4))) {
+        rootModes.delete(k);
+        changed = true;
+      }
+    } else if (!activeIds.has(k)) {
+      rootModes.delete(k);
+      changed = true;
+    }
+  }
+
+  lastReconcileView = { x: view.x, y: view.y, z: view.z };
+  Object.assign(virtStats, { active: true, totalRoots: activeIds.size, live: liveCount, lod: lodCount, virtual: virtCount, totalNodes: info.totalNodes, liveNodes });
+  if (lodWarmQueue.length && !lodWarmInFlight) {
+    if (performance.now() >= gestureUntil && !B.dragging) pumpLodWarm();
+    else {
+      clearTimeout(virtSoon);
+      virtSoon = setTimeout(() => reconcileArtboardModes(), 190);
+    }
+  }
+  return changed;
+}
+
+function reconcileArtboardModes(force = false) {
+  if (!force && (B.dragging || performance.now() < gestureUntil)) return;
+  const page = currentPage();
+  if (!B.board || !page) return;
+  const changed = computeRootModes(B.board, page, B.view);
+  pumpLodWarm();
+  if (changed) virtListener?.();
+}
+
+/** Force the root artboards of `ids` into live DOM (e.g. double-click on LOD or zoom-to-selection). */
+function ensureLiveRoots(ids) {
+  if (!B.board || !ids?.length) return false;
+  let added = false;
+  for (const id of ids) {
+    if (!B.board.nodes[id]) continue;
+    const r = rootOf(B.board, id);
+    if (!forceLiveRoots.has(r)) {
+      forceLiveRoots.add(r);
+      added = true;
+    }
+  }
+  if (added) reconcileArtboardModes(true);
+  return added;
 }
 
 /** A screen point (client px) on the canvas, in board units. */
@@ -272,11 +668,16 @@ function afterDrag() {
 /** A layer's box in board units (as drawn), or null if it isn't drawn. */
 export function worldBox(id) {
   afterDrag();
+  const n = node(id);
+  const el = elOf(id);
+  if (n && !n.parent && (!el || el.dataset.virtual === "1" || el.dataset.lod === "1")) {
+    const rb = rootBoxOf(B.board, id);
+    return rb ? { x: rb.x, y: rb.y, width: rb.width, height: rb.height } : null;
+  }
   if (!B.dragging && B.editing !== id) {
     const cached = worldRects.get(id);
     if (cached) return cached;
   }
-  const el = elOf(id);
   if (!el) return null;
   const r = el.getBoundingClientRect();
   const c = getCanvasRect();
@@ -291,6 +692,14 @@ useMeasure((id) => worldBox(id));
 /** A layer's box on screen, relative to the canvas. */
 export function screenBox(id) {
   afterDrag();
+  const n = node(id);
+  const el = elOf(id);
+  if (n && !n.parent && (!el || el.dataset.virtual === "1" || el.dataset.lod === "1")) {
+    const rb = rootBoxOf(B.board, id);
+    if (!rb) return null;
+    const { x, y, z } = B.view;
+    return { x: rb.x * z + x, y: rb.y * z + y, width: rb.width * z, height: rb.height * z };
+  }
   if (!B.dragging && B.editing !== id) {
     const wb = worldRects.get(id);
     if (wb) {
@@ -298,7 +707,6 @@ export function screenBox(id) {
       return { x: wb.x * z + x, y: wb.y * z + y, width: wb.width * z, height: wb.height * z };
     }
   }
-  const el = elOf(id);
   if (!el) return null;
   const r = el.getBoundingClientRect();
   const c = getCanvasRect();
@@ -436,9 +844,25 @@ export function applyView() {
   cam.el.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${s})`;
   updatePixelGrid(v);
   clearTimeout(sharpenSoon);
+  clearTimeout(virtSoon);
   // Only re-rasterize .bd-world when the zoom actually changed (s !== 1), never after a pure pan.
   if (s !== 1) sharpenSoon = setTimeout(sharpen, 130);
   else sharpenSoon = setTimeout(upgradeVisibleImages, 220);
+  if (virtStats.active) {
+    // Reconcile virtual/LOD artboards after the gesture settles; also catch up during long
+    // continuous pans so we hydrate upcoming artboards before hitting the overscan edge.
+    virtSoon = setTimeout(() => reconcileArtboardModes(), 190);
+    if (lastReconcileView && !B.dragging) {
+      const cr = getCanvasRect();
+      const span = Math.min(cr.width || 900, cr.height || 600);
+      const movedFar = Math.hypot(v.x - lastReconcileView.x, v.y - lastReconcileView.y) > span * 0.6;
+      const zoomedFar = v.z / (lastReconcileView.z || 1) > 2.2 || v.z / (lastReconcileView.z || 1) < 0.45;
+      if ((movedFar || zoomedFar) && performance.now() - lastCatchupAt > 320) {
+        lastCatchupAt = performance.now();
+        reconcileArtboardModes(true);
+      }
+    }
+  }
   return true;
 }
 const camRef = (el) => {
@@ -455,6 +879,14 @@ function sharpen() {
   drawn = null;
   applyView();
   upgradeVisibleImages();
+  if (virtStats.active) {
+    // Settling zoom commits cleanly: release temporary force-live pins and reconcile right away
+    // instead of waiting another 190ms for the gesture timer.
+    gestureUntil = 0;
+    clearTimeout(virtSoon);
+    if (forceLiveRoots.size) forceLiveRoots.clear();
+    if (!B.dragging) reconcileArtboardModes(true);
+  }
 }
 // The view goes on screen at each frame it changes, without drawing the canvas's layers again.
 onBoard(() => applyView());
@@ -514,7 +946,10 @@ export function fit(ids, { instant = false } = {}) {
   const page = currentPage();
   if (!c || !c.width || !page) return;
   const list = ids?.length ? ids : page.children;
-  const boxes = list.map(worldBox).filter(Boolean);
+  if (ids?.length && virtStats.active) ensureLiveRoots(ids);
+  const boxes = list
+    .map((id) => worldBox(id) ?? (B.board?.nodes[id] ? rootBoxOf(B.board, rootOf(B.board, id)) : null))
+    .filter(Boolean);
   if (!boxes.length) return setView({ x: c.width / 2 - 200, y: 120, z: 1 }, !instant);
   const minX = Math.min(...boxes.map((b) => b.x));
   const minY = Math.min(...boxes.map((b) => b.y));
@@ -679,6 +1114,78 @@ class Layer extends Component {
   }
 }
 
+class VirtualRoot extends Component {
+  el = null;
+  setRef = (el) => {
+    const id = this.props.n?.id;
+    if (this.el && this.el !== el && id && nodeEls.get(id) === this.el) nodeEls.delete(id);
+    this.el = el;
+    if (id && el) bindEl(id, el);
+  };
+  componentWillUnmount() {
+    const id = this.props.n?.id;
+    if (id && nodeEls.get(id) === this.el) nodeEls.delete(id);
+    this.el = null;
+  }
+  shouldComponentUpdate(next) {
+    return next.n !== this.props.n || next.box?.x !== this.props.box?.x || next.box?.y !== this.props.box?.y || next.box?.width !== this.props.box?.width || next.box?.height !== this.props.box?.height;
+  }
+  render({ n, box }) {
+    if (!n || n.hidden || !box) return null;
+    const style = {
+      position: "absolute",
+      left: `${box.x}px`,
+      top: `${box.y}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+      background: n.style.backgroundColor || n.style.background || "var(--panel)",
+      ...(n.style.borderRadius ? { borderRadius: n.style.borderRadius } : {}),
+    };
+    return html`<div class="bd-virtual" data-bid=${n.id} data-virtual="1" style=${style} ref=${this.setRef}></div>`;
+  }
+}
+
+class LodRoot extends Component {
+  el = null;
+  setRef = (el) => {
+    const id = this.props.n?.id;
+    if (this.el && this.el !== el && id && nodeEls.get(id) === this.el) nodeEls.delete(id);
+    this.el = el;
+    if (id && el) bindEl(id, el);
+  };
+  componentWillUnmount() {
+    const id = this.props.n?.id;
+    if (id && nodeEls.get(id) === this.el) nodeEls.delete(id);
+    this.el = null;
+  }
+  shouldComponentUpdate(next) {
+    return (
+      next.n !== this.props.n ||
+      next.imgUrl !== this.props.imgUrl ||
+      next.box?.x !== this.props.box?.x ||
+      next.box?.y !== this.props.box?.y ||
+      next.box?.width !== this.props.box?.width ||
+      next.box?.height !== this.props.box?.height
+    );
+  }
+  render({ n, box, imgUrl }) {
+    if (!n || n.hidden || !box) return null;
+    const style = {
+      position: "absolute",
+      left: `${box.x}px`,
+      top: `${box.y}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+      ...(imgUrl ? {} : { background: n.style.backgroundColor || n.style.background || "var(--panel)" }),
+      ...(n.style.borderRadius ? { borderRadius: n.style.borderRadius } : {}),
+      ...(n.style.boxShadow ? { boxShadow: n.style.boxShadow } : {}),
+    };
+    return html`<div class="bd-lod" data-bid=${n.id} data-lod="1" style=${style} ref=${this.setRef}>
+      ${imgUrl && html`<img class="bd-lod-img" src=${imgUrl} decoding="async" alt="" draggable=${false} />`}
+    </div>`;
+  }
+}
+
 /** A frame's layers: those a mask masks are drawn inside the elements that mask them, as exports draw them. */
 function layersOf(n, nodes, editing) {
   const kids = n.children ?? [];
@@ -800,6 +1307,7 @@ export function BoardCanvas() {
   const ref = useRef();
   // The layers redraw for what they show: the view (the camera) and the pointer (the overlay) follow on their own.
   const b = useBoard(CANVAS_ONLY);
+  const [, setVirtTick] = useState(0);
   const page = currentPage();
   const prevRef = useRef({ id: null, page: null, board: null });
   useFonts(b.board, page);
@@ -830,7 +1338,13 @@ export function BoardCanvas() {
     const moved = applyView();
     if (rootsDirty && b.board && page) measureRoots();
     if (moved) notify();
-    if (switched) setTimeout(upgradeVisibleImages, 260);
+    if (switched) {
+      setTimeout(upgradeVisibleImages, 260);
+      syncLodMeta(b.board, page);
+    } else if (mutated && !B.dragging && getPageVirtInfo(b.board, page).active) {
+      clearTimeout(lodMetaSoon);
+      lodMetaSoon = setTimeout(() => syncLodMeta(B.board, currentPage()), 750);
+    }
   });
   // A board opens fitted to its first page (computed before first paint when layout is ready,
   // avoiding a wasted raster pass at the default zoom on huge 100,000px boards).
@@ -840,16 +1354,21 @@ export function BoardCanvas() {
       if (ref.current?.getBoundingClientRect().width) {
         fit(undefined, { instant: true });
         applyView();
+        if (B.board && page && getPageVirtInfo(B.board, page).active) {
+          if (computeRootModes(B.board, page, B.view)) setVirtTick((t) => t + 1);
+        }
       } else {
         requestAnimationFrame(() => fit(undefined, { instant: true }));
       }
     }
   }, [b.id, b.page]);
   useEffect(() => {
+    virtListener = () => setVirtTick((t) => t + 1);
     const el = ref.current;
     let ro = null;
     const onResize = () => {
       refreshCanvasRect();
+      if (virtStats.active) reconcileArtboardModes();
     };
     if (typeof ResizeObserver !== "undefined") {
       ro = new ResizeObserver(onResize);
@@ -892,6 +1411,7 @@ export function BoardCanvas() {
     };
     el.addEventListener("load", loaded, true);
     return () => {
+      virtListener = null;
       el.removeEventListener("load", loaded, true);
       clearTimeout(loadedSoon);
       ro?.disconnect();
@@ -901,6 +1421,7 @@ export function BoardCanvas() {
       el.removeEventListener("gesturechange", gc);
       document.fonts.removeEventListener?.("loadingdone", fonts);
       canvasRect = null;
+      resetVirtualization();
       invalidateWorldCache();
       nodeEls.clear();
       mipNodes.clear();
@@ -911,6 +1432,17 @@ export function BoardCanvas() {
   // The view goes on screen before what's drawn over the design measures where things are.
   applyView();
   if (!b.board || !page) return html`<div class="bd-canvas" ref=${ref}></div>`;
+  const pageKey = `${b.id}:${page.id}`;
+  if (virtPageKey !== pageKey) {
+    resetVirtualization();
+    virtPageKey = pageKey;
+  }
+  const virtInfo = getPageVirtInfo(b.board, page);
+  if (virtInfo.active) computeRootModes(b.board, page, B.view);
+  else if (rootModes.size) {
+    rootModes.clear();
+    Object.assign(virtStats, { active: false, totalRoots: page.children.length, live: page.children.length, lod: 0, virtual: 0, totalNodes: virtInfo.totalNodes, liveNodes: virtInfo.totalNodes });
+  }
   const tokens = Object.fromEntries(b.board.tokens.map((t) => [t.name, t.value]));
   return html`<div class="bd-canvas tool-${b.tool} ${spaceDown ? "panning" : ""}" ref=${ref}
       onPointerDown=${down} onDblClick=${dblclick} onContextMenu=${contextMenu} onPointerMove=${hoverMove} onPointerLeave=${() => (B.hover && bset({ hover: null }), B.live && sendLivePresence({ cursor: null }, { immediate: true }))}
@@ -918,7 +1450,18 @@ export function BoardCanvas() {
       onDragOver=${(e) => e.preventDefault()} onDrop=${dropFiles}>
     <div class="bd-camera" ref=${camRef}>
       <div class="bd-world" ref=${worldRef} style=${tokens}>
-        ${page.children.map((id) => html`<${Layer} key=${id} n=${b.board.nodes[id]} root editing=${b.editing} />`)}
+        ${page.children.map((id) => {
+          const n = b.board.nodes[id];
+          if (!n || n.hidden) return null;
+          const mode = virtInfo.active ? rootModes.get(id) ?? "live" : "live";
+          if (mode === "virtual") return html`<${VirtualRoot} key=${id} n=${n} box=${rootBoxOf(b.board, id)} />`;
+          if (mode === "lod") {
+            const entry = lodEntries.get(id);
+            const imgUrl = isFreshLod(b.board, id, entry) && entry.ready ? entry.url : "";
+            return html`<${LodRoot} key=${id} n=${n} box=${rootBoxOf(b.board, id)} imgUrl=${imgUrl} />`;
+          }
+          return html`<${Layer} key=${id} n=${n} root editing=${b.editing} />`;
+        })}
       </div>
     </div>
     <div class="bd-pxgrid" ref=${gridRef}></div>
@@ -971,8 +1514,11 @@ function Overlay() {
       const r = screenBox(id);
       if (!r || r.x + r.width < -60 || r.x > cr.width + 60 || r.y + r.height < -60 || r.y - 26 > cr.height + 60) return null;
       const agent = onIt.get(id);
+      const selected = b.sel.includes(id);
+      // When dozens of artboards are zoomed tiny (< 28 px wide), skip unreadable overlapping labels unless selected/hovered/active.
+      if (roots.length > 20 && r.width < 28 && !selected && b.hover !== id && !agent) return null;
       const writing = agent && !["look", "read"].includes(agent.doing);
-      return html`<div key=${id} class="bd-label ${b.sel.includes(id) ? "on" : ""} ${agent ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px", "--c": agent ? colourOf(agent.key) : undefined }} data-label=${id}>
+      return html`<div key=${id} class="bd-label ${selected ? "on" : ""} ${agent ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px", "--c": agent ? colourOf(agent.key) : undefined }} data-label=${id}>
         ${agent && html`<span class="bd-agent"><i></i>${agent.name}</span>`}<span class="t">${b.board.nodes[id].name}</span></div>
         ${writing && html`<div class="bd-working" style=${{ left: r.x - 2 + "px", top: r.y - 2 + "px", width: r.width + 4 + "px", height: r.height + 4 + "px", "--c": colourOf(agent.key) }}></div>`}`;
     })}
@@ -1325,6 +1871,16 @@ function down(e) {
   }
   const hit = e.target.closest?.("[data-bid]");
   if (!hit) return marquee(e, null);
+  if (hit.dataset.lod === "1" && (e.metaKey || e.ctrlKey)) {
+    const cx = e.clientX, cy = e.clientY;
+    ensureLiveRoots([hit.dataset.bid]);
+    requestAnimationFrame(() => {
+      const deep = document.elementFromPoint(cx, cy)?.closest?.("[data-bid]");
+      const picked = deep ? deepestFor(deep.dataset.bid) : hit.dataset.bid;
+      if (picked) select(picked);
+    });
+    return;
+  }
   const id = pickFor(e, hit.dataset.bid);
   if (!id) return marquee(e, null);
   const n = node(id);
@@ -1959,6 +2515,18 @@ function dblclick(e) {
   const label = e.target.closest?.("[data-label]");
   if (label) return bset({ renaming: label.dataset.label });
   if (!hit) return;
+  if (hit.dataset.lod === "1") {
+    const cx = e.clientX, cy = e.clientY;
+    ensureLiveRoots([hit.dataset.bid]);
+    requestAnimationFrame(() => {
+      const deep = document.elementFromPoint(cx, cy)?.closest?.("[data-bid]");
+      const target = deep ? deepestFor(deep.dataset.bid) : hit.dataset.bid;
+      if (!target) return;
+      select(target);
+      if (node(target)?.type === "text") startTextEdit(target);
+    });
+    return;
+  }
   // Straight to the deepest layer under the pointer, past every frame holding it (and into its words, if it's text).
   const target = deepestFor(hit.dataset.bid);
   if (!target) return;

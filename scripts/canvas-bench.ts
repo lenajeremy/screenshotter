@@ -740,9 +740,24 @@ async function look(pages: Array<{ b: Side; page: Page }>, engine: string) {
   console.log(`pictures in ${dir}`);
 }
 
+// Keep macOS display/idle awake during benchmarks; `-w <pid>` exits automatically when this process ends.
+if (process.platform === "darwin") {
+  const caff = spawn("/usr/bin/caffeinate", ["-d", "-i", "-w", String(process.pid)], { stdio: "ignore", detached: true });
+  caff.on("error", () => undefined);
+  caff.unref();
+}
+const CHROMIUM_PERF_ARGS = [
+  "--disable-renderer-backgrounding",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+];
+
 try {
   for (const name of engines) {
-    const browser = name === "electron" ? null : await ENGINES[name].launch(name === "chromium" ? { channel: "chromium", headless: !HEADED } : { headless: !HEADED });
+    const browser =
+      name === "electron"
+        ? null
+        : await ENGINES[name].launch(name === "chromium" ? { channel: "chromium", headless: !HEADED, args: CHROMIUM_PERF_ARGS } : { headless: !HEADED });
     // A page for each side, in contexts of their own: only one is driven at a time.
     const pages: Array<{ b: Side; page: Page; open: string; errors: string[] }> = [];
     let electronApps: ElectronApplication[] = [];
@@ -752,7 +767,7 @@ try {
       const b = sides[sides.length - 1];
       const tmp = path.join(tmpRoot, `${b.name}-electron`);
       const eapp = await _electron.launch({
-        args: [path.join(b.root, "desktop", "main.js")],
+        args: [...CHROMIUM_PERF_ARGS, path.join(b.root, "desktop", "main.js")],
         env: { ...process.env, ...sideEnv[b.name].env, SCREENSHOTTER_APP_NAME: "Glassine Bench", GLASSINE_USER_DATA: path.join(tmp, "user-data"), GLASSINE_LOG_DIR: path.join(tmp, "logs"), SCREENSHOTTER_NO_SHELL_ENV: "1", GLASSINE_BACKGROUND: "1" },
       });
       electronApps = [eapp];

@@ -983,6 +983,10 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .bd-world [data-bid] { user-select: none; -webkit-user-select: none; }
 .bd-world [contenteditable] { user-select: text; -webkit-user-select: text; cursor: text; }
 .bd-world .bd-dragging { opacity: 0.45; }
+/* Virtualized off-screen placeholders and zoomed-out Bitmap LOD snapshots. */
+.bd-virtual { box-sizing: border-box; }
+.bd-lod { box-sizing: border-box; overflow: hidden; }
+.bd-lod-img { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; user-select: none; -webkit-user-select: none; }
 .bd-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .bd-label { position: absolute; display: flex; align-items: center; gap: 6px; height: 20px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; pointer-events: auto; cursor: default; user-select: none; -webkit-user-select: none; }
 .bd-label .t { overflow: hidden; text-overflow: ellipsis; }

@@ -1,15 +1,15 @@
 /**
- * The Studio as people use it, in Chromium and in WebKit (the engine of the Mac app's web view):
- * adding and dragging pictures, colour, accent marks, the store page icon, deleting pictures,
- * designs without a screenshot, exports, templates, devices carrying on across screens and moving
- * through a set. Each check watches
- * for page errors and failed requests too. It starts its own Studio on a free port with a
- * throwaway library, so it never touches yours.
+ * The Studio as people use it, in Chromium (the Electron desktop app's engine), with optional WebKit
+ * (Safari): adding and dragging pictures, colour, accent marks, the store page icon, deleting
+ * pictures, designs without a screenshot, exports, templates, devices carrying on across screens
+ * and moving through a set. Each check watches for page errors and failed requests too. It starts
+ * its own Studio on a free port with a throwaway library, so it never touches yours.
  *
- *   npm run test:ui                       both engines
- *   npm run test:ui -- webkit             one engine (chromium or webkit)
+ *   npm run test:ui                       Chromium (default)
+ *   npm run test:ui -- webkit             WebKit (Safari)
+ *   npm run test:ui -- chromium webkit    both engines
  *
- * Needs Playwright's browsers once: npx playwright install chromium webkit
+ * Needs Playwright's browser once: npx playwright install chromium
  */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -2857,7 +2857,7 @@ const engines = { chromium, webkit } as const;
 const asked = process.argv.slice(2).filter((a) => a in engines) as Array<keyof typeof engines>;
 let failed = 0;
 try {
-  for (const name of asked.length ? asked : (["chromium", "webkit"] as const)) {
+  for (const name of asked.length ? asked : (["chromium"] as const)) {
     await fixtures();
     let browser: Browser;
     try {

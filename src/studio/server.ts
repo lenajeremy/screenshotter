@@ -14,6 +14,7 @@ import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplica
 import { CloudError, cancelDeviceSignIn, cancelTeamInvitation, createTeam, createTeamBoard, deleteTeamBoard, deviceSignInStatus, downloadTeamAsset, getAccount, getTeamDetails, inviteToTeam, listTeamBoards, moveLocalBoardToTeam, renameTeamBoard, setServerUrl, signOut, startDeviceSignIn } from "../cloud/client.js";
 import { closeAllLiveRooms, closeLiveRoom, openTeamBoard, pushTeamOps, sendLivePresence, subscribeLive, type PeerPresence } from "../cloud/sync.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
+import { cachedLodFile, ensureLodFile, lodStatus, warmLodBatch } from "../board/lod.js";
 import { drawLayers, maskFontsFor, previewDocument } from "../board/render.js";
 import { importWebsite } from "../board/web-import.js";
 import { importFigma } from "../board/figma-import.js";
@@ -524,6 +525,22 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     const b = getBoard(url.searchParams.get("id"));
     return send(200, { ...getComments(b.id), agents: b.agents ?? {} });
   }
+  if (req.method === "GET" && url.pathname === "/api/board/lod") {
+    const id = url.searchParams.get("id") ?? "";
+    const root = url.searchParams.get("root") ?? "";
+    const h = url.searchParams.get("h") ?? "";
+    const w = Number(url.searchParams.get("w") ?? 768);
+    const file = (h ? cachedLodFile(h) : null) ?? (id && root ? await ensureLodFile(id, root, h || undefined, w) : null);
+    if (!file || !existsSync(file)) throw new HttpError(404, "LOD unavailable");
+    const stat = statSync(file);
+    res.writeHead(200, {
+      "Content-Type": "image/webp",
+      "Content-Length": stat.size,
+      "Cache-Control": h ? "public, max-age=31536000, immutable" : "no-cache",
+    });
+    stream(res, file);
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/progress") {
     // How far along an export is, and about how long it has to go (from how fast it's been).
     const j = jobs.get(url.searchParams.get("job") ?? "");
@@ -589,6 +606,16 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/board/new": {
       const b = createBoard((await json<{ name?: string }>(req)).name, "studio");
       return send(200, b);
+    }
+    case "/api/board/lod/meta": {
+      const a = z.object({ id: z.string().min(1), roots: z.array(z.string()).max(2000).optional(), w: z.number().optional() }).parse(await json(req));
+      const b = getBoard(a.id);
+      const roots = a.roots ?? b.pages.flatMap((p) => p.children);
+      return send(200, { rev: b.rev, items: lodStatus(b, roots, a.w) });
+    }
+    case "/api/board/lod/warm": {
+      const a = z.object({ id: z.string().min(1), roots: z.array(z.string()).min(1).max(24), w: z.number().optional() }).parse(await json(req));
+      return send(200, { items: await warmLodBatch(a.id, a.roots, a.w) });
     }
     case "/api/board/ops": {
       const b = await json<{ id: string; ops: Op[]; base?: number }>(req);
