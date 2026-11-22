@@ -17,6 +17,9 @@
  *   npm run bench:canvas -- webkit --only "pan|zoom"  one engine, some interactions
  *   npm run bench:canvas -- chromium --trace          Chromium only: where main-thread time goes, per interaction
  *   npm run bench:canvas -- --headed                  windows you can watch
+ *   npm run bench:canvas -- --ab <folder>             before and after: the app built in <folder> (a
+ *                                                     checkout of the commit before) against this one,
+ *                                                     a round of each in turn, so a busy Mac slows both alike
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -47,24 +50,34 @@ const STRESS = flag("stress");
 const SETS = STRESS ? 3 : 1;
 
 // ---------------------------------------------------------------------------------------------
-// A library of its own, set before the engine's modules read where things are.
+// Each app under test ("side") has a library of its own, never the person's: set before the
+// engine's modules read where things are.
 
-const tmp = mkdtempSync(path.join(os.tmpdir(), "glassine-bench-"));
-const LIB = path.join(tmp, "library");
-mkdirSync(path.join(LIB, "images"), { recursive: true });
-writeFileSync(path.join(tmp, "studio.json"), JSON.stringify({ folder: LIB }));
-const ENV: Record<string, string> = {
-  SCREENSHOTTER_OUTPUT_DIR: LIB,
-  SCREENSHOTTER_STUDIO_FILE: path.join(tmp, "studio.json"),
-  SCREENSHOTTER_SEEN_FILE: path.join(tmp, "seen.json"),
-  SCREENSHOTTER_STYLE_FILE: path.join(tmp, "style.json"),
-  SCREENSHOTTER_CACHE_DIR: path.join(tmp, "cache"),
-  SCREENSHOTTER_AGENTMAN_SOCKET: path.join(tmp, "none.sock"),
-  SCREENSHOTTER_NO_KEYCHAIN: "1",
-  // The engine draws board thumbnails with a browser: Playwright's own, not the person's Chrome.
-  SCREENSHOTTER_CHROME_PATH: chromium.executablePath(),
-};
-Object.assign(process.env, ENV);
+const AB = opt("ab");
+const SIDES = AB ? [{ name: "before", root: path.resolve(AB) }, { name: "after", root: ROOT }] : [{ name: "after", root: ROOT }];
+const tmpRoot = mkdtempSync(path.join(os.tmpdir(), "glassine-bench-"));
+function envFor(name: string) {
+  const tmp = path.join(tmpRoot, name);
+  const LIB = path.join(tmp, "library");
+  mkdirSync(path.join(LIB, "images"), { recursive: true });
+  writeFileSync(path.join(tmp, "studio.json"), JSON.stringify({ folder: LIB }));
+  return {
+    LIB,
+    env: {
+      SCREENSHOTTER_OUTPUT_DIR: LIB,
+      SCREENSHOTTER_STUDIO_FILE: path.join(tmp, "studio.json"),
+      SCREENSHOTTER_SEEN_FILE: path.join(tmp, "seen.json"),
+      SCREENSHOTTER_STYLE_FILE: path.join(tmp, "style.json"),
+      SCREENSHOTTER_CACHE_DIR: path.join(tmp, "cache"),
+      SCREENSHOTTER_AGENTMAN_SOCKET: path.join(tmp, "none.sock"),
+      SCREENSHOTTER_NO_KEYCHAIN: "1",
+      // The engine draws board thumbnails with a browser: Playwright's own, not the person's Chrome.
+      SCREENSHOTTER_CHROME_PATH: chromium.executablePath(),
+    } as Record<string, string>,
+  };
+}
+const sideEnv = Object.fromEntries(SIDES.map((x) => [x.name, envFor(x.name)]));
+Object.assign(process.env, sideEnv[SIDES[0].name].env);
 
 const boards = await import("../src/board/store.js");
 const core = await import("../src/board/core.js");
@@ -90,12 +103,16 @@ function photo(file: string, w: number, h: number, seed: number) {
     }
   writeFileSync(file, encodePng({ width: w, height: h, rgba }));
 }
-const PHOTOS = [0, 1, 2, 3, 4, 5].map((i) => path.join(LIB, "images", `photo-${i}.png`));
-const AVATARS = [0, 1, 2, 3, 4, 5].map((i) => path.join(LIB, "images", `avatar-${i}.png`));
-PHOTOS.forEach((f, i) => photo(f, 1200, 800, i + 1));
-AVATARS.forEach((f, i) => photo(f, 160, 160, i + 11));
-const CLIP = path.join(LIB, "clip.mp4");
-copyFileSync(path.join(ROOT, "scripts", "fixtures", "clip.mp4"), CLIP);
+const PICS = path.join(tmpRoot, "pictures");
+mkdirSync(PICS, { recursive: true });
+for (let i = 0; i < 6; i++) {
+  photo(path.join(PICS, `photo-${i}.png`), 1200, 800, i + 1);
+  photo(path.join(PICS, `avatar-${i}.png`), 160, 160, i + 11);
+}
+/** The pictures and the video in the library being built. */
+let PHOTOS: string[] = [];
+let AVATARS: string[] = [];
+let CLIP = "";
 
 // ---------------------------------------------------------------------------------------------
 // The designs
@@ -213,38 +230,55 @@ function makeBoard(name: string, artboards: string[]) {
   return { id: b.id, layers: Object.keys(board.nodes).length, byName: (n: string) => Object.values(board.nodes).find((x) => x.name === n)!.id };
 }
 
-// Each set: a row of 6 desktop pages with a row of 10 phones under it (--stress stacks 3 sets).
-const screens = makeBoard("Bench: screens", Array.from({ length: SETS }, (_, r) => [
-  ...[0, 1, 2, 3, 4, 5].map((k) => desktop(r * 6 + k, { x: k * 1640, y: r * 7200 })),
-  ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => phone(r * 10 + k, { x: k * 490, y: r * 7200 + 5600 })),
-]).flat());
-const site = makeBoard("Bench: website", [website({ x: 0, y: 0 })]);
-
-// ---------------------------------------------------------------------------------------------
-// The engine, as its own process
-
 async function freePort() {
   return new Promise<number>((done) => {
-    const s = net.createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as net.AddressInfo).port;
-      s.close(() => done(p));
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const p = (srv.address() as net.AddressInfo).port;
+      srv.close(() => done(p));
     });
   });
 }
-if (!existsSync(path.join(ROOT, "dist", "index.js"))) throw new Error("Build first: npm run build");
-const port = await freePort();
-const engine: ChildProcess = spawn(process.execPath, [path.join(ROOT, "dist", "index.js"), "studio", "--port", String(port), "--no-open"], { env: { ...process.env, ...ENV }, stdio: ["ignore", "ignore", "pipe"] });
-let engineErr = "";
-engine.stderr?.on("data", (d) => (engineErr += d));
-const BASE = `http://127.0.0.1:${port}/`;
-for (let i = 0; ; i++) {
-  try {
-    if ((await fetch(BASE + "api/options")).ok) break;
-  } catch {}
-  if (i > 100) throw new Error(`The engine didn't start: ${engineErr}`);
-  await new Promise((r) => setTimeout(r, 100));
+
+type Made = ReturnType<typeof makeBoard>;
+type Side = { name: string; root: string; base: string; engine: ChildProcess; screens: Made; site: Made };
+
+/** A side: its library with the two boards, and its engine (the app built in `root`) serving it. */
+async function makeSide(name: string, root: string): Promise<Side> {
+  const { LIB, env } = sideEnv[name];
+  Object.assign(process.env, env);
+  PHOTOS = [0, 1, 2, 3, 4, 5].map((i) => path.join(LIB, "images", `photo-${i}.png`));
+  AVATARS = [0, 1, 2, 3, 4, 5].map((i) => path.join(LIB, "images", `avatar-${i}.png`));
+  for (let i = 0; i < 6; i++) {
+    copyFileSync(path.join(PICS, `photo-${i}.png`), PHOTOS[i]);
+    copyFileSync(path.join(PICS, `avatar-${i}.png`), AVATARS[i]);
+  }
+  CLIP = path.join(LIB, "clip.mp4");
+  copyFileSync(path.join(ROOT, "scripts", "fixtures", "clip.mp4"), CLIP);
+  // Each set: a row of 6 desktop pages with a row of 10 phones under it (--stress stacks 3 sets).
+  const screens = makeBoard("Bench: screens", Array.from({ length: SETS }, (_, r) => [
+    ...[0, 1, 2, 3, 4, 5].map((k) => desktop(r * 6 + k, { x: k * 1640, y: r * 7200 })),
+    ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => phone(r * 10 + k, { x: k * 490, y: r * 7200 + 5600 })),
+  ]).flat());
+  const site = makeBoard("Bench: website", [website({ x: 0, y: 0 })]);
+  if (!existsSync(path.join(root, "dist", "index.js"))) throw new Error(`Build first: npm run build (in ${root})`);
+  const port = await freePort();
+  const engine = spawn(process.execPath, [path.join(root, "dist", "index.js"), "studio", "--port", String(port), "--no-open"], { env: { ...process.env, ...env }, stdio: ["ignore", "ignore", "pipe"] });
+  let err = "";
+  engine.stderr?.on("data", (d) => (err += d));
+  const base = `http://127.0.0.1:${port}/`;
+  for (let i = 0; ; i++) {
+    try {
+      if ((await fetch(base + "api/options")).ok) break;
+    } catch {}
+    if (i > 100) throw new Error(`The ${name} engine didn't start: ${err}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return { name, root, base, engine, screens, site };
 }
+const sides: Side[] = [];
+for (const x of SIDES) sides.push(await makeSide(x.name, x.root));
+const { screens, site } = sides[0];
 
 // ---------------------------------------------------------------------------------------------
 // Measuring frames in the page
@@ -252,15 +286,27 @@ for (let i = 0; ; i++) {
 const RECORDER = `(() => {
   // tsx names inner functions with a helper the page doesn't have.
   globalThis.__name = globalThis.__name || ((f) => f);
-  const b = (window.__bench = { on: false, gen: 0, frames: [], long: [] });
+  const b = (window.__bench = { on: false, gen: 0, frames: [], long: [], work: [] });
+  // How long each frame's work takes, whatever the display's rate: from the frame's start (this
+  // callback, the first of the frame's) to the first task after it, which runs once the frame's
+  // scripts, style, layout and painting are done.
+  const ch = new MessageChannel();
+  const starts = [];
+  ch.port1.onmessage = () => { const t0 = starts.shift(); if (b.on && t0 !== undefined) b.work.push(performance.now() - t0); };
   b.start = () => {
-    b.frames = []; b.long = []; b.on = true;
+    b.frames = []; b.long = []; b.work = []; starts.length = 0; b.on = true;
     // Each run has its own loop: one left over from the last run stops instead of counting twice.
     const gen = ++b.gen;
-    const f = (t) => { if (!b.on || gen !== b.gen) return; b.frames.push(t); requestAnimationFrame(f); };
+    const f = (t) => {
+      if (!b.on || gen !== b.gen) return;
+      b.frames.push(t);
+      starts.push(performance.now());
+      ch.port2.postMessage(0);
+      requestAnimationFrame(f);
+    };
     requestAnimationFrame(f);
   };
-  b.stop = () => { b.on = false; b.gen++; return { frames: b.frames, long: b.long }; };
+  b.stop = () => { b.on = false; b.gen++; return { frames: b.frames, long: b.long, work: b.work }; };
   try {
     new PerformanceObserver((l) => { if (b.on) for (const e of l.getEntries()) b.long.push(Math.round(e.duration)); }).observe({ type: "longtask" });
   } catch {}
@@ -277,11 +323,19 @@ interface Result {
   slow: number;
   long: number;
   longMs: number;
+  /** Each frame's work (ms), whatever the display's rate: a frame fits 60 fps under ~14 ms. */
+  workP50: number;
+  workP95: number;
+  workMax: number;
+  /** Frames whose work didn't fit a 60 Hz frame. */
+  over: number;
   trace?: Record<string, number>;
 }
 
 const FRAME = 1000 / 60;
-function summarize(ts: number[], long: number[]): Result {
+function summarize(ts: number[], long: number[], work: number[] = []): Result {
+  const w = [...work].sort((a, b) => a - b);
+  const wq = (p: number) => (w.length ? Math.round(w[Math.min(w.length - 1, Math.floor(p * w.length))] * 10) / 10 : 0);
   const d = ts.slice(1).map((t, i) => t - ts[i]);
   const s = [...d].sort((a, b) => a - b);
   const q = (p: number) => (s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : 0);
@@ -299,6 +353,10 @@ function summarize(ts: number[], long: number[]): Result {
     slow: d.filter((x) => x > FRAME * 1.25).length,
     long: long.length,
     longMs: long.reduce((a, b) => a + b, 0),
+    workP50: wq(0.5),
+    workP95: wq(0.95),
+    workMax: wq(1),
+    over: w.filter((x) => x > 14).length,
   };
 }
 
@@ -343,8 +401,8 @@ async function undo(page: Page) {
   await sleep(500);
 }
 
-type Ctx = { page: Page; browser: Browser; engine: EngineName };
-type Scenario = { name: string; board: "screens" | "website"; prep: (c: Ctx) => Promise<void>; run: (c: Ctx) => Promise<void>; after?: (c: Ctx) => Promise<void> };
+type Ctx = { page: Page; browser: Browser; engine: EngineName; side: Side };
+type Scenario = { name: string; board: "screens" | "website"; prep: (c: Ctx) => Promise<unknown>; run: (c: Ctx) => Promise<unknown>; after?: (c: Ctx) => Promise<unknown> };
 
 const center = async (page: Page) => {
   const c = await canvasBox(page);
@@ -403,46 +461,175 @@ async function clickTargets(page: Page, n: number) {
  * requestAnimationFrame, none of the Studio's code running. `willChange` keeps the drawn board
  * on the GPU while it moves (sharp again only after); without it, every zoom step redraws it.
  */
-async function ceiling(page: Page, kind: "pan" | "zoom", willChange: boolean, frames = 150) {
-  await E(page, async ({ kind, willChange, frames }: { kind: string; willChange: boolean; frames: number }) => {
+async function ceiling(page: Page, kind: "pan" | "zoom", mode: "redrawn" | "will-change" | "camera", frames = 150) {
+  await E(page, async ({ kind, mode, frames }: { kind: string; mode: string; frames: number }) => {
     const w = document.querySelector(".bd-world") as HTMLElement;
     const t0 = w.style.transform;
-    const m = /translate\(([-\d.e]+)px, ([-\d.e]+)px\) scale\(([-\d.e]+)\)/.exec(t0)!;
-    const [x, y, z] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const { x, y, z } = (await import("/ui/board-state.js" as string)).B.view as { x: number; y: number; z: number };
     const c = document.querySelector(".bd-canvas")!.getBoundingClientRect();
-    if (willChange) w.style.willChange = "transform";
+    // The Studio's own camera, if it has one, stands still (or is the one used, for "camera").
+    const own = document.querySelector(".bd-camera") as HTMLElement | null;
+    const c0 = own?.style.transform ?? "";
+    if (own) own.style.transform = "none";
+    // "camera": the world drawn at a zoom of its own, inside a GPU layer that moves and scales it
+    // to the view; drawn again at the view's zoom only when that's 1.6× off.
+    let cam: HTMLElement | null = null;
+    let made = false;
+    let at = { x, y, z };
+    if (mode === "camera") {
+      cam = own;
+      if (!cam) {
+        cam = document.createElement("div");
+        cam.style.cssText = "position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform";
+        w.parentElement!.insertBefore(cam, w);
+        cam.appendChild(w);
+        made = true;
+      }
+      w.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
+    }
+    if (mode === "will-change") w.style.willChange = "transform";
+    const put = (vx: number, vy: number, vz: number) => {
+      if (!cam) return void (w.style.transform = `translate(${vx}px, ${vy}px) scale(${vz})`);
+      let s = vz / at.z;
+      if (s > 1.6 || s < 0.6) {
+        at = { x: vx, y: vy, z: vz };
+        w.style.transform = `translate(${vx}px, ${vy}px) scale(${vz})`;
+        s = 1;
+      }
+      cam.style.transform = `translate(${vx - s * at.x}px, ${vy - s * at.y}px) scale(${s})`;
+    };
     await new Promise<void>((done) => {
       let i = 0;
       const f = () => {
         i++;
-        if (kind === "pan") w.style.transform = `translate(${x + 160 * Math.sin(i / 15)}px, ${y + 100 * (1 - Math.cos(i / 15))}px) scale(${z})`;
+        if (kind === "pan") put(x + 160 * Math.sin(i / 15), y + 100 * (1 - Math.cos(i / 15)), z);
         else {
           const k = Math.exp(1.2 * Math.sin((i / frames) * Math.PI * 2));
           const cx = c.width / 2, cy = c.height / 2;
-          w.style.transform = `translate(${cx - (cx - x) * k}px, ${cy - (cy - y) * k}px) scale(${z * k})`;
+          put(cx - (cx - x) * k, cy - (cy - y) * k, z * k);
         }
         if (i < frames) requestAnimationFrame(f);
         else done();
       };
       requestAnimationFrame(f);
     });
+    if (cam && made) {
+      cam.parentElement!.insertBefore(w, cam);
+      cam.remove();
+    }
+    if (own) own.style.transform = c0;
     w.style.transform = t0;
     w.style.willChange = "";
-  }, { kind, willChange, frames });
+  }, { kind, mode, frames });
 }
 
+/**
+ * --lab: what makes WebKit slow to move the camera. The camera pans (whole pixels, or not) with
+ * one kind of thing hidden at a time.
+ */
+async function lab(page: Page, { css = "", whole = true }: { css?: string; whole?: boolean }, frames = 150) {
+  await E(page, async ({ css, whole, frames }: { css: string; whole: boolean; frames: number }) => {
+    const cam = document.querySelector(".bd-camera") as HTMLElement;
+    const t0 = cam.style.transform;
+    const m = /translate\(([-\d.e]+)px, ([-\d.e]+)px\)/.exec(t0)!;
+    const [x, y] = [Number(m[1]), Number(m[2])];
+    const st = document.createElement("style");
+    st.textContent = css;
+    document.head.appendChild(st);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => setTimeout(r, 300));
+    await new Promise<void>((done) => {
+      let i = 0;
+      const f = () => {
+        i++;
+        let dx = 160 * Math.sin(i / 15), dy = 100 * (1 - Math.cos(i / 15));
+        if (whole) (dx = Math.round(dx)), (dy = Math.round(dy));
+        cam.style.transform = `translate(${x + dx}px, ${y + dy}px) scale(1)`;
+        if (i < frames) requestAnimationFrame(f);
+        else done();
+      };
+      requestAnimationFrame(f);
+    });
+    cam.style.transform = t0;
+    st.remove();
+  }, { css, whole, frames });
+}
+const LAB: Array<[string, { css?: string; whole?: boolean }]> = [
+  ["part pixels", { whole: false }],
+  ["whole pixels", {}],
+  ["no overlay", { css: ".bd-overlay, .bd-presence { display: none !important; }" }],
+  ["no video, canvas", { css: ".bd-world video, .bd-world canvas { display: none !important; }" }],
+  ["no shadows", { css: ".bd-world * { box-shadow: none !important; }" }],
+  ["no pictures", { css: ".bd-world img { visibility: hidden !important; }" }],
+  ["no text", { css: ".bd-world * { color: transparent !important; text-shadow: none !important; }" }],
+  ["no gradients", { css: ".bd-world * { background-image: none !important; }" }],
+  ["design hidden", { css: ".bd-world { visibility: hidden !important; }" }],
+];
+const LAB_APP: Array<[string, string]> = [
+  ["app pan", ""],
+  ["app pan, no overlay", ".bd-overlay { display: none !important; }"],
+  ["app pan, no labels", ".bd-label { display: none !important; }"],
+  ["app pan, no topbar", ".bd-topbar { display: none !important; }"],
+  ["app pan, no panels", ".bd-left, .bd-right { display: none !important; }"],
+  ["app pan, no canvas", ".bd-world canvas { display: none !important; }"],
+  ["app pan, no video", ".bd-world video { display: none !important; }"],
+  ["app pan, design hidden", ".bd-world { visibility: hidden !important; }"],
+];
+/** The app's own trackpad pan, with one kind of thing hidden. */
+async function labApp(page: Page, css: string) {
+  await E(page, (css: string) => {
+    const st = document.createElement("style");
+    st.id = "lab-css";
+    st.textContent = css;
+    document.head.appendChild(st);
+  }, css);
+  await sleep(300);
+  await wheelPan(page);
+  await E(page, () => document.getElementById("lab-css")?.remove());
+}
+/** A zoom redrawn at every step (the world's own transform), with one kind of thing hidden. */
+async function labZoom(page: Page, css: string) {
+  await E(page, (css: string) => {
+    const st = document.createElement("style");
+    st.id = "lab-css";
+    st.textContent = css;
+    document.head.appendChild(st);
+  }, css);
+  await sleep(400);
+  await ceiling(page, "zoom", "redrawn", 90);
+  await E(page, () => document.getElementById("lab-css")?.remove());
+}
+const LAB_ZOOM: Array<[string, string]> = [
+  ["zoom", ""],
+  ["zoom, no shadows", ".bd-world * { box-shadow: none !important; }"],
+  ["zoom, no text", ".bd-world * { color: transparent !important; }"],
+  ["zoom, no pictures", ".bd-world img, .bd-world video { visibility: hidden !important; }"],
+  ["zoom, no gradients", ".bd-world * { background-image: none !important; }"],
+  ["zoom, gradients no-repeat", ".bd-world * { background-repeat: no-repeat !important; }"],
+  ["zoom, gradients as layers", ".bd-world *[style*='gradient'] { will-change: transform; }"],
+  ["zoom, no svg", ".bd-world svg { visibility: hidden !important; }"],
+  ["zoom, no corners", ".bd-world * { border-radius: 0 !important; }"],
+  ["zoom, no borders", ".bd-world * { border-color: transparent !important; }"],
+  ["zoom, design hidden", ".bd-world { visibility: hidden !important; }"],
+];
+const LAB_SCENARIOS: Scenario[] = [
+  ...LAB_ZOOM.map(([name, css]): Scenario => ({ name: `lab: ${name}`, board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => labZoom(page, css) })),
+  ...LAB.map(([name, o]): Scenario => ({ name: `lab: ${name}`, board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => lab(page, o) })),
+  ...LAB_APP.map(([name, css]): Scenario => ({ name: `lab: ${name}`, board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => labApp(page, css) })),
+];
+
 const SCENARIOS: Scenario[] = [
-  { name: "idle", board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: () => sleep(1500) },
-  { name: "pan: trackpad (all in view)", board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => wheelPan(page) },
-  { name: "pan: trackpad (50%)", board: "screens", prep: ({ page }) => setup(page, { view: WORK }), run: ({ page }) => wheelPan(page) },
-  { name: "pan: space-drag (50%)", board: "screens", prep: ({ page }) => setup(page, { view: WORK }), run: async ({ page }) => dragPath(page, await center(page), { x: -5, y: -3 }, 90, { space: true }) },
-  { name: "zoom: pinch (ctrl+wheel)", board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => pinch(page) },
-  { name: "zoom: ⌘+ / ⌘− (animated)", board: "screens", prep: ({ page }) => setup(page, { view: WORK }), run: ({ page }) => keyZoom(page) },
+  { name: "idle", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: () => sleep(1500) },
+  { name: "pan: trackpad (all in view)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => wheelPan(page) },
+  { name: "pan: trackpad (50%)", board: "screens", prep: ({ page, side }) => setup(page, { view: WORK }), run: ({ page, side }) => wheelPan(page) },
+  { name: "pan: space-drag (50%)", board: "screens", prep: ({ page, side }) => setup(page, { view: WORK }), run: async ({ page, side }) => dragPath(page, await center(page), { x: -5, y: -3 }, 90, { space: true }) },
+  { name: "zoom: pinch (ctrl+wheel)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => pinch(page) },
+  { name: "zoom: ⌘+ / ⌘− (animated)", board: "screens", prep: ({ page, side }) => setup(page, { view: WORK }), run: ({ page, side }) => keyZoom(page) },
   {
     name: "zoom: to fit / to selection",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK, sel: [screens.byName("Phone 3")] }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: WORK, sel: [side.screens.byName("Phone 3")] }),
+    run: async ({ page, side }) => {
       for (let i = 0; i < 2; i++) {
         await page.keyboard.press("Shift+Digit1");
         await sleep(450);
@@ -451,14 +638,16 @@ const SCENARIOS: Scenario[] = [
       }
     },
   },
-  { name: "ceiling: pan (all in view)", board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => ceiling(page, "pan", false) },
-  { name: "ceiling: zoom, redrawn (all)", board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => ceiling(page, "zoom", false) },
-  { name: "ceiling: zoom, will-change (all)", board: "screens", prep: ({ page }) => setup(page, { view: "fit" }), run: ({ page }) => ceiling(page, "zoom", true) },
+  { name: "ceiling: pan (all in view)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => ceiling(page, "pan", "redrawn") },
+  { name: "ceiling: pan, camera (all)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => ceiling(page, "pan", "camera") },
+  { name: "ceiling: zoom, redrawn (all)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => ceiling(page, "zoom", "redrawn") },
+  { name: "ceiling: zoom, will-change (all)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => ceiling(page, "zoom", "will-change") },
+  { name: "ceiling: zoom, camera (all)", board: "screens", prep: ({ page, side }) => setup(page, { view: "fit" }), run: ({ page, side }) => ceiling(page, "zoom", "camera") },
   {
     name: "click to select",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: WORK }),
+    run: async ({ page, side }) => {
       for (const p of await clickTargets(page, 12)) {
         await page.mouse.click(p.x, p.y);
         await sleep(160);
@@ -468,8 +657,8 @@ const SCENARIOS: Scenario[] = [
   {
     name: "hover across layers",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: WORK }),
+    run: async ({ page, side }) => {
       const c = await canvasBox(page);
       await paced(150, (i) => page.mouse.move(c.x + 30 + ((i % 30) / 30) * (c.width - 60), c.y + 60 + (Math.floor(i / 30) / 5) * (c.height - 120) + (i % 30) * 3));
     },
@@ -477,50 +666,50 @@ const SCENARIOS: Scenario[] = [
   {
     name: "drag an artboard",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: WORK }),
+    run: async ({ page, side }) => {
       const l = await E<Box, string>(page, (id) => {
         const r = document.querySelector(`[data-label="${id}"]`)!.getBoundingClientRect();
         return { x: r.x, y: r.y, width: r.width, height: r.height };
-      }, screens.byName("Desktop 0"));
+      }, side.screens.byName("Desktop 0"));
       await dragPath(page, { x: l.x + 20, y: l.y + l.height / 2 }, { x: 3, y: 2 });
     },
-    after: ({ page }) => undo(page),
+    after: ({ page, side }) => undo(page),
   },
   {
     name: "drag a layer",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK }),
-    run: async ({ page }) => {
-      const b = (await boxOf(page, screens.byName("Badge 0")))!;
+    prep: ({ page, side }) => setup(page, { view: WORK }),
+    run: async ({ page, side }) => {
+      const b = (await boxOf(page, side.screens.byName("Badge 0")))!;
       await dragPath(page, { x: b.x + 10, y: b.y + b.height / 2 }, { x: 3, y: 2 });
     },
-    after: ({ page }) => undo(page),
+    after: ({ page, side }) => undo(page),
   },
   {
     name: "drag to reorder (flex)",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK }),
-    run: async ({ page }) => {
-      const b = (await boxOf(page, screens.byName("Logos 0")))!;
+    prep: ({ page, side }) => setup(page, { view: WORK }),
+    run: async ({ page, side }) => {
+      const b = (await boxOf(page, side.screens.byName("Logos 0")))!;
       await dragPath(page, { x: b.x + 30, y: b.y + b.height / 2 }, { x: 0, y: 4 });
     },
-    after: ({ page }) => undo(page),
+    after: ({ page, side }) => undo(page),
   },
   {
     name: "resize with a handle",
     board: "screens",
-    prep: ({ page }) => setup(page, { view: WORK, sel: [screens.byName("Badge 0")] }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: WORK, sel: [side.screens.byName("Badge 0")] }),
+    run: async ({ page, side }) => {
       const h = (await page.locator(".bd-handle.h-se").first().boundingBox())!;
       await dragPath(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: 3, y: 1 });
     },
-    after: ({ page }) => undo(page),
+    after: ({ page, side }) => undo(page),
   },
-  { name: "site: idle", board: "website", prep: ({ page }) => setup(page, { view: SITE_VIEW }), run: () => sleep(1500) },
-  { name: "site: scroll (trackpad)", board: "website", prep: ({ page }) => setup(page, { view: SITE_VIEW }), run: ({ page }) => wheelScroll(page) },
-  { name: "site: pinch (ctrl+wheel)", board: "website", prep: ({ page }) => setup(page, { view: SITE_VIEW }), run: ({ page }) => pinch(page, 50, 3) },
-  { name: "site: zoom to fit", board: "website", prep: ({ page }) => setup(page, { view: SITE_VIEW }), run: async ({ page }) => {
+  { name: "site: idle", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: () => sleep(1500) },
+  { name: "site: scroll (trackpad)", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: ({ page, side }) => wheelScroll(page) },
+  { name: "site: pinch (ctrl+wheel)", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: ({ page, side }) => pinch(page, 50, 3) },
+  { name: "site: zoom to fit", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: async ({ page, side }) => {
     for (let i = 0; i < 2; i++) {
       await page.keyboard.press("Shift+Digit1");
       await sleep(450);
@@ -528,12 +717,14 @@ const SCENARIOS: Scenario[] = [
       await sleep(450);
     }
   } },
-  { name: "site ceiling: zoom, redrawn", board: "website", prep: ({ page }) => setup(page, { view: SITE_VIEW }), run: ({ page }) => ceiling(page, "zoom", false) },
+  { name: "site ceiling: zoom, redrawn", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: ({ page, side }) => ceiling(page, "zoom", "redrawn") },
+  { name: "site ceiling: zoom, will-change", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: ({ page, side }) => ceiling(page, "zoom", "will-change") },
+  { name: "site ceiling: zoom, camera", board: "website", prep: ({ page, side }) => setup(page, { view: SITE_VIEW }), run: ({ page, side }) => ceiling(page, "zoom", "camera") },
   {
     name: "site: click to select",
     board: "website",
-    prep: ({ page }) => setup(page, { view: SITE_VIEW }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: SITE_VIEW }),
+    run: async ({ page, side }) => {
       for (const p of await clickTargets(page, 12)) {
         await page.mouse.click(p.x, p.y);
         await sleep(160);
@@ -543,8 +734,8 @@ const SCENARIOS: Scenario[] = [
   {
     name: "site: hover",
     board: "website",
-    prep: ({ page }) => setup(page, { view: SITE_VIEW }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: SITE_VIEW }),
+    run: async ({ page, side }) => {
       const c = await canvasBox(page);
       await paced(150, (i) => page.mouse.move(c.x + 30 + ((i % 30) / 30) * (c.width - 60), c.y + 60 + (Math.floor(i / 30) / 5) * (c.height - 120) + (i % 30) * 3));
     },
@@ -552,22 +743,22 @@ const SCENARIOS: Scenario[] = [
   {
     name: "site: drag a layer",
     board: "website",
-    prep: ({ page }) => setup(page, { view: SITE_VIEW }),
-    run: async ({ page }) => {
-      const b = (await boxOf(page, site.byName("Badge 9")))!;
+    prep: ({ page, side }) => setup(page, { view: SITE_VIEW }),
+    run: async ({ page, side }) => {
+      const b = (await boxOf(page, side.site.byName("Badge 9")))!;
       await dragPath(page, { x: b.x + 10, y: b.y + b.height / 2 }, { x: 3, y: 2 });
     },
-    after: ({ page }) => undo(page),
+    after: ({ page, side }) => undo(page),
   },
   {
     name: "site: resize with a handle",
     board: "website",
-    prep: ({ page }) => setup(page, { view: SITE_VIEW, sel: [site.byName("Badge 9")] }),
-    run: async ({ page }) => {
+    prep: ({ page, side }) => setup(page, { view: SITE_VIEW, sel: [side.site.byName("Badge 9")] }),
+    run: async ({ page, side }) => {
       const h = (await page.locator(".bd-handle.h-se").first().boundingBox())!;
       await dragPath(page, { x: h.x + h.width / 2, y: h.y + h.height / 2 }, { x: 3, y: 1 });
     },
-    after: ({ page }) => undo(page),
+    after: ({ page, side }) => undo(page),
   },
 ];
 
@@ -616,7 +807,8 @@ function traceSummary(buf: Buffer): Record<string, number> {
 // Running it
 
 type Results = Record<string, Record<string, Result>>;
-const results: Results = {};
+/** By side ("before", "after"), engine and interaction. */
+const results: Record<string, Results> = Object.fromEntries(sides.map((x) => [x.name, {}]));
 let failures = 0;
 
 async function openBoardIn(page: Page, id: string) {
@@ -625,63 +817,135 @@ async function openBoardIn(page: Page, id: string) {
   await sleep(1500);
 }
 
+const row = (r: Result) => `${String(r.fps).padStart(5)} ${String(r.p50).padStart(6)} ${String(r.p95).padStart(6)} ${String(r.max).padStart(6)} ${String(r.dropped).padStart(5)} ${String(r.slow).padStart(5)}   ${String(r.workP50).padStart(5)} ${String(r.workP95).padStart(5)} ${String(r.workMax).padStart(6)} ${String(r.over).padStart(4)}  ${r.long ? `${r.long} (${r.longMs} ms)` : "-"}`;
+
+/**
+ * --look (with --ab): the canvas at rest, the same views in both builds, compared pixel by pixel:
+ * how many pixels differ visibly, and pictures of both (and of the difference) to look at.
+ */
+async function look(pages: Array<{ b: Side; page: Page }>, engine: string) {
+  const { decodePng } = await import("../src/util/png.js");
+  const dir = path.join(os.tmpdir(), "glassine-look");
+  mkdirSync(dir, { recursive: true });
+  const views: Array<[string, "screens" | "website", { x: number; y: number; z: number } | "fit", string[]?]> = [
+    ["screens fit", "screens", "fit"],
+    ["screens 50%", "screens", WORK],
+    ["screens 200%", "screens", { x: -200, y: -300, z: 2 }],
+    ["site 75%", "website", SITE_VIEW],
+    ["selected", "screens", WORK, ["Badge 0"]],
+  ];
+  for (const [title, board, view, sel] of views) {
+    const shots: Buffer[] = [];
+    for (const p of pages) {
+      const id = board === "screens" ? p.b.screens.id : p.b.site.id;
+      if ((p as { open?: string }).open !== id) {
+        await openBoardIn(p.page, id);
+        (p as { open?: string }).open = id;
+      }
+      await setup(p.page, { view, sel: sel?.map((n) => p.b.screens.byName(n)) });
+      await sleep(900);
+      const c = await canvasBox(p.page);
+      const file = path.join(dir, `${engine}-${title.replace(/\W+/g, "-")}-${p.b.name}.png`);
+      shots.push(await p.page.screenshot({ path: file, clip: c }));
+    }
+    const [a, b] = shots.map((x) => decodePng(x));
+    let off = 0;
+    let worst = 0;
+    const diff = Buffer.alloc(a.width * a.height * 4);
+    for (let i = 0; i < a.rgba.length; i += 4) {
+      const d = Math.max(Math.abs(a.rgba[i] - b.rgba[i]), Math.abs(a.rgba[i + 1] - b.rgba[i + 1]), Math.abs(a.rgba[i + 2] - b.rgba[i + 2]));
+      if (d > 8) off++;
+      worst = Math.max(worst, d);
+      diff.set(d > 8 ? [255, 0, 80, 255] : [a.rgba[i] / 3, a.rgba[i + 1] / 3, a.rgba[i + 2] / 3, 255], i);
+    }
+    writeFileSync(path.join(dir, `${engine}-${title.replace(/\W+/g, "-")}-diff.png`), encodePng({ width: a.width, height: a.height, rgba: diff }));
+    console.log(`${title.padEnd(16)} ${((off / (a.width * a.height)) * 100).toFixed(3).padStart(7)}% of pixels differ (largest difference ${worst}/255)`);
+  }
+  console.log(`pictures in ${dir}`);
+}
+
 try {
   for (const name of engines) {
     const browser = await ENGINES[name].launch(name === "chromium" ? { channel: "chromium", headless: !HEADED } : { headless: !HEADED });
-    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: "dark" });
-    await context.addInitScript(RECORDER);
-    const page = await context.newPage();
-    const errors: string[] = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(BASE, { waitUntil: "networkidle" });
+    // A page for each side, in contexts of their own: only one is driven at a time.
+    const pages: Array<{ b: Side; page: Page; open: string; errors: string[] }> = [];
+    for (const b of sides) {
+      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: "dark" });
+      await context.addInitScript(RECORDER);
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.goto(b.base, { waitUntil: "networkidle" });
+      pages.push({ b, page, open: "", errors });
+      results[b.name][name] = {};
+    }
     await sleep(500);
-    results[name] = {};
-    let open = "";
-    console.log(`\n${name} (${screens.layers} + ${site.layers} layers)`);
-    console.log(`${"interaction".padEnd(34)} ${"fps".padStart(5)} ${"p50".padStart(6)} ${"p95".padStart(6)} ${"max".padStart(6)} ${"drop".padStart(5)} ${"slow".padStart(5)}  long tasks${TRACE ? "   main-thread ms (trace)" : ""}`);
-    for (const sc of SCENARIOS) {
+    if (flag("look")) {
+      console.log(`\n${name}: the canvas at rest, before against after`);
+      await look(pages, name);
+      await browser.close();
+      continue;
+    }
+    console.log(`\n${name} (${screens.layers} + ${site.layers} layers)${AB ? ": before → after" : ""}`);
+    // A display slower than 60 Hz holds WebKit to its rate: then the frames' work says more than fps.
+    const hz = await E<number, void>(pages[0].page, () => new Promise<number>((done) => { const t: number[] = []; const f = (x: number) => (t.push(x), t.length < 31 ? requestAnimationFrame(f) : done(Math.round(30000 / (t[30] - t[0])))); requestAnimationFrame(f); }));
+    if (hz < 55) console.log(`(this engine draws at ${hz} Hz here: the display it follows is slower than 60 Hz, so fps can't pass ${hz}; "work" still shows what fits 60)`);
+    console.log(AB ? `${"interaction".padEnd(34)} ${"fps".padStart(13)} ${"p95 ms".padStart(13)} ${"work p95".padStart(13)} ${"work max".padStart(13)} ${">14ms".padStart(9)}` : `${"interaction".padEnd(34)} ${"fps".padStart(5)} ${"p50".padStart(6)} ${"p95".padStart(6)} ${"max".padStart(6)} ${"drop".padStart(5)} ${"slow".padStart(5)}   work: p50   p95    max >14  long tasks${TRACE ? "   main-thread ms (trace)" : ""}`);
+    for (const sc of flag("lab") ? LAB_SCENARIOS : SCENARIOS) {
       if (only && !only.test(sc.name)) continue;
-      const boardId = sc.board === "screens" ? screens.id : site.id;
-      if (open !== boardId) {
-        await openBoardIn(page, boardId);
-        open = boardId;
-      }
-      const runs: Result[] = [];
+      const runs = new Map<string, Result[]>(pages.map((x) => [x.b.name, []]));
       try {
-        for (let round = 0; round < ROUNDS; round++) {
-          const ctx = { page, browser, engine: name };
-          await sc.prep(ctx);
-          if (TRACE && name === "chromium") await browser.startTracing(page, { categories: TRACE_CATS });
-          await E(page, () => (window as unknown as { __bench: { start(): void } }).__bench.start());
-          await sc.run(ctx);
-          await sleep(120);
-          const raw = await E<{ frames: number[]; long: number[] }, void>(page, () => (window as unknown as { __bench: { stop(): { frames: number[]; long: number[] } } }).__bench.stop());
-          const r = summarize(raw.frames, raw.long);
-          if (TRACE && name === "chromium") r.trace = traceSummary(await browser.stopTracing());
-          runs.push(r);
-          await sc.after?.(ctx);
-        }
+        for (let round = 0; round < ROUNDS; round++)
+          for (const p of pages) {
+            const { page, b } = p;
+            const boardId = sc.board === "screens" ? b.screens.id : b.site.id;
+            if (p.open !== boardId) {
+              await openBoardIn(page, boardId);
+              p.open = boardId;
+            }
+            const ctx = { page, browser, engine: name, side: b };
+            await sc.prep(ctx);
+            if (TRACE && name === "chromium") await browser.startTracing(page, { categories: TRACE_CATS });
+            await E(page, () => (window as unknown as { __bench: { start(): void } }).__bench.start());
+            await sc.run(ctx);
+            await sleep(120);
+            const raw = await E<{ frames: number[]; long: number[]; work: number[] }, void>(page, () => (window as unknown as { __bench: { stop(): { frames: number[]; long: number[]; work: number[] } } }).__bench.stop());
+            const r = summarize(raw.frames, raw.long, raw.work);
+            // --frames: each frame's length, to see where the slow ones fall.
+            if (flag("frames")) console.log(`  ${b.name} frames: ` + raw.frames.slice(1).map((t, i) => Math.round(t - raw.frames[i])).join(" "));
+            if (TRACE && name === "chromium") r.trace = traceSummary(await browser.stopTracing());
+            runs.get(b.name)!.push(r);
+            await sc.after?.(ctx);
+          }
       } catch (e) {
-        await E(page, () => (window as unknown as { __bench: { stop(): void } }).__bench.stop()).catch(() => undefined);
+        for (const { page } of pages) await E(page, () => (window as unknown as { __bench: { stop(): void } }).__bench.stop()).catch(() => undefined);
         failures++;
         console.log(`${sc.name.padEnd(34)} failed: ${(e as Error).message.split("\n")[0]}`);
         continue;
       }
       // Several rounds: the median one by fps.
-      const r = runs.sort((a, b) => a.fps - b.fps)[Math.floor(runs.length / 2)];
-      results[name][sc.name] = r;
-      const tr = r.trace ? "   " + Object.entries(r.trace).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", ") : "";
-      console.log(`${sc.name.padEnd(34)} ${String(r.fps).padStart(5)} ${String(r.p50).padStart(6)} ${String(r.p95).padStart(6)} ${String(r.max).padStart(6)} ${String(r.dropped).padStart(5)} ${String(r.slow).padStart(5)}  ${r.long ? `${r.long} (${r.longMs} ms)` : "-"}${tr}`);
+      const med = (list: Result[]) => [...list].sort((a, b) => a.fps - b.fps)[Math.floor(list.length / 2)];
+      for (const { b } of pages) results[b.name][name][sc.name] = med(runs.get(b.name)!);
+      if (AB && results.before[name]) {
+        const [o, r] = [results.before[name][sc.name], results.after[name][sc.name]];
+        const pair = (a: number, c: number, w: number) => `${a} → ${c}`.padStart(w);
+        console.log(`${sc.name.padEnd(34)} ${pair(o.fps, r.fps, 13)} ${pair(o.p95, r.p95, 13)} ${pair(o.workP95, r.workP95, 13)} ${pair(o.workMax, r.workMax, 13)} ${pair(o.over, r.over, 9)}`);
+      } else {
+        const r = results.after[name][sc.name];
+        const tr = r.trace ? "   " + Object.entries(r.trace).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", ") : "";
+        console.log(`${sc.name.padEnd(34)} ${row(r)}${tr}`);
+      }
     }
-    if (errors.length) {
-      failures++;
-      console.log(`page errors: ${[...new Set(errors)].slice(0, 3).join(" | ")}`);
-    }
+    for (const p of pages)
+      if (p.errors.length) {
+        failures++;
+        console.log(`page errors (${p.b.name}): ${[...new Set(p.errors)].slice(0, 3).join(" | ")}`);
+      }
     await browser.close();
   }
 } finally {
-  engine.kill("SIGTERM");
-  rmSync(tmp, { recursive: true, force: true });
+  for (const b of sides) b.engine.kill("SIGTERM");
+  rmSync(tmpRoot, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -690,15 +954,16 @@ try {
 const outDir = path.join(ROOT, "docs", "perf");
 mkdirSync(outDir, { recursive: true });
 const file = path.join(outDir, `canvas-${label}.json`);
-writeFileSync(file, JSON.stringify({ label, stress: STRESS, at: new Date().toISOString(), layers: { screens: screens.layers, website: site.layers }, viewport: "1440x900@2x", results }, null, 2) + "\n");
+const meta = { label, stress: STRESS, at: new Date().toISOString(), layers: { screens: screens.layers, website: site.layers }, viewport: "1440x900@2x", rounds: ROUNDS };
+writeFileSync(file, JSON.stringify({ ...meta, results: results.after, ...(AB ? { before: results.before } : {}) }, null, 2) + "\n");
 console.log(`\nSaved ${path.relative(ROOT, file)}`);
 
 if (compareTo) {
   const old = JSON.parse(readFileSync(path.join(outDir, `canvas-${compareTo}.json`), "utf8")).results as Results;
-  for (const name of Object.keys(results)) {
+  for (const name of Object.keys(results.after)) {
     if (!old[name]) continue;
     console.log(`\n${name}: fps ${compareTo} → ${label} (p95 ms)`);
-    for (const [sc, r] of Object.entries(results[name])) {
+    for (const [sc, r] of Object.entries(results.after[name])) {
       const o = old[name][sc];
       if (!o) continue;
       console.log(`${sc.padEnd(34)} ${String(o.fps).padStart(5)} → ${String(r.fps).padStart(5)}   (${o.p95} → ${r.p95})`);
