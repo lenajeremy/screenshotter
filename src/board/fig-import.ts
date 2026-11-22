@@ -3,12 +3,14 @@
  * Figma (⌘C) and pasted. The frames land on a board as artboards of ordinary layers, where they
  * sat relative to each other, with their pictures (from a .fig) and their Google fonts.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { libraryFolder } from "../util/files.js";
 import { freeSpot, htmlToNodes, newId, type BoardFont, type Op } from "./core.js";
 import { changeBoard, createBoard, getBoard } from "./store.js";
 import { forLatin, saveAsset } from "./web-import.js";
 import { readFigClipboard, readFigFile, type FigArchive } from "./fig-file.js";
-import { copiedRoots, figDoc, newCtx, nodeHtml, placeOf, resolveTree, type FNode } from "./fig-convert.js";
+import { copiedRoots, figDoc, newCtx, nodeHtml, placeOf, resolveTree, type FigDoc, type FNode } from "./fig-convert.js";
 
 type Progress = (fraction: number, step?: string) => void;
 
@@ -84,11 +86,66 @@ export interface FigImportOptions {
   figmaPage?: string;
 }
 
+/**
+ * Pictures a paste points to but doesn't carry (Figma's clipboard holds only their hashes): the
+ * library's own copy when the file was brought in before (a picture's hash is its contents'), else
+ * from Figma itself when there's a token to ask with. What's still missing is said by picture().
+ */
+async function bringPictures(d: FigDoc, fileKey: string | undefined, warnings: Set<string>, progress: Progress) {
+  const wanted = new Set<string>();
+  const look = (v: unknown, depth: number) => {
+    if (!v || typeof v !== "object" || depth > 12) return;
+    if (Array.isArray(v)) return v.forEach((x) => look(x, depth + 1));
+    const o = v as Record<string, any>;
+    if (o.type === "IMAGE" && o.image?.hash) wanted.add(typeof o.image.hash === "string" ? o.image.hash : Buffer.from(Object.values(o.image.hash) as number[]).toString("hex"));
+    for (const [k, x] of Object.entries(o)) if (k !== "children" && x && typeof x === "object" && !(x instanceof Uint8Array)) look(x, depth + 1);
+  };
+  for (const n of d.byId.values()) look(n, 0);
+  let missing = [...wanted].filter((h) => !d.images.has(h));
+  if (!missing.length) return;
+  const dir = path.join(libraryFolder(), "images", "figma");
+  if (existsSync(dir)) {
+    const files = readdirSync(dir);
+    for (const h of missing) {
+      const f = files.find((x) => x.startsWith(h.slice(0, 20)));
+      if (f) d.images.set(h, readFileSync(path.join(dir, f)));
+    }
+  }
+  missing = missing.filter((h) => !d.images.has(h));
+  const token = process.env.FIGMA_TOKEN?.trim();
+  if (!missing.length || !token || !fileKey) return;
+  progress(0.15, "Fetching pictures from Figma");
+  try {
+    const r = await fetch(`https://api.figma.com/v1/files/${encodeURIComponent(fileKey)}/images`, { headers: { "X-Figma-Token": token }, signal: AbortSignal.timeout(30_000) });
+    if (!r.ok) {
+      if (r.status === 429) warnings.add("Figma is limiting how often this account can ask for pictures right now, so some didn't come. Drop the .fig file instead (File › Save local copy), or paste again later.");
+      return;
+    }
+    const urls: Record<string, string> = ((await r.json()) as { meta?: { images?: Record<string, string> } }).meta?.images ?? {};
+    const queue = missing.filter((h) => urls[h]);
+    await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        for (let h = queue.shift(); h; h = queue.shift()) {
+          try {
+            const got = await fetch(urls[h], { signal: AbortSignal.timeout(60_000) });
+            if (got.ok) d.images.set(h, Buffer.from(await got.arrayBuffer()));
+          } catch {
+            // That one stays missing (and is said).
+          }
+        }
+      }),
+    );
+  } catch {
+    // Offline, or Figma didn't answer: what's missing is said.
+  }
+}
+
 export async function importFig(boardId: string | null | undefined, o: FigImportOptions, by: "agent" | "studio", progress: Progress = () => undefined): Promise<FigImportResult> {
   progress(0.05, "Reading Figma's file");
   const archive: FigArchive = o.html ? readFigClipboard(o.html) : readFigFile(o.data ?? readFileSync(o.file!));
   const d = figDoc(archive);
   const ctx = newCtx(d);
+  if (o.html) await bringPictures(d, (archive as { fileKey?: string }).fileKey, ctx.warnings, progress);
   // What comes in, page by page: what was copied; or the file's pages (all of them, onto a new
   // board, each its own page; one page, onto a board already open).
   const framesOf = (page: FNode) => {

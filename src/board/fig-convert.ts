@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { libraryFolder } from "../util/files.js";
 import type { FigArchive } from "./fig-file.js";
+import { ellipseOutline, lineOutline, networkOutline, rectOutline, starOutline, type Outline } from "./fig-geometry.js";
 
 type G = { sessionID: number; localID: number };
 type M = { m00: number; m01: number; m02: number; m10: number; m11: number; m12: number };
@@ -25,6 +26,8 @@ const cmp = (a = "", b = "") => (a < b ? -1 : a > b ? 1 : 0);
 
 export interface FigDoc {
   byId: Map<string, FNode>;
+  /** Shared styles by their key: what the clipboard points to them by. */
+  styles: Map<string, FNode>;
   pages: FNode[];
   blob(i: number): Buffer | undefined;
   images: Map<string, Buffer>;
@@ -33,9 +36,12 @@ export interface FigDoc {
 
 export function figDoc(a: FigArchive): FigDoc {
   const byId = new Map<string, FNode>();
+  const styles = new Map<string, FNode>();
   for (const raw of a.message.nodeChanges) {
     if (!raw.guid) continue;
-    byId.set(gid(raw.guid), { ...raw, id: gid(raw.guid), key: gid(raw.overrideKey ?? raw.guid), children: [] });
+    const node: FNode = { ...raw, id: gid(raw.guid), key: gid(raw.overrideKey ?? raw.guid), assetKey: raw.key, children: [] };
+    byId.set(gid(raw.guid), node);
+    if (raw.styleType && typeof raw.key === "string") styles.set(raw.key, node);
   }
   for (const n of byId.values()) {
     const p = n.parentIndex ? byId.get(gid(n.parentIndex.guid)) : undefined;
@@ -45,7 +51,7 @@ export function figDoc(a: FigArchive): FigDoc {
   const doc = [...byId.values()].find((n) => n.type === "DOCUMENT");
   const pages = (doc?.children ?? []).filter((c) => c.type === "CANVAS" && !c.internalOnly);
   const blobs = a.message.blobs ?? [];
-  return { byId, pages, blob: (i) => (blobs[i] ? Buffer.from(blobs[i].bytes) : undefined), images: a.images, name: a.name };
+  return { byId, styles, pages, blob: (i) => (blobs[i] ? Buffer.from(blobs[i].bytes) : undefined), images: a.images, name: a.name };
 }
 
 /** What was copied: the nodes whose parents aren't in the copy (or are a page). */
@@ -132,10 +138,19 @@ const css = (o: Record<string, string | undefined>) =>
     .map(([k, v]) => `${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}:${String(v).replace(/"/g, "'")}`)
     .join(";");
 
+/** A shared style a node points to: by its id in this file, or by its key (as the clipboard does). */
+function styleNode(c: Ctx, ref: any): FNode | undefined {
+  if (!ref) return undefined;
+  const byId = ref.guid ? c.d.byId.get(gid(ref.guid)) : undefined;
+  if (byId) return byId;
+  const key = ref.assetRef?.key;
+  return typeof key === "string" ? c.d.styles.get(key) : undefined;
+}
+
 /** A node's paints: its shared style's when it uses one this file holds, else its own. */
 function paints(c: Ctx, n: FNode, which: "fill" | "stroke"): any[] {
   const ref = which === "fill" ? n.styleIdForFill : n.styleIdForStrokeFill;
-  const style = ref?.guid ? c.d.byId.get(gid(ref.guid)) : undefined;
+  const style = styleNode(c, ref);
   // A colour style is a node whose fill is the style (a stroke style keeps it there too).
   const fromStyle = style?.fillPaints;
   if (fromStyle) return fromStyle;
@@ -204,7 +219,7 @@ function picture(c: Ctx, hash: Uint8Array | string | undefined): string | undefi
   if (have) return have;
   const data = c.d.images.get(hex);
   if (!data) {
-    c.warnings.add("Some pictures weren't in what Figma gave (copying doesn't carry them): drop the .fig file instead (File › Save local copy) to bring them in.");
+    c.warnings.add("Some pictures didn't come: copying from Figma doesn't carry them. Drop the .fig file instead (File › Save local copy), or add a Figma token in Settings so pastes can fetch them.");
     return undefined;
   }
   const ext = MIME.find(([sig]) => sig.every((b, i) => data[i] === b))?.[1] ?? ".png";
@@ -312,7 +327,7 @@ function lookCss(c: Ctx, n: FNode, out: Record<string, string>, text = false) {
     else if (n.strokeAlign === "CENTER") shadows.push(`inset 0 0 0 ${px(sw / 2)} ${col}`, `0 0 0 ${px(sw / 2)} ${col}`);
     else shadows.push(`inset 0 0 0 ${px(sw)} ${col}`);
   }
-  const fx: any[] = shown(n.effects as any[]);
+  const fx: any[] = shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]);
   for (const e of [...fx].reverse()) {
     if (e.type === "DROP_SHADOW" || e.type === "INNER_SHADOW") {
       const s = `${e.type === "INNER_SHADOW" ? "inset " : ""}${px(e.offset?.x ?? 0)} ${px(e.offset?.y ?? 0)} ${px(e.radius ?? 0)}${text ? "" : ` ${px(e.spread ?? 0)}`} ${rgba(e.color)}`;
@@ -375,23 +390,239 @@ function svgPaint(c: Ctx, p: any, w: number, h: number, defs: string[]): { fill:
   return null;
 }
 
+// Figma's outlines: the ones it stored (a .fig file has them), or rebuilt from the shape's settings
+// when it didn't (the clipboard leaves them out). See fig-geometry.
+
+const rebuilt = new WeakMap<object, Outline | null>();
+/** A shape's outline from its settings (its vector network, its corners, its arc, its points). */
+function outline(c: Ctx, n: FNode): Outline | null {
+  if (rebuilt.has(n)) return rebuilt.get(n)!;
+  const w = n.size?.x ?? 0;
+  const h = n.size?.y ?? 0;
+  let o: Outline | null = null;
+  const vd = n.vectorData;
+  if (vd?.vectorNetworkBlob !== undefined) {
+    const buf = c.d.blob(vd.vectorNetworkBlob);
+    const table = new Map<number, any>((vd.styleOverrideTable ?? []).map((t: any) => [t.styleID, t]));
+    if (buf) o = networkOutline(buf, vd.normalizedSize, { x: w, y: h }, (sid) => table.get(sid)?.cornerRadius ?? n.cornerRadius ?? 0);
+  } else if (n.type === "ROUNDED_RECTANGLE" || n.type === "RECTANGLE" || BOXES.has(n.type)) {
+    const r = n.cornerRadius ?? 0;
+    o = rectOutline(w, h, n.rectangleCornerRadiiIndependent ? [n.rectangleTopLeftCornerRadius ?? 0, n.rectangleTopRightCornerRadius ?? 0, n.rectangleBottomRightCornerRadius ?? 0, n.rectangleBottomLeftCornerRadius ?? 0] : [r, r, r, r]);
+  } else if (n.type === "ELLIPSE") o = ellipseOutline(w, h, n.arcData);
+  else if (n.type === "STAR") o = starOutline(w, h, n.count ?? 5, n.starInnerScale ?? 0.382, n.cornerRadius ?? 0);
+  else if (n.type === "REGULAR_POLYGON") o = starOutline(w, h, n.count ?? 3, null, n.cornerRadius ?? 0);
+  else if (n.type === "LINE") o = lineOutline(w);
+  rebuilt.set(n, o);
+  return o;
+}
+
+const stored = (n: FNode) => Boolean((n.fillGeometry ?? []).length || (n.strokeGeometry ?? []).length);
+/** A boolean shape Figma didn't store an outline for: drawn from its parts (see booleanPaths). */
+const composed = (n: FNode) => n.type === "BOOLEAN_OPERATION" && !stored(n);
+
+/** The areas a shape fills, with their winding rules (and a vector region's own style). */
+function fillPaths(c: Ctx, n: FNode): Array<{ d: string; rule: string; styleID?: number }> {
+  if (stored(n)) return (n.fillGeometry ?? []).map((g: any) => ({ d: pathData(c.d.blob(g.commandsBlob)), rule: g.windingRule ?? "NONZERO" })).filter((g: { d: string }) => g.d);
+  return (outline(c, n)?.fills ?? []).filter((f) => f.d);
+}
+const ruleAttr = (rule?: string) => (rule === "ODD" || rule === "EVENODD" ? ' fill-rule="evenodd"' : "");
+
+/** Whether a shape's stroke goes all round it (so inside and outside mean something), or has ends. */
+function closedShape(c: Ctx, n: FNode): boolean {
+  if (n.type === "LINE") return false;
+  if (stored(n)) return (n.fillGeometry ?? []).length > 0;
+  return outline(c, n)?.closed ?? false;
+}
+
+const CAPS: Record<string, string> = { NONE: "butt", ROUND: "round", SQUARE: "square" };
+const JOINS: Record<string, string> = { MITER: "miter", ROUND: "round", BEVEL: "bevel" };
+
+/** A cap Figma draws itself at a line's end (an arrow, a dot), in the stroke's paint. */
+function capShape(cap: string, at: { x: number; y: number }, dir: { x: number; y: number }, w: number, paint: string): string {
+  const rot = (v: { x: number; y: number }, a: number) => ({ x: v.x * Math.cos(a) - v.y * Math.sin(a), y: v.x * Math.sin(a) + v.y * Math.cos(a) });
+  const pt = (v: { x: number; y: number }) => `${num(v.x)} ${num(v.y)}`;
+  const back = { x: -dir.x, y: -dir.y };
+  const perp = { x: -dir.y, y: dir.x };
+  const go = (k: number, v: { x: number; y: number }) => ({ x: at.x + v.x * k, y: at.y + v.y * k });
+  switch (cap) {
+    case "ROUND":
+      return `<circle cx="${num(at.x)}" cy="${num(at.y)}" r="${num(w / 2)}" fill="${paint}"/>`;
+    case "SQUARE": {
+      const a = go(w / 2, perp);
+      const b = go(-w / 2, perp);
+      return `<path d="M${pt(a)}L${pt({ x: a.x + (dir.x * w) / 2, y: a.y + (dir.y * w) / 2 })}L${pt({ x: b.x + (dir.x * w) / 2, y: b.y + (dir.y * w) / 2 })}L${pt(b)}Z" fill="${paint}"/>`;
+    }
+    case "ARROW_LINES": {
+      // Two arms back from the tip at 45°, 4.5 strokes long, with round ends (as Figma draws them).
+      const a1 = go(4.5 * w, rot(back, Math.PI / 4));
+      const a2 = go(4.5 * w, rot(back, -Math.PI / 4));
+      return `<path d="M${pt(a1)}L${pt(at)}L${pt(a2)}" fill="none" stroke="${paint}" stroke-width="${num(w)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    }
+    case "ARROW_EQUILATERAL":
+    case "TRIANGLE_FILLED": {
+      const tip = go(1.5 * w, dir);
+      const a = go(1.75 * w, perp);
+      const b = go(-1.75 * w, perp);
+      return `<path d="M${pt(tip)}L${pt({ x: a.x - dir.x * 1.5 * w, y: a.y - dir.y * 1.5 * w })}L${pt({ x: b.x - dir.x * 1.5 * w, y: b.y - dir.y * 1.5 * w })}Z" fill="${paint}"/>`;
+    }
+    case "DIAMOND_FILLED": {
+      const k = 1.5 * w;
+      return `<path d="M${pt(go(k, dir))}L${pt(go(k, perp))}L${pt(go(-k, dir))}L${pt(go(-k, perp))}Z" fill="${paint}"/>`;
+    }
+    case "CIRCLE_FILLED":
+      return `<circle cx="${num(at.x)}" cy="${num(at.y)}" r="${num(1.5 * w)}" fill="${paint}"/>`;
+    default:
+      return "";
+  }
+}
+
+/** A mask (in defs) showing what `content` paints white, over the whole plane. */
+function maskOf(c: Ctx, defs: string[], content: string): string {
+  const id = `k${c.uid++}`;
+  defs.push(`<mask id="${id}" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000">${content}</mask>`);
+  return id;
+}
+const PLANE = `<rect x="-100000" y="-100000" width="200000" height="200000" fill="white"/>`;
+const placed = (k: FNode, inner: string) => {
+  const t: M = k.transform ?? ID;
+  return `<g transform="matrix(${num(t.m00)} ${num(t.m10)} ${num(t.m01)} ${num(t.m11)} ${num(t.m02)} ${num(t.m12)})">${inner}</g>`;
+};
+
+/** A part's area painted in one colour, placed in its boolean (for masks). */
+function partArea(c: Ctx, k: FNode, colour: string, defs: string[]): string {
+  if (k.visible === false) return "";
+  if (composed(k)) return placed(k, `<g mask="url(#${booleanArea(c, k, defs)})"><rect x="-100000" y="-100000" width="200000" height="200000" fill="${colour}"/></g>`);
+  return placed(k, fillPaths(c, k).map((f) => `<path d="${f.d}"${ruleAttr(f.rule)} fill="${colour}"/>`).join(""));
+}
+
+/** A boolean shape's area, as a mask (union, subtract, intersect or exclude of its parts). */
+function booleanArea(c: Ctx, n: FNode, defs: string[]): string {
+  const parts = n.children.filter((k) => k.visible !== false);
+  if (!parts.length) return maskOf(c, defs, "");
+  const op = n.booleanOperation ?? "UNION";
+  if (op === "UNION") return maskOf(c, defs, parts.map((k) => partArea(c, k, "white", defs)).join(""));
+  if (op === "SUBTRACT") return maskOf(c, defs, partArea(c, parts[0], "white", defs) + parts.slice(1).map((k) => partArea(c, k, "black", defs)).join(""));
+  let acc = maskOf(c, defs, partArea(c, parts[0], "white", defs));
+  for (const k of parts.slice(1)) {
+    const kArea = maskOf(c, defs, partArea(c, k, "white", defs));
+    if (op === "INTERSECT") acc = maskOf(c, defs, `<g mask="url(#${kArea})"><g mask="url(#${acc})">${PLANE}</g></g>`);
+    else {
+      // Exclude: in one or the other, not both.
+      const notK = maskOf(c, defs, PLANE + partArea(c, k, "black", defs));
+      const notAcc = maskOf(c, defs, `${PLANE}<g mask="url(#${acc})"><rect x="-100000" y="-100000" width="200000" height="200000" fill="black"/></g>`);
+      acc = maskOf(c, defs, `<g mask="url(#${notK})"><g mask="url(#${acc})">${PLANE}</g></g><g mask="url(#${notAcc})">${partArea(c, k, "white", defs)}</g>`);
+    }
+  }
+  return acc;
+}
+
+/**
+ * The edge of a boolean shape, `width` wide and white (for a mask): each part's own edge, kept only
+ * where it's the edge of the whole (a union's parts' edges outside the others, and so on).
+ */
+function booleanEdge(c: Ctx, n: FNode, width: number, defs: string[]): string {
+  const parts = n.children.filter((k) => k.visible !== false);
+  const op = n.booleanOperation ?? "UNION";
+  return parts
+    .map((k, i) => {
+      const own = composed(k) ? booleanEdge(c, k, width, defs) : `<path d="${outline(c, k)?.stroke ?? fillPaths(c, k).map((f) => f.d).join("")}" fill="none" stroke="white" stroke-width="${num(width)}" stroke-linejoin="${JOINS[n.strokeJoin] ?? "miter"}" stroke-miterlimit="4"/>`;
+      const edge = placed(k, own);
+      const others = parts.filter((_, j) => j !== i);
+      if (op === "XOR" || op === "EXCLUDE" || !others.length) return edge;
+      let keep: string;
+      if (op === "UNION") keep = maskOf(c, defs, PLANE + others.map((o) => partArea(c, o, "black", defs)).join(""));
+      else if (op === "SUBTRACT")
+        keep = i === 0 ? maskOf(c, defs, PLANE + others.map((o) => partArea(c, o, "black", defs)).join("")) : maskOf(c, defs, partArea(c, parts[0], "white", defs) + others.slice(1).map((o) => partArea(c, o, "black", defs)).join(""));
+      else keep = others.reduce((m, o) => maskOf(c, defs, `<g mask="url(#${m})">${partArea(c, o, "white", defs)}</g>`), maskOf(c, defs, PLANE));
+      return `<g mask="url(#${keep})">${edge}</g>`;
+    })
+    .join("");
+}
+
+/** A boolean shape Figma didn't store: its fills over its area, its strokes along its edge. */
+function booleanPaths(c: Ctx, n: FNode, defs: string[]): string {
+  const w = n.size?.x ?? 0;
+  const h = n.size?.y ?? 0;
+  const area = booleanArea(c, n, defs);
+  const box = (paint: string, opacity: number | undefined, mask: string) => `<rect x="-2" y="-2" width="${num(w + 4)}" height="${num(h + 4)}" fill="${paint}"${opacity !== undefined && opacity < 1 ? ` fill-opacity="${num(opacity)}"` : ""} mask="url(#${mask})"/>`;
+  const out: string[] = [];
+  for (const p of shown(paints(c, n, "fill"))) {
+    const sp = svgPaint(c, p, w, h, defs);
+    if (sp) out.push(box(sp.fill, sp.opacity, area));
+  }
+  const sw = n.strokeWeight ?? 1;
+  const strokes = shown(paints(c, n, "stroke"));
+  if (strokes.length && sw > 0) {
+    const align = n.strokeAlign ?? "CENTER";
+    const edge = booleanEdge(c, n, align === "CENTER" ? sw : 2 * sw, defs);
+    const along = align === "INSIDE" ? `<g mask="url(#${area})">${edge}</g>` : align === "OUTSIDE" ? `<g mask="url(#${maskOf(c, defs, `${PLANE}<g mask="url(#${area})"><rect x="-100000" y="-100000" width="200000" height="200000" fill="black"/></g>`)})">${edge}</g>` : edge;
+    const strokeArea = maskOf(c, defs, along);
+    const pad = 2 * sw + 2;
+    for (const p of strokes) {
+      const sp = svgPaint(c, p, w, h, defs);
+      if (sp) out.push(`<rect x="${num(-pad)}" y="${num(-pad)}" width="${num(w + 2 * pad)}" height="${num(h + 2 * pad)}" fill="${sp.fill}"${sp.opacity !== undefined && sp.opacity < 1 ? ` fill-opacity="${num(sp.opacity)}"` : ""} mask="url(#${strokeArea})"/>`);
+    }
+  }
+  return out.join("");
+}
+
 /** A shape's paths (its fills, then its strokes, as Figma draws them), in its own coordinates. */
 function shapePaths(c: Ctx, n: FNode, defs: string[]): string {
+  if (composed(n)) return booleanPaths(c, n, defs);
   const w = n.size?.x ?? 0;
   const h = n.size?.y ?? 0;
   const out: string[] = [];
-  const layer = (geom: any[] | undefined, list: any[]) => {
-    for (const g of geom ?? []) {
-      const d = pathData(c.d.blob(g.commandsBlob));
-      if (!d) continue;
-      for (const p of shown(list)) {
-        const sp = svgPaint(c, p, w, h, defs);
-        if (sp) out.push(`<path d="${d}" fill="${sp.fill}"${sp.opacity !== undefined && sp.opacity < 1 ? ` fill-opacity="${num(sp.opacity)}"` : ""}${g.windingRule === "ODD" || g.windingRule === "EVENODD" ? ' fill-rule="evenodd"' : ""}/>`);
-      }
+  const fills = fillPaths(c, n);
+  const own = paints(c, n, "fill");
+  const regionStyles = new Map<number, any>((n.vectorData?.styleOverrideTable ?? []).map((t: any) => [t.styleID, t]));
+  for (const f of fills) {
+    const rs = f.styleID ? regionStyles.get(f.styleID) : undefined;
+    const list = rs?.fillPaints ?? styleNode(c, rs?.styleIdForFill)?.fillPaints ?? own;
+    for (const p of shown(list)) {
+      const sp = svgPaint(c, p, w, h, defs);
+      if (sp) out.push(`<path d="${f.d}" fill="${sp.fill}"${sp.opacity !== undefined && sp.opacity < 1 ? ` fill-opacity="${num(sp.opacity)}"` : ""}${ruleAttr(f.rule)}/>`);
     }
-  };
-  layer(n.fillGeometry, paints(c, n, "fill"));
-  layer(n.strokeGeometry, paints(c, n, "stroke"));
+  }
+  const sw = n.strokeWeight ?? 1;
+  const strokes = shown(paints(c, n, "stroke"));
+  if (!strokes.length || !(sw > 0)) return out.join("");
+  // Inside and outside strokes are a centred band twice as wide, cut to the shape (as Figma draws them).
+  const closed = closedShape(c, n);
+  const align = closed ? n.strokeAlign ?? "CENTER" : "CENTER";
+  const area = fills.map((f) => `<path d="${f.d}"${ruleAttr(f.rule)}/>`).join("");
+  let wrap = (x: string) => x;
+  if (align === "INSIDE" && area) {
+    const id = `i${c.uid++}`;
+    defs.push(`<clipPath id="${id}">${area}</clipPath>`);
+    wrap = (x) => `<g clip-path="url(#${id})">${x}</g>`;
+  } else if (align === "OUTSIDE" && area) {
+    const id = maskOf(c, defs, PLANE + fills.map((f) => `<path d="${f.d}"${ruleAttr(f.rule)} fill="black"/>`).join(""));
+    wrap = (x) => `<g mask="url(#${id})">${x}</g>`;
+  }
+  const o = stored(n) ? null : outline(c, n);
+  for (const p of strokes) {
+    const sp = svgPaint(c, p, w, h, defs);
+    if (!sp) continue;
+    const op = sp.opacity !== undefined && sp.opacity < 1 ? sp.opacity : undefined;
+    if (!o) {
+      // Figma's own outline of the stroke, filled.
+      for (const g of n.strokeGeometry ?? []) {
+        const d = pathData(c.d.blob(g.commandsBlob));
+        if (d) out.push(wrap(`<path d="${d}" fill="${sp.fill}"${op !== undefined ? ` fill-opacity="${num(op)}"` : ""}/>`));
+      }
+      continue;
+    }
+    if (!o.stroke) continue;
+    // Rebuilt: the line, stroked; caps each end's own (a vertex can have an arrow, the other end not).
+    const table = new Map<number, any>((n.vectorData?.styleOverrideTable ?? []).map((t: any) => [t.styleID, t]));
+    const capAt = (sid?: number) => (sid ? table.get(sid)?.strokeCap : undefined) ?? n.strokeCap ?? "NONE";
+    const caps = o.ends.map((e) => capAt(e.styleID));
+    const same = caps.length && caps.every((k) => k === caps[0] && CAPS[k]);
+    const width = align === "CENTER" ? sw : 2 * sw;
+    const dash = (n.dashPattern ?? []).length ? ` stroke-dasharray="${n.dashPattern.map(num).join(" ")}"` : "";
+    const g = `<g${op !== undefined ? ` opacity="${num(op)}"` : ""}><path d="${o.stroke}" fill="none" stroke="${sp.fill}" stroke-width="${num(width)}" stroke-linecap="${same ? CAPS[caps[0]] : "butt"}" stroke-linejoin="${JOINS[n.strokeJoin] ?? "miter"}" stroke-miterlimit="4"${dash}/>${same ? "" : o.ends.map((e, i) => capShape(caps[i], e.at, e.dir, sw, sp.fill)).join("")}</g>`;
+    out.push(wrap(g));
+  }
   return out.join("");
 }
 
@@ -422,7 +653,7 @@ function svgNode(c: Ctx, n: FNode, defs: string[]): string {
       if (k.mask) {
         const id = `m${c.uid++}`;
         const kt: M = k.transform ?? ID;
-        defs.push(`<clipPath id="${id}"><g transform="matrix(${num(kt.m00)} ${num(kt.m10)} ${num(kt.m01)} ${num(kt.m11)} ${num(kt.m02)} ${num(kt.m12)})">${(k.fillGeometry ?? []).map((g: any) => `<path d="${pathData(c.d.blob(g.commandsBlob))}"/>`).join("")}</g></clipPath>`);
+        defs.push(`<clipPath id="${id}"><g transform="matrix(${num(kt.m00)} ${num(kt.m10)} ${num(kt.m01)} ${num(kt.m11)} ${num(kt.m02)} ${num(kt.m12)})">${fillPaths(c, k).map((g) => `<path d="${g.d}"${ruleAttr(g.rule)}/>`).join("")}</g></clipPath>`);
         clip = id;
         continue;
       }
@@ -458,7 +689,7 @@ const weightOf = (style = "") => WEIGHTS.find(([re]) => re.test(style))?.[1] ?? 
 const TEXT_KEYS = ["fontName", "fontSize", "lineHeight", "letterSpacing", "textCase", "textDecoration"];
 /** A node's (or run's) type: its shared text style's when it uses one this file holds, else its own. */
 function withTextStyle(c: Ctx, s: any): any {
-  const style = s?.styleIdForText?.guid ? c.d.byId.get(gid(s.styleIdForText.guid)) : undefined;
+  const style = styleNode(c, s?.styleIdForText);
   if (!style) return s;
   const out = { ...s };
   for (const k of TEXT_KEYS) if (style[k] !== undefined) out[k] = style[k];
@@ -516,27 +747,45 @@ function textPaintCss(c: Ctx, list: any[], w: number, h: number, out: Record<str
   out.WebkitTextFillColor = "transparent";
 }
 
-/** The words, each run of another style a span. */
-function textHtml(c: Ctx, n: FNode): string {
+/**
+ * Each line's own height, when the text's line height is "auto" and its lines differ (a 20px name
+ * over an 18px role): Figma lays out each line by its own type, as it recorded.
+ */
+function lineHeights(n: FNode): { least: number; at: (i: number) => number | undefined } | null {
+  const lines: any[] = n.derivedTextData?.baselines ?? [];
+  const hs = lines.map((b) => b.lineHeight).filter((h) => typeof h === "number" && h > 0);
+  if (hs.length < 2 || hs.every((h) => Math.abs(h - hs[0]) < 0.01)) return null;
+  return {
+    least: Math.min(...hs),
+    at: (i) => lines.find((b) => i >= (b.firstCharacter ?? 0) && i < (b.endCharacter ?? Infinity))?.lineHeight,
+  };
+}
+
+/** The words, each run of another style a span (and each line its own height, when `lines` says). */
+function textHtml(c: Ctx, n: FNode, lines: ReturnType<typeof lineHeights> = null): string {
   const td = n.textData ?? {};
   const chars: string = td.characters ?? n.characters ?? "";
   const ids: number[] = td.characterStyleIDs ?? [];
   const table = new Map<number, any>((td.styleOverrideTable ?? []).map((s: any) => [s.styleID, s]));
-  const runs: Array<{ text: string; id: number }> = [];
+  const runs: Array<{ text: string; id: number; lh?: number }> = [];
   for (let i = 0; i < chars.length; i++) {
     const id = ids[i] ?? 0;
-    if (runs.length && runs[runs.length - 1].id === id) runs[runs.length - 1].text += chars[i];
-    else runs.push({ text: chars[i], id });
+    const lh = lines?.at(i);
+    const last = runs[runs.length - 1];
+    if (last && last.id === id && last.lh === lh) last.text += chars[i];
+    else runs.push({ text: chars[i], id, lh });
   }
   const words = (t: string) => esc(t).replace(/\u2028|\n/g, "<br>");
   return runs
     .map((r) => {
       const s = r.id ? table.get(r.id) : undefined;
-      if (!s) return words(r.text);
       const o: Record<string, string> = {};
-      textStyleCss(c, s, o, n);
-      const sp = s.fillPaints ?? (s.styleIdForFill?.guid ? c.d.byId.get(gid(s.styleIdForFill.guid))?.fillPaints : undefined);
-      if (sp) textPaintCss(c, sp, n.size?.x ?? 0, n.size?.y ?? 0, o);
+      if (s) {
+        textStyleCss(c, s, o, n);
+        const sp = styleNode(c, s.styleIdForFill)?.fillPaints ?? s.fillPaints;
+        if (sp) textPaintCss(c, sp, n.size?.x ?? 0, n.size?.y ?? 0, o);
+      }
+      if (r.lh) o.lineHeight = px(r.lh);
       return Object.keys(o).length ? `<span style="${attr(css(o))}">${words(r.text)}</span>` : words(r.text);
     })
     .join("");
@@ -631,6 +880,9 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
     if (n.stackChildAlignSelf === "STRETCH") {
       st.alignSelf = "stretch";
       row ? (fixH = false) : (fixW = false);
+      // A layer that fills a column which hugs its content doesn't widen the column (in Figma the
+      // others set its width); CSS would count its own content in.
+      if (!row && hugs(parent.stackCounterSizing)) st.contain = "inline-size";
     }
     st.flexShrink = "0";
   }
@@ -643,10 +895,15 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
   if (drawnAsSvg) return svgHtml(c, n, parent, st, inFlow, { x: 0, y: 0, w, h }, null);
 
   if (isText) {
+    let perLine: ReturnType<typeof lineHeights> = null;
     textStyleCss(c, n, st);
+    // Figma draws type without the Mac's extra weight (light words on dark looked bold beside it).
+    st.WebkitFontSmoothing = "antialiased";
     // Figma's own line height for "auto", from how it laid the text out.
     const derived = n.derivedTextData?.baselines?.[0]?.lineHeight;
-    if (st.lineHeight === "normal" && derived && !(n.textData?.styleOverrideTable ?? []).some((s: any) => s.fontSize || s.lineHeight)) st.lineHeight = px(derived);
+    perLine = st.lineHeight === "normal" ? lineHeights(n) : null;
+    if (perLine) st.lineHeight = px(perLine.least);
+    else if (st.lineHeight === "normal" && derived) st.lineHeight = px(derived);
     textPaintCss(c, paints(c, n, "fill"), w, h, st);
     lookCss(c, n, st, true);
     const align = n.textAlignHorizontal;
@@ -657,9 +914,9 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
       st.display = "flex";
       st.flexDirection = "column";
       st.justifyContent = v === "CENTER" ? "center" : "flex-end";
-      return `<div${name}${mask} style="${attr(css(st))}"><span>${textHtml(c, n)}</span></div>`;
+      return `<div${name}${mask} style="${attr(css(st))}"><span>${textHtml(c, n, perLine)}</span></div>`;
     }
-    return `<p${name}${mask} style="${attr(css({ margin: "0", ...st }))}">${textHtml(c, n)}</p>`;
+    return `<p${name}${mask} style="${attr(css({ margin: "0", ...st }))}">${textHtml(c, n, perLine)}</p>`;
   }
 
   // Boxes: frames, components, rectangles, ellipses.
@@ -703,9 +960,13 @@ function strokeReach(c: Ctx, n: FNode): number {
   let r = 0;
   const visit = (k: FNode) => {
     if (k.visible === false) return;
-    // An open path's stroke is centred whatever its alignment says; a box's inside stroke stays in.
-    const inside = k.strokeAlign === "INSIDE" && !VECTORISH.has(k.type);
-    if ((k.strokeGeometry ?? []).length && shown(paints(c, k, "stroke")).length && !inside) r = Math.max(r, (k.strokeWeight ?? 1) * (k.strokeJoin === "MITER" ? 2 : 1));
+    // An inside stroke stays in; an open path's is centred whatever its alignment says, and its
+    // ends may carry arrows.
+    const sw = k.strokeWeight ?? 1;
+    if (shown(paints(c, k, "stroke")).length && sw > 0 && !(k.strokeAlign === "INSIDE" && (BOXES.has(k.type) || closedShape(c, k)))) {
+      const arrows = !BOXES.has(k.type) && !closedShape(c, k) && (/ARROW|FILLED/.test(k.strokeCap ?? "") || (k.vectorData?.styleOverrideTable ?? []).some((t: any) => /ARROW|FILLED/.test(t.strokeCap ?? "")));
+      r = Math.max(r, sw * (arrows ? 4 : k.strokeJoin === "MITER" ? 2 : 1));
+    }
     for (const x of k.children ?? []) visit(x);
   };
   visit(n);

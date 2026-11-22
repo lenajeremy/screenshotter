@@ -1,9 +1,10 @@
 /**
- * A .fig import against Figma's own picture of a frame (exported from Figma at 1x): the frame is
- * imported into a scratch library, drawn by the engine, and compared pixel by pixel. Writes
- * figma.png, ours.png, diff.png and side.png, and prints the share of pixels that differ.
+ * A .fig import (or a paste: what Figma put on the clipboard, saved as .html) against Figma's own
+ * picture of a frame (exported from Figma at 1x): the frame is imported into a scratch library,
+ * drawn by the engine, and compared pixel by pixel. Writes figma.png, ours.png, diff.png and
+ * side.png, and prints the share of pixels that differ.
  *
- *   npx tsx scripts/fig-compare.ts <file.fig> <frame name> <figma export.png> [--page name] [--out dir]
+ *   npx tsx scripts/fig-compare.ts <file.fig | clipboard.html> <frame name> <figma export.png> [--page name] [--out dir]
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -95,7 +96,7 @@ async function compare(a: Buffer, b: Buffer, dir: string) {
 }
 
 const t0 = Date.now();
-const r = await importFig(null, { file, figmaPage: page || undefined }, "studio");
+const r = file.endsWith(".html") ? await importFig(null, { html: readFileSync(file, "utf8") }, "studio") : await importFig(null, { file, figmaPage: page || undefined }, "studio");
 const art = r.artboards.find((a) => a.name.trim().toLowerCase() === frame.trim().toLowerCase());
 if (!art) throw new Error(`No frame "${frame}": ${r.artboards.map((a) => a.name).join(", ")}`);
 const dir = path.join(outRoot, frame.replace(/[^\w-]+/g, "_"));

@@ -35,7 +35,8 @@
     "app:dmg": "node scripts/build-dmg.mjs",
     "release:feed": "node scripts/release-feed.mjs",
     "site": "cd site && python3 -m http.server 4700 --bind 127.0.0.1",
-    "test:agents": "npm run build && tsx scripts/agents-test.ts"
+    "test:agents": "npm run build && tsx scripts/agents-test.ts",
+    "test:fig": "tsx scripts/fig-test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",

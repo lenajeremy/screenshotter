@@ -349,6 +349,15 @@ const commands = {
   },
   // Frames copied in Figma (the Mac app hands over what Figma put on the clipboard).
   pasteFigma: (html) => pasteFigma(html, { board: S.boardId }),
+  // A .fig file the Mac app was given (pasted from Finder, opened with the app): onto this board, or a new one.
+  importFigBytes: async ({ name, data }) => {
+    try {
+      const blob = await (await fetch(`data:application/octet-stream;base64,${data}`)).blob();
+      await importFigFile(new File([blob], name), { board: S.boardId });
+    } catch (err) {
+      fail(err, "Couldn't bring the Figma file in");
+    }
+  },
   // Before the app quits: the open board's last changes.
   flush: () => boardSaved(),
   error: (message) => toast({ kind: "err", title: "Something went wrong", text: message }),

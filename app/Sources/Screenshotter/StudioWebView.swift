@@ -79,9 +79,11 @@ final class StudioWebView: WKWebView, NSDraggingSource {
     // Pictures (SVG and GIF too) and videos, which land on the board as layers.
     static let importableTypes: [UTType] = [.png, .jpeg, .webP, .tiff, .heic, .svg, .gif, .mpeg4Movie, .quickTimeMovie]
 
+    static func isFigFile(_ u: URL) -> Bool { u.pathExtension.lowercased() == "fig" }
+
     static func pasteboardHasImport(_ pb: NSPasteboard = .general) -> Bool {
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-           urls.contains(where: { u in importableTypes.contains { UTType(filenameExtension: u.pathExtension)?.conforms(to: $0) == true } }) {
+           urls.contains(where: { u in isFigFile(u) || importableTypes.contains { UTType(filenameExtension: u.pathExtension)?.conforms(to: $0) == true } }) {
             return true
         }
         return pb.availableType(from: [.png, .tiff]) != nil

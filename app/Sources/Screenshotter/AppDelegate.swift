@@ -352,8 +352,24 @@ import WebKit
     }
 
     func upload(_ urls: [URL]) {
+        // Figma files go to the page, which brings their frames in (onto this board, or a new one).
+        let figs = urls.filter(StudioWebView.isFigFile)
+        for url in figs { importFig(url) }
+        let rest = urls.filter { !StudioWebView.isFigFile($0) }
         let takes = { (u: URL) in StudioWebView.importableTypes.contains { UTType(filenameExtension: u.pathExtension)?.conforms(to: $0) == true } }
-        send(urls.filter(takes).map { .file($0) }, refused: urls.filter { !takes($0) }.map(\.lastPathComponent))
+        send(rest.filter(takes).map { .file($0) }, refused: rest.filter { !takes($0) }.map(\.lastPathComponent))
+    }
+
+    /// A .fig file (Figma's File › Save local copy), read off the main thread and handed to the page.
+    private func importFig(_ url: URL) {
+        Task {
+            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+            guard let data else {
+                _ = try? await web.callAsyncJavaScript("window.studio && window.studio.command('error', text)", arguments: ["text": "Couldn't open \(url.lastPathComponent): it isn't there any more, or \(AppName.name) isn't allowed to open it."], in: nil, contentWorld: .page)
+                return
+            }
+            _ = try? await web.callAsyncJavaScript("window.studio && window.studio.command('importFigBytes', { name, data })", arguments: ["name": url.lastPathComponent, "data": data.base64EncodedString()], in: nil, contentWorld: .page)
+        }
     }
 
     /// Off the main thread (a long video is gigabytes): each file goes to the engine, its answer
@@ -365,7 +381,7 @@ import WebKit
             var items: [[String: Any]] = []
             var problems: [String] = []
             if !refused.isEmpty {
-                problems.append("Couldn't add \(refused.joined(separator: ", ")). Screenshotter adds pictures (PNG, JPEG, WebP, TIFF, HEIC, SVG, GIF) and videos (MP4, MOV).")
+                problems.append("Couldn't add \(refused.joined(separator: ", ")). \(AppName.name) adds pictures (PNG, JPEG, WebP, TIFF, HEIC, SVG, GIF), videos (MP4, MOV) and Figma files (.fig).")
             }
             for upload in uploads {
                 let name: String
