@@ -196,6 +196,39 @@ export const SNAPSHOT = String.raw`(function (opts) {
     });
   })();
 
+  // A box pulled up (or left) over what comes before it by a negative margin, with a background:
+  // in the page's flow, words and inline boxes paint above every box's background, so what it
+  // slides over still shows (Flutterwave's hero buttons, under the next section's white). On a
+  // board each layer paints whole, in order: what it slides over is lifted to stay on top.
+  (function () {
+    if (!document.body) return;
+    var all = document.body.getElementsByTagName("*");
+    var INLINE_REPLACED = { IMG: 1, SVG: 1, svg: 1, VIDEO: 1, CANVAS: 1, INPUT: 1, BUTTON: 1, SELECT: 1, TEXTAREA: 1 };
+    var hit = function (a, b) { return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom; };
+    var paints = function (cs) { return (cs.backgroundColor && !/rgba\(.*,\s*0\)$|transparent/.test(cs.backgroundColor)) || cs.backgroundImage !== "none"; };
+    var ownWords = function (el) { for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && c.textContent.trim()) return true; return false; };
+    for (var i = 0; i < all.length && i < 25000; i++) {
+      var e = all[i], ecs = getComputedStyle(e);
+      if (ecs.position !== "static" || !(parseFloat(ecs.marginTop) < 0 || parseFloat(ecs.marginLeft) < 0) || !paints(ecs)) continue;
+      var er = e.getBoundingClientRect();
+      if (er.width < 1 || er.height < 1) continue;
+      // What comes before it: its earlier siblings (and its parents' earlier siblings), and all inside them.
+      for (var a = e, up = 0; a && a !== document.body && up < 4; a = a.parentElement, up++) {
+        for (var sib = a.previousElementSibling; sib; sib = sib.previousElementSibling) {
+          var list = [sib].concat([].slice.call(sib.getElementsByTagName("*"), 0, 3000));
+          for (var k = 0; k < list.length; k++) {
+            var c = list[k], ccs = getComputedStyle(c);
+            if (ccs.position !== "static" || ccs.display === "none") continue;
+            var inlineBox = ccs.display.indexOf("inline") === 0 || INLINE_REPLACED[c.tagName];
+            // Words in a box with nothing painted of its own: only the words are content.
+            var bareWords = !inlineBox && ownWords(c) && !paints(ccs) && ccs.borderTopStyle === "none";
+            if ((inlineBox || bareWords) && hit(c.getBoundingClientRect(), er)) c.setAttribute("data-ss-lift", "");
+          }
+        }
+      }
+    }
+  })();
+
   var MAX = opts.maxNodes || 6000;
   var CUT = opts.maxHeight || 16000;
   var VIEW_H = window.innerHeight;
@@ -552,6 +585,7 @@ export const SNAPSHOT = String.raw`(function (opts) {
     // (Not when something else shows in its place, one of several that take turns, nor a menu or a
     // tooltip waiting to be opened: hidden, inert, or in a box floated over the page.)
     if (px(cs.opacity) < 0.05 && !lifted && cs.pointerEvents !== "none" && (el.textContent || "").trim() && !el.closest("[aria-hidden=true]") && !takesTurns(el, rect) && !inPopover(el)) { delete style.opacity; delete style.transform; }
+    if (el.hasAttribute && el.hasAttribute("data-ss-lift") && !style.position) style.position = "relative";
     // Fixed (a header that stays put): where it sits at the top of the page, in its holder.
     if (cs.position === "fixed") {
       var holder = positioned[positioned.length - 1];

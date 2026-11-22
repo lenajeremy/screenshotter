@@ -1393,6 +1393,8 @@ await fake.close();
     <div class="intro"><h1>Story<br>time</h1><div style="display:contents"><div style="display:contents"><span>Deep contents</span></div></div></div>
     <section class="runway"><div class="stick"><p class="fade">Shown in the pinned part</p></div></section>
     <div class="after"><p class="fade">Shown when scrolled to</p></div>
+    <div style="padding: 20px 40px 60px"><a href="#" style="display:inline-flex;padding:20px;background:#0a0e27;color:#fff">Create a free account</a></div>
+    <div style="margin-top:-150px;padding-top:160px;background:#fff">The next section, pulled up over the button</div>
     <div class="cookie">We use cookies to improve your experience. <button>Accept</button> <button>Reject</button></div>
     <script>
       const io = new IntersectionObserver((es) => es.forEach((e) => e.target.classList.toggle("on", e.isIntersecting)));
@@ -1478,8 +1480,12 @@ await fake.close();
     check(Boolean(words("Shown in the pinned part")) && Number(words("Shown in the pinned part")!.style.opacity ?? 1) > 0.9, "words that fade in inside a pinned section come in shown");
     check(Boolean(words("Shown when scrolled to")) && Number(words("Shown when scrolled to")!.style.opacity ?? 1) > 0.9, "words that fade in when scrolled to, and out when scrolled back, come in shown");
     const tall = parseFloat(sroot.style.minHeight ?? sroot.style.height ?? "0");
-    check(tall > 1900 && tall < 2400, `a pinned section keeps its own height, not the room it scrolls through (${tall}px, the page is 4100)`);
+    check(tall > 1900 && tall < 2600, `a pinned section keeps its own height, not the room it scrolls through (${tall}px, the page is 4300)`);
     check(!words("We use cookies") && sr.warnings.some((w) => /cookie/.test(w)), "a cookie banner is left out, and that's said");
+    const cta = words("Create a free account");
+    // Lifted: the layer itself, its frame, or the button inside its words (a link kept as styled text).
+    const lifted = (n?: { style: Record<string, string>; parent?: string | null; text?: string }) => n?.style.position === "relative" || /position:\s*relative/.test(n?.text ?? "") || (n?.parent ? sb.nodes[n.parent]?.style.position === "relative" : false);
+    check(lifted(cta), "a button a later section is pulled up over (negative margin, white background) stays on top, as in the page");
   }
   // Agents bring sites in too, onto a new board named after it.
   const viaAgent = await call("board_import_website", { url: siteUrl, width: 390, fullPage: false });
