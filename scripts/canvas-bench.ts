@@ -11,13 +11,13 @@
  * ctrl+wheel zooms, keyboard zooms, zoom to fit / to selection, space-drag, clicks, drags, resizes
  * and hovers. Frames are timed in the page with requestAnimationFrame.
  *
- *   npm run bench:canvas                              both engines, prints a table, saves JSON
- *   npm run bench:canvas -- --label before            names the saved results (docs/perf/canvas-before.json)
- *   npm run bench:canvas -- --compare before          prints the change from a saved run
- *   npm run bench:canvas -- webkit --only "pan|zoom"  one engine, some interactions
- *   npm run bench:canvas -- chromium --trace          Chromium only: where main-thread time goes, per interaction
- *   npm run bench:canvas -- --headed                  windows you can watch
- *   npm run bench:canvas -- --ab <folder>             before and after: the app built in <folder> (a
+ *   npx tsx scripts/canvas-bench.ts                           both engines, prints a table, saves JSON
+ *   npx tsx scripts/canvas-bench.ts --label before            names the saved results (docs/perf/canvas-before.json)
+ *   npx tsx scripts/canvas-bench.ts --compare before          prints the change from a saved run
+ *   npx tsx scripts/canvas-bench.ts webkit --only "pan|zoom"  one engine, some interactions
+ *   npx tsx scripts/canvas-bench.ts chromium --trace          Chromium only: where main-thread time goes, per interaction
+ *   npx tsx scripts/canvas-bench.ts --headed                  windows you can watch
+ *   npx tsx scripts/canvas-bench.ts --ab <folder>             before and after: the app built in <folder> (a
  *                                                     checkout of the commit before) against this one,
  *                                                     a round of each in turn, so a busy Mac slows both alike
  */
