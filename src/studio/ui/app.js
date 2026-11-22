@@ -9,7 +9,7 @@ import { BoardApp, boardCommand, importToBoard, pickImages } from "./board.js";
 import { bset, closeBoard, newBoard, openBoard, saved as boardSaved } from "./board-state.js";
 import { BoardsGrid, refreshBoards, useBoards } from "./board-library.js";
 import { ImportWebsite, looksLikeUrl, openImportWebsite } from "./web-import.js";
-import { ConnectAgent, FigmaMark, ImportFigma, looksLikeFigma, openImportFigma, saveFigmaToken } from "./imports.js";
+import { ConnectAgent, FigmaMark, ImportFigma, importFigFile, isFigFile, isFigmaClipboard, looksLikeFigma, openImportFigma, pasteFigma, saveFigmaToken } from "./imports.js";
 import { AgentLogo } from "./agent-logos.js";
 import { loadAgents } from "./board-agent.js";
 import { S, answerConfirm, answerPrompt, api, dismiss, fail, native, restore, set, setTheme, themeNow, toast, touch, useStore } from "./store.js";
@@ -347,6 +347,8 @@ const commands = {
     if (S.boardId) return importToBoard(items);
     return startBoardWith(items);
   },
+  // Frames copied in Figma (the Mac app hands over what Figma put on the clipboard).
+  pasteFigma: (html) => pasteFigma(html, { board: S.boardId }),
   // Before the app quits: the open board's last changes.
   flush: () => boardSaved(),
   error: (message) => toast({ kind: "err", title: "Something went wrong", text: message }),
@@ -366,6 +368,8 @@ window.addEventListener("keydown", (e) => {
 // A website or Figma link pasted on Home goes straight in; pictures start a board.
 window.addEventListener("paste", (e) => {
   if (S.boardId || S.modal || typing()) return;
+  const htmlText = e.clipboardData?.getData("text/html") ?? "";
+  if (isFigmaClipboard(htmlText)) return (e.preventDefault(), pasteFigma(htmlText));
   const text = e.clipboardData?.getData("text/plain")?.trim();
   if (text && looksLikeFigma(text)) return (e.preventDefault(), openImportFigma({ url: text }));
   if (text && looksLikeUrl(text)) return (e.preventDefault(), openImportWebsite({ url: text }));
@@ -395,7 +399,11 @@ window.addEventListener("drop", (e) => {
   e.preventDefault();
   dragDepth = 0;
   set({ dropping: false });
-  uploadFiles([...e.dataTransfer.files]).then(startBoardWith);
+  const files = [...e.dataTransfer.files];
+  // A .fig file: its frames, as a board of their own.
+  const fig = files.find(isFigFile);
+  if (fig) return importFigFile(fig).catch((err) => fail(err, "Couldn't bring the Figma file in"));
+  uploadFiles(files).then(startBoardWith);
 });
 
 // The draggable title-bar area, for the Mac app's window.

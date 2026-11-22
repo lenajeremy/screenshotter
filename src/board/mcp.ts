@@ -59,6 +59,7 @@ import { adoptCssPictures, adoptImage, adoptImages, changeBoard, createBoard, fi
 import { addVideoStills } from "./video.js";
 import { whoAmI, type AgentIdentity } from "./agentman.js";
 import { importFigma } from "./figma-import.js";
+import { importFig } from "./fig-import.js";
 import { importWebsite } from "./web-import.js";
 import { describeAnchor, getComments, keysOf, reply, sentOnly, startThread, threadForAgent } from "./comments.js";
 import { SHADER_PRESETS, cleanShaderCode, cleanShaderParams, cleanShaderSpec, parseShaderParams, presetOf, shaderCatalog, shaderCode, shaderKey, shaderPresetName, shaderUsers, shaderValues, type ShaderSpec } from "./core.js";
@@ -82,7 +83,7 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - board_edit changes layers in place (styles, words, names, order, duplicates, deletes, tokens, scale: a layer bigger or smaller with its type and spacing) without rewriting them; board_read shows the layer tree with ids (tree), the HTML (html) or the tokens.
 - Look before you call it done: board_screenshot an artboard (or one layer) after each meaningful change. Fix overflow and alignment it shows. When you've finished, call board_done.
 - Inline <svg> comes in as a vector layer with a layer for each part (groups, rects, circles, paths, lines, words), each with its SVG attributes; board_read tree lists them. board_edit vector sets a part's attributes (fill, stroke, d, cx…), text retypes an SVG <text>, and board_write_html with an svg layer (or a group in one) as the target adds SVG elements to it. split and flatten turn a vector drawn as one piece into parts and back.
-- A Figma file: board_import_figma brings its frames (or one frame, from its link) onto a board as layers.
+- A Figma design: board_import_figma brings a .fig file's frames (File › Save local copy in Figma), or a frame from a link, onto a board as layers.
 - An existing website: board_import_website brings a page onto a board as an artboard of ordinary layers (its layout, words, pictures and fonts, read as the browser draws it at the width you give), ready to change with board_edit like anything else. Use it to redesign or extend a real site from where it is, rather than rebuilding it by hand.
 - Tokens (board_edit token; rename renames one everywhere it's used) are CSS custom properties every layer can use as var(--name): set colours, radii and spacing once and use them everywhere.
 - Repeated pieces (a button, a list row, a card): build one, make it a component (board_edit component), and place copies of it (board_edit copy). Change the component to change them all; change a copy's words or colours for that copy alone.
@@ -1088,20 +1089,23 @@ export function registerBoardTools(server: McpServer) {
   server.registerTool(
     "board_import_figma",
     {
-      title: "Bring a Figma file onto a board",
+      title: "Bring a Figma design onto a board",
       description:
-        "Put a Figma file's frames (its first page's, up to 12) or one frame (a link to it: right-click › Copy link to selection) on a board as artboards of ordinary layers: auto layout as flex, fills, strokes, radii, shadows, text with its styles, pictures, and vectors and icons as SVG. Needs a Figma personal access token: the person adds it in the app (Settings › Figma), or the FIGMA_TOKEN environment variable. Takes 5–60 seconds.",
+        "Put a Figma design on a board as artboards of ordinary layers: auto layout as flex, components expanded with their overrides, fills (pictures, gradients, blends), strokes, radii, shadows and blurs, text with its styles and fonts, and vectors and icons as SVG from Figma's own geometry. Best from a .fig file (in Figma: File › Save local copy): `file`, its path; it needs nothing else and has no limits. A Figma link works too (`url`), but needs a personal access token (the app's Settings › Figma, or FIGMA_TOKEN) and Figma lets free accounts read only a few files a month that way.",
       inputSchema: {
-        url: z.string().describe("The Figma link: figma.com/design/<key>/… (a frame's link has ?node-id=…)."),
+        file: z.string().optional().describe("A .fig file's path (File › Save local copy in Figma)."),
+        figmaPage: z.string().optional().describe("With `file`: the Figma page to bring in, by name (default the first page with frames)."),
+        url: z.string().optional().describe("Or a Figma link: figma.com/design/<key>/… (a frame's link has ?node-id=…)."),
         board: BoardRef.optional().describe("The board to put it on; left out, a new board named after the file."),
         page: z.string().optional().describe("The page of the board to put it on (its id); default the first."),
       },
     },
     (a) =>
       guard(async () => {
+        if (!a.file && !a.url) throw new Error("Give a .fig file's path (`file`) or a Figma link (`url`).");
         const b = a.board ? findBoard(a.board) : null;
         const me = await whoAmI();
-        const r = await importFigma(b?.id ?? null, { url: a.url, page: a.page }, "agent");
+        const r = a.file ? await importFig(b?.id ?? null, { file: a.file.replace(/^~(?=\/)/, process.env.HOME ?? "~"), figmaPage: a.figmaPage, page: a.page }, "agent") : await importFigma(b?.id ?? null, { url: a.url!, page: a.page }, "agent");
         changeBoard(r.board, workingOps(getBoard(r.board), r.artboards.map((x) => x.id), me, "import"), "agent");
         return [text({ ...r, note: `On the board as ${r.artboards.length} artboard${r.artboards.length === 1 ? "" : "s"}. board_read it (tree) to find the layers, board_screenshot an artboard to see it.` })];
       }),

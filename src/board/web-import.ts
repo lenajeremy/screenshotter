@@ -111,7 +111,7 @@ function extOf(url: string, type?: string): string {
 }
 
 /** Keep bytes in the library, by their contents (the same picture once). */
-function saveAsset(buf: Buffer, ext: string): string {
+export function saveAsset(buf: Buffer, ext: string): string {
   const hash = createHash("sha1").update(buf).digest("hex").slice(0, 16);
   const out = path.join(assetDir(), `${hash}.${ext}`);
   if (!existsSync(out)) writeFileSync(out, buf);
@@ -157,7 +157,7 @@ async function inTurn<T>(items: T[], n: number, job: (item: T, i: number) => Pro
 const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 
 /** A typeface's ranges: does it hold Latin letters (A, or the accented ones)? Faces for other scripts stay behind. */
-function forLatin(range: string): boolean {
+export function forLatin(range: string): boolean {
   if (!range.trim()) return true;
   for (const part of range.split(",")) {
     const m = /U\+([0-9A-F?]+)(?:-([0-9A-F]+))?/i.exec(part.trim());

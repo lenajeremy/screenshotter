@@ -1475,6 +1475,9 @@ async function dropFiles(e) {
     const { addAsset } = await import("./board-assets.js");
     return addAsset(JSON.parse(asset), { at: toWorld(e.clientX, e.clientY), into: frameAt(e.clientX, e.clientY), ev: e });
   }
+  // A .fig file: its frames beside the artboards on this board.
+  const fig = [...(e.dataTransfer?.files ?? [])].find((f) => /\.fig$/i.test(f.name));
+  if (fig) return import("./imports.js").then((m) => m.importFigFile(fig, { board: B.id })).catch((err) => import("./store.js").then((st) => st.fail(err, "Couldn't bring the Figma file in")));
   const { addImages, isMedia } = await import("./board.js");
   const files = [...(e.dataTransfer?.files ?? [])].filter(isMedia);
   if (!files.length) return;

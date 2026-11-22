@@ -7,7 +7,7 @@
  * absolutely; fills (solid, gradients, pictures), strokes, corner radii, shadows, blurs, opacity and
  * blend modes as CSS; text with its runs of styles; vectors and icons as SVG (Figma draws them).
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { freeSpot, htmlToNodes, type Op } from "./core.js";
@@ -110,13 +110,29 @@ export function parseFigmaUrl(url: string): { key: string; node?: string } {
   return { key, node: node && node !== "0:1" ? node : undefined };
 }
 
-async function figma<T>(token: string, url: string): Promise<T> {
+async function figma<T>(token: string, url: string, tries = 5): Promise<T> {
+  // While developing the importer: Figma's answers kept on disk (SCREENSHOTTER_FIGMA_CACHE), so
+  // running the same import again doesn't use up Figma's rate limit.
+  const cacheDir = process.env.SCREENSHOTTER_FIGMA_CACHE;
+  const cached = cacheDir ? path.join(cacheDir, `${createHash("sha1").update(url).digest("hex")}.json`) : "";
+  if (cached && existsSync(cached)) return JSON.parse(readFileSync(cached, "utf8")) as T;
   const res = await fetch(url, { headers: { "X-Figma-Token": token } });
+  // Too many requests: wait as long as Figma asks (a minute at most), then try again.
+  if (res.status === 429 && tries > 1) {
+    const wait = Math.min(60, Math.max(2, Number(res.headers.get("retry-after")) || 2 ** (6 - tries)));
+    await new Promise((r) => setTimeout(r, wait * 1000));
+    return figma<T>(token, url, tries - 1);
+  }
   if (res.status === 403) throw new Error("Figma refused the token: make a new personal access token in Figma (Settings › Security › Personal access tokens) with read access to files, and paste it again.");
   if (res.status === 404) throw new Error("Figma couldn't find that file. Check the link, and that the token's account can open the file.");
   if (res.status === 429) throw new Error("Figma says too many requests: wait a minute and try again.");
   if (!res.ok) throw new Error(`Figma answered ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return (await res.json()) as T;
+  const body = (await res.json()) as T;
+  if (cached) {
+    mkdirSync(cacheDir!, { recursive: true });
+    writeFileSync(cached, JSON.stringify(body));
+  }
+  return body;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -252,6 +268,29 @@ function textCss(t: TypeStyle | undefined, out: Record<string, string>) {
   if (fill) out.color = rgba(fill.color, fill.opacity ?? 1);
 }
 
+/**
+ * A text layer's paint (on the layer, not in its text style): a colour, or a gradient or picture
+ * shown through the letters.
+ */
+function textPaint(fills: Paint[] | undefined, ctx: Ctx, out: Record<string, string>) {
+  const list = visible(fills);
+  if (!list.length) return;
+  if (list.length === 1 && list[0].type === "SOLID") {
+    out.color = rgba(list[0].color, list[0].opacity ?? 1);
+    return;
+  }
+  const bg: Record<string, string> = {};
+  fillCss(list, ctx, bg);
+  const layers = [bg.backgroundImage, bg.backgroundColor && `linear-gradient(${bg.backgroundColor}, ${bg.backgroundColor})`].filter(Boolean).join(", ");
+  if (!layers) return;
+  out.backgroundImage = layers;
+  if (bg.backgroundSize) out.backgroundSize = `${bg.backgroundSize}${bg.backgroundColor ? ", auto" : ""}`;
+  out.WebkitBackgroundClip = "text";
+  out.backgroundClip = "text";
+  out.color = "transparent";
+  out.WebkitTextFillColor = "transparent";
+}
+
 const css = (o: Record<string, string>) =>
   Object.entries(o)
     .filter(([, v]) => v !== undefined && v !== "")
@@ -341,6 +380,7 @@ export function nodeHtml(n: FigmaNode, parent: FigmaNode | null, ctx: Ctx): stri
 
   if (isText) {
     textCss(n.style, st);
+    textPaint(n.fills, ctx, st);
     effectsCss(n, st, true);
     const align = n.style?.textAlignHorizontal;
     if (align && align !== "LEFT") st.textAlign = align === "JUSTIFIED" ? "justify" : align.toLowerCase();

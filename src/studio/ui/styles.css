@@ -1722,3 +1722,16 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .ag-actions { display: flex; gap: 2px; margin-left: -6px; opacity: 0; transition: opacity 0.15s; }
 .ag-reply:hover .ag-actions, .ag-actions:focus-within { opacity: 1; }
 .ag-answer { white-space: normal; }
+
+/* Import from Figma: a .fig file first, a paste, a link last */
+.fg-drop { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 26px 16px 22px; border: 0; border-radius: 14px; background: var(--panel-2); box-shadow: inset 0 0 0 1.5px var(--line-2); color: var(--text); transition: background 0.12s, box-shadow 0.12s; }
+.fg-drop svg { margin-bottom: 4px; }
+.fg-drop:hover, .fg-drop.over { background: var(--panel-3); box-shadow: inset 0 0 0 1.5px var(--iris); }
+.fg-drop b { font-size: 13.5px; font-weight: 600; }
+.fg-drop span { font-size: 12px; color: var(--text-3); }
+.fg-or { margin: 0; font-size: 12.5px; color: var(--text-2); text-align: center; }
+.fg-or span { color: var(--text-4); margin-right: 2px; }
+.fg-more { align-self: center; padding: 2px 4px; border: 0; background: none; color: var(--text-3); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.fg-more:hover { color: var(--text); }
+.fg-link { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.fg-progress { padding: 18px 2px; }

@@ -15,6 +15,7 @@ import { scheduleBoardThumb } from "../board/thumbs.js";
 import { drawLayers, maskFontsFor, previewDocument } from "../board/render.js";
 import { importWebsite } from "../board/web-import.js";
 import { importFigma } from "../board/figma-import.js";
+import { importFig } from "../board/fig-import.js";
 import { connectedAgents } from "../board/agents-live.js";
 import { installedAgents, type AgentId } from "../agent/agents.js";
 import { deleteThread, getThread, listThreads, send as sendChat, stop as stopChat } from "../agent/chat.js";
@@ -567,6 +568,23 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       const { id } = await json<{ id: string }>(req);
       deleteThread(id);
       return send(200, { ok: true });
+    }
+    case "/api/board/import-fig": {
+      // A .fig file (Figma's File › Save local copy), its bytes as the body: onto a board (a new one, without `id`).
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const c of req) {
+        size += (c as Buffer).length;
+        if (size > 1024 * 1024 * 1024) throw new HttpError(413, "That .fig file is larger than 1 GB");
+        chunks.push(c as Buffer);
+      }
+      const progress = jobProgress(url);
+      return send(200, await importFig(url.searchParams.get("id") || null, { data: Buffer.concat(chunks), page: url.searchParams.get("page") ?? undefined, figmaPage: url.searchParams.get("figmaPage") ?? undefined }, "studio", (f, step) => progress?.(f, step)));
+    }
+    case "/api/board/import-fig-paste": {
+      // Frames copied in Figma (⌘C): what Figma put on the clipboard, as HTML.
+      const a = z.object({ id: z.string().optional(), html: z.string().max(200 * 1024 * 1024), page: z.string().optional() }).parse(await json(req));
+      return send(200, await importFig(a.id || null, { html: a.html, page: a.page }, "studio"));
     }
     case "/api/figma-token": {
       // The token for this run (the Mac app keeps it in the Keychain for the next).

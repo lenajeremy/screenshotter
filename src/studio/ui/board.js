@@ -889,6 +889,8 @@ function onPaste(e) {
   const htmlText = e.clipboardData?.getData("text/html") ?? "";
   const plain = e.clipboardData?.getData("text/plain") ?? "";
   e.preventDefault();
+  // Frames copied in Figma: onto this board, as layers.
+  if (/\(figma\)/.test(htmlText)) return import("./imports.js").then((m) => m.pasteFigma(htmlText, { board: B.id }));
   if (files.length && !htmlText) return addImages(files, pasteTarget());
   const mark = /<!--board:([a-z0-9]+)-->/.exec(htmlText);
   if (mark && clip?.token === mark[1]) return pasteLayers(clip);

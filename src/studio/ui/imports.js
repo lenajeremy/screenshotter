@@ -6,7 +6,7 @@ import { fit } from "./board-canvas.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { AgentLogo } from "./agent-logos.js";
-import { S, api, fail, native, set, touch, toast, useStore } from "./store.js";
+import { S, api, dismiss, fail, native, set, touch, toast, useStore } from "./store.js";
 
 /** Run an import with its progress (`onStep` gets { fraction, step }), then open what it made. */
 export async function runImport(kind, body, onStep = () => undefined) {
@@ -53,19 +53,73 @@ export async function saveFigmaToken(token) {
   await native?.call("setFigmaToken", { key: token }).catch(() => undefined);
 }
 
+/** After a Figma import: the board open on what came in, and anything worth knowing. */
+async function landed(r, { switchToAgent }) {
+  await openBoard(r.board);
+  // What came in on the page in view (a file's other pages are pages of the board).
+  const ids = r.artboards.filter((a) => !a.page || a.page === B.page).map((a) => a.id);
+  requestAnimationFrame(() => {
+    select(ids.slice(0, 1));
+    fit(ids);
+  });
+  touch("started");
+  touch("figma");
+  if (switchToAgent) bset({ rightOpen: true, rightTab: "agent" });
+  const what = [r.pages > 1 && `${r.pages} pages`, `${r.artboards.length} frame${r.artboards.length === 1 ? "" : "s"}`, `${r.layers.toLocaleString()} layers`, r.pictures && `${r.pictures} pictures`, r.fonts && `${r.fonts} font files`].filter(Boolean).join(" · ");
+  toast({ kind: r.warnings.length ? "warn" : "ok", title: `Brought in ${r.name}`, text: r.warnings.length ? `${what}. ${r.warnings[0]}` : what, timeout: 9000 });
+}
+
+/** A .fig file (Figma's File › Save local copy) onto a board: this one, or a new one. */
+export async function importFigFile(file, { board = null } = {}, onStep = () => undefined) {
+  const job = Math.random().toString(36).slice(2, 12);
+  onStep({ fraction: 0.05, step: "Reading Figma's file" });
+  const poll = setInterval(async () => {
+    try {
+      const p = await api(`/api/progress?job=${job}`);
+      if (p.fraction != null) onStep({ fraction: p.fraction, step: p.step });
+    } catch {}
+  }, 400);
+  try {
+    const q = new URLSearchParams({ job, ...(board ? { id: board } : {}), ...(board && B.id === board && B.page ? { page: B.page } : {}) });
+    const r = await api(`/api/board/import-fig?${q}`, file, true);
+    await landed(r, { switchToAgent: !board });
+    return r;
+  } finally {
+    clearInterval(poll);
+  }
+}
+
+/** Frames copied in Figma (⌘C): what Figma put on the clipboard, onto a board. */
+export async function pasteFigma(html, { board = null } = {}) {
+  const id = toast({ kind: "info", title: "Bringing in what you copied in Figma…", timeout: 0 });
+  try {
+    const r = await api("/api/board/import-fig-paste", { html, id: board ?? undefined, page: board && B.id === board ? B.page : undefined });
+    dismiss(id);
+    await landed(r, { switchToAgent: !board });
+    return r;
+  } catch (e) {
+    dismiss(id);
+    fail(e, "Couldn't bring in what you copied");
+  }
+}
+
+export const isFigmaClipboard = (html) => /\(figma\)/.test(html ?? "");
+export const isFigFile = (f) => /\.fig$/i.test(f?.name ?? "");
+
 export function ImportFigma() {
   const s = useStore();
   const m = s.modal;
+  const [link, setLink] = useState(Boolean(m.url));
   const [url, setUrl] = useState(m.url ?? "");
   const [token, setToken] = useState("");
   const [hasToken, setHasToken] = useState(null);
   const [busy, setBusy] = useState(null);
-  const field = useRef();
+  const [over, setOver] = useState(false);
+  const picker = useRef();
   useEffect(() => {
     api("/api/figma")
       .then((r) => setHasToken(r.hasToken))
       .catch(() => setHasToken(false));
-    field.current?.focus();
   }, []);
   useEffect(() => {
     const key = (e) => {
@@ -74,9 +128,35 @@ export function ImportFigma() {
         set({ modal: null });
       }
     };
+    // Frames copied in Figma, pasted while this is open.
+    const paste = (e) => {
+      const h = e.clipboardData?.getData("text/html") ?? "";
+      if (!isFigmaClipboard(h) || busy) return;
+      e.preventDefault();
+      e.stopPropagation();
+      set({ modal: null });
+      pasteFigma(h, { board: m.board });
+    };
     addEventListener("keydown", key, true);
-    return () => removeEventListener("keydown", key, true);
+    addEventListener("paste", paste, true);
+    return () => {
+      removeEventListener("keydown", key, true);
+      removeEventListener("paste", paste, true);
+    };
   }, [busy]);
+  const step = (p) => setBusy((b) => ({ fraction: p.fraction ?? b?.fraction ?? 0, step: p.step ?? b?.step }));
+  const takeFile = async (file) => {
+    if (!file || busy) return;
+    if (!isFigFile(file)) return toast({ kind: "warn", title: "That isn't a .fig file", text: "In Figma: File › Save local copy… makes one." });
+    try {
+      setBusy({ fraction: 0.05, step: "Reading Figma's file" });
+      await importFigFile(file, { board: m.board }, step);
+      set({ modal: null });
+    } catch (e) {
+      setBusy(null);
+      fail(e, "Couldn't bring the Figma file in");
+    }
+  };
   const needsToken = hasToken === false;
   const ready = url.trim() && (!needsToken || token.trim());
   const go = async () => {
@@ -84,7 +164,7 @@ export function ImportFigma() {
     try {
       if (needsToken) await saveFigmaToken(token.trim());
       setBusy({ fraction: 0.02, step: "Reading the file from Figma" });
-      await runImport("figma", { id: m.board ?? undefined, url: url.trim(), page: m.board && B.id === m.board ? B.page : undefined }, (p) => setBusy((b) => ({ fraction: p.fraction ?? b?.fraction ?? 0, step: p.step ?? b?.step })));
+      await runImport("figma", { id: m.board ?? undefined, url: url.trim(), page: m.board && B.id === m.board ? B.page : undefined }, step);
       set({ modal: null });
     } catch (e) {
       setBusy(null);
@@ -102,28 +182,44 @@ export function ImportFigma() {
     <div class="sheet web-import" role="dialog" aria-label="Import from Figma">
       <div class="sheet-head"><h2>Import from Figma</h2><button class="icon-btn" title="Close (Esc)" disabled=${Boolean(busy)} onClick=${() => set({ modal: null })}><${Icon} n="x" s=${16} /></button></div>
       <div class="sheet-body">
-        <p class="note">Paste a link to a file (its first page's frames come in) or to one frame (in Figma: right-click it › Copy link to selection). ${m.board ? "It goes beside the artboards on this board." : "It gets a board of its own."}</p>
-        <label class="wi-url ${busy ? "off" : ""}">
-          <${FigmaMark} />
-          <input ref=${field} class="input grow" type="url" placeholder="figma.com/design/…" spellcheck=${false} autocomplete="off" value=${url} disabled=${Boolean(busy)} onInput=${(e) => setUrl(e.target.value)} onKeyDown=${onKey} aria-label="Figma link" />
-        </label>
-        ${needsToken &&
-        html`<div class="fg-token">
-          <label class="lbl" for="fg-token">Personal access token</label>
-          <input id="fg-token" class="input mono" type="password" placeholder="figd_…" spellcheck=${false} autocomplete="off" value=${token} disabled=${Boolean(busy)} onInput=${(e) => setToken(e.target.value)} onKeyDown=${onKey} />
-          <p class="note faint">Once only. In Figma: Settings › Security › Personal access tokens › Generate, with read access to files. It stays on this Mac${native ? ", in your Keychain" : ""}.</p>
-        </div>`}
         ${busy
-          ? html`<div class="wi-progress" aria-live="polite">
+          ? html`<div class="wi-progress fg-progress" aria-live="polite">
               <div class="wi-bar"><i style=${{ width: `${Math.round(busy.fraction * 100)}%` }}></i></div>
               <span>${busy.step}…</span>
             </div>`
-          : !needsToken && html`<p class="note faint">Auto layout comes in as flex; text, fills, strokes, shadows, pictures and icons come with it.</p>`}
+          : html`<button class=${`fg-drop ${over ? "over" : ""}`} onClick=${() => picker.current?.click()}
+              onDragOver=${(e) => (e.preventDefault(), setOver(true))} onDragLeave=${() => setOver(false)}
+              onDrop=${(e) => (e.preventDefault(), setOver(false), takeFile(e.dataTransfer?.files?.[0]))}>
+              <${FigmaMark} s=${26} />
+              <b>Drop a .fig file, or choose one</b>
+              <span>In Figma: File › Save local copy…</span>
+            </button>
+            <input ref=${picker} type="file" accept=".fig" hidden onChange=${(e) => takeFile(e.target.files?.[0])} />
+            <p class="fg-or"><span>or</span> copy frames in Figma (⌘C) and paste them here (⌘V)</p>
+            <p class="note faint">${m.board ? "They go beside the artboards on this board, as layers you can change: auto layout, text, pictures, icons and fonts come with them." : "They come in as a board of layers you can change: auto layout, text, pictures, icons and fonts come with them."}</p>`}
+        ${!busy &&
+        (link
+          ? html`<div class="fg-link">
+              <label class="wi-url">
+                <${Icon} n="link" s=${14} />
+                <input class="input grow" type="url" placeholder="figma.com/design/…" spellcheck=${false} autocomplete="off" value=${url} onInput=${(e) => setUrl(e.target.value)} onKeyDown=${onKey} aria-label="Figma link" autoFocus />
+              </label>
+              ${needsToken &&
+              html`<div class="fg-token">
+                <label class="lbl" for="fg-token">Personal access token</label>
+                <input id="fg-token" class="input mono" type="password" placeholder="figd_…" spellcheck=${false} autocomplete="off" value=${token} onInput=${(e) => setToken(e.target.value)} onKeyDown=${onKey} />
+                <p class="note faint">In Figma: Settings › Security › Personal access tokens › Generate, with read access to files. It stays on this Mac${native ? ", in your Keychain" : ""}.</p>
+              </div>`}
+              <p class="note faint">Figma lets free accounts read only a few files a month by link: a .fig file or a paste has no limit.</p>
+            </div>`
+          : html`<button class="fg-more" onClick=${() => setLink(true)}>Use a Figma link instead</button>`)}
       </div>
-      <div class="sheet-foot">
-        <button class="btn" disabled=${Boolean(busy)} onClick=${() => set({ modal: null })}>Cancel</button>
-        <button class="btn primary" disabled=${!ready || Boolean(busy)} onClick=${go}>${busy ? html`<span class="spinner dark"></span>Importing` : "Import"}</button>
-      </div>
+      ${link &&
+      !busy &&
+      html`<div class="sheet-foot">
+        <button class="btn" onClick=${() => set({ modal: null })}>Cancel</button>
+        <button class="btn primary" disabled=${!ready} onClick=${go}>Import</button>
+      </div>`}
     </div>
   </div>`;
 }

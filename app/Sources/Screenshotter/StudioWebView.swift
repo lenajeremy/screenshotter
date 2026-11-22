@@ -87,11 +87,26 @@ final class StudioWebView: WKWebView, NSDraggingSource {
         return pb.availableType(from: [.png, .tiff]) != nil
     }
 
+    /// What Figma puts on the clipboard when you copy (its design data, inside HTML).
+    static func figmaClipboard(_ pb: NSPasteboard = .general) -> String? {
+        guard let html = pb.string(forType: .html), html.contains("(figma)") else { return nil }
+        return html
+    }
+
     private static let pasteSelector = NSSelectorFromString("paste:")
 
     /// WebKit implements `paste:` in Objective-C without exposing it to Swift, so this takes over
     /// the selector and calls WebKit's own version for ordinary text pastes.
     @objc(paste:) func pasteFromMenu(_ sender: Any?) {
+        // Frames copied in Figma: the page brings them in as layers (unless a text field is being typed in).
+        if let figma = StudioWebView.figmaClipboard() {
+            evaluateJavaScript("Boolean(window.studio && window.studio.isTyping())") { [weak self] result, _ in
+                guard let self else { return }
+                if (result as? Bool) == true { return self.webKitPaste(sender) }
+                self.callAsyncJavaScript("window.studio && window.studio.command('pasteFigma', html)", arguments: ["html": figma], in: nil, in: .page)
+            }
+            return
+        }
         guard StudioWebView.pasteboardHasImport() else { return webKitPaste(sender) }
         // Text fields keep normal paste; anywhere else an image goes onto the board.
         evaluateJavaScript("Boolean(window.studio && window.studio.isTyping())") { [weak self] result, _ in
@@ -111,7 +126,7 @@ final class StudioWebView: WKWebView, NSDraggingSource {
     }
 
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == StudioWebView.pasteSelector, StudioWebView.pasteboardHasImport() { return true }
+        if item.action == StudioWebView.pasteSelector, StudioWebView.pasteboardHasImport() || StudioWebView.figmaClipboard() != nil { return true }
         return super.validateUserInterfaceItem(item)
     }
 
