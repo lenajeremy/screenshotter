@@ -11,7 +11,191 @@
  * content keeps no height. What it can't keep as layers (a <canvas>, an iframe, a form control's
  * native look) is marked for a picture of itself.
  */
+/**
+ * Before the page is read: down the page and back, so pictures that wait to be scrolled to load and
+ * reveal-once animations play. Then, for what's still hidden below the first screen (animations that
+ * play backwards when scrolled up, ones tied to the scroll), a slower pass that waits at each step
+ * until things stop moving and keeps how each looks when it's in view. A pinned section is kept at
+ * one moment as a whole (the one showing the most), so states that take turns never overlap. The
+ * chosen looks are left in window.__ssSettled for SNAPSHOT to apply at the top.
+ */
+export const SETTLE = String.raw`(async function (opts) {
+  var css = document.createElement("style");
+  css.textContent = "html, body { scroll-behavior: auto !important; }";
+  (document.head || document.documentElement).appendChild(css);
+  var vh = innerHeight, vw = innerWidth, cap = opts.maxHeight || 16000;
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var lenis = window.lenis || window.__lenis;
+  var go = function (y) {
+    window.scrollTo({ top: y, left: 0, behavior: "instant" });
+    if (lenis && typeof lenis.scrollTo === "function") { try { lenis.scrollTo(y, { immediate: true, force: true }); } catch (e) {} }
+  };
+  var docH = function () { return Math.min(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), cap); };
+  async function toTop() { for (var i = 0, still = 0; i < 40 && still < 4; i++) { go(0); await wait(100); still = window.scrollY === 0 ? still + 1 : 0; } }
+  var moved = false;
+  for (var y = 0; y < docH(); y += vh * 0.75) { go(y); await wait(140); if (window.scrollY > 0) moved = true; }
+  go(docH()); await wait(300);
+  await toTop(); await wait(400);
+  window.__ssSettled = []; window.__ssScrolled = moved;
+  if (!moved || !document.body) return { scrolled: moved, groups: 0 };
+
+  function inside(r, b) {
+    var w = Math.max(0, Math.min(r.right, b.right) - Math.max(r.left, b.left)), h = Math.max(0, Math.min(r.bottom, b.bottom) - Math.max(r.top, b.top));
+    return r.width * r.height > 0 ? (w * h) / (r.width * r.height) : 0;
+  }
+  var screen = { left: 0, right: vw, top: -1e9, bottom: 1e9 };
+  function look(el) { var cs = getComputedStyle(el); return { opacity: cs.opacity, visibility: cs.visibility, transform: cs.transform, translate: cs.translate, scale: cs.scale, rotate: cs.rotate, filter: cs.filter }; }
+  function score(el, st, clipped) {
+    if (st.visibility === "hidden") return 0;
+    var r = el.getBoundingClientRect(), s = parseFloat(st.opacity) * inside(r, screen);
+    if (clipped && el.parentElement) s *= inside(r, el.parentElement.getBoundingClientRect());
+    return s;
+  }
+  // The pinned section an element is in, if any: a sticky box, or what GSAP pins in its spacer.
+  function pinOf(el) {
+    for (var a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      if (getComputedStyle(a).position === "sticky") return a;
+      if (a.parentElement && a.parentElement.classList.contains("pin-spacer")) return a;
+    }
+    return null;
+  }
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var all = document.body.getElementsByTagName("*"), groups = [], byPin = new Map();
+  for (var i = 0; i < all.length && i < 25000; i++) {
+    var el = all[i];
+    if (el.namespaceURI === SVG_NS && el.tagName.toLowerCase() !== "svg") continue;
+    var cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.position === "fixed") continue;
+    var r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    // Seen at the top already (the first screen): kept as it is there.
+    if (r.top < vh * 0.75) continue;
+    var faded = parseFloat(cs.opacity) < 0.98 || cs.visibility === "hidden", clipped = false;
+    // Words that slide up into view from behind their line's edge (a mask reveal). Only upwards: what
+    // slides sideways is a marquee or a carousel, whose parts take turns.
+    if (!faded && cs.transform !== "none" && el.parentElement && getComputedStyle(el.parentElement).overflow !== "visible") {
+      var mt = new DOMMatrixReadOnly(cs.transform);
+      clipped = Math.abs(mt.f) > Math.abs(mt.e) && inside(r, el.parentElement.getBoundingClientRect()) < 0.5;
+    }
+    if (!faded && !clipped) continue;
+    var pin = pinOf(el);
+    if (pin) {
+      if (byPin.has(pin)) continue;
+      // The whole section at one moment: every part of it, shown or not.
+      var parts = [], inner = pin.getElementsByTagName("*");
+      for (var j = 0; j < inner.length && parts.length < 500; j++) if (!(inner[j].namespaceURI === SVG_NS && inner[j].tagName.toLowerCase() !== "svg")) parts.push({ el: inner[j], clipped: false });
+      var g = { root: pin, parts: parts, pinned: true };
+      byPin.set(pin, g); groups.push(g);
+      continue;
+    }
+    // One of several that take turns in the same place (slides, tabs): left as it is.
+    var sibs = el.parentElement ? el.parentElement.children : [], alt = false;
+    for (var k = 0; k < sibs.length && !alt; k++) {
+      var sb = sibs[k];
+      if (sb === el) continue;
+      var scs = getComputedStyle(sb);
+      if (scs.display === "none" || parseFloat(scs.opacity) < 0.5 || scs.visibility === "hidden") continue;
+      if (inside(r, sb.getBoundingClientRect()) > 0.5) alt = true;
+    }
+    if (alt) continue;
+    groups.push({ root: el, parts: [{ el: el, clipped: clipped }], pinned: false });
+  }
+  if (!groups.length) return { scrolled: true, groups: 0 };
+  groups.forEach(function (g) { g.top = 0; g.parts.forEach(function (p) { g.top += score(p.el, look(p.el), p.clipped); }); g.best = null; g.last = null; });
+
+  var spent = 0, budget = opts.budget || 9000, end = docH();
+  for (var y2 = vh * 0.4; y2 <= end + vh * 0.6; y2 += vh * 0.6) {
+    go(y2); await wait(160);
+    for (var round = 0; round < 7; round++) {
+      var moving = false, any = false;
+      for (var gi = 0; gi < groups.length; gi++) {
+        var g2 = groups[gi], rr = g2.root.getBoundingClientRect();
+        if (rr.bottom < vh * 0.08 || rr.top > vh * 0.92) continue;
+        any = true;
+        var looks = [], total = 0, key = "", shown = [], clean = true;
+        for (var pi = 0; pi < g2.parts.length; pi++) {
+          var lk = look(g2.parts[pi].el), sc = score(g2.parts[pi].el, lk, g2.parts[pi].clipped), op = parseFloat(lk.opacity);
+          looks.push(lk);
+          total += sc;
+          shown.push(sc >= 0.5);
+          if (op > 0.1 && op < 0.9) clean = false;
+          key += lk.opacity + lk.transform + lk.translate + lk.scale + lk.rotate + lk.filter + lk.visibility;
+        }
+        if (g2.last !== null && g2.last !== key) moving = true;
+        if (g2.last === null) moving = true;
+        g2.last = key;
+        // A pinned section's moments are taken once the step has settled (below), never halfway through a fade.
+        if (g2.pinned) g2.pending = { total: total, looks: looks, key: key, shown: shown, clean: clean };
+        else if (!g2.best || total > g2.best.total + 0.02 * g2.parts.length) g2.best = { total: total, looks: looks };
+      }
+      if (!any || !moving || spent >= budget) break;
+      await wait(180); spent += 180;
+    }
+    groups.forEach(function (g6) {
+      if (!g6.pending) return;
+      if (!g6.moments) g6.moments = [];
+      if (!g6.moments.length || g6.moments[g6.moments.length - 1].key !== g6.pending.key) g6.moments.push(g6.pending);
+      g6.pending = null;
+    });
+    groups.forEach(function (g3) { var b = g3.root.getBoundingClientRect(); if (b.bottom < vh * 0.08 || b.top > vh * 0.92) g3.last = null; });
+    if (y2 > docH() + vh) break;
+  }
+  await toTop(); await wait(300);
+  // A pinned section, at one moment with nothing caught halfway through a fade. When it builds up as
+  // it's scrolled (what shows early still shows later), its fullest moment; when its parts take turns
+  // (slides, a sequence), its first.
+  groups.forEach(function (g5) {
+    if (!g5.pinned || !g5.moments || !g5.moments.length) return;
+    var pool = g5.moments.filter(function (m) { return m.clean; });
+    if (!pool.length) pool = g5.moments;
+    var full = pool[0];
+    pool.forEach(function (m) { if (m.total > full.total + 0.01) full = m; });
+    var first = pool[0];
+    var builds = first.shown.every(function (v, i) { return !v || full.shown[i]; });
+    g5.best = builds ? full : first;
+  });
+  groups.forEach(function (g4) {
+    if (!g4.best || (!g4.pinned && g4.best.total < g4.top + 0.05)) return;
+    for (var q = 0; q < g4.parts.length; q++) window.__ssSettled.push([g4.parts[q].el, g4.best.looks[q]]);
+  });
+  return { scrolled: true, groups: groups.length, settled: window.__ssSettled.length, waited: spent };
+})`;
+
 export const SNAPSHOT = String.raw`(function (opts) {
+  // As each part looks when it's scrolled to (see SETTLE), with transitions that are halfway done finished.
+  (window.__ssSettled || []).forEach(function (s) {
+    var el = s[0], lk = s[1];
+    if (!el.isConnected || !el.style) return;
+    el.style.setProperty("transition", "none", "important");
+    el.style.setProperty("opacity", lk.opacity, "important");
+    el.style.setProperty("visibility", lk.visibility, "important");
+    el.style.setProperty("transform", lk.transform, "important");
+    ["translate", "scale", "rotate"].forEach(function (k) { if (lk[k] !== undefined) el.style.setProperty(k, lk[k], "important"); });
+    el.style.setProperty("filter", lk.filter, "important");
+  });
+  try {
+    document.getAnimations().forEach(function (a) {
+      var t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null;
+      if (a.playState === "running" && t && typeof t.endTime === "number" && isFinite(t.endTime) && t.endTime < 6000) a.finish();
+    });
+  } catch (e) {}
+  // A pinned section's runway (a tall box a sticky child scrolls through, GSAP's pin-spacer) is only
+  // room for an animation to play in: it goes, and what follows moves up to meet the section.
+  (function () {
+    var els = document.body ? document.body.getElementsByTagName("*") : [], runways = [];
+    for (var i = 0; i < els.length && i < 25000; i++) {
+      var e = els[i], cl = e.classList;
+      if (cl && (cl.contains("pin-spacer") || cl.contains("scrollmagic-pin-spacer"))) runways.push([e, true]);
+      else if (getComputedStyle(e).position === "sticky" && e.parentElement && e.parentElement !== document.body) runways.push([e.parentElement, false]);
+    }
+    runways.forEach(function (rw) {
+      var p = rw[0], before = p.getBoundingClientRect().height, old = p.getAttribute("style");
+      p.style.setProperty("height", "auto", "important");
+      if (rw[1]) { p.style.setProperty("padding-top", "0px", "important"); p.style.setProperty("padding-bottom", "0px", "important"); }
+      if (before - p.getBoundingClientRect().height < window.innerHeight * 0.3) { if (old === null) p.removeAttribute("style"); else p.setAttribute("style", old); }
+    });
+  })();
+
   var MAX = opts.maxNodes || 6000;
   var CUT = opts.maxHeight || 16000;
   var VIEW_H = window.innerHeight;
@@ -34,7 +218,7 @@ export const SNAPSHOT = String.raw`(function (opts) {
     "justify-items", "justify-self", "row-gap", "column-gap", "flex-grow", "flex-shrink", "flex-basis", "order",
     "grid-template-columns", "grid-template-rows", "grid-template-areas", "grid-auto-flow", "grid-auto-rows", "grid-auto-columns",
     "grid-column-start", "grid-column-end", "grid-row-start", "grid-row-end",
-    "transform", "transform-origin", "filter", "backdrop-filter", "mix-blend-mode", "isolation", "object-fit", "object-position", "aspect-ratio",
+    "transform", "translate", "scale", "rotate", "transform-origin", "filter", "backdrop-filter", "mix-blend-mode", "isolation", "object-fit", "object-position", "aspect-ratio",
     "vertical-align", "text-decoration-line", "text-decoration-color", "text-decoration-style", "text-decoration-thickness", "text-underline-offset",
     "text-overflow", "clip-path", "mask-image", "-webkit-mask-image", "mask-size", "-webkit-mask-size", "mask-position", "-webkit-mask-position",
     "mask-repeat", "-webkit-mask-repeat", "outline-width", "outline-style", "outline-color", "outline-offset", "-webkit-line-clamp", "-webkit-box-orient",
@@ -236,7 +420,9 @@ export const SNAPSHOT = String.raw`(function (opts) {
       var ref = uses[k].getAttribute("href") || uses[k].getAttribute("xlink:href") || "";
       if (ref.charAt(0) !== "#") continue;
       var target = document.getElementById(ref.slice(1));
-      if (!target || clone.querySelector(ref.replace(/([^\w#-])/g, "\\$1"))) continue;
+      var here = null;
+      try { here = clone.querySelector("#" + CSS.escape(ref.slice(1))); } catch (e) {}
+      if (!target || here) continue;
       var g = document.createElementNS("http://www.w3.org/2000/svg", target.tagName.toLowerCase() === "symbol" ? "svg" : "g");
       if (target.getAttribute("viewBox")) g.setAttribute("viewBox", target.getAttribute("viewBox"));
       ["x", "y", "width", "height"].forEach(function (a) { if (uses[k].getAttribute(a)) g.setAttribute(a, uses[k].getAttribute(a)); });
@@ -252,6 +438,45 @@ export const SNAPSHOT = String.raw`(function (opts) {
     return new XMLSerializer().serializeToString(clone);
   }
 
+  // A country or region picker, a cookie notice by its usual names: left out wherever it sits.
+  var HOUSEKEEPING = /onetrust|cookiebot|cookieyes|localeswitcher|locale-switcher|cookie-?(banner|consent|notice|bar)|consent-?(banner|bar|manager)/i;
+  var CONSENT_ID = /cookie|consent|gdpr|onetrust|cookiebot|cookieyes|cmp-|cc-window|cc-banner|truste|didomi|usercentrics|termly|iubenda|osano/i;
+  var CONSENT_WORDS = /\b(cookies?|consent|gdpr|tracking technologies)\b/i;
+  var CONSENT_ACT = /\b(accept|reject|decline|agree|allow|deny|got it|i understand|preferences|customi[sz]e)\b/i;
+  function isConsent(el) {
+    var id = (el.id || "") + " " + (typeof el.className === "string" ? el.className : "") + " " + (el.getAttribute("aria-label") || "");
+    if (CONSENT_ID.test(id)) return true;
+    var text = (el.textContent || "").slice(0, 3000);
+    if (text.length > 1500 || !CONSENT_WORDS.test(text) || !CONSENT_ACT.test(text)) return false;
+    // A site's header or footer that links to its cookie policy isn't a banner.
+    return !el.querySelector("nav") && Boolean(el.querySelector("button, [role=button], a"));
+  }
+  function inPopover(el) {
+    for (var a = el.parentElement, i = 0; a && a !== document.body && i < 8; a = a.parentElement, i++) {
+      var p = getComputedStyle(a).position;
+      if (p === "absolute" || p === "fixed") return true;
+    }
+    return false;
+  }
+  function takesTurns(el, rect) {
+    var p = el.parentElement;
+    if (!p || rect.width * rect.height === 0) return false;
+    for (var i = 0; i < p.children.length; i++) {
+      var o = p.children[i];
+      if (o === el) continue;
+      var ocs = getComputedStyle(o);
+      if (ocs.display === "none" || ocs.visibility === "hidden" || px(ocs.opacity) < 0.5) continue;
+      var r = o.getBoundingClientRect();
+      var w = Math.max(0, Math.min(r.right, rect.right) - Math.max(r.left, rect.left)), h = Math.max(0, Math.min(r.bottom, rect.bottom) - Math.max(r.top, rect.top));
+      if (w * h > 0.5 * rect.width * rect.height) return true;
+    }
+    return false;
+  }
+  function isAnimation(svg) {
+    if (svg.querySelector("image, foreignObject")) return true;
+    if (/translate3d/.test(svg.getAttribute("style") || "")) return true;
+    return svg.getElementsByTagName("*").length > 1200;
+  }
   function walk(el, parentCs, depth) {
     if (SKIP[el.tagName] || depth > 60) return null;
     if (count >= MAX) { cutOff = true; return null; }
@@ -270,11 +495,16 @@ export const SNAPSHOT = String.raw`(function (opts) {
       var flat = [];
       for (var c = el.firstChild; c; c = c.nextSibling) {
         if (c.nodeType === 3) { var t = textNode(c); if (t) flat.push(t); }
-        else if (c.nodeType === 1) { var k = walk(c, parentCs, depth + 1); if (k) flat.push(k); }
+        else if (c.nodeType === 1) { var k = walk(c, parentCs, depth + 1); if (k && k.tag === "#contents") flat.push.apply(flat, k.children); else if (k) flat.push(k); }
       }
       return { tag: "#contents", children: flat };
     }
     var tagName = el.tagName;
+    if (tagName === "BR") return { tag: "br" };
+    if (tagName === "WBR") return null;
+    // A cookie or consent banner: the site's housekeeping, not its design.
+    if ((lifted || cs.position === "sticky") && isConsent(el)) { warnings.indexOf("consent") < 0 && warnings.push("consent"); return null; }
+    if (HOUSEKEEPING.test((el.id || "") + " " + (typeof el.className === "string" ? el.className : ""))) return null;
     var isSvg = el instanceof SVGElement;
     if (isSvg && tagName.toLowerCase() !== "svg") return null;
     if (rect.width === 0 && rect.height === 0 && cs.overflow !== "visible") return null;
@@ -289,7 +519,15 @@ export const SNAPSHOT = String.raw`(function (opts) {
       node = { tag: "img", attrs: { src: abs(src), alt: el.alt || "" } };
     } else if (tagName === "VIDEO") {
       node = { tag: "video", attrs: { src: abs(el.currentSrc || el.src || ""), poster: el.poster ? abs(el.poster) : "", muted: "", loop: el.loop ? "" : null, autoplay: el.autoplay ? "" : null, playsinline: "" } };
-      if (!node.attrs.src) { node = { tag: "img", attrs: { src: "shot:" + shots.length, alt: "" } }; el.setAttribute("data-ss-shot", shots.length); shots.push(shots.length); }
+      // A film streamed in pieces (a blob: link) can't be played from anywhere else: its picture instead.
+      if (!node.attrs.src || /^blob:/.test(node.attrs.src)) { node = { tag: "img", attrs: { src: "shot:" + shots.length, alt: "" } }; el.setAttribute("data-ss-shot", shots.length); shots.push(shots.length); }
+      // Its still is a frame of it as it's seen (see the pictures in web-import), not the site's poster.
+      else if (el.readyState >= 2 && el.videoWidth) { el.setAttribute("data-ss-shot", shots.length); node.attrs.poster = "shot:" + shots.length; shots.push(shots.length); }
+    } else if (isSvg && isAnimation(el)) {
+      // An animation drawn in SVG (Lottie and the like, with its pictures inside): a picture of how it's drawn.
+      el.setAttribute("data-ss-shot", shots.length);
+      node = { tag: "img", attrs: { src: "shot:" + shots.length, alt: "" } };
+      shots.push(shots.length);
     } else if (isSvg) {
       node = { tag: "svg", markup: svgOf(el, rect) };
     } else if (PICTURED[tagName] || (tagName === "INPUT" && /^(checkbox|radio|range|color|file)$/i.test(el.type))) {
@@ -311,12 +549,15 @@ export const SNAPSHOT = String.raw`(function (opts) {
     var replaced = node.tag === "img" || node.tag === "video" || node.tag === "svg";
     sizeOf(el, cs, style, rect, parentCs, replaced);
     // Kept back by a reveal-on-scroll script that didn't run: shown as it's meant to be seen.
-    if (px(cs.opacity) < 0.05 && !lifted && (el.textContent || "").trim() && !el.closest("[aria-hidden=true]")) { delete style.opacity; delete style.transform; }
+    // (Not when something else shows in its place, one of several that take turns, nor a menu or a
+    // tooltip waiting to be opened: hidden, inert, or in a box floated over the page.)
+    if (px(cs.opacity) < 0.05 && !lifted && cs.pointerEvents !== "none" && (el.textContent || "").trim() && !el.closest("[aria-hidden=true]") && !takesTurns(el, rect) && !inPopover(el)) { delete style.opacity; delete style.transform; }
     // Fixed (a header that stays put): where it sits at the top of the page, in its holder.
     if (cs.position === "fixed") {
       var holder = positioned[positioned.length - 1];
       style.position = "absolute";
-      style.top = r1(top - holder.y - holder.bt) + "px";
+      // On the screen is where it sits at the top of the page, however far the page is scrolled.
+      style.top = r1(rect.top - holder.y - holder.bt) + "px";
       style.left = r1(rect.left + scrollX - holder.x - holder.bl) + "px";
       delete style.right; delete style.bottom;
     }
@@ -327,6 +568,13 @@ export const SNAPSHOT = String.raw`(function (opts) {
       if (node.placeholder) style.color = node.placeholder;
       if (!style["white-space"]) style["white-space"] = "nowrap";
       if (!style.overflow && !style["overflow-x"]) style["overflow-x"] = "hidden";
+      if (tagName === "INPUT") {
+        style.display = /^inline/.test(disp) ? "inline-flex" : "flex";
+        style["align-items"] = "center";
+        var ta = cs.textAlign;
+        if (ta === "center") style["justify-content"] = "center";
+        else if (ta === "right" || ta === "end") style["justify-content"] = "flex-end";
+      }
     }
     if (node.tag === "div" || node.tag === "span" || node.tag === "a") {
       var pushed = cs.position !== "static";

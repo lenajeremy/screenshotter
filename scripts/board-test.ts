@@ -1378,7 +1378,29 @@ await fake.close();
     <img src="http://127.0.0.1:${otherPort}/x.png" alt="Elsewhere" width="10" height="10">
     <script>const c = document.querySelector("canvas").getContext("2d"); c.fillStyle = "#e63946"; c.fillRect(0, 0, 60, 30);</script>
   </body></html>`;
+  // A page that tells a story as it's scrolled: a pinned section with a tall runway, words that fade
+  // in when scrolled to and out again when scrolled back, a cookie banner, line breaks.
+  const story = `<!doctype html><html><head><title>Story</title><style>
+    body { margin: 0; font-family: sans-serif; }
+    .intro { height: 1000px; background: #eee; }
+    .runway { height: 2700px; }
+    .stick { position: sticky; top: 0; height: 600px; background: #264653; color: #fff; }
+    .after { height: 400px; background: #e9c46a; padding-top: 100px; }
+    .fade { opacity: 0; transition: opacity .3s; font-size: 30px; }
+    .fade.on { opacity: 1; }
+    .cookie { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 16px; }
+  </style></head><body>
+    <div class="intro"><h1>Story<br>time</h1><div style="display:contents"><div style="display:contents"><span>Deep contents</span></div></div></div>
+    <section class="runway"><div class="stick"><p class="fade">Shown in the pinned part</p></div></section>
+    <div class="after"><p class="fade">Shown when scrolled to</p></div>
+    <div class="cookie">We use cookies to improve your experience. <button>Accept</button> <button>Reject</button></div>
+    <script>
+      const io = new IntersectionObserver((es) => es.forEach((e) => e.target.classList.toggle("on", e.isIntersecting)));
+      document.querySelectorAll(".fade").forEach((f) => io.observe(f));
+    </script>
+  </body></html>`;
   const site = http.createServer((q, r) => {
+    if (q.url === "/story") return r.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }), r.end(story);
     if (q.url === "/pic.png") return r.writeHead(200, { "Content-Type": "image/png" }), r.end(png);
     if (q.url === "/font.ttf") return r.writeHead(200, { "Content-Type": "font/ttf" }), r.end(readFileSync(fontFile));
     r.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -1444,6 +1466,21 @@ await fake.close();
   }, `data:image/png;base64,${real.toString("base64")}`, `data:image/png;base64,${drawn.images[r.artboard].toString("base64")}`);
   await p.close();
   check(diff.mean < 6 && Math.abs(diff.sizes[1] - diff.sizes[3]) <= 2, `drawn back out, it matches the page (mean difference ${diff.mean.toFixed(2)} of 255, heights ${diff.sizes[1]} and ${diff.sizes[3]})`);
+  // Scroll animations: seen as a visitor sees them when scrolled to, without the room they scroll through.
+  {
+    const sr = await importWebsite(null, { url: `${siteUrl}story`, width: 1200 }, "studio");
+    const sb = store.getBoard(sr.board);
+    const sn = Object.values(sb.nodes);
+    const words = (t: string) => sn.find((n) => n.type === "text" && plainOf(n.text).includes(t));
+    const sroot = sb.nodes[sr.artboard];
+    check(/Story<br>time/.test(words("Story")?.text ?? ""), `a line break in a heading stays a line break (${words("Story")?.text})`);
+    check(Boolean(words("Deep contents")) && !sn.some((n) => /#contents/.test(n.text ?? "")), "an element inside nested display:contents boxes comes in, and nothing of the boxes themselves");
+    check(Boolean(words("Shown in the pinned part")) && Number(words("Shown in the pinned part")!.style.opacity ?? 1) > 0.9, "words that fade in inside a pinned section come in shown");
+    check(Boolean(words("Shown when scrolled to")) && Number(words("Shown when scrolled to")!.style.opacity ?? 1) > 0.9, "words that fade in when scrolled to, and out when scrolled back, come in shown");
+    const tall = parseFloat(sroot.style.minHeight ?? sroot.style.height ?? "0");
+    check(tall > 1900 && tall < 2400, `a pinned section keeps its own height, not the room it scrolls through (${tall}px, the page is 4100)`);
+    check(!words("We use cookies") && sr.warnings.some((w) => /cookie/.test(w)), "a cookie banner is left out, and that's said");
+  }
   // Agents bring sites in too, onto a new board named after it.
   const viaAgent = await call("board_import_website", { url: siteUrl, width: 390, fullPage: false });
   const made = viaAgent.json && store.getBoard(viaAgent.json.board);

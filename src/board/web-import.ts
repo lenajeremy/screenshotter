@@ -15,7 +15,7 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { findChrome } from "../render/browser.js";
 import { freeSpot, htmlToNodes, type BoardFont, type Op } from "./core.js";
 import { assetDir, changeBoard, createBoard, getBoard } from "./store.js";
-import { SNAPSHOT } from "./web-snapshot.js";
+import { SETTLE, SNAPSHOT } from "./web-snapshot.js";
 
 export interface WebImportOptions {
   url: string;
@@ -235,7 +235,7 @@ function toHtml(n: SnapNode | string): string {
   const named = n.name ? ` data-name="${escAttr(n.name)}"` : "";
   const style = styleText(n.style);
   const open = `<${n.tag}${named}${attrs}${style ? ` style="${escAttr(style)}"` : ""}>`;
-  if (n.tag === "img") return open;
+  if (n.tag === "img" || n.tag === "br") return open;
   return `${open}${(n.children ?? []).map((c) => toHtml(typeof c === "string" ? c : unwrap(c))).join("")}</${n.tag}>`;
 }
 
@@ -299,23 +299,53 @@ export async function snapshotWebsite(opts: WebImportOptions, progress: Progress
     if (answer && answer.status() >= 400) throw new Error(`${url.hostname} answered ${answer.status()}${answer.status() === 403 ? ": it may not let browsers like this one in" : ""}.`);
     progress(0.3, "Scrolling through it");
     // Down the page and back, so pictures and sections that wait to be scrolled to are drawn.
-    await page.evaluate(`(async () => { const max = Math.min(document.documentElement.scrollHeight, 16000); for (let y = 0; y < max; y += innerHeight * 0.75) { scrollTo(0, y); await new Promise((r) => setTimeout(r, 140)); } scrollTo(0, 0); await new Promise((r) => setTimeout(r, 350)); })()`);
+    const settled = (await page.evaluate(`${SETTLE}(${JSON.stringify({ maxHeight: 16000 })})`).catch(() => null)) as { settled?: number } | null;
+    if (process.env.SCREENSHOTTER_DEBUG) console.error("settle", settled);
     await page.waitForNetworkIdle({ idleTime: 500, timeout: 10_000 }).catch(() => undefined);
     await page.evaluate("document.fonts.ready.then(() => true)").catch(() => undefined);
     progress(0.5, "Reading the layout");
     const snap = (await page.evaluate(`${SNAPSHOT}(${JSON.stringify({ fullPage, maxNodes: 6000, maxHeight: 16000 })})`)) as Snapshot;
-    warnings.push(...snap.warnings);
+    warnings.push(...snap.warnings.map((w) => (w === "consent" ? "Its cookie banner was left out." : w)));
 
     // What can't be layers (a <canvas>, an iframe, a native control): a picture of itself.
+    // Each taken on its own: everything else on the page hidden, so nothing over it (a header, a
+    // cookie banner, the page's own words) gets into its picture.
     const shots = new Map<string, string>();
-    for (let i = 0; i < snap.shots; i++) {
-      const el = await page.$(`[data-ss-shot="${i}"]`);
-      try {
-        const buf = el ? Buffer.from(await el.screenshot({ type: "png", omitBackground: true })) : null;
-        if (buf) shots.set(`shot:${i}`, saveAsset(buf, "png"));
-      } catch {
-        // Off the page, or not drawn: it's left empty.
+    if (snap.shots) {
+      await page.evaluate(`(() => {
+        const s = document.createElement("style");
+        s.textContent = "html.ss-iso, html.ss-iso body { background: transparent !important; } html.ss-iso body * { visibility: hidden !important; } html.ss-iso [data-ss-now], html.ss-iso [data-ss-now] * { visibility: visible !important; }";
+        document.head.appendChild(s);
+        document.documentElement.classList.add("ss-iso");
+        // The looks SETTLE pinned on are inline and would show through: hidden like the rest.
+        (window.__ssSettled || []).forEach((p) => p[0].style && p[0].style.removeProperty("visibility"));
+      })()`);
+      for (let i = 0; i < snap.shots; i++) {
+        const el = await page.$(`[data-ss-shot="${i}"]`);
+        try {
+          await page.evaluate(`(async () => {
+            document.querySelectorAll("[data-ss-now]").forEach((e) => e.removeAttribute("data-ss-now"));
+            const e = document.querySelector('[data-ss-shot="${i}"]');
+            if (!e) return;
+            e.setAttribute("data-ss-now", "");
+            // A film is pictured as a visitor is left with it: at its end, unless it loops.
+            if (e.tagName === "VIDEO" && isFinite(e.duration) && e.duration > 0) {
+              e.pause();
+              const at = e.loop ? Math.min(e.currentTime || e.duration / 2, e.duration) : Math.max(0, e.duration - 0.05);
+              if (Math.abs(e.currentTime - at) > 0.02) {
+                e.currentTime = at;
+                await new Promise((ok) => { e.addEventListener("seeked", ok, { once: true }); setTimeout(ok, 3000); });
+              }
+              await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+            }
+          })()`);
+          const buf = el ? Buffer.from(await el.screenshot({ type: "png", omitBackground: true })) : null;
+          if (buf) shots.set(`shot:${i}`, saveAsset(buf, "png"));
+        } catch {
+          // Off the page, or not drawn: it's left empty.
+        }
       }
+      await page.evaluate(`document.documentElement.classList.remove("ss-iso")`);
     }
 
     // Pictures: into the library, so the board has them for good.
@@ -340,7 +370,7 @@ export async function snapshotWebsite(opts: WebImportOptions, progress: Progress
     if (missed) warnings.push(`${missed} picture${missed === 1 ? "" : "s"} couldn't be copied, so ${missed === 1 ? "it stays" : "they stay"} linked to the site.`);
     walkTree(snap.root, (n) => {
       if (n.attrs?.src) n.attrs.src = shots.get(n.attrs.src) ?? local.get(n.attrs.src) ?? (n.attrs.src.startsWith("shot:") ? "" : n.attrs.src);
-      if (n.attrs?.poster) n.attrs.poster = local.get(n.attrs.poster) ?? n.attrs.poster;
+      if (n.attrs?.poster) n.attrs.poster = shots.get(n.attrs.poster) ?? local.get(n.attrs.poster) ?? (n.attrs.poster.startsWith("shot:") ? "" : n.attrs.poster);
       if (n.attrs && n.tag === "img" && !n.attrs.src) n.attrs.src = null;
       for (const [k, v] of Object.entries(n.style ?? {})) if (v.includes("url(")) n.style![k] = v.replace(CSS_URL, (m, _q, u: string) => (local.has(u) ? `url("${local.get(u)}")` : m));
     });
