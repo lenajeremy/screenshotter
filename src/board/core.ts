@@ -9,6 +9,8 @@
  */
 import { CUSTOM_SHADER, cleanShaderCode, scaledShader, shaderAttrs, shaderBoxStyle, shaderCanvas, shaderCode, shaderFromAttrs, shaderPresetName, shaderWords, presetOf, type BoardShader, type ShaderSpec } from "./shaders.js";
 export * from "./shaders.js";
+import { cleanEffects, effectsAttrs, effectsFromAttrs, effectsWords, scaledEffects, type LayerEffect } from "./effects.js";
+export * from "./effects.js";
 
 export type NodeType = "frame" | "text" | "image" | "svg" | "vector" | "video";
 
@@ -78,6 +80,8 @@ export interface BoardNode {
   mask?: MaskType;
   /** A frame's shader fill, drawn over its fills and behind its layers: a preset or code of its own, its parameters, speed and still (see shaders.ts). */
   shader?: ShaderSpec;
+  /** Optical & layer effects (Liquid Glass, Pattern refraction, Lens distortion, Bloom, Gooey merge, etc., see effects.ts). */
+  effects?: LayerEffect[];
 }
 
 export interface BoardPage {
@@ -1067,7 +1071,11 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
         continue;
       }
       const k = convert(c, id, column);
-      if (k) kids.push(maskFromHtml(nodes[k], c));
+      if (k) {
+        const fx = effectsFromAttrs(c.attrs, warnings);
+        if (fx) nodes[k].effects = fx;
+        kids.push(maskFromHtml(nodes[k], c));
+      }
     }
     flush();
     nodes[id].children = kids;
@@ -1092,7 +1100,11 @@ export function htmlToNodes(html: string, opts: { wholeSvg?: boolean } = {}): Im
     flushLoose();
     const id = convert(c, null, false);
     // (A mask written as a top-level element is one when the HTML goes into a frame.)
-    if (id) roots.push(maskFromHtml(nodes[id], c));
+    if (id) {
+      const fx = effectsFromAttrs(c.attrs, warnings);
+      if (fx) nodes[id].effects = fx;
+      roots.push(maskFromHtml(nodes[id], c));
+    }
   }
   flushLoose();
   if (classes) warnings.push(`${classes} element${classes === 1 ? "" : "s"} had class names. Boards read inline styles only (style="…"), so those classes did nothing: give the styles inline.`);
@@ -1139,7 +1151,7 @@ export function nodeHtml(board: Board, id: string, opts: HtmlOptions = {}, depth
   // A shader is drawn on a canvas behind the frame's layers: the frame holds it (see shaders.ts).
   if (n.shader && n.type === "frame") Object.assign(style, shaderBoxStyle(style));
   const css = styleText(style);
-  const attrs = `${opts.ids ? ` data-id="${id}" data-name="${escAttr(n.name)}"${n.isComponent ? " data-component" : ""}${n.instanceOf ? ` data-copy-of="${n.instanceOf}"` : ""}` : ""}${n.mask ? ` data-mask="${n.mask}"` : ""}${css ? ` style="${escAttr(css)}"` : ""}`;
+  const attrs = `${opts.ids ? ` data-id="${id}" data-name="${escAttr(n.name)}"${n.isComponent ? " data-component" : ""}${n.instanceOf ? ` data-copy-of="${n.instanceOf}"` : ""}` : ""}${n.mask ? ` data-mask="${n.mask}"` : ""}${effectsAttrs(n.effects)}${css ? ` style="${escAttr(css)}"` : ""}`;
   switch (n.type) {
     case "text":
       return `<div${attrs}>${n.text ?? ""}</div>`;
@@ -1317,7 +1329,11 @@ export function scaleOps(board: Board, id: string, k: number, inherited: Inherit
       const sh = scaledShader(n.shader, shaderCode(n.shader, board.shaders), k);
       if (sh) op.shader = sh;
     }
-    if (op.style || op.text !== undefined || op.shader) ops.push(op);
+    if (n.effects) {
+      const fx = scaledEffects(n.effects, k);
+      if (fx) op.effects = fx;
+    }
+    if (op.style || op.text !== undefined || op.shader || op.effects) ops.push(op);
   }
   // Type and spacing the layer only inherits don't change with it: it gets them, scaled, of its own.
   if (words || relative) {
@@ -1547,6 +1563,8 @@ export type Op =
       mask?: MaskType | null;
       /** A frame's shader fill, whole (see shaders.ts); null takes it away. */
       shader?: ShaderSpec | null;
+      /** Optical & layer effects (see effects.ts); null or empty removes them. */
+      effects?: LayerEffect[] | null;
       /** Made by a component for its copies (so it doesn't count as a change made in a copy). */
       sync?: boolean;
     }
@@ -1689,10 +1707,14 @@ export function applyOps(input: Board, ops: Op[]): { board: Board; inverse: Op[]
           n.tag = vectorTag(op.tag);
         }
         if (op.shader && n.type !== "frame") throw new OpError(`Only frames take a shader fill; ${n.name} is ${n.type === "text" ? "text" : n.type === "image" ? "a picture" : n.type === "video" ? "a video" : "a vector"} (put it in a frame with the shader).`);
-        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides", "mask", "shader"] as const) {
+        for (const k of ["text", "src", "poster", "video", "svg", "defs", "shape", "hidden", "locked", "isComponent", "instanceOf", "master", "overrides", "mask", "shader", "effects"] as const) {
           if (op[k] === undefined) continue;
           (back as Record<string, unknown>)[k] = n[k] ?? null;
-          if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
+          if (k === "effects") {
+            const cleaned = op.effects ? cleanEffects(op.effects) : undefined;
+            if (!cleaned) delete n.effects;
+            else n.effects = cleaned;
+          } else if (op[k] === null || op[k] === false || (Array.isArray(op[k]) && !(op[k] as string[]).length)) delete n[k];
           else (n as unknown as Record<string, unknown>)[k] = Array.isArray(op[k]) ? (op[k] as string[]).slice() : op[k];
         }
         if (op.sync) back.sync = true;
@@ -1951,7 +1973,7 @@ export function copyTree(board: Board, id: string, parent: string | null): { id:
 /** How a layer sits in its frame or on the page: never taken from a component by its copies. */
 const PLACEMENT = ["left", "top", "right", "bottom", "position", "inset", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "alignSelf", "flexGrow", "flexShrink", "flexBasis", "flex", "order", "zIndex", "transform", "rotate", "translate", "gridColumn", "gridRow", "gridArea", "justifySelf"];
 
-const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name", "mask", "shader"] as const;
+const FIELDS = ["text", "src", "poster", "video", "svg", "defs", "tag", "shape", "hidden", "name", "mask", "shader", "effects"] as const;
 
 /** The keys a set step changes, as overrides name them ("style.color", "text"). */
 function changedKeys(before: BoardNode, op: Extract<Op, { op: "set" }>): string[] {
@@ -2315,6 +2337,10 @@ function describe(board: Board, id: string): string {
   }
   if (n.type === "svg") bits.push(n.svg ? (n.shape ? `shape ${String(n.shape.type ?? "")}` : "one piece") : `in parts${n.attrs?.viewBox ? `, viewBox ${n.attrs.viewBox}` : ""}`);
   if (n.shader) bits.push(shaderWords(n.shader, board.shaders));
+  if (n.effects?.length) {
+    const ew = effectsWords(n.effects);
+    if (ew) bits.push(ew);
+  }
   if (n.mask) bits.push(maskWords(board, id));
   const maskedBy = maskOf(board, id);
   if (maskedBy) bits.push(`masked by #${maskedBy}${board.nodes[maskedBy]?.hidden ? " (mask hidden, so shown whole)" : ""}`);

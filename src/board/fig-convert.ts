@@ -993,7 +993,22 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
   }
   const kids = n.children.filter((k) => k.visible !== false);
   if (kids.some((k) => !autoLayout(n) || k.stackPositioning === "ABSOLUTE")) st.position ||= "relative";
-  return `<div${name}${mask} style="${attr(css(st))}">${kids.map((k) => nodeHtml(c, k, n)).join("")}</div>`;
+  const fxList: any[] = shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]);
+  const glassFx = fxList.find((e) => e.type === "GLASS");
+  const glassAttr = glassFx
+    ? ` data-glass="${attr(
+        JSON.stringify({
+          refraction: Math.round((glassFx.refraction ?? 0.8) * (glassFx.refraction > 1 ? 1 : 100)),
+          depth: Math.round((glassFx.depth ?? 0.65) * (glassFx.depth > 1 ? 1 : 100)),
+          dispersion: Math.round((glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.5) * ((glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.5) > 1 ? 1 : 100)),
+          frost: Math.round(Math.min(100, (glassFx.radius ?? glassFx.frost ?? 0) * 2)),
+          splay: Math.round((glassFx.splay ?? 0) * ((glassFx.splay ?? 0) > 1 ? 1 : 100)),
+          lightAngle: Math.round(glassFx.specularAngle ?? glassFx.lightAngle ?? -60),
+          lightIntensity: Math.round((glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8) * ((glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8) > 1 ? 1 : 100)),
+        }),
+      )}"`
+    : "";
+  return `<div${name}${mask}${glassAttr} style="${attr(css(st))}">${kids.map((k) => nodeHtml(c, k, n)).join("")}</div>`;
 }
 
 /** The box a w×h layer covers once its transform's turn (no move) is applied. */

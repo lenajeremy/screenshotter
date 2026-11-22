@@ -1793,3 +1793,55 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .electron [data-drag] { -webkit-app-region: drag; }
 .electron [data-drag] :is([data-nodrag], button, input, select, textarea, a, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
 .bd-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+
+/* Optical & layer effects (Liquid Glass, Pattern refraction, Lens distortion, Bloom, etc.) */
+.bd-prow.is-off .bd-prow-main { opacity: 0.48; }
+.bd-fx-dot { width: 14px; height: 14px; border-radius: 50%; flex: none; position: relative; box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.18); background: radial-gradient(circle at 30% 25%, #fff 0%, #c7d2fe 45%, #6366f1 100%); }
+.bd-fx-dot.glass { background: conic-gradient(from 135deg, #fff, #93c5fd, #e879f9, #fde68a, #67e8f9, #fff); box-shadow: inset 0 1px 2px #fff, 0 0 0 1px rgb(var(--ink) / 0.22); }
+.bd-fx-dot.pattern-refraction { background: repeating-linear-gradient(45deg, #67e8f9 0 2px, #0f172a 2px 4px, #f0abfc 4px 6px); }
+.bd-fx-dot.lens-distortion { background: radial-gradient(circle, #e0f2fe 20%, #38bdf8 58%, #f472b6 84%, #fbbf24 100%); }
+.bd-fx-dot.warp { background: repeating-radial-gradient(circle, #fb923c 0 2px, #38bdf8 2px 4px); }
+.bd-fx-dot.moving-blobs { background: linear-gradient(135deg, #06b6d4, #6366f1, #ec4899); }
+.bd-fx-dot.slice-shift { background: repeating-linear-gradient(-45deg, #f472b6 0 3px, #1e1b4b 3px 6px); }
+.bd-fx-dot.pixel-stretch { background: linear-gradient(90deg, #0ea5e9 0 40%, #f43f5e 40% 70%, #facc15 70% 100%); }
+.bd-fx-dot.gooey-merge { background: radial-gradient(circle at 32% 50%, #e4e4e7 30%, transparent 32%), radial-gradient(circle at 68% 50%, #e4e4e7 30%, #27272a 32%); }
+.bd-fx-dot.bloom { background: radial-gradient(circle, #ffffff 0%, #fef08a 45%, #fb923c 100%); }
+.bd-fx-dot.bokeh-blur { background: radial-gradient(circle at 35% 35%, #fff 15%, #93c5fd 55%, #334155 100%); }
+.bd-fx-dot.gradient-map { background: linear-gradient(135deg, #1b1464, #7c3aed, #f9a8d4); }
+.bd-fx-dot.color-adjust { background: conic-gradient(#ef4444, #f59e0b, #22c55e, #3b82f6, #a855f7, #ef4444); }
+.bd-fx-dot.pixelate { background: repeating-conic-gradient(#38bdf8 0 25%, #f43f5e 0 50%) 0 0 / 7px 7px; }
+.bd-fx-dot.crt-screen { background: repeating-linear-gradient(90deg, #ef4444 0 2px, #22c55e 2px 4px, #3b82f6 4px 6px); }
+.bd-fx-dot.outlines { background: repeating-radial-gradient(circle, #c4b5fd 0 1.5px, #0b0b12 1.5px 3.5px); }
+.bd-fx-dot.chromatic-metal { background: linear-gradient(135deg, #090b12 0 35%, #67e8f9 48%, #f472b6 58%, #ffffff 78%); }
+
+.bd-fx-pop { padding: 10px; }
+.bd-fx-head { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.bd-fx-head > :first-child { flex: 1; min-width: 0; }
+.bd-fx-body { display: flex; flex-direction: column; gap: 7px; }
+.bd-fx-body .row { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 8px; }
+.bd-fx-body .row > label { font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bd-fx-light { display: grid; grid-template-columns: 42px 66px 1fr; align-items: center; gap: 8px; padding: 2px 0 8px; border-bottom: 1px solid var(--line); }
+.bd-fx-light-lbl { font-size: 11.5px; color: var(--text-2); }
+.bd-fx-pad { position: relative; width: 64px; height: 64px; border-radius: 10px; box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.18), 0 1px 2px rgb(0 0 0 / 0.15); cursor: crosshair; touch-action: none; overflow: hidden; user-select: none; }
+.bd-fx-pad-card { position: absolute; left: 50%; top: 50%; width: 24px; height: 24px; transform: translate(-50%, -50%); border-radius: 6px; border: 1.5px solid rgba(255, 255, 255, 0.72); background: rgba(255, 255, 255, 0.14); box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.45); pointer-events: none; }
+.bd-fx-pad-beam { position: absolute; width: 10px; height: 10px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--iris); box-shadow: 0 0 0 2px #fff, 0 0 10px var(--iris); pointer-events: none; }
+.bd-fx-light-nums { display: flex; flex-direction: column; gap: 6px; }
+
+.bd-fx-pick-pop { padding: 10px; }
+.bd-fx-pick-list { max-height: 330px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding-right: 2px; }
+.bd-fx-group { display: flex; flex-direction: column; gap: 3px; }
+.bd-fx-cat { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-4); padding: 2px 6px; }
+.bd-fx-item { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: var(--text); text-align: left; width: 100%; }
+.bd-fx-item:hover { background: rgb(var(--ink) / 0.06); }
+.bd-fx-inm { display: flex; flex-direction: column; min-width: 0; }
+.bd-fx-inm b { font-size: 12px; font-weight: 560; }
+.bd-fx-inm small { font-size: 10.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bd-glass-art { position: relative; overflow: hidden; }
+.bd-glass-art.glass-globe { background: radial-gradient(circle at 30% 28%, rgba(255,255,255,0.92) 0%, rgba(169,165,252,0.5) 38%, rgba(103,232,249,0.55) 68%, rgba(232,121,249,0.55) 86%, rgba(15,23,42,0.85) 100%); }
+.bd-glass-art.glass-globe::after { content: ""; position: absolute; inset: 12%; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.85); box-shadow: inset 2px 3px 8px rgba(255,255,255,0.7), inset -2px -3px 8px rgba(103,232,249,0.6), 0 0 14px rgba(168,85,247,0.45); }
+.bd-glass-art.glass-pill { background: linear-gradient(135deg, #38bdf8, #818cf8 55%, #f472b6); }
+.bd-glass-art.glass-pill::after { content: ""; position: absolute; left: 12%; right: 12%; top: 26%; bottom: 26%; border-radius: 999px; background: rgba(255,255,255,0.22); backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.72); box-shadow: inset 0 1px 2px rgba(255,255,255,0.85); }
+.bd-glass-art.fluted-glass { background: repeating-linear-gradient(55deg, rgba(15,61,86,0.95) 0 4px, rgba(72,209,181,0.9) 4px 8px, rgba(247,230,161,0.95) 8px 11px, rgba(240,171,252,0.7) 11px 13px); }
+.bd-glass-art.lens-prism { background: radial-gradient(circle at 50% 50%, #e0f2fe 0%, #38bdf8 48%, #a855f7 76%, #fb7185 92%, #0f172a 100%); }

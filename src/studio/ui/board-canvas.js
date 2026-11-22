@@ -15,6 +15,7 @@ import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
 import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
 import { ShaderCanvas } from "./board-shaders.js";
+import { detachElementEffects, syncElementEffects } from "./board-effects.js";
 
 export const canvasEl = { current: null };
 
@@ -1011,6 +1012,7 @@ class Layer extends Component {
     if (id && el) {
       bindEl(id, el);
       this.syncMip();
+      syncElementEffects(el, this.props.n, B.board);
     } else if (id) {
       mipNodes.delete(id);
     }
@@ -1032,9 +1034,11 @@ class Layer extends Component {
   }
   componentDidUpdate() {
     this.syncMip();
+    if (this.el) syncElementEffects(this.el, this.props.n, B.board);
   }
   componentWillUnmount() {
     const id = this.props.n?.id;
+    if (this.el) detachElementEffects(this.el);
     if (id) {
       if (nodeEls.get(id) === this.el) nodeEls.delete(id);
       mipNodes.delete(id);

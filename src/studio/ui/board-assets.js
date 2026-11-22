@@ -10,6 +10,7 @@ import { Section, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { shapeInBox } from "./shapes.js";
 import { ShaderAssets, shaderAssetLayers } from "./board-shaders.js";
+import { GlassAssets, glassAssetLayers } from "./board-effects.js";
 import { S, api, fail, fileUrl, thumbUrl, useStore } from "./store.js";
 
 // ---------------------------------------------------------------------------------------------
@@ -42,6 +43,7 @@ export const BOARD_SHAPES = [
 /** What an asset becomes: the new layers (not yet on the board), made with no parent. */
 async function layersFor(a) {
   if (a.kind === "shader") return shaderAssetLayers(a);
+  if (a.kind === "glass-asset") return glassAssetLayers(a);
   if (a.kind === "shape") {
     const k = BOARD_SHAPES.find((x) => x.id === a.id);
     const id = newId();
@@ -181,6 +183,7 @@ export function AssetsPanel() {
       <div class="bd-tints">${TINTS.map((c) => html`<button class=${c === tint ? "on" : ""} style=${{ background: c }} title=${c} onClick=${() => pick(c)}></button>`)}</div>
       <div class="bd-asset-grid shapes">${BOARD_SHAPES.map((k) => html`<${ShapeTile} k=${k} tint=${tint} />`)}</div>
     <//>
+    <${GlassAssets} />
     <${ShaderAssets} />
     <${Section} title="Stickers" count=${s.opts?.stickers?.length} collapsible id="bd-a-stickers">
       <div class="bd-asset-grid icons">${(s.opts?.stickers ?? []).map((n) => html`<${Tile} a=${{ kind: "sticker", name: n }} title=${n}><img loading="lazy" draggable=${false} src=${`/ui/stickers/${n}.svg`} alt="" /><//>`)}</div>

@@ -370,6 +370,572 @@ void main() {
 }
 `,
   },
+  {
+    id: "chromatic-metal",
+    name: "Chromatic metal",
+    blurb: "Liquid chrome with vivid spectral rainbow Fresnel dispersion.",
+    code: `// Chromatic metal: liquid mercury folds with prismatic rainbow Fresnel bands.
+uniform vec3 uShadow; // @color = #080a10 "Shadow"
+uniform vec3 uHighlight; // @color = #ffffff "Highlight"
+uniform float uDispersion; // @param 0..1 = 0.85 "Dispersion"
+uniform float uScale; // @param 0.5..5 = 1.65 "Scale"
+uniform float uWarp; // @param 0..2 = 0.9 "Warp"
+uniform float uAngle; // @param -180..180 = -35 step 1 "Angle"
+vec3 spectrum(float x) {
+  return 0.5 + 0.5 * cos(6.28318 * (x + vec3(0.0, 0.33, 0.67)));
+}
+float field(vec2 p, float t) {
+  vec2 q = p;
+  for (int i = 1; i < 5; i++) {
+    float fi = float(i);
+    q += uWarp * 0.45 / fi * vec2(sin(fi * q.y + t + fi), cos(fi * q.x - t * 0.75 + fi * 1.4));
+  }
+  return 0.5 + 0.5 * sin(q.x * 2.0 + q.y * 1.6);
+}
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
+  float a = radians(uAngle);
+  mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
+  vec2 p = rot * uv * uScale;
+  float t = uTime * 0.25 + 1.5;
+  float eps = 0.02;
+  float h = field(p, t);
+  float hx = field(p + vec2(eps, 0.0), t) - h;
+  float hy = field(p + vec2(0.0, eps), t) - h;
+  vec3 n = normalize(vec3(-hx * 14.0, -hy * 14.0, 1.0));
+  vec3 l = normalize(vec3(0.55, 0.7, 0.82));
+  float diff = clamp(dot(n, l), 0.0, 1.0);
+  float spec = pow(clamp(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0, 1.0), 18.0);
+  float band = smoothstep(0.26, 0.74, diff);
+  vec3 c = mix(uShadow, uHighlight, pow(band, 0.9));
+  // Vivid spectral rainbow fringe right along the dark-to-bright chrome horizon
+  float rimBand = exp(-pow((diff - 0.48) * 4.4, 2.0));
+  vec3 irid = spectrum(diff * 2.8 + h * 1.1 - 0.35);
+  c = mix(c, irid * 1.25, rimBand * uDispersion);
+  c += uHighlight * spec * 0.85;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "glowing-particles",
+    name: "Glowing particles",
+    blurb: "Luminous soft bokeh orbs and sparkling dust drifting in depth.",
+    code: `// Glowing particles: layered soft bokeh light orbs and sparkling micro-dust.
+uniform vec3 uSky; // @color = #0c1242 "Backdrop"
+uniform vec3 uColor1; // @color = #ff4de6 "Orb 1"
+uniform vec3 uColor2; // @color = #48d8ff "Orb 2"
+uniform vec3 uColor3; // @color = #ffe08a "Sparkle"
+uniform float uDensity; // @param 0.5..2.5 = 1.1 "Density"
+uniform float uGlow; // @param 0.2..2 = 1.25 "Glow"
+${HASH}
+vec3 orbLayer(vec2 uv, float scale, float t, float seed, float sizeMul) {
+  vec2 gv = uv * scale;
+  vec2 id = floor(gv);
+  vec2 f = fract(gv) - 0.5;
+  vec3 col = vec3(0.0);
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 offs = vec2(float(x), float(y));
+      vec2 cid = id + offs;
+      float h1 = hash(cid + seed);
+      if (h1 > 0.62) continue;
+      float h2 = hash(cid * 1.7 + seed + 19.3);
+      float h3 = hash(cid * 2.3 + seed + 41.7);
+      vec2 pos = offs + 0.36 * vec2(sin(t * (0.4 + h2 * 0.5) + h1 * 18.0), cos(t * (0.35 + h3 * 0.45) + h2 * 18.0));
+      float d = length(f - pos);
+      float rad = (0.14 + 0.32 * h3) * sizeMul;
+      float core = exp(-d * d / (rad * rad * 0.38));
+      float halo = exp(-d * d / (rad * rad * 1.5)) * 0.45;
+      float pulse = 0.55 + 0.45 * sin(t * 1.3 + h1 * 30.0);
+      vec3 c = h2 < 0.44 ? uColor1 : (h2 < 0.8 ? uColor2 : uColor3);
+      col += c * (core + halo) * pulse;
+    }
+  }
+  return col;
+}
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;
+  float t = uTime * 0.5 + 3.0;
+  vec3 c = mix(uSky * 0.72, uSky * 1.45, clamp(uv.y + 0.55, 0.0, 1.0));
+  vec3 l1 = orbLayer(uv + vec2(t * 0.035, t * 0.02), 2.4 * uDensity, t, 1.0, 1.15);
+  vec3 l2 = orbLayer(uv - vec2(t * 0.025, -t * 0.03), 5.0 * uDensity, t * 1.25, 17.0, 0.9);
+  vec2 sp = floor(gl_FragCoord.xy / max(3.0 * uPx, 1.0));
+  float spark = step(0.992, hash(sp)) * (0.45 + 0.55 * sin(t * 3.2 + hash(sp + 9.0) * 18.0));
+  c += (l1 * 0.85 + l2 * 0.65) * uGlow + uColor3 * spark * 0.9;
+  c = 1.0 - exp(-c * 1.2);
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "cmyk-halftone",
+    name: "CMYK halftone",
+    blurb: "Four-plate CMYK, RGB or monochrome halftone screen with dot, line and ring patterns.",
+    code: `// CMYK halftone: four-angle print screen (Dot, Line or Ring) driven by flowing light.
+uniform int uPattern; // @choice dot|line|ring = dot "Pattern"
+uniform int uMode; // @choice cmyk|rgb|mono = cmyk "Color mode"
+uniform float uDotSize; // @param 4..40 = 14 px "Dot size"
+uniform float uDotScale; // @param 0.3..1.6 = 1.0 "Dot scale"
+uniform float uSoftness; // @param 0..1 = 0.08 "Softness"
+uniform float uRotation; // @param -180..180 = 0 step 1 "Rotation"
+uniform vec3 uPaper; // @color = #fffdf6 "Paper"
+${NOISE}
+float screenDot(vec2 p, float ang, float s, float val) {
+  float a = radians(ang + uRotation);
+  mat2 r = mat2(cos(a), sin(a), -sin(a), cos(a));
+  vec2 q = r * p;
+  float soft = max(0.7, s * uSoftness * 0.45);
+  if (uPattern == 1) {
+    float d = abs(fract(q.y / s) - 0.5) * s;
+    float w = s * 0.48 * uDotScale * val;
+    return 1.0 - smoothstep(w - soft, w + soft, d);
+  }
+  vec2 cell = (floor(q / s) + 0.5) * s;
+  float d = distance(q, cell);
+  float rad = s * 0.56 * uDotScale * sqrt(clamp(val, 0.0, 1.0));
+  if (uPattern == 2) {
+    float ring = abs(d - rad * 0.72);
+    return 1.0 - smoothstep(s * 0.12 - soft * 0.4, s * 0.12 + soft * 0.4, ring) * step(0.08, val);
+  }
+  return 1.0 - smoothstep(rad - soft, rad + soft, d);
+}
+void main() {
+  float s = max(uDotSize, 3.0);
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec2 p = gl_FragCoord.xy - 0.5 * uRes;
+  float t = uTime * 0.2 + 2.0;
+  float n1 = fbm(uv * 2.6 + vec2(t, t * 0.5));
+  float n2 = fbm(uv * 2.6 + vec2(-t * 0.7 + 4.1, t * 0.4));
+  float n3 = fbm(uv * 2.2 + vec2(t * 0.4, -t * 0.8 + 8.3));
+  vec3 src = vec3(
+    smoothstep(0.22, 0.82, n1),
+    smoothstep(0.22, 0.82, n2),
+    smoothstep(0.22, 0.82, n3)
+  );
+  if (uMode == 1) {
+    float r = screenDot(p, 15.0, s, src.r);
+    float g = screenDot(p, 75.0, s, src.g);
+    float b = screenDot(p, 45.0, s, src.b);
+    gl_FragColor = vec4(vec3(r, g, b), 1.0);
+    return;
+  }
+  if (uMode == 2) {
+    float lum = dot(src, vec3(0.299, 0.587, 0.114));
+    float k = screenDot(p, 45.0, s, 1.0 - lum);
+    gl_FragColor = vec4(mix(uPaper, vec3(0.08, 0.08, 0.1), k), 1.0);
+    return;
+  }
+  float kVal = 1.0 - max(src.r, max(src.g, src.b));
+  float denom = max(1.0 - kVal, 0.001);
+  float cVal = (1.0 - src.r - kVal) / denom;
+  float mVal = (1.0 - src.g - kVal) / denom;
+  float yVal = (1.0 - src.b - kVal) / denom;
+  float cDot = screenDot(p, 15.0, s, cVal);
+  float mDot = screenDot(p, 75.0, s, mVal);
+  float yDot = screenDot(p, 0.0, s, yVal);
+  float kDot = screenDot(p, 45.0, s, kVal * 0.85);
+  vec3 col = uPaper;
+  col *= mix(vec3(1.0), vec3(0.06, 0.78, 0.96), cDot);
+  col *= mix(vec3(1.0), vec3(0.96, 0.14, 0.58), mDot);
+  col *= mix(vec3(1.0), vec3(1.0, 0.9, 0.08), yDot);
+  col *= mix(vec3(1.0), vec3(0.08, 0.08, 0.11), kDot);
+  gl_FragColor = vec4(col, 1.0);
+}
+`,
+  },
+  {
+    id: "pattern-refraction",
+    name: "Pattern refraction",
+    blurb: "Fluted and lenticular glass ribs bending colorful light and caustics.",
+    code: `// Pattern refraction: fluted and lenticular glass ribs refracting flowing light with dispersion.
+uniform int uPattern; // @choice lenticular|waves|ripple = waves "Pattern"
+uniform vec3 uColor1; // @color = #0f3d56 "Deep"
+uniform vec3 uColor2; // @color = #48d1b5 "Mid"
+uniform vec3 uColor3; // @color = #f7e6a1 "Light"
+uniform float uRibs; // @param 4..36 = 14 "Ribs"
+uniform float uStrength; // @param 0..2 = 1.0 "Strength"
+uniform float uDispersion; // @param 0..1 = 0.5 "Dispersion"
+uniform float uAngle; // @param -180..180 = 35 step 1 "Angle"
+${NOISE}
+float fbm3(vec2 p) {
+  float v = 0.0, a = 0.55;
+  for (int i = 0; i < 3; i++) { v += a * noise(p); p = p * 2.02 + 13.7; a *= 0.5; }
+  return v;
+}
+vec3 backdrop(vec2 uv, float t) {
+  float n = fbm3(uv * 2.2 + vec2(t * 0.25, -t * 0.18));
+  float n2 = fbm3(uv * 3.0 - vec2(t * 0.2, t * 0.25) + 4.2);
+  vec3 c = mix(uColor1, uColor2, smoothstep(0.22, 0.72, n));
+  return mix(c, uColor3, smoothstep(0.48, 0.88, n2));
+}
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;
+  float a = radians(uAngle);
+  mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
+  vec2 q = rot * p;
+  float t = uTime * 0.4 + 2.0;
+  float coord = q.x * uRibs;
+  if (uPattern == 1) coord += sin(q.y * 4.2 + t * 0.6) * 1.4;
+  else if (uPattern == 2) coord = length(p) * uRibs - t * 0.4;
+  float ph = fract(coord);
+  float slope = (ph - 0.5) * 2.0;
+  vec2 dir = uPattern == 2 ? normalize(p + vec2(1e-4)) : vec2(cos(a), sin(a));
+  vec2 baseShift = dir * slope * 0.08 * uStrength;
+  float disp = uDispersion * 0.025 * uStrength;
+  vec3 c;
+  c.r = backdrop(uv + baseShift - dir * disp, t).r;
+  c.g = backdrop(uv + baseShift, t).g;
+  c.b = backdrop(uv + baseShift + dir * disp, t).b;
+  float spec = pow(max(0.0, 1.0 - abs(ph - 0.28) * 5.0), 3.0) * 0.35;
+  float shade = 0.86 + 0.24 * sin(ph * 3.14159);
+  c = c * shade + vec3(spec);
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "moving-blobs",
+    name: "Moving blobs",
+    blurb: "Organic chromatic fluid contours and iridescent liquid blobs.",
+    code: `// Moving blobs: organic iridescent fluid contours flowing across the frame.
+uniform vec3 uBase; // @color = #0c2233 "Base"
+uniform vec3 uAccent; // @color = #25a7b8 "Accent"
+uniform vec3 uLight; // @color = #f2f4f7 "Light"
+uniform float uScale; // @param 0.5..6 = 2.4 "Scale"
+uniform float uWarp; // @param 0..2 = 1.15 "Warp"
+uniform float uIridescence; // @param 0..1 = 0.6 "Iridescence"
+${NOISE}
+float fbm4(vec2 p) {
+  float v = 0.0, a = 0.52;
+  for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.02 + 13.7; a *= 0.5; }
+  return v;
+}
+vec3 spectrum(float x) { return 0.5 + 0.5 * cos(6.28318 * (x + vec3(0.0, 0.33, 0.67))); }
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * uScale;
+  float t = uTime * 0.18 + 3.0;
+  vec2 w1 = vec2(fbm4(uv + t * 0.4), fbm4(uv + vec2(5.2, 1.3) - t * 0.3));
+  vec2 w2 = vec2(fbm4(uv + uWarp * 2.2 * w1 + vec2(1.7, 9.2)), fbm4(uv + uWarp * 2.2 * w1 + vec2(8.3, 2.8)));
+  float v = fbm4(uv + uWarp * 2.4 * w2);
+  float rings = 0.5 + 0.5 * sin(v * 26.0);
+  vec3 c = mix(uBase, uAccent, smoothstep(0.2, 0.72, v));
+  c = mix(c, uLight, smoothstep(0.66, 0.88, v));
+  float ridge = smoothstep(0.7, 0.98, rings) * 0.35;
+  c = mix(c, spectrum(v * 3.0 + length(w2)), ridge * uIridescence);
+  c += vec3(0.12) * pow(smoothstep(0.55, 0.95, w2.x), 3.0);
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "iridescent-glass",
+    name: "Iridescent glass",
+    blurb: "Thin-film soap-bubble and liquid-glass prism sheen (great standalone or blended).",
+    code: `// Iridescent glass: silky thin-film interference rainbow pearl & liquid glass sheen.
+uniform vec3 uBase; // @color = #e8efff "Glass tint"
+uniform float uShift; // @param 0..2 = 0.75 "Prism shift"
+uniform float uRipple; // @param 0..2 = 0.85 "Ripple"
+uniform float uGloss; // @param 0..2 = 1.15 "Gloss"
+vec3 thinFilm(float x) {
+  return 0.62 + 0.36 * cos(6.28318 * (x + vec3(0.0, 0.27, 0.58)));
+}
+float glassH(vec2 p, float t) {
+  float a = sin(p.x * 2.3 + t * 0.65) * cos(p.y * 2.1 - t * 0.5);
+  float b = sin((p.x * 1.4 - p.y * 1.9) * 1.8 + t * 0.45);
+  float c = cos(length(p - vec2(0.3 * sin(t * 0.4), 0.25 * cos(t * 0.35))) * 3.6 - t * 0.7);
+  return (a * 0.45 + b * 0.32 + c * 0.23) * uRipple;
+}
+void main() {
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y) * 1.7;
+  float t = uTime * 0.45 + 1.0;
+  float eps = 0.025;
+  float h = glassH(p, t);
+  float gx = glassH(p + vec2(eps, 0.0), t) - h;
+  float gy = glassH(p + vec2(0.0, eps), t) - h;
+  vec3 n = normalize(vec3(-gx * 12.0, -gy * 12.0, 1.0));
+  float fresnel = pow(1.0 - max(n.z, 0.0), 1.6);
+  vec3 irid = thinFilm(h * 0.65 + fresnel * 1.25 + p.x * 0.18 + uShift * 0.5);
+  vec3 l = normalize(vec3(-0.55, 0.72, 0.88));
+  float spec = pow(max(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0), 20.0);
+  vec3 c = mix(uBase, irid, 0.38 + 0.56 * fresnel);
+  c += vec3(1.0) * spec * 0.85 * uGloss;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "caustics",
+    name: "Water caustics",
+    blurb: "Sunlit refractive light webs shimmering through clear water.",
+    code: `// Water caustics: sunlit Voronoi optical light webs with subtle chromatic dispersion.
+uniform vec3 uDeep; // @color = #062849 "Deep"
+uniform vec3 uWater; // @color = #0ea5c6 "Water"
+uniform vec3 uLight; // @color = #d8fbff "Light"
+uniform float uScale; // @param 1..10 = 4.5 "Scale"
+uniform float uIntensity; // @param 0.2..2 = 1.15 "Intensity"
+uniform float uDispersion; // @param 0..1 = 0.35 "Dispersion"
+${HASH}
+float caustic(vec2 p, float t) {
+  vec2 n = floor(p), f = fract(p);
+  float md = 8.0, md2 = 8.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      float h = hash(n + g);
+      float h2 = hash(n + g + 17.3);
+      vec2 o = 0.5 + 0.42 * vec2(sin(t + h * 6.283), cos(t * 0.9 + h2 * 6.283));
+      float d = length(g + o - f);
+      if (d < md) { md2 = md; md = d; }
+      else if (d < md2) { md2 = d; }
+    }
+  }
+  return pow(clamp(1.0 - (md2 - md) * 2.4, 0.0, 1.0), 3.2);
+}
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * uScale;
+  float t = uTime * 0.75 + 2.0;
+  vec2 off = vec2(0.035, 0.02) * uDispersion;
+  float sub = 0.55 * caustic(uv * 1.45 + 3.1, -t * 0.7);
+  float r = caustic(uv + off, t) + sub;
+  float g = caustic(uv, t) + sub;
+  float b = caustic(uv - off, t) + sub;
+  vec3 base = mix(uDeep, uWater, clamp(gl_FragCoord.y / uRes.y * 0.8 + 0.15, 0.0, 1.0));
+  vec3 c = base + uLight * vec3(r, g, b) * 0.85 * uIntensity;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "prism-voronoi",
+    name: "Voronoi crystal",
+    blurb: "Faceted refractive crystal glass cells with glowing bevel edges.",
+    code: `// Voronoi crystal: faceted refractive crystal cells with glowing bevel edges.
+uniform vec3 uBase; // @color = #14132e "Base"
+uniform vec3 uFacet; // @color = #4c6ef5 "Facet"
+uniform vec3 uEdge; // @color = #e0f2fe "Bevel"
+uniform float uCells; // @param 2..12 = 5.5 "Cells"
+uniform float uGloss; // @param 0..2 = 1.1 "Gloss"
+${HASH}
+void main() {
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * uCells;
+  float t = uTime * 0.35 + 1.5;
+  vec2 n = floor(p), f = fract(p);
+  float md = 8.0, md2 = 8.0;
+  vec2 bestId = vec2(0.0);
+  vec2 bestDiff = vec2(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 cid = n + g;
+      float h1 = hash(cid), h2 = hash(cid + 31.7);
+      vec2 o = 0.5 + 0.4 * vec2(sin(t + h1 * 6.283), cos(t * 0.85 + h2 * 6.283));
+      vec2 diff = g + o - f;
+      float d = length(diff);
+      if (d < md) { md2 = md; md = d; bestId = cid; bestDiff = diff; }
+      else if (d < md2) { md2 = d; }
+    }
+  }
+  float h = hash(bestId + 7.1);
+  float edge = 1.0 - smoothstep(0.02, 0.14, md2 - md);
+  vec3 normal = normalize(vec3(bestDiff * 2.2, 1.0));
+  float light = clamp(dot(normal, normalize(vec3(sin(t * 0.6), 0.7, 0.9))), 0.0, 1.0);
+  vec3 prism = 0.5 + 0.5 * cos(6.28318 * (h + light * 0.4 + vec3(0.0, 0.33, 0.67)));
+  vec3 c = mix(uBase, mix(uFacet, prism, 0.38), 0.35 + 0.65 * light);
+  c += uEdge * (edge * 0.65 + pow(light, 10.0) * 0.5) * uGloss;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "silk-folds",
+    name: "Silk folds",
+    blurb: "Velvety 3D-lit flowing silk fabric ribbons with soft specular sheen.",
+    code: `// Silk folds: velvety 3D-lit flowing fabric folds with soft anisotropic sheen.
+uniform vec3 uShadow; // @color = #170d2e "Shadow"
+uniform vec3 uFabric; // @color = #7c3aed "Fabric"
+uniform vec3 uSheen; // @color = #f5d0fe "Sheen"
+uniform float uFolds; // @param 1..10 = 4.2 "Folds"
+uniform float uSoftness; // @param 0.2..2 = 1.0 "Softness"
+float foldH(vec2 p, float t) {
+  float sw = sin(p.y * 1.8 - t * 0.45) * 0.55 + cos(p.x * 1.3 + p.y * 0.9 + t * 0.35) * 0.45;
+  float a = sin(p.x * uFolds + sw * 2.1 + t * 0.55);
+  float b = cos(p.y * uFolds * 0.55 - sw * 1.6 + t * 0.4);
+  float c = sin((p.x - p.y * 0.65) * uFolds * 0.72 + t * 0.3);
+  return a * 0.5 + b * 0.32 + c * 0.18;
+}
+void main() {
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * 1.7;
+  float t = uTime * 0.5 + 1.0;
+  float eps = 0.03;
+  float h = foldH(p, t);
+  float dx = foldH(p + vec2(eps, 0.0), t) - h;
+  float dy = foldH(p + vec2(0.0, eps), t) - h;
+  vec3 n = normalize(vec3(-dx * 8.0 / uSoftness, -dy * 8.0 / uSoftness, 1.0));
+  vec3 l = normalize(vec3(-0.5, 0.75, 0.85));
+  float diff = clamp(dot(n, l) * 0.65 + 0.35, 0.0, 1.0);
+  float spec = pow(clamp(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0, 1.0), 10.0);
+  float rim = pow(1.0 - max(n.z, 0.0), 2.4);
+  vec3 c = mix(uShadow, uFabric, smoothstep(0.15, 0.88, diff));
+  c = mix(c, uSheen, clamp(spec * 0.75 + rim * 0.42, 0.0, 1.0));
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "nebula-plasma",
+    name: "Domain nebula",
+    blurb: "Multi-octave domain-warped cosmic nebula clouds and stars.",
+    code: `// Domain nebula: multi-octave domain-warped cosmic energy clouds and twinkling stars.
+uniform vec3 uSpace; // @color = #05060f "Space"
+uniform vec3 uCloud1; // @color = #4f46e5 "Cloud 1"
+uniform vec3 uCloud2; // @color = #ec4899 "Cloud 2"
+uniform vec3 uCore; // @color = #fde68a "Core"
+uniform float uScale; // @param 0.5..5 = 2.0 "Scale"
+uniform float uStars; // @param 0..1 = 0.6 "Stars"
+${NOISE}
+float fbm4(vec2 p) {
+  float v = 0.0, a = 0.52;
+  for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.02 + 13.7; a *= 0.5; }
+  return v;
+}
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * uScale;
+  float t = uTime * 0.12 + 4.0;
+  vec2 q = vec2(fbm4(uv + t * 0.25), fbm4(uv + vec2(5.2, 1.3) - t * 0.2));
+  vec2 r = vec2(fbm4(uv + 2.4 * q + vec2(1.7, 9.2) + t * 0.15), fbm4(uv + 2.4 * q + vec2(8.3, 2.8) - t * 0.12));
+  float f = fbm4(uv + 2.2 * r);
+  vec3 c = mix(uSpace, uCloud1, smoothstep(0.22, 0.68, f));
+  c = mix(c, uCloud2, smoothstep(0.32, 0.78, length(q) * 0.9) * smoothstep(0.3, 0.85, f));
+  c += uCore * pow(smoothstep(0.58, 0.94, f * r.x * 1.45), 2.4) * 1.2;
+  vec2 sp = floor(gl_FragCoord.xy / max(2.0 * uPx, 1.0));
+  float st = step(1.0 - 0.005 * uStars, hash(sp)) * (0.5 + 0.5 * sin(uTime * 2.5 + hash(sp + 5.0) * 12.0));
+  c += vec3(st) * 0.9;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "holo-foil",
+    name: "Holographic foil",
+    blurb: "Collectible trading-card diffraction grating foil with rainbow shimmer.",
+    code: `// Holographic foil: micro-grating diffraction rainbow shimmer like a foil card.
+uniform vec3 uMetal; // @color = #202430 "Metal"
+uniform float uIntensity; // @param 0..2 = 1.15 "Rainbow"
+uniform float uGrating; // @param 20..180 = 80 "Grating"
+uniform float uAngle; // @param -180..180 = 32 step 1 "Angle"
+${NOISE}
+vec3 rainbow(float x) { return 0.5 + 0.5 * cos(6.28318 * (x + vec3(0.0, 0.33, 0.67))); }
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;
+  float a = radians(uAngle);
+  mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
+  vec2 q = rot * p;
+  float t = uTime * 0.45 + 1.0;
+  float warp = fbm(q * 2.2 + vec2(t * 0.3, -t * 0.2));
+  float sheen = sin(q.x * 5.0 + warp * 4.5 + t * 1.6);
+  float lines = 0.88 + 0.12 * sin((q.x + q.y * 0.15) * uGrating + warp * 6.0);
+  vec3 foil = rainbow(q.x * 0.85 + warp * 0.95 + t * 0.25);
+  float gleam = pow(clamp(0.5 + 0.5 * sheen, 0.0, 1.0), 3.0);
+  vec3 c = uMetal * (0.65 + 0.55 * gleam) + foil * (0.28 + 0.72 * gleam) * uIntensity;
+  c *= lines;
+  c += vec3(1.0) * pow(gleam, 8.0) * 0.45;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
+  {
+    id: "hatching",
+    name: "Cross-hatching",
+    blurb: "Hand-drawn ink cross-hatching strokes shaded by shifting light.",
+    code: `// Cross-hatching: hand-drawn pen-and-ink strokes shaded by animated light.
+uniform vec3 uInk; // @color = #18181b "Ink"
+uniform vec3 uPaper; // @color = #f7f3e8 "Paper"
+uniform float uSpacing; // @param 4..24 = 9 px "Spacing"
+uniform float uWeight; // @param 0.5..3 = 1.2 "Weight"
+uniform float uAngle; // @param -90..90 = 35 step 1 "Angle"
+${NOISE}
+float hatch(vec2 p, float deg, float sp, float w) {
+  float a = radians(deg);
+  float u = p.x * cos(a) + p.y * sin(a);
+  float v = -p.x * sin(a) + p.y * cos(a);
+  float jitter = (noise(vec2(v / (sp * 3.0), floor(u / sp) * 1.7)) - 0.5) * 0.22;
+  float d = abs(fract(u / sp + jitter) - 0.5) * sp;
+  return 1.0 - smoothstep(w * 0.45, w * 0.45 + 0.9, d);
+}
+void main() {
+  float sp = max(uSpacing, 3.0);
+  vec2 uv = gl_FragCoord.xy / uRes;
+  float t = uTime * 0.14 + 2.0;
+  float lum = fbm(uv * 2.5 + vec2(t, -t * 0.6));
+  lum = clamp(lum * 1.15 - 0.08 + 0.18 * (1.0 - distance(uv, vec2(0.5 + 0.2 * sin(t * 2.0), 0.5))), 0.0, 1.0);
+  float ink = 0.0;
+  if (lum < 0.76) ink = max(ink, hatch(gl_FragCoord.xy, uAngle, sp, uWeight));
+  if (lum < 0.54) ink = max(ink, hatch(gl_FragCoord.xy, uAngle + 90.0, sp, uWeight));
+  if (lum < 0.34) ink = max(ink, hatch(gl_FragCoord.xy, uAngle + 45.0, sp * 0.85, uWeight * 0.95));
+  if (lum < 0.18) ink = max(ink, hatch(gl_FragCoord.xy, uAngle - 45.0, sp * 0.75, uWeight * 1.1));
+  vec3 paper = uPaper * (0.97 + 0.06 * hash(floor(gl_FragCoord.xy / max(uPx, 1.0))));
+  gl_FragColor = vec4(mix(paper, uInk, ink), 1.0);
+}
+`,
+  },
+  {
+    id: "crt-scanlines",
+    name: "CRT scanlines",
+    blurb: "Retro RGB phosphor scanlines and subtle signal glitch (blends over layers).",
+    style: { mixBlendMode: "overlay" },
+    blend: "overlay",
+    code: `// CRT scanlines: retro phosphor subpixels, scanlines and rolling sync bar (blends well as Overlay).
+uniform vec3 uTint; // @color = #67e8f9 "Phosphor"
+uniform float uPitch; // @param 2..12 = 4 px "Pitch"
+uniform float uScanlines; // @param 0..1 = 0.65 "Scanlines"
+uniform float uGlitch; // @param 0..1 = 0.3 "Glitch"
+${HASH}
+void main() {
+  float p = max(uPitch, 2.0);
+  vec2 uv = gl_FragCoord.xy / uRes;
+  float row = floor(gl_FragCoord.y / p);
+  float sub = mod(floor(gl_FragCoord.x / max(p * 0.5, 1.0)), 3.0);
+  vec3 mask = sub < 0.5 ? vec3(1.0, 0.35, 0.35) : (sub < 1.5 ? vec3(0.35, 1.0, 0.35) : vec3(0.35, 0.35, 1.0));
+  float scan = 1.0 - uScanlines * 0.55 * step(0.55, fract(gl_FragCoord.y / p));
+  float bar = exp(-pow(fract(uv.y - uTime * 0.18) - 0.5, 2.0) * 80.0) * 0.25;
+  float tear = step(1.0 - 0.08 * uGlitch, hash(vec2(row, floor(uTime * 10.0)))) * uGlitch * 0.4;
+  float vig = smoothstep(0.95, 0.35, length(uv - 0.5) * 1.2);
+  vec3 c = mix(vec3(0.5), uTint * mask, 0.55) * scan * (0.75 + 0.25 * vig) + vec3(bar + tear);
+  gl_FragColor = vec4(c, 0.72);
+}
+`,
+  },
+  {
+    id: "dot-matrix",
+    name: "LED matrix",
+    blurb: "Glowing LED dot-matrix grid pulsing with flowing light waves.",
+    code: `// LED matrix: crisp glowing dot-matrix display pulsing with flowing light waves.
+uniform vec3 uOff; // @color = #0b0d14 "Panel"
+uniform vec3 uLow; // @color = #2563eb "Low"
+uniform vec3 uHigh; // @color = #a3e635 "High"
+uniform float uPitch; // @param 6..32 = 12 px "Pitch"
+uniform float uGlow; // @param 0..1.5 = 0.65 "Glow"
+${NOISE}
+void main() {
+  float s = max(uPitch, 4.0);
+  vec2 cell = floor(gl_FragCoord.xy / s);
+  vec2 f = fract(gl_FragCoord.xy / s) - 0.5;
+  vec2 uv = (cell + 0.5) * s / uRes;
+  float t = uTime * 0.55 + 1.0;
+  float v = fbm(uv * 3.5 + vec2(t * 0.35, -t * 0.25));
+  v = clamp(v * 1.15 + 0.2 * sin(uv.x * 8.0 + t * 2.0), 0.0, 1.0);
+  float d = length(f);
+  float led = 1.0 - smoothstep(0.28, 0.36, d);
+  float halo = exp(-d * d * 7.0) * uGlow * v;
+  vec3 lit = mix(uLow, uHigh, smoothstep(0.3, 0.85, v));
+  vec3 c = mix(uOff, lit, led * (0.2 + 0.8 * v)) + lit * halo * 0.55;
+  gl_FragColor = vec4(c, 1.0);
+}
+`,
+  },
 ];
 
 export const presetOf = (id: string | undefined) => (id ? SHADER_PRESETS.find((p) => p.id === id) : undefined);

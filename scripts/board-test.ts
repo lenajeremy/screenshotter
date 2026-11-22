@@ -1558,6 +1558,35 @@ await fake.close();
   const wordsId = /data-id="([^"]+)" data-name="Words"/.exec(cardHtml)?.[1] ?? `none in ${cardHtml.slice(0, 200)}`;
   const notFrame = await call("board_edit", { board: sb, changes: [{ do: "shader", id: wordsId, preset: "aurora" }] }, true);
   check(/Only frames take a shader fill/.test(notFrame.text) || /Only frames take a shader fill/.test(JSON.stringify(notFrame.json ?? {})), `a shader on something that isn't a frame is refused (${notFrame.text.slice(0, 120)})`);
+
+  // Optical & layer effects (Liquid Glass, Pattern refraction, Warp, Bloom, etc.): HTML round-trip,
+  // undo/redo, board_edit, board_read catalog, and headless Chrome rendering.
+  const fxBoard = (await call("board_create", { name: "Effects tools" })).json.id;
+  const fxArt = (
+    await call("board_write_html", {
+      board: fxBoard,
+      html: `<div data-name="Glass Stage" style="width:400px;height:300px;position:relative;background:linear-gradient(90deg,#1d4ed8 50%,#ec4899 50%)">
+        <div data-name="Lens" data-glass='{"refraction":95,"depth":80,"dispersion":75,"frost":0,"lightAngle":-60,"lightIntensity":85}' style="position:absolute;left:100px;top:50px;width:200px;height:200px;border-radius:100px;background:rgba(255,255,255,0.16);overflow:hidden"></div>
+      </div>`,
+    })
+  ).json.created[0].id;
+  const fxHtml = (await call("board_read", { board: fxBoard, node: fxArt, what: "html" })).text;
+  check(/data-effects=/.test(fxHtml) && /refraction/.test(fxHtml), "board_read html preserves effects on frames");
+  const fxTree = (await call("board_read", { board: fxBoard, node: fxArt })).text;
+  check(/glass/.test(fxTree), "board_read tree mentions optical effects on the layer");
+  const lensId = /data-id="([^"]+)" data-name="Lens"/.exec(fxHtml)?.[1] ?? "";
+  const fxUpdated = await call("board_edit", {
+    board: fxBoard,
+    changes: [{ do: "effects", id: lensId, effects: [{ type: "glass", refraction: 80, dispersion: 50, frost: 8 }, { type: "bloom", intensity: 70, radius: 14 }] }],
+  });
+  check(fxUpdated.json.results?.[0]?.count === 2 && fxUpdated.json.results?.[0]?.types?.join(",") === "glass,bloom", `board_edit sets optical & layer effects (${JSON.stringify(fxUpdated.json.results?.[0])})`);
+  check(/- glass \[behind/.test(listed.text) && /- pattern-refraction \[behind/.test(listed.text), "board_read shaders also lists the 16 optical & layer effects");
+  const fxShot = await call("board_screenshot", { board: fxBoard, nodes: [fxArt] });
+  const fxPng = decodePng(fxShot.images[0]);
+  const fxPx = pixelAt(fxPng, 200, 150);
+  check(fxPng.width === 400 && fxPng.height === 300 && fxPx[3] === 255, `board_screenshot renders a Liquid Glass frame cleanly (${fxPng.width}x${fxPng.height}, center ${fxPx.slice(0, 3)})`);
+  const fxRemoved = await call("board_edit", { board: fxBoard, changes: [{ do: "effects", id: lensId, remove: true }] });
+  check(fxRemoved.json.results?.[0]?.removedEffects === lensId, "board_edit removes effects cleanly");
 }
 
 console.log(`\nFiles in ${out}`);

@@ -87,9 +87,9 @@ export function artboardLodHash(board: Board, rootId: string, maxEdge: number): 
     if (id === rootId) {
       const style: Record<string, string> = {};
       for (const [k, v] of Object.entries(n.style)) if (k !== "left" && k !== "top") style[k] = v;
-      h.update(JSON.stringify({ t: n.type, s: style, c: n.children, tx: n.text, src: n.src, p: n.poster, svg: n.svg, d: n.defs, a: n.attrs, g: n.tag, m: n.mask, sh: n.shader }));
+      h.update(JSON.stringify({ t: n.type, s: style, c: n.children, tx: n.text, src: n.src, p: n.poster, svg: n.svg, d: n.defs, a: n.attrs, g: n.tag, m: n.mask, sh: n.shader, fx: n.effects }));
     } else {
-      h.update(JSON.stringify({ t: n.type, s: n.style, c: n.children, tx: n.text, src: n.src, p: n.poster, svg: n.svg, d: n.defs, a: n.attrs, g: n.tag, m: n.mask, sh: n.shader }));
+      h.update(JSON.stringify({ t: n.type, s: n.style, c: n.children, tx: n.text, src: n.src, p: n.poster, svg: n.svg, d: n.defs, a: n.attrs, g: n.tag, m: n.mask, sh: n.shader, fx: n.effects }));
     }
   }
   return h.digest("hex").slice(0, 20);
@@ -305,7 +305,7 @@ async function renderBatch(batch: PendingJob[]) {
       await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 4000))]);
       await Promise.all(Array.from(document.images).map((img) => (img.complete ? Promise.resolve() : img.decode().catch(() => undefined))));
     });
-    await page.evaluate("window.BoardShaders ? BoardShaders.ready() : null");
+    await page.evaluate("Promise.all([window.BoardShaders ? BoardShaders.ready() : null, window.BoardEffects ? BoardEffects.ready() : null])");
 
     // Pack scaled slots into a compact 2D grid (<= 3200px wide, well under Chromium's 16,384px
     // GPU texture height limit) so none of the 24 slots ever clip out of bounds.
