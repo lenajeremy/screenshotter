@@ -10,6 +10,7 @@ import path from "node:path";
 import { libraryFolder } from "../util/files.js";
 import type { FigArchive } from "./fig-file.js";
 import { ellipseOutline, lineOutline, networkOutline, rectOutline, starOutline, type Outline } from "./fig-geometry.js";
+import { pathKit, type SkPath } from "./pathkit.js";
 
 type G = { sessionID: number; localID: number };
 type M = { m00: number; m01: number; m02: number; m10: number; m11: number; m12: number };
@@ -408,7 +409,8 @@ function outline(c: Ctx, n: FNode): Outline | null {
   } else if (n.type === "ROUNDED_RECTANGLE" || n.type === "RECTANGLE" || BOXES.has(n.type)) {
     const r = n.cornerRadius ?? 0;
     o = rectOutline(w, h, n.rectangleCornerRadiiIndependent ? [n.rectangleTopLeftCornerRadius ?? 0, n.rectangleTopRightCornerRadius ?? 0, n.rectangleBottomRightCornerRadius ?? 0, n.rectangleBottomLeftCornerRadius ?? 0] : [r, r, r, r]);
-  } else if (n.type === "ELLIPSE") o = ellipseOutline(w, h, n.arcData);
+  } else if (n.type === "BOOLEAN_OPERATION") o = joinedOutline(c, n);
+  else if (n.type === "ELLIPSE") o = ellipseOutline(w, h, n.arcData);
   else if (n.type === "STAR") o = starOutline(w, h, n.count ?? 5, n.starInnerScale ?? 0.382, n.cornerRadius ?? 0);
   else if (n.type === "REGULAR_POLYGON") o = starOutline(w, h, n.count ?? 3, null, n.cornerRadius ?? 0);
   else if (n.type === "LINE") o = lineOutline(w);
@@ -417,8 +419,56 @@ function outline(c: Ctx, n: FNode): Outline | null {
 }
 
 const stored = (n: FNode) => Boolean((n.fillGeometry ?? []).length || (n.strokeGeometry ?? []).length);
-/** A boolean shape Figma didn't store an outline for: drawn from its parts (see booleanPaths). */
-const composed = (n: FNode) => n.type === "BOOLEAN_OPERATION" && !stored(n);
+
+const SKIA_OPS = { UNION: "UNION", SUBTRACT: "DIFFERENCE", INTERSECT: "INTERSECT", XOR: "XOR", EXCLUDE: "XOR" } as const;
+/**
+ * A boolean shape's one outline, its parts joined by Skia's path operations (as Figma joins them):
+ * the first part, then each next one added, taken away, kept where they meet, or kept where they
+ * don't. Null without PathKit, or when a part can't be read.
+ */
+function joinedOutline(c: Ctx, n: FNode): Outline | null {
+  const PK = pathKit();
+  if (!PK) return null;
+  const made = new Set<SkPath>();
+  const keep = (p: SkPath | null) => (p && made.add(p), p);
+  try {
+    const part = (k: FNode): SkPath | null => {
+      let p: SkPath | null = null;
+      for (const f of fillPaths(c, k)) {
+        const q = keep(PK.FromSVGString(f.d));
+        if (!q) return null;
+        q.setFillType(f.rule === "ODD" || f.rule === "EVENODD" ? PK.FillType.EVENODD : PK.FillType.WINDING);
+        p = p ? keep(PK.MakeFromOp(p, q, PK.PathOp.UNION)) : q;
+        if (!p) return null;
+      }
+      if (!p) return null;
+      const t: M = k.transform ?? ID;
+      p.transform(t.m00, t.m01, t.m02, t.m10, t.m11, t.m12, 0, 0, 1);
+      return p;
+    };
+    const op = PK.PathOp[SKIA_OPS[(n.booleanOperation ?? "UNION") as keyof typeof SKIA_OPS] ?? "UNION"];
+    let acc: SkPath | null = null;
+    for (const k of n.children) {
+      // A part that draws nothing (hidden, or a line with no area) takes no part in the join.
+      if (k.visible === false || !fillPaths(c, k).length) continue;
+      const p = part(k);
+      if (!p) return null;
+      acc = acc ? keep(PK.MakeFromOp(acc, p, op)) : p;
+      if (!acc) return null;
+    }
+    if (!acc) return null;
+    const d = acc.toSVGString();
+    const rule = /even/i.test(acc.getFillTypeString()) ? "ODD" : "NONZERO";
+    return { fills: d ? [{ d, rule }] : [], stroke: d, closed: true, ends: [] };
+  } catch {
+    return null;
+  } finally {
+    for (const p of made) p.delete();
+  }
+}
+
+/** A boolean shape Figma didn't store an outline for, and PathKit couldn't join: drawn from its parts (see booleanPaths). */
+const composed = (c: Ctx, n: FNode) => n.type === "BOOLEAN_OPERATION" && !stored(n) && !outline(c, n);
 
 /** The areas a shape fills, with their winding rules (and a vector region's own style). */
 function fillPaths(c: Ctx, n: FNode): Array<{ d: string; rule: string; styleID?: number }> {
@@ -491,7 +541,7 @@ const placed = (k: FNode, inner: string) => {
 /** A part's area painted in one colour, placed in its boolean (for masks). */
 function partArea(c: Ctx, k: FNode, colour: string, defs: string[]): string {
   if (k.visible === false) return "";
-  if (composed(k)) return placed(k, `<g mask="url(#${booleanArea(c, k, defs)})"><rect x="-100000" y="-100000" width="200000" height="200000" fill="${colour}"/></g>`);
+  if (composed(c, k)) return placed(k, `<g mask="url(#${booleanArea(c, k, defs)})"><rect x="-100000" y="-100000" width="200000" height="200000" fill="${colour}"/></g>`);
   return placed(k, fillPaths(c, k).map((f) => `<path d="${f.d}"${ruleAttr(f.rule)} fill="${colour}"/>`).join(""));
 }
 
@@ -525,7 +575,7 @@ function booleanEdge(c: Ctx, n: FNode, width: number, defs: string[]): string {
   const op = n.booleanOperation ?? "UNION";
   return parts
     .map((k, i) => {
-      const own = composed(k) ? booleanEdge(c, k, width, defs) : `<path d="${outline(c, k)?.stroke ?? fillPaths(c, k).map((f) => f.d).join("")}" fill="none" stroke="white" stroke-width="${num(width)}" stroke-linejoin="${JOINS[n.strokeJoin] ?? "miter"}" stroke-miterlimit="4"/>`;
+      const own = composed(c, k) ? booleanEdge(c, k, width, defs) : `<path d="${outline(c, k)?.stroke ?? fillPaths(c, k).map((f) => f.d).join("")}" fill="none" stroke="white" stroke-width="${num(width)}" stroke-linejoin="${JOINS[n.strokeJoin] ?? "miter"}" stroke-miterlimit="4"/>`;
       const edge = placed(k, own);
       const others = parts.filter((_, j) => j !== i);
       if (op === "XOR" || op === "EXCLUDE" || !others.length) return edge;
@@ -568,7 +618,7 @@ function booleanPaths(c: Ctx, n: FNode, defs: string[]): string {
 
 /** A shape's paths (its fills, then its strokes, as Figma draws them), in its own coordinates. */
 function shapePaths(c: Ctx, n: FNode, defs: string[]): string {
-  if (composed(n)) return booleanPaths(c, n, defs);
+  if (composed(c, n)) return booleanPaths(c, n, defs);
   const w = n.size?.x ?? 0;
   const h = n.size?.y ?? 0;
   const out: string[] = [];

@@ -10,6 +10,7 @@ import { freeSpot, htmlToNodes, newId, type BoardFont, type Op } from "./core.js
 import { changeBoard, createBoard, getBoard } from "./store.js";
 import { forLatin, saveAsset } from "./web-import.js";
 import { readFigClipboard, readFigFile, type FigArchive } from "./fig-file.js";
+import { loadPathKit } from "./pathkit.js";
 import { copiedRoots, figDoc, newCtx, nodeHtml, placeOf, resolveTree, type FigDoc, type FNode } from "./fig-convert.js";
 
 type Progress = (fraction: number, step?: string) => void;
@@ -142,6 +143,8 @@ async function bringPictures(d: FigDoc, fileKey: string | undefined, warnings: S
 
 export async function importFig(boardId: string | null | undefined, o: FigImportOptions, by: "agent" | "studio", progress: Progress = () => undefined): Promise<FigImportResult> {
   progress(0.05, "Reading Figma's file");
+  // Skia's path operations, for joining shapes Figma didn't store an outline for (as in a paste).
+  await loadPathKit();
   const archive: FigArchive = o.html ? readFigClipboard(o.html) : readFigFile(o.data ?? readFileSync(o.file!));
   const d = figDoc(archive);
   const ctx = newCtx(d);

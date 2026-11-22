@@ -9,6 +9,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { copiedRoots, figDoc, newCtx, nodeHtml, resolveTree } from "../src/board/fig-convert.js";
 import { decodeNetwork, networkOutline, rectOutline } from "../src/board/fig-geometry.js";
+import { loadPathKit } from "../src/board/pathkit.js";
 import { closeBrowser, newPage } from "../src/render/browser.js";
 import { decodePng, pixelAt } from "../src/util/png.js";
 
@@ -97,15 +98,33 @@ const rounded = networkOutline(Buffer.from(blobs[0]), { x: 200, y: 100 }, { x: 2
 check((rounded?.fills[0].d.match(/C/g) ?? []).length === 4, `every corner of a rectangle is rounded, a straight edge stored as a curve too (${rounded?.fills[0].d})`);
 check(rectOutline(10, 10, [50, 0, 0, 0]).fills[0].d.startsWith("M5 0"), "a corner radius larger than the box is made to fit");
 
+// Joined shapes without a stored outline, at the bottom: cut out, kept where they meet, kept where
+// they don't, and a union of two halves that only touch (one outline, no seam down the middle).
+let next = 200;
+const joined = (op: string, x: number, parts: Array<[string, number, number, number, number]>, stroke = false) => {
+  const b = next++;
+  nodeChanges.push({ guid: G(b), type: "BOOLEAN_OPERATION", name: op, booleanOperation: op, size: { x: 60, y: 60 }, transform: T(x, 225), fillPaints: solid(C(0, 0, 200)), ...(stroke ? { strokePaints: solid(C(230, 0, 0)), strokeWeight: 3, strokeAlign: "INSIDE", strokeJoin: "MITER" } : {}), parentIndex: at(10, `z${b}`) } as never);
+  parts.forEach(([type, px, py, w, h], i) => nodeChanges.push({ guid: G(next++), type, name: `${op} ${i}`, size: { x: w, y: h }, transform: T(px, py), fillPaints: solid(C(0, 200, 0)), parentIndex: at(b, String.fromCharCode(97 + i)) } as never));
+};
+(nodeChanges[4] as { size: { x: number; y: number } }).size.y = 300;
+joined("SUBTRACT", 10, [["RECTANGLE", 0, 0, 60, 60], ["ELLIPSE", 15, 15, 30, 30]]);
+joined("INTERSECT", 90, [["RECTANGLE", 0, 0, 40, 40], ["RECTANGLE", 20, 20, 40, 40]]);
+joined("XOR", 170, [["RECTANGLE", 0, 0, 40, 40], ["RECTANGLE", 20, 20, 40, 40]]);
+joined("UNION", 250, [["RECTANGLE", 0, 0, 30, 60], ["RECTANGLE", 30, 0, 30, 60]], true);
+
 // Drawn.
+const handlers = () => process.listeners("uncaughtException").length + process.listeners("unhandledRejection").length;
+const had = handlers();
+const pk = await loadPathKit();
+check(Boolean(pk) && handlers() === had, `Skia's path library (PathKit) loads, and leaves the engine's error handling as it was (${had} handlers before, ${handlers()} after)`);
 const d = figDoc({ message: { nodeChanges, blobs: blobs.map((bytes) => ({ bytes })) }, images: new Map() } as never);
 const ctx = newCtx(d);
 const [root] = copiedRoots(d);
 const html = nodeHtml(ctx, resolveTree(d, root), null);
 const page = await newPage();
-await page.setViewport({ width: 320, height: 220, deviceScaleFactor: 1 });
+await page.setViewport({ width: 320, height: 300, deviceScaleFactor: 1 });
 await page.setContent(`<!doctype html><body style="margin:0">${html}</body>`, { waitUntil: "load" });
-const png = Buffer.from(await page.screenshot({ type: "png", clip: { x: 0, y: 0, width: 320, height: 220 } }));
+const png = Buffer.from(await page.screenshot({ type: "png", clip: { x: 0, y: 0, width: 320, height: 300 } }));
 await page.close();
 if (process.env.UI_SHOTS) writeFileSync(path.join(process.env.UI_SHOTS, "fig-test.png"), png);
 const img = decodePng(png);
@@ -126,6 +145,15 @@ check(any(56, 124, 64, 132, isGreen) && any(76, 124, 84, 132, isGreen) && !any(6
 check(any(30, 160, 80, 180, isGreen) && !any(30, 184, 110, 200, isGreen), "the name's first line is green from its shared style, the second keeps the text's white");
 check(any(240, 58, 260, 62, (p) => p[0] > 200 && p[1] > 200 && p[2] > 200) && any(278, 50, 284, 54, (p) => p[0] > 200), "the arrow has its shaft and the arrowhead's arms (a cap set on its end point)");
 check(isGreen(px(251, 160)) && !isGreen(px(248, 160)), "a stored inside stroke stays inside the shape (Figma keeps it twice as wide, cut to the shape)");
+
+const blue = (x: number, y: number) => { const [r, g, b] = px(x, y); return b > 150 && r < 60 && g < 60; };
+const red = (x: number, y: number) => { const [r, g, b] = px(x, y); return r > 180 && g < 70 && b < 70; };
+check(blue(13, 228) && !blue(40, 255), "subtract: a square with a round hole cut out of it");
+check(blue(120, 255) && !blue(95, 230) && !blue(145, 280), "intersect: only where both squares are");
+check(blue(175, 230) && blue(225, 280) && !blue(200, 255), "exclude: each square, but not where they overlap");
+check(red(251, 255) && red(308, 255) && red(280, 226) && !red(279, 255) && !red(281, 255) && blue(280, 255), "union of two halves that only touch: one outline, stroked all round, no line down the middle");
+const svgs = html.match(/<svg[\s\S]*?<\/svg>/g) ?? [];
+check(svgs.every((x) => !x.includes("<mask")), "joined shapes are one path each (no stacks of masks): lighter to draw, editable as one vector");
 
 await closeBrowser();
 if (failed) {
