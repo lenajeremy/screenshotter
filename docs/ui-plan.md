@@ -120,9 +120,21 @@ One item at a time, each with a check in `scripts/ui-test.ts`, a before and afte
 its own commit on `glassine-ui`. Order: Phase 1, then the bugs (H2, H3, F1–F3, S1, S2), then the
 rest of Phases 2 to 6.
 
-## Open questions
+## Decisions (2026-11-22)
 
-1. Email code typed inside the app, Google through the browser: is that the sign-in you want?
-2. After the first sign-in, should the app open when there's no internet?
-3. Onboarding length: the three short steps in O6, or sign in and go straight to Home?
-4. Should a new, empty board open on the Agent tab (E1)?
+- Sign-in: email code typed in the app; Google through the browser.
+- Onboarding: the three short steps in O6, then a "Welcome to Glassine" board in every new
+  account, with artboards that explain the app.
+- Boards are online by default. Each one keeps a copy on the Mac, so edits apply at once, work
+  offline and go up when the connection is back. "Download a copy" saves a board as a file.
+- Collaboration happens only in teams. Teams are paid: $20 a month, or $16 a month billed
+  yearly. The upgrade screen and the lock are built now; real payments are wired later.
+- The editor layout is to be reimagined, not patched: Phase 3 starts with layout directions as
+  mockups to choose from. E1 to E3 wait on that choice.
+
+## Added phases
+
+- **Phase 0: every board online.** Personal boards sync to the server privately, the way team
+  boards do now. Needs the live-editing conflict fix in `src/cloud/sync.ts` first, since every
+  board will depend on it.
+- **Phase 1b: plans.** Free and Team plans, the upgrade screen, locks on paid features.
