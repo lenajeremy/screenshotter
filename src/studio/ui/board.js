@@ -5,7 +5,7 @@ import { looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ancestors, canHold, cloneTree, componentOps, copyTree, detachOps, flattenSvgOps, freeSpot, htmlToNodes, inFlow, instanceRootOf, instanceTree, instancesOf, isFlex, isGrid, mainOf, newId, nodeHtml, parseHtml, plainText, pxValue, resetOps, rootOf, siblingsOf, splitSvgOps, subtree, uncomponentOps } from "./board-core.js";
 import { maskGroupOps, maskOps, maskRuns } from "./board-core.js";
-import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, sendLivePresence, undo, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPage, node, redo, select, selectedArtboards, sendLivePresence, undo, useBoard, useBoardPick } from "./board-state.js";
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AgentDot, AgentPanel, boardOpened } from "./board-agent.js";
@@ -109,9 +109,14 @@ const TOOLS = [
   { id: "hand", icon: "hand", label: "Pan", key: "H or Space" },
 ];
 
+/** The zoom, as a percentage: redrawn when that number changes, not at every frame of a pan. */
+function ZoomLabel() {
+  return useBoardPick((b) => Math.round(b.view.z * 100)) + "%";
+}
+
 function BoardTopbar() {
-  // It shows the zoom, so it follows the view (not the pointer).
-  const b = useBoard(["hover", "guides", "drop", "words", "peers"]);
+  // Not the view or the pointer: the zoom it shows follows the view on its own.
+  const b = useBoard(CANVAS_ONLY);
   const s = useStore();
   const exportBtn = useRef();
   const zoomBtn = useRef();
@@ -147,7 +152,7 @@ function BoardTopbar() {
       ${!b.live && b.id !== "scratchpad" && s.cloud?.signedIn && html`<button class="btn ghost sm" title="Move this board into a team to edit live together" onClick=${() => set({ modal: { kind: "moveToTeam", boardId: b.id, boardName: b.board.name } })}><${Icon} n="users" s=${13} />Move to team</button>`}
       <button class="icon-btn" title="Undo (⌘Z)" disabled=${!b.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
       <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!b.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
-      <button class="btn ghost sm bd-zoom" ref=${zoomBtn} title="Zoom" onClick=${() => setZoomOpen(!zoomOpen)}>${Math.round(b.view.z * 100)}%<${Icon} n="down" s=${12} /></button>
+      <button class="btn ghost sm bd-zoom" ref=${zoomBtn} title="Zoom" onClick=${() => setZoomOpen(!zoomOpen)}><${ZoomLabel} /><${Icon} n="down" s=${12} /></button>
       <button class="btn ghost sm bd-preview" disabled=${!currentPage()?.children.length} title=${`Preview ${node(previewTarget())?.name ?? "the frame"} in your browser (⌥⌘P)`} onClick=${() => previewFrame()}><${Icon} n="play" s=${13} />Preview</button>
       <button class="btn primary" ref=${exportBtn} disabled=${!currentPage()?.children.length} onClick=${() => setExporting(!exporting)}><${Icon} n="export" s=${15} w=${2} />Export</button>
       <span class="topbar-sep"></span>
@@ -278,7 +283,7 @@ export function layerIcon(n, b = B.board) {
 
 function LayersList() {
   // Its rows show the layer under the pointer and where a dragged one would go, not the view.
-  const b = useBoard(["view", "guides", "words"]);
+  const b = useBoard(["view", "guides", "words", "presence", "following"]);
   const page = currentPage();
   const ref = useRef();
   const [room, setRoom] = useState(236);

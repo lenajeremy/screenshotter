@@ -7,7 +7,7 @@ import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, in
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
 import { mapSvgImages, shaderBoxStyle, svgImageAttrs } from "./board-core.js";
 import { CANVAS_ONLY } from "./board-state.js";
-import { B, bset, commit, currentPage, node, notify, preview, select, sendLivePresence, useBoard, useMeasure } from "./board-state.js";
+import { B, bset, commit, currentPage, node, notify, onBoard, preview, select, sendLivePresence, useBoard, useMeasure } from "./board-state.js";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { fileUrl, toast } from "./store.js";
@@ -153,6 +153,8 @@ function sharpen() {
   drawn = null;
   applyView();
 }
+// The view goes on screen at each frame it changes, without drawing the canvas's layers again.
+onBoard(() => applyView());
 
 export function zoomTo(z, at, { animate = false } = {}) {
   const c = canvasEl.current?.getBoundingClientRect();
@@ -426,8 +428,8 @@ export async function finishText(id, el) {
 
 export function BoardCanvas() {
   const ref = useRef();
-  // The canvas follows everything, the view and the pointer included (the panels around it don't).
-  const b = useBoard();
+  // The layers redraw for what they show: the view (the camera) and the pointer (the overlay) follow on their own.
+  const b = useBoard(CANVAS_ONLY);
   const page = currentPage();
   useFonts(b.board, page);
   useMaskFonts(b.board);
@@ -514,7 +516,8 @@ function sizeLabel(id, box) {
 }
 
 function Overlay() {
-  const b = B;
+  // It follows everything: the view, the pointer, the selection.
+  const b = useBoard();
   const page = currentPage();
   if (!canvasEl.current || !page) return null;
   // Artboards (frames on the page) carry their names above them; a loose picture or shape doesn't.

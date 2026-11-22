@@ -1,6 +1,6 @@
 // Boards in the Studio: the open board, what's selected, undo, and keeping in step with the board
 // on disk, which agents change too (their changes show up within a second, as steps you can undo).
-import { useEffect, useReducer } from "preact/hooks";
+import { useEffect, useReducer, useRef } from "preact/hooks";
 import { OpError, applyOps, expandOps, pxValue, rootOf } from "./board-core.js";
 import { shapeInBox } from "./shapes.js";
 import { S, api, fail, set, toast } from "./store.js";
@@ -111,6 +111,17 @@ export function useBoard(ignore) {
     return () => listeners.delete(force);
   }, []);
   return B;
+}
+
+/** Redraw the calling component only when `pick(B)` gives something else (the zoom shown as a percentage, say). */
+export function useBoardPick(pick) {
+  const [, force] = useReducer((n) => n + 1, 0);
+  const fn = useRef(pick);
+  fn.current = pick;
+  const last = useRef();
+  last.current = pick(B);
+  useEffect(() => onBoard(() => fn.current(B) !== last.current && force()), []);
+  return last.current;
 }
 
 /** Call `fn` (at most once a frame) whenever the board changes, for code outside components. Returns how to stop. */

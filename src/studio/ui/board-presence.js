@@ -7,7 +7,7 @@
 // moving the view away from where the agent is working, Esc, or Stop ends it.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { pageOf, rootOf } from "./board-core.js";
-import { B, bset } from "./board-state.js";
+import { B, bset, useBoard } from "./board-state.js";
 import { canvasEl, centerOn, elOf, followGliding, frameBox, worldBox } from "./board-canvas.js";
 import { html } from "./controls.js";
 
@@ -161,7 +161,7 @@ export const unfollow = () => B.following && bset({ following: null });
 
 /** The cursors, in the board's own space (so panning and zooming carry them), each gliding when its agent or teammate moves. */
 export function Presence() {
-  const b = B;
+  const b = useBoard();
   const [, tick] = useState(0);
   const agents = activeAgents();
   const peers = b.peers ?? [];
@@ -275,7 +275,7 @@ export function Presence() {
 
 /** The teammates and agents on the board as avatars over the canvas: click one to follow, again to stop. */
 export function PresenceBar() {
-  const b = B;
+  const b = useBoard(["view", "hover", "guides", "drop", "words"]);
   const agents = activeAgents();
   const peers = b.peers ?? [];
   const followedAgent = (b.presence ?? []).find((p) => p.key === b.following);
