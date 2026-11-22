@@ -172,9 +172,10 @@
 
   function drawGlassSpecular(canvas, geom, fx) {
     const { W, H, rTL, rTR, rBR, rBL } = geom;
-    // Cap rim canvas at 256px (smooth Fresnel glow upscales cleanly on GPU at 9x less CPU work)
-    const sW = clamp(Math.round(W), 48, 256);
-    const sH = clamp(Math.round(H), 48, 256);
+    const dpr = Math.min(2, typeof devicePixelRatio === "number" ? devicePixelRatio : 2);
+    // Crisp Retina rim up to 512px (interior bounding-box skip keeps CPU work tiny)
+    const sW = clamp(Math.round(W * dpr), 64, 512);
+    const sH = clamp(Math.round(H * dpr), 64, 512);
     if (canvas.width !== sW) canvas.width = sW;
     if (canvas.height !== sH) canvas.height = sH;
     const ctx = canvas.getContext("2d");
@@ -193,10 +194,10 @@
       const maxR = Math.min(W, H) * 0.5;
       const depth = clamp(Number(fx.depth ?? 65) / 100, 0, 1);
       const splay = clamp(Number(fx.splay ?? 0) / 100, 0, 1);
-      const bevel = Math.max(4, maxR * (0.08 + 0.54 * depth + 0.34 * splay * depth));
-      const rimBand = clamp(bevel * 0.36, 3, 28);
+      const bevel = Math.max(6, maxR * (0.14 + 0.46 * depth + 0.16 * splay));
+      const rimBand = clamp(bevel * 0.28, 3, 22);
       const invRim = 1 / rimBand;
-      const skipDist = rimBand * 3.8 + 4;
+      const skipDist = rimBand * 3.6 + 6;
       const innerX0 = skipDist, innerX1 = W - skipDist;
       const innerY0 = skipDist, innerY1 = H - skipDist;
       const hasInner = innerX1 > innerX0 && innerY1 > innerY0;
@@ -212,11 +213,13 @@
           const { sd, nx, ny } = rrectSdf(x, y, W, H, rTL, rTR, rBR, rBL);
           if (sd <= 0 || sd > skipDist) continue;
           const dot = -nx * lx - ny * ly;
-          const primary = dot > 0 ? dot * dot * Math.sqrt(dot) : 0;
-          const opposite = dot < 0 ? (-dot) * (-dot) * (-dot) * 0.52 : 0;
-          const sharpEdge = sd < 10 ? Math.exp(-sd * 0.645) * (0.28 + 0.85 * primary + 0.48 * opposite) : 0;
-          const bevelGlow = Math.exp(-sd * invRim) * (primary * 0.44 + opposite * 0.22);
-          const a = (sharpEdge + bevelGlow) * li;
+          // Crisp primary Fresnel specular arc + soft opposite transmitted caustic arc
+          const primary = dot > 0 ? Math.pow(dot, 2.4) : 0;
+          const opposite = dot < 0 ? Math.pow(-dot, 3.0) * 0.58 : 0;
+          const razor = sd < 6 ? Math.exp(-sd * 0.92) * (0.24 + 0.92 * primary + 0.56 * opposite) : 0;
+          const innerRim = sd < 14 ? Math.exp(-Math.pow((sd - 2.2) / 2.6, 2)) * (0.22 * primary + 0.14 * opposite) : 0;
+          const bevelGlow = Math.exp(-sd * invRim) * (primary * 0.34 + opposite * 0.16);
+          const a = (razor + innerRim + bevelGlow) * li;
           if (a < 0.004) continue;
           const idx = (rowOff + i) * 4;
           d[idx] = 255;
@@ -289,15 +292,51 @@
   // -------------------------------------------------------------------------------------------
   // SVG <filter> builders for all 16 effects
 
-  /** Emit a displacement + optional RGB chromatic dispersion pipeline from `inName` to `outName`. */
-  function displaceStage(inName, outName, mapUrl, W, H, scale, dispersionFrac, blurPx) {
-    const pre = blurPx > 0.05 ? `<feGaussianBlur in="${inName}" stdDeviation="${blurPx.toFixed(2)}" result="${outName}_s"/>` : "";
-    const src = pre ? `${outName}_s` : inName;
+  /**
+   * Emit a displacement + optional continuous spectral chromatic dispersion pipeline from `inName` to `outName`.
+   * When `spectral` is true (Liquid Glass), uses 5 energy-conserving spectral bands (Red -> Amber ->
+   * Green -> Cyan -> Violet) so dispersion renders as a silky continuous prism rainbow instead of 3
+   * hard disconnected RGB ghosts.
+   */
+  function displaceStage(inName, outName, mapUrl, W, H, scale, dispersionFrac, blurPx, spectral = false, satBoost = 1) {
+    let pre = "";
+    let src = inName;
+    if (blurPx > 0.05) {
+      pre += `<feGaussianBlur in="${src}" stdDeviation="${blurPx.toFixed(2)}" result="${outName}_b"/>`;
+      src = `${outName}_b`;
+    }
+    if (satBoost > 1.01) {
+      pre += `<feColorMatrix in="${src}" type="saturate" values="${satBoost.toFixed(2)}" result="${outName}_v"/>`;
+      src = `${outName}_v`;
+    }
     if (Math.abs(scale) < 0.05) {
       return pre ? `${pre}<feOffset in="${src}" dx="0" dy="0" result="${outName}"/>` : `<feOffset in="${inName}" dx="0" dy="0" result="${outName}"/>`;
     }
     const map = `<feImage href="${mapUrl}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none" result="${outName}_m"/>`;
     if (dispersionFrac > 0.004) {
+      if (spectral) {
+        // 5-band continuous spectral prism (sums: R=1.00, G=1.00, B=1.00 -> exact colour preservation in center)
+        const s1 = scale * (1 - dispersionFrac);
+        const s2 = scale * (1 - dispersionFrac * 0.5);
+        const s3 = scale;
+        const s4 = scale * (1 + dispersionFrac * 0.5);
+        const s5 = scale * (1 + dispersionFrac);
+        return `${pre}${map}
+          <feDisplacementMap in="${src}" in2="${outName}_m" scale="${s1.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="${outName}_d1"/>
+          <feDisplacementMap in="${src}" in2="${outName}_m" scale="${s2.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="${outName}_d2"/>
+          <feDisplacementMap in="${src}" in2="${outName}_m" scale="${s3.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="${outName}_d3"/>
+          <feDisplacementMap in="${src}" in2="${outName}_m" scale="${s4.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="${outName}_d4"/>
+          <feDisplacementMap in="${src}" in2="${outName}_m" scale="${s5.toFixed(2)}" xChannelSelector="R" yChannelSelector="G" result="${outName}_d5"/>
+          <feColorMatrix in="${outName}_d1" type="matrix" values="0.58 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="${outName}_c1"/>
+          <feColorMatrix in="${outName}_d2" type="matrix" values="0.42 0 0 0 0  0 0.33 0 0 0  0 0 0 0 0  0 0 0 1 0" result="${outName}_c2"/>
+          <feColorMatrix in="${outName}_d3" type="matrix" values="0 0 0 0 0  0 0.34 0 0 0  0 0 0 0 0  0 0 0 1 0" result="${outName}_c3"/>
+          <feColorMatrix in="${outName}_d4" type="matrix" values="0 0 0 0 0  0 0.33 0 0 0  0 0 0.42 0 0  0 0 0 1 0" result="${outName}_c4"/>
+          <feColorMatrix in="${outName}_d5" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0.58 0 0  0 0 0 1 0" result="${outName}_c5"/>
+          <feComposite in="${outName}_c1" in2="${outName}_c2" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="${outName}_s12"/>
+          <feComposite in="${outName}_s12" in2="${outName}_c3" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="${outName}_s13"/>
+          <feComposite in="${outName}_s13" in2="${outName}_c4" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="${outName}_s14"/>
+          <feComposite in="${outName}_s14" in2="${outName}_c5" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="${outName}"/>`;
+      }
       const sR = scale * (1 - dispersionFrac);
       const sG = scale;
       const sB = scale * (1 + dispersionFrac);
@@ -321,6 +360,8 @@
     const mapH = clamp(Math.round(H * 0.5), 48, 128);
     const hiW = clamp(Math.round(W * 0.75), 64, 192);
     const hiH = clamp(Math.round(H * 0.75), 64, 192);
+    const glassW = clamp(Math.round(W), 128, 320);
+    const glassH = clamp(Math.round(H), 128, 320);
 
     switch (fx.type) {
       case "glass": {
@@ -330,27 +371,29 @@
         const frost = clamp(Number(fx.frost ?? 6) / 100, 0, 1);
         const splay = clamp(Number(fx.splay ?? 0) / 100, 0, 1);
         const maxR = Math.min(W, H) * 0.5;
-        const bevel = Math.max(4, maxR * (0.08 + 0.54 * depth + 0.36 * splay * depth));
-        const power = 3.8 - splay * 2.1;
-        const scale = refr * Math.min(maxR * 0.56, 76);
-        const key = `glass:${Math.round(W)}x${Math.round(H)}:${Math.round(rTL)},${Math.round(rTR)},${Math.round(rBR)},${Math.round(rBL)}:${bevel.toFixed(1)}:${power.toFixed(2)}`;
+        // Strictly monotonic C1 dome profile: u(s) = s + (a/p)*(1-s)^p with a <= 0.92 guarantees
+        // du/ds = 1 - a*(1-s)^(p-1) >= 0.08 > 0 everywhere -> ZERO folding creases or mirrored tears!
+        const bevel = Math.max(6, maxR * (0.12 + 0.43 * depth + 0.18 * splay));
+        const power = 2.85 - splay * 1.05; // 2.85 tight glossy rim -> 1.80 broad dome splay
+        const maxDisp = Math.min(bevel * ((refr * 0.92) / power), 68);
+        // feDisplacementMap applies scale * (channel/255 - 0.5), so scale = 2 * maxDisp gives exact pixel displacement
+        const scale = maxDisp * 2;
+        const key = `glass2:${Math.round(W)}x${Math.round(H)}:${Math.round(rTL)},${Math.round(rTR)},${Math.round(rBR)},${Math.round(rBL)}:${bevel.toFixed(1)}:${power.toFixed(2)}`;
         const url = cacheGet(key, () =>
-          makePng(mapW, mapH, (data, mw, mh) => {
+          makePng(glassW, glassH, (data, mw, mh) => {
             for (let j = 0; j < mh; j++) {
               const y = ((j + 0.5) / mh) * H;
               for (let i = 0; i < mw; i++) {
                 const x = ((i + 0.5) / mw) * W;
                 const { sd, nx, ny } = rrectSdf(x, y, W, H, rTL, rTR, rBR, rBL);
                 const idx = (j * mw + i) * 4;
-                if (sd <= 0 || sd >= bevel) {
+                if (sd >= bevel) {
                   data[idx] = 128; data[idx + 1] = 128; data[idx + 2] = 128; data[idx + 3] = 255;
                   continue;
                 }
-                const t = sd / bevel; // 0 at rim, 1 at inner end of bevel
-                // Smoothstep roll-off so center stays crystal-clear with zero stray fringing
-                const u = 1 - t;
-                const smooth = u * u * (3 - 2 * u);
-                const mag = Math.pow(smooth, power * 0.52);
+                // Extrapolate rim vector smoothly past sd <= 0 so bilinear feImage never stair-steps the circular border!
+                const t = sd <= 0 ? 0 : sd / bevel;
+                const mag = Math.pow(1 - t, power);
                 data[idx] = clampByte(128 + nx * mag * 127);
                 data[idx + 1] = clampByte(128 + ny * mag * 127);
                 data[idx + 2] = 128;
@@ -359,9 +402,10 @@
             }
           }),
         );
-        const dispFrac = disp * 0.19;
+        const dispFrac = disp * 0.24;
         const blurPx = frost * 18;
-        return displaceStage(inName, outName, url, W, H, scale, dispFrac, blurPx);
+        const satBoost = frost > 0.02 ? 1 + Math.min(0.24, frost * 0.85) : 1;
+        return displaceStage(inName, outName, url, W, H, scale, dispFrac, blurPx, disp > 0.15, satBoost);
       }
 
       case "pattern-refraction": {
