@@ -109,8 +109,8 @@ function Code({ email, onBack }) {
   const field = useRef();
   // The boxes are drawn; the one real field under them takes the typing, so it has the focus from the start.
   useEffect(() => {
-    field.current?.focus();
-  }, []);
+    if (!busy) field.current?.focus();
+  }, [busy]);
   useEffect(() => {
     if (wait <= 0) return;
     const t = setTimeout(() => setWait(wait - 1), 1000);
@@ -126,7 +126,6 @@ function Code({ email, onBack }) {
     } catch (x) {
       setErr(x.message || "That code isn't right.");
       setDigits("");
-      field.current?.focus();
     } finally {
       setBusy(false);
     }

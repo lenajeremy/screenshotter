@@ -932,17 +932,22 @@ const CHECKS: Record<string, Check> = {
     });
     await page.click(".bd-agent-toggle");
     await page.waitForSelector(".bd-chat-col");
+    await page.waitForTimeout(350);
     const beside = await S(page, () => {
       const c = document.querySelector(".bd-chat-col")?.getBoundingClientRect();
       const r = document.querySelector(".bd-right")?.getBoundingClientRect();
       return Boolean(c && r && c.width > 200 && Math.abs(c.right - r.left) < 2);
     });
     await page.click('.bd-chat-tabs [data-tab="comments"]');
+    await page.waitForTimeout(200);
     const comments = await S(page, () => Boolean(document.querySelector(".bd-chat-col .bd-comments, .bd-chat-col [class*=comment]")));
     await page.click(".bd-chat-bar .icon-btn");
+    await page.waitForTimeout(200);
     const closed = await S(page, () => !document.querySelector(".bd-chat-col"));
     await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select([id]), t.byName("Row One"));
+    await page.waitForTimeout(150);
     await page.click('.bd-design-tabs [data-tab="code"]');
+    await page.waitForTimeout(250);
     const code = await S(page, () => document.querySelector(".bd-codeview-text")?.textContent ?? "");
     await page.click('.bd-design-tabs [data-tab="design"]');
     const ok = dock?.low && dock.mid && beside && comments && closed && /<div[^>]*style=/.test(code);
@@ -950,37 +955,44 @@ const CHECKS: Record<string, Check> = {
   },
   async "the sign-in screen: an email gets the code boxes, a wrong code says so, and signing in goes on to the first-run steps"(page) {
     await S(page, async () => (await import("/ui/board-state.js" as string)).closeBoard());
-    const before = await S(page, async () => {
-      const st = await import("/ui/store.js" as string);
-      const keep = { opts: st.S.opts, cloud: st.S.cloud };
-      st.set({ opts: { ...st.S.opts, requireAccount: true }, cloud: { loaded: true, signedIn: false, teams: [], serverUrl: "" }, gate: undefined });
-      return keep;
-    });
+    const need = (sel: string) => page.waitForSelector(sel, { timeout: 8000 }).then(() => true, () => false);
     await page.route("**/api/cloud/signin/email/send", (r) => r.fulfill({ json: { email: "ada@example.com" } }));
     let tries = 0;
-    await page.route("**/api/cloud/signin/email/verify", (r) => (tries++ === 0 ? r.fulfill({ status: 400, json: { error: "That code isn't right. Check it and try again." } }) : r.fulfill({ json: { user: { id: "u-test", name: "ada@example.com", email: "ada@example.com" }, teams: [] } })));
+    await page.route("**/api/cloud/signin/email/verify", (r) => (tries++ === 0 ? r.fulfill({ status: 400, headers: { "x-test-refusal": "1" }, json: { error: "That code isn't right. Check it and try again." } }) : r.fulfill({ json: { user: { id: "u-test", name: "ada@example.com", email: "ada@example.com" }, teams: [] } })));
     await page.route("**/api/cloud/account", (r) => r.fulfill({ json: { signedIn: tries > 1, serverUrl: "", user: tries > 1 ? { id: "u-test", name: "ada@example.com", email: "ada@example.com" } : undefined, teams: [] } }));
-    await page.waitForSelector(".gate");
+    const before = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      const keep = { opts: st.S.opts, cloud: st.S.cloud ?? null };
+      st.set({ modal: null, opts: { ...st.S.opts, requireAccount: true }, cloud: { loaded: true, signedIn: false, teams: [], serverUrl: "" }, gate: undefined });
+      return keep;
+    });
+    const restore = async () => {
+      await page.unroute("**/api/cloud/signin/email/send");
+      await page.unroute("**/api/cloud/signin/email/verify");
+      await page.unroute("**/api/cloud/account");
+      await S(page, async (keep: Record<string, unknown>) => (await import("/ui/store.js" as string)).set({ ...keep, gate: false }), before as Record<string, unknown>);
+      await page.waitForTimeout(300);
+    };
+    if (!(await need(".gate"))) return await restore(), "the sign-in screen didn't show";
     const hidden = await S(page, () => !document.querySelector(".home, .bd-app"));
     await page.fill(".gate-input", "ada@example.com");
     await page.click(".gate-btn");
-    await page.waitForSelector(".gate-code");
+    if (!(await need(".gate-code"))) return await restore(), "no code boxes after the email";
+    await page.waitForTimeout(200);
     await page.keyboard.type("111111");
-    await page.waitForSelector(".gate-err");
+    if (!(await need(".gate-err"))) return await restore(), `a wrong code said nothing (boxes: "${await S(page, () => document.querySelector(".gate-code")?.textContent ?? "")}", tries: ${tries})`;
     const wrong = await S(page, () => document.querySelector(".gate-err")?.textContent ?? "");
+    await page.waitForTimeout(250);
     await page.keyboard.type("222222");
-    await page.waitForSelector(".gate-steps", { timeout: 8000 }).catch(() => undefined);
+    const on = await need(".gate-steps");
     const step = await S(page, () => document.querySelector(".gate h1")?.textContent ?? "");
-    await page.unroute("**/api/cloud/signin/email/send");
-    await page.unroute("**/api/cloud/signin/email/verify");
-    await page.unroute("**/api/cloud/account");
-    await S(page, async (keep: Record<string, unknown>) => (await import("/ui/store.js" as string)).set({ ...keep, gate: false }), before as Record<string, unknown>);
-    await page.waitForSelector(".home");
-    return hidden && /isn't right/.test(wrong) && /call you/.test(step) ? "ok" : `app hidden: ${hidden}, wrong code: "${wrong}", then: "${step}"`;
+    await restore();
+    return hidden && /isn't right/.test(wrong) && on && /call you/.test(step) ? "ok" : `app hidden: ${hidden}, wrong code: "${wrong}", steps shown: ${on}, then: "${step}", tries: ${tries}`;
   },
   async "Settings has its sections down the side, and the Team plan adds up seats and price"(page) {
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings", tab: "general" } }));
     await page.waitForSelector(".set-sheet");
+    await page.waitForTimeout(350);
     const size = () => S(page, () => { const r = document.querySelector(".set-sheet")!.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)}`; });
     const a = await size();
     await page.locator(".set-nav button", { hasText: "Shortcuts" }).click();
@@ -994,6 +1006,7 @@ const CHECKS: Record<string, Check> = {
     await page.click('.plan-step button[title="One more"]');
     const monthly = await total();
     await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
     const closed = await S(page, () => !document.querySelector(".plan-sheet"));
     return a === b && yearly === "$576.00" && monthly === "$80.00" && closed ? "ok" : `sheet ${a} then ${b}, yearly for 3: ${yearly}, monthly for 4: ${monthly}, Esc closes: ${closed}`;
   },

@@ -1365,13 +1365,9 @@ function BoardPanel() {
   return html`<div class="panel-head"><h2>${b.board.name}</h2><span class="sub">${page?.children.length ?? 0} artboard${page?.children.length === 1 ? "" : "s"}</span></div>
     <div class="panel-body bd-insp">
       <${Section} title="Tokens" count=${tokens.length || undefined} right=${html`<button class="icon-btn sm" title="Add a token" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${14} /></button>`}>
-        <p class="bd-note">Colours, sizes and fonts with a name. Any layer can use one as <code>var(--name)</code>, so changing it here changes them all. Every colour picker on the board lists the colour ones.</p>
+        ${!tokens.length && !adding && html`<p class="bd-note">Name a colour, size or font once and use it on any layer.</p>`}
         ${tokens.map((t) => html`<${TokenRow} key=${t.name} t=${t} tokens=${tokens} uses=${uses.get(t.name)} onChange=${(v) => setToken(t.name, v, true)} onRemove=${() => setToken(t.name, null)} onRename=${(to) => renameToken(t.name, to)} />`)}
         ${adding && html`<${NewToken} onDone=${(name, value) => (setAdding(false), name && setToken(name, value || "#000000"))} />`}
-      <//>
-      <${Section} title="Agents">
-        <p class="bd-note">Ask Claude Code, Codex, opencode or Antigravity to design right here while you watch. Its changes land as steps you can undo.</p>
-        <button class="btn sm block" onClick=${() => bset({ rightTab: "agent" })}><${Icon} n="comment" s=${13} />Chat with an agent</button>
       <//>
       <${Section} title="Shortcuts" collapsible open=${false} id="board-keys">
         <dl class="bd-keys">
