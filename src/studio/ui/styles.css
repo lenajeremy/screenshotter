@@ -2867,3 +2867,19 @@ button[data-clicked]:focus-visible, [role="tab"][data-clicked]:focus-visible { o
 .bd-dock .bd-agent-toggle:has(.ag-dot) { color: var(--accent); }
 .bd-app .bd-chat-tabs button { display: inline-flex; align-items: center; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .bd-dock .bd-agent-toggle .ag-dot { animation: none; border-color: rgb(var(--accent-rgb) / 0.5); } }
+
+/* The chat composer: the agent's name stays on one line; the selected layer's chip gives way first. */
+.bd-app .ag-pick { flex: none; white-space: nowrap; }
+.bd-app .ag-ctx { flex: 0 1 auto; }
+/* Tokens in the 240px panel: the name gets the room, a colour is its swatch (its value shows in the picker), other values a short field. */
+.bd-app .bd-token { grid-template-columns: minmax(0, 1fr) auto 26px 20px; gap: 4px; min-height: 24px; }
+.bd-app .bd-token .color-field { width: 24px; }
+.bd-app .bd-token .color-btn { width: 24px; padding: 0; justify-content: center; background: none; }
+.bd-app .bd-token .color-btn:hover { background: var(--fill); box-shadow: none; }
+.bd-app .bd-token .color-btn .grow, .bd-app .bd-token .cf-tools { display: none; }
+.bd-app .bd-token > input.input { width: 76px; height: 24px; padding: 0 6px; font-size: 10.5px; }
+.bd-app .bd-token-name { height: 24px; margin-left: -6px; }
+.bd-app .bd-token code { font: 11px/16px var(--mono); color: var(--text); }
+.bd-app .bd-uses { height: 24px; font: 11px/16px var(--sans); color: var(--text-3); }
+.bd-app .bd-token .icon-btn.sm { width: 20px; height: 20px; color: var(--text-3); opacity: 0; }
+.bd-app .bd-token:hover .icon-btn.sm, .bd-app .bd-token .icon-btn.sm:focus-visible { opacity: 1; }
