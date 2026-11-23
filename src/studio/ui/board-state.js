@@ -643,6 +643,8 @@ function hydrateBoard(board, teamInfo) {
 export async function openBoard(id) {
   try {
     const board = await api(`/api/board?id=${encodeURIComponent(id)}`);
+    // From another board (a new tab): close that one first, without showing Home in between.
+    if (B.id && B.id !== board.id) closeBoard({ keepScreen: true });
     hydrateBoard(board, board._team);
   } catch (e) {
     // A board that's gone (deleted, or its team left) leaves the tabs too.
@@ -665,7 +667,29 @@ export async function openTeamBoard(id, teamName) {
   }
 }
 
-export function closeBoard({ toLibrary = true } = {}) {
+/**
+ * Swap the open board for another. The next board is loaded first, then the two change places in one
+ * step, so nothing (Home) shows in between. Only the latest of several quick switches wins.
+ */
+let switching = 0;
+export async function switchBoard(id) {
+  if (!B.id) return openBoard(id);
+  const mine = ++switching;
+  let board;
+  try {
+    board = await api(`/api/board?id=${encodeURIComponent(id)}`);
+  } catch (e) {
+    if (mine !== switching) return;
+    dropTab(id);
+    fail(e, "Couldn't open the board");
+    return;
+  }
+  if (mine !== switching) return;
+  closeBoard({ keepScreen: true });
+  hydrateBoard(board, board._team);
+}
+
+export function closeBoard({ toLibrary = true, keepScreen = false } = {}) {
   const closingId = B.id;
   const wasLive = Boolean(B.live);
   rememberView();
@@ -673,6 +697,8 @@ export function closeBoard({ toLibrary = true } = {}) {
   stopLiveStream();
   if (closingId && wasLive) api("/api/cloud/boards/close", { id: closingId }).catch(() => undefined);
   Object.assign(B, { id: null, board: null, sel: [], editing: null, past: [], future: [], thread: null, draft: null, comments: { rev: 0, threads: [], agents: {} }, live: null, peers: [] });
+  // keepScreen: another board takes its place straight away (switchBoard), so Home never shows.
+  if (keepScreen) return;
   try {
     localStorage.removeItem("board:last");
   } catch {}

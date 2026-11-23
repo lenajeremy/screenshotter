@@ -900,6 +900,34 @@ const CHECKS: Record<string, Check> = {
     boards.deleteBoard(b.id);
     return onBoard === "Tabbed board" && kept && back === b.id && gone ? "ok" : `tab: "${onBoard}", kept on Home: ${kept}, reopened: ${back === b.id}, closed: ${gone}`;
   },
+  async "the tab bar: switching from one board's tab to another's never shows Home in between, even when the board loads slowly"(page) {
+    const a = boards.createBoard("Tab one", "studio");
+    const b = boards.createBoard("Tab two", "studio");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), a.id);
+    await page.waitForSelector(".bd-app .tabbar .tab.on");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+    await page.waitForFunction((id: string) => document.querySelector(".tabbar .tab.on")?.getAttribute("data-tab-board") === id, b.id);
+    // Watch every change to the page while switching back, with the board's load held up for a moment.
+    await page.route(`**/api/board?id=${a.id}`, async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
+    await S(page, () => {
+      (window as any).__sawHome = false;
+      const o = new MutationObserver(() => { if (document.querySelector(".home")) (window as any).__sawHome = true; });
+      o.observe(document.body, { childList: true, subtree: true });
+      (window as any).__homeWatch = o;
+    });
+    await page.click(`.tabbar [data-tab-board="${a.id}"]`);
+    await page.waitForFunction((id: string) => document.querySelector(".tabbar .tab.on")?.getAttribute("data-tab-board") === id, a.id, { timeout: 5000 });
+    await page.waitForTimeout(150);
+    const r = await S(page, async () => {
+      (window as any).__homeWatch.disconnect();
+      return { sawHome: (window as any).__sawHome as boolean, id: (await import("/ui/board-state.js" as string)).B.id as string, drawn: document.querySelectorAll(".bd-app").length };
+    });
+    await page.unroute(`**/api/board?id=${a.id}`);
+    for (const id of [a.id, b.id]) await S(page, async (id: string) => (await import("/ui/tabs.js" as string)).closeTab(id), id);
+    boards.deleteBoard(a.id);
+    boards.deleteBoard(b.id);
+    return !r.sawHome && r.id === a.id && r.drawn === 1 ? "ok" : `Home showed during the switch: ${r.sawHome}, open board: ${r.id === a.id ? "the right one" : r.id}, editors drawn: ${r.drawn}`;
+  },
   async "Home: boards sort by name, show as a list, and the scratchpad stays in the sidebar"(page) {
     const made = ["Zebra", "Apple", "Mango"].map((n) => boards.createBoard(n, "studio"));
     await S(page, async () => (await import("/ui/board-library.js" as string)).refreshBoards());
