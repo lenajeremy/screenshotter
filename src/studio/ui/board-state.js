@@ -569,8 +569,32 @@ function connectLive(boardId, teamInfo) {
   };
 }
 
+/** The boards open as tabs along the top, in the order they were opened; remembered between launches. */
+function saveTabs(tabs) {
+  set({ tabs });
+  try {
+    localStorage.setItem("board:tabs", JSON.stringify(tabs));
+  } catch {}
+}
+export function noteTab(id, name) {
+  const tabs = S.tabs ?? [];
+  const i = tabs.findIndex((t) => t.id === id);
+  if (i >= 0 && tabs[i].name === name) return;
+  saveTabs(i < 0 ? [...tabs, { id, name }] : tabs.map((t, j) => (j === i ? { id, name } : t)));
+}
+export function dropTab(id) {
+  saveTabs((S.tabs ?? []).filter((t) => t.id !== id));
+}
+export function restoreTabs() {
+  try {
+    const tabs = JSON.parse(localStorage.getItem("board:tabs") ?? "[]");
+    if (Array.isArray(tabs)) set({ tabs: tabs.filter((t) => t && typeof t.id === "string").map((t) => ({ id: t.id, name: String(t.name ?? "Board") })) });
+  } catch {}
+}
+
 function hydrateBoard(board, teamInfo) {
   const id = board.id;
+  noteTab(id, board.name);
   const remembered = rememberedView(id);
   const clean = { ...board };
   const team = teamInfo || clean._team || null;
@@ -621,6 +645,8 @@ export async function openBoard(id) {
     const board = await api(`/api/board?id=${encodeURIComponent(id)}`);
     hydrateBoard(board, board._team);
   } catch (e) {
+    // A board that's gone (deleted, or its team left) leaves the tabs too.
+    dropTab(id);
     fail(e, "Couldn't open the board");
   }
 }
@@ -657,6 +683,8 @@ export async function newBoard(name) {
   try {
     const b = await api("/api/board/new", { name });
     await openBoard(b.id);
+    // A new board starts with the agent's chat open: that's the quickest way to something on it.
+    if (B.id === b.id) bset({ rightTab: "agent" });
     return b;
   } catch (e) {
     fail(e, "Couldn't make a board");

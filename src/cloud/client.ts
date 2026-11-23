@@ -360,6 +360,60 @@ export function cancelDeviceSignIn(): void {
   activeFlow = null;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Email sign-in: a six-digit code, typed in the app itself
+
+const cleanEmail = (email: string) => email.trim().toLowerCase();
+
+/** Email a six-digit sign-in code. */
+export async function sendEmailCode(email: string): Promise<{ email: string }> {
+  const to = cleanEmail(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new CloudError(400, "That doesn't look like an email address.");
+  await cloudFetch("/api/auth/email-otp/send-verification-otp", { method: "POST", body: { email: to, type: "sign-in" }, token: "" });
+  return { email: to };
+}
+
+/** Sign in with the code from the email: keeps the session as the device flow does. */
+export async function signInWithEmailCode(email: string, code: string): Promise<{ user: CloudUser; teams: CloudTeam[]; token: string }> {
+  const base = serverUrl();
+  const otp = code.replace(/\D/g, "");
+  if (otp.length !== 6) throw new CloudError(400, "The code has six digits.");
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/auth/sign-in/email-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: base },
+      body: JSON.stringify({ email: cleanEmail(email), otp }),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new CloudError(0, "Couldn't reach Glassine. Check your connection and try again.");
+  }
+  const body = (await res.json().catch(() => ({}))) as { token?: string; message?: string; code?: string };
+  if (!res.ok) {
+    const why = `${body.code ?? ""} ${body.message ?? ""}`.toLowerCase();
+    throw new CloudError(res.status, /expire/.test(why) ? "That code has expired. Send a new one." : /attempt/.test(why) ? "Too many tries. Send a new code." : "That code isn't right. Check it and try again.");
+  }
+  const token = res.headers.get("set-auth-token") || body.token || "";
+  if (!token) throw new CloudError(500, "Signed in, but the server sent no session. Try again.");
+  const persistToDisk = process.env.SCREENSHOTTER_APP !== "1" || process.env.SCREENSHOTTER_NO_KEYCHAIN === "1";
+  setAuthToken(token, persistToDisk);
+  if (!persistToDisk) writeStored({ ...readStored(), serverUrl: base, token });
+  const me = await cloudFetch<{ user: CloudUser; teams: CloudTeam[] }>("/api/me", { token, base });
+  writeStored({ ...readStored(), serverUrl: base, user: me.user, teams: me.teams });
+  return { user: me.user, teams: me.teams, token };
+}
+
+/** Change the name teammates see. */
+export async function updateProfile(name: string): Promise<{ name: string }> {
+  const clean = name.trim().slice(0, 80);
+  if (!clean) throw new CloudError(400, "A name can't be empty.");
+  await cloudFetch("/api/auth/update-user", { method: "POST", body: { name: clean } });
+  const cur = readStored();
+  if (cur.user) writeStored({ ...cur, user: { ...cur.user, name: clean } });
+  return { name: clean };
+}
+
 export async function signOut(): Promise<void> {
   stopFlow(activeFlow);
   activeFlow = null;

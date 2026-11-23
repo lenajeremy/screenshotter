@@ -1468,7 +1468,15 @@ export function BoardCanvas() {
     <${Overlay} />
     <${Presence} />
     <${PresenceBar} />
-    ${!page.children.length && html`<div class="bd-empty"><b>An empty page</b><span>Press F and drag to draw an artboard, paste HTML, or ask an agent to design here.</span></div>`}
+    ${!page.children.length && html`<div class="bd-empty">
+      <b>What are we making?</b><span>Tell an agent, or start one of these ways.</span>
+      <div class="bd-starts">
+        <button onClick=${() => bset({ rightTab: "agent" })}><i><${Icon} n="spark" s=${16} /></i><span><b>Ask an agent</b><small>Describe a screen</small></span></button>
+        <button onClick=${() => bset({ tool: "frame" })}><i><${Icon} n="frame" s=${16} /></i><span><b>Draw a frame</b><small>Press F and drag</small></span></button>
+        <button onClick=${() => window.studio?.command("importWebsite")}><i><${Icon} n="globe" s=${16} /></i><span><b>Import a website</b><small>A page as layers</small></span></button>
+        <button onClick=${() => window.studio?.command("importFigma")}><i><${Icon} n="component" s=${16} /></i><span><b>Import from Figma</b><small>A .fig file, or copied frames</small></span></button>
+      </div>
+    </div>`}
   </div>`;
 }
 
@@ -1485,7 +1493,7 @@ function sizeLabel(id, box) {
   const word = (axis, px) => {
     const w = sizeWord(B.board, id, axis);
     const v = Math.round(px / z);
-    return w === "fit" ? `Fit ${v}` : w === "fill" ? `Fill ${v}` : w === "auto" ? `${v}` : /%$/.test(w) ? `${w} ${v}` : String(round(Number(w), 1)) === "NaN" ? `${v}` : w;
+    return w === "fit" ? `Hug ${v}` : w === "fill" ? `Fill ${v}` : w === "auto" ? `${v}` : /%$/.test(w) ? `${w} ${v}` : String(round(Number(w), 1)) === "NaN" ? `${v}` : w;
   };
   return `${word("width", box.width)} × ${word("height", box.height)}`;
 }

@@ -171,7 +171,7 @@ function ChatHead() {
 }
 
 /** An empty chat: a few things to ask, from what's on the board. */
-function Starts() {
+function ideasNow() {
   const page = currentPage();
   const first = page?.children.map((id) => node(id)).find((n) => n && !n.hidden);
   const sel = B.sel.length === 1 ? node(B.sel[0]) : null;
@@ -182,8 +182,13 @@ function Starts() {
     : first
       ? [narrow ? `Make a desktop version of ${q(first)}` : `Make a phone version of ${q(first)}`, `Try three colour directions for ${q(first)}`, `Tighten the spacing and type on ${q(first)}`]
       : ["Design a sign-up screen for an iPhone app", "A pricing page with three plans", "A settings screen, light and dark"];
+  return { ideas, onBoard: Boolean(first || sel) };
+}
+
+function Starts() {
+  const { ideas, onBoard } = ideasNow();
   return html`<div class="ag-starts">
-    <p>${first || sel ? "Ask for a change, or try:" : "Describe a screen, or try:"}</p>
+    <p>${onBoard ? "Ask for a change, or try:" : "Describe a screen, or try:"}</p>
     ${ideas.map((t) => html`<button class="ag-idea" onClick=${() => fillComposer(t)}>${t}</button>`)}
   </div>`;
 }
@@ -253,6 +258,8 @@ function Reply({ m, last, onRetry }) {
     return () => clearInterval(i);
   }, [live]);
   const shown = live ? steps.slice(-6) : steps;
+  // The steps that changed the board, not the ones that only looked at it.
+  const changes = steps.filter((p) => p.kind === "tool" && /write_html|board_edit|import|board_create/.test(p.name ?? ""));
   const [copied, setCopied] = useState(false);
   const copy = () => navigator.clipboard.writeText(answer ?? "").then(() => (setCopied(true), setTimeout(() => setCopied(false), 1400)));
   return html`<div class="ag-reply">
@@ -266,6 +273,11 @@ function Reply({ m, last, onRetry }) {
     html`<div class="ag-steps">
       ${shown.map((p) => (p.kind === "tool" ? html`<span class="ag-step" key=${p.id}><${Icon} n=${stepIcon(p.name)} s=${12} />${p.label}</span>` : p.text.trim() && html`<span class="ag-note" key=${p.id}>${p.text.trim()}</span>`))}
     </div>`}
+    ${!live && changes.length > 0 &&
+    html`<div class="ag-card">
+      ${changes.slice(0, 4).map((p) => html`<span class="ag-change" key=${p.id}><${Icon} n=${stepIcon(p.name)} s=${12} /><span class="ellipsis">${p.label}</span></span>`)}
+      <div class="ag-card-foot"><span>${changes.length} change${changes.length === 1 ? "" : "s"}${changes.length > 4 ? `, ${changes.length - 4} more in the steps` : ""}</span><button class="ag-undo" title="Undo the last change (⌘Z)" onClick=${() => window.studio?.command("undo")}><${Icon} n="undo" s=${11} />Undo</button></div>
+    </div>`}
     ${answer && html`<${Prose} text=${answer} />`}
     ${m.status === "error" && html`<div class="ag-error">${m.error ?? "The agent stopped."}</div>`}
     ${m.status === "stopped" && html`<div class="ag-stopped">Stopped.</div>`}
@@ -275,6 +287,8 @@ function Reply({ m, last, onRetry }) {
       ${answer && html`<button class="icon-btn sm" title=${copied ? "Copied" : "Copy"} onClick=${copy}><${Icon} n=${copied ? "check" : "copy"} s=${13} /></button>`}
       <button class="icon-btn sm" title="Try again" onClick=${onRetry}><${Icon} n="refresh" s=${13} /></button>
     </div>`}
+    ${last && !live && m.status !== "error" &&
+    html`<div class="ag-next">${ideasNow().ideas.map((t) => html`<button class="ag-chip" key=${t} onClick=${() => fillComposer(t)}>${t}</button>`)}</div>`}
   </div>`;
 }
 

@@ -288,7 +288,7 @@ function ComponentSection() {
 
 const SIZE_MODES = [
   { value: "fixed", label: "Fixed" },
-  { value: "fit", label: "Fit" },
+  { value: "fit", label: "Hug" },
   { value: "fill", label: "Fill" },
   { value: "relative", label: "Relative" },
 ];
@@ -536,7 +536,7 @@ function FlexSection() {
     const k = column ? alignIndex(items) : alignIndex(justify);
     return !spread ? m === r && k === c : column ? alignIndex(items) === c : alignIndex(items) === r;
   };
-  return html`<${Section} title="Flex" right=${html`<button class="icon-btn sm" title="Remove flex (⌥⇧A): keep each layer where it is" onClick=${() => list.forEach((id) => setFlex(id, false))}><${Icon} n="minus" s=${14} /></button>`}>
+  return html`<${Section} title="Auto layout" right=${html`<button class="icon-btn sm" title="Remove flex (⌥⇧A): keep each layer where it is" onClick=${() => list.forEach((id) => setFlex(id, false))}><${Icon} n="minus" s=${14} /></button>`}>
     <${LayoutKind} list=${list} />
     <div class="bd-flex">
       <div class="bd-pad" role="group" aria-label="Alignment">
@@ -579,7 +579,7 @@ function LookSection() {
     const same = v.every((x) => x === v[0]);
     return { borderRadius: same ? (v[0] ? `${v[0]}px` : null) : v.map((x) => `${x}px`).join(" "), ...Object.fromEntries(RADIUS_KEYS.map((k) => [k, null])) };
   };
-  return html`<${Section} title="Look">
+  return html`<${Section} title="Appearance">
     <div class="grid2">
       <${Num} label=${html`<${Icon} n="eye" s=${12} />`} title="Opacity" unit="%" value=${opacity === "mixed" ? undefined : Math.round(opacity * 100)} placeholder="—" min=${0} max=${100}
         onChange=${(v) => v !== undefined && setStyle({ opacity: v >= 100 ? null : String(round(v / 100, 3)) }, "opacity")} />
@@ -912,7 +912,7 @@ function LineSection({ kind }) {
       key,
     );
   const offset = px(n.style.outlineOffset) ?? 0;
-  return html`<${Section} title=${outline ? "Outline" : "Border"} right=${b ? html`<button class="icon-btn sm" title=${`Remove the ${kind}`} onClick=${() => put(null)}><${Icon} n="minus" s=${14} /></button>` : html`<button class="icon-btn sm" title=${outline ? "Add an outline: a line round the layer that takes no room" : "Add a border"} onClick=${() => put({ width: outline ? 2 : 1, style: "solid", color: outline ? "#4c8dff" : "#e4e4e7" })}><${Icon} n="plus" s=${14} /></button>`}>
+  return html`<${Section} title=${outline ? "Outline" : "Stroke"} right=${b ? html`<button class="icon-btn sm" title=${`Remove the ${kind}`} onClick=${() => put(null)}><${Icon} n="minus" s=${14} /></button>` : html`<button class="icon-btn sm" title=${outline ? "Add an outline: a line round the layer that takes no room" : "Add a border"} onClick=${() => put({ width: outline ? 2 : 1, style: "solid", color: outline ? "#4c8dff" : "#e4e4e7" })}><${Icon} n="plus" s=${14} /></button>`}>
     ${b &&
     html`<div class="bd-line">
         <${BoardColor} value=${b.color === "currentColor" ? undefined : b.color} auto="Text colour" onChange=${(c) => put({ ...b, color: c ?? "currentColor" }, `${kind}c`)} />

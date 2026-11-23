@@ -9,6 +9,8 @@ import { B, CANVAS_ONLY, LEFT_MAX, LEFT_MIN, bset, closeBoard, commit, currentPa
 import { BoardCanvas, canvasEl, elOf, finishText, fit, placeNew, placeOf, shiftSteps, toWorld, worldBox, zoomBy, zoomTo } from "./board-canvas.js";
 import { Inspector } from "./board-inspector.js";
 import { AgentDot, AgentPanel, boardOpened } from "./board-agent.js";
+import { TabBar } from "./tabs.js";
+import { SharePopover } from "./share.js";
 import { AssetsPanel } from "./board-assets.js";
 import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
@@ -44,21 +46,30 @@ export function BoardApp() {
     if (b.id) boardOpened(b.id);
   }, [b.id]);
   if (!b.board) return html`<div class="bd-app"><div class="boot"><div class="boot-mark"></div></div></div>`;
+  const chat = b.rightTab === "agent" || b.rightTab === "comments" ? b.rightTab : null;
   return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}" style=${{ "--bd-left-w": b.leftW ? b.leftW + "px" : null }}>
     <${BoardTopbar} />
     ${b.leftOpen && html`<aside class="panel bd-left">
+      <${BoardHead} />
       <div class="bd-left-tabs" role="tablist">
-        ${[["layers", "Layers"], ["assets", "Assets"], ["comments", "Comments"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${(b.leftTab ?? "layers") === id} class=${(b.leftTab ?? "layers") === id ? "on" : ""} onClick=${() => bset({ leftTab: id })}>${label}${id === "comments" && openCount() > 0 && html`<span class="n">${openCount()}</span>`}</button>`)}
+        ${[["layers", "File"], ["assets", "Assets"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${(b.leftTab ?? "layers") === id} class=${(b.leftTab ?? "layers") === id ? "on" : ""} onClick=${() => bset({ leftTab: id })}>${label}</button>`)}
       </div>
-      ${(b.leftTab ?? "layers") === "assets" ? html`<${AssetsPanel} />` : b.leftTab === "comments" ? html`<${CommentsPanel} />` : html`<${PagesList} /><${LayersList} />`}
+      ${b.leftTab === "assets" ? html`<${AssetsPanel} />` : html`<${PagesList} /><${LayersList} />`}
     </aside>`}
     ${b.leftOpen && html`<${LeftResizer} />`}
-    <main class="bd-stage"><${BoardCanvas} /></main>
-    ${b.rightOpen && html`<aside class="panel bd-right">
-      <div class="bd-left-tabs bd-right-tabs" role="tablist">
-        ${[["design", "Design"], ["agent", "Agent"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${(b.rightTab ?? "design") === id} class=${(b.rightTab ?? "design") === id ? "on" : ""} onClick=${() => bset({ rightTab: id })}>${label}${id === "agent" && html`<${AgentDot} />`}</button>`)}
+    <main class="bd-stage"><${BoardCanvas} /><${ToolDock} /></main>
+    ${chat && html`<aside class="panel bd-chat-col">
+      <div class="bd-chat-bar">
+        <div class="bd-left-tabs bd-chat-tabs" role="tablist">
+          ${[["agent", "Agent"], ["comments", "Comments"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${chat === id} class=${chat === id ? "on" : ""} onClick=${() => bset({ rightTab: id })}>${label}${id === "agent" ? html`<${AgentDot} />` : openCount() > 0 && html`<span class="n">${openCount()}</span>`}</button>`)}
+        </div>
+        <button class="icon-btn sm" title="Close" onClick=${() => bset({ rightTab: "design" })}><${Icon} n="x" s=${14} /></button>
       </div>
-      ${b.rightTab === "agent" ? html`<${AgentPanel} />` : html`<${Inspector} />`}
+      ${chat === "comments" ? html`<${CommentsPanel} />` : html`<${AgentPanel} />`}
+    </aside>`}
+    ${b.rightOpen && html`<aside class="panel bd-right">
+      <${RightHead} />
+      ${b.designView === "code" ? html`<${CodePanel} />` : html`<${Inspector} />`}
     </aside>`}
   </div>`;
 }
@@ -118,49 +129,78 @@ function ZoomLabel() {
 }
 
 function BoardTopbar() {
-  // Not the view or the pointer: the zoom it shows follows the view on its own.
+  const b = useBoard(CANVAS_ONLY);
+  return html`<${TabBar} name=${b.board.name} right=${html`<div class="hstack" data-nodrag>
+      ${b.working.length > 0 && html`<span class="bd-agent-pill" title="An agent is changing this board: you'll see each change as it lands"><i></i>Agent at work</span>`}
+      <button class="icon-btn" title="Undo (⌘Z)" disabled=${!b.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
+      <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!b.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
+      <span class="topbar-sep"></span>
+      <button class="icon-btn ${b.leftOpen ? "on" : ""}" title="Pages and layers (⌥⌘S)" onClick=${() => bset({ leftOpen: !B.leftOpen })}><${Icon} n="sidebar" s=${16} /></button>
+      <button class="icon-btn ${b.rightOpen ? "on" : ""}" title="Design (⌥⌘I)" onClick=${() => bset({ rightOpen: !B.rightOpen })}><${Icon} n="sidebarR" s=${16} /></button>
+    </div>`} />`;
+}
+
+/** The left panel's head: the board's name (click to rename) and the team it's in. */
+function BoardHead() {
+  const b = useBoard(CANVAS_ONLY);
+  const liveLabel = b.live?.status === "connected" ? (b.live.teamName || "Team") : b.live?.status === "reconnecting" ? "Reconnecting…" : b.live?.status === "offline" ? "Offline" : "Connecting…";
+  return html`<div class="bd-file-head">
+    <input class="scene-name" value=${b.board.name} spellcheck=${false} title="Rename this board"
+      onKeyDown=${(e) => {
+        e.stopPropagation();
+        // Escape puts the name back before leaving the field, so nothing is renamed.
+        if (e.key === "Escape") e.target.value = B.board.name;
+        if (e.key === "Enter" || e.key === "Escape") e.target.blur();
+      }}
+      onChange=${(e) => {
+        const name = e.target.value.trim();
+        if (name && name !== B.board.name) commit([{ op: "rename", name }], { label: "Rename" });
+        else e.target.value = B.board.name;
+      }} />
+    ${b.live
+      ? html`<button class="bd-team-pill ${b.live.status}" title="Team board · click for members and invites" onClick=${() => set({ modal: { kind: "teamMembers", teamId: b.live.teamId } })}><i></i>${liveLabel}</button>`
+      : html`<span class="bd-head-sub">${b.id === "scratchpad" ? "A page for each try" : "My boards"}</span>`}
+  </div>`;
+}
+
+/** The tools, floating at the bottom of the canvas, and the agent chat's switch. */
+function ToolDock() {
+  const b = useBoard(CANVAS_ONLY);
+  const agentOpen = b.rightTab === "agent" || b.rightTab === "comments";
+  return html`<div class="bd-dock">
+    <div class="bd-tools" role="toolbar" aria-label="Tools">
+      ${TOOLS.map((t) => html`<button class="icon-btn ${b.tool === t.id ? "on" : ""}" title=${`${t.label} (${t.key})`} aria-pressed=${b.tool === t.id}
+          onClick=${() => (t.id === "image" ? pickImages() : bset({ tool: t.id }))}><${Icon} n=${t.icon} s=${16} /></button>`)}
+      <span class="bd-dock-sep"></span>
+      <button class="icon-btn bd-agent-toggle ${agentOpen ? "on" : ""}" title="Chat with an agent" aria-pressed=${agentOpen} onClick=${() => bset({ rightTab: agentOpen ? "design" : "agent" })}><${Icon} n="spark" s=${16} /><${AgentDot} /></button>
+    </div>
+  </div>`;
+}
+
+/** The right panel's head: who it's shared with, Preview and Export, then the zoom. */
+function RightHead() {
   const b = useBoard(CANVAS_ONLY);
   const s = useStore();
   const exportBtn = useRef();
   const zoomBtn = useRef();
   const [exporting, setExporting] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
-  const liveLabel = b.live?.status === "connected" ? (b.live.teamName || "Team") : b.live?.status === "reconnecting" ? "Reconnecting…" : b.live?.status === "offline" ? "Offline" : "Connecting…";
-  return html`<header class="topbar bd-topbar" data-drag>
-    <div class="brand">
-      <div class="brand-mark"></div>
-      <button class="btn ghost sm bd-back" data-nodrag title="All boards (⇧⌘O)" onClick=${() => closeBoard()}><${Icon} n="left" s=${14} />Boards</button>
-      <span class="crumb-sep" aria-hidden="true">/</span>
-      <input class="scene-name" data-nodrag value=${b.board.name} spellcheck=${false} title="Rename this board"
-        onKeyDown=${(e) => {
-          e.stopPropagation();
-          // Escape puts the name back before leaving the field, so nothing is renamed.
-          if (e.key === "Escape") e.target.value = B.board.name;
-          if (e.key === "Enter" || e.key === "Escape") e.target.blur();
-        }}
-        onChange=${(e) => {
-          const name = e.target.value.trim();
-          if (name && name !== B.board.name) commit([{ op: "rename", name }], { label: "Rename" });
-          else e.target.value = B.board.name;
-        }} />
-      ${b.live && html`<button class="bd-team-pill ${b.live.status}" data-nodrag title="Team board · click for members and invites" onClick=${() => set({ modal: { kind: "teamMembers", teamId: b.live.teamId } })}><i></i>${liveLabel}</button>`}
+  const shareBtn = useRef();
+  const [sharing, setSharing] = useState(false);
+  return html`<div class="bd-right-head">
+    <div class="bd-right-row">
+      <${PeopleHere} />
+      <span class="spacer"></span>
+      <button class="icon-btn bd-preview" disabled=${!currentPage()?.children.length} title=${`Preview ${node(previewTarget())?.name ?? "the frame"} in your browser (⌥⌘P)`} onClick=${() => previewFrame()}><${Icon} n="play" s=${15} /></button>
+      <button class="btn sm" ref=${exportBtn} disabled=${!currentPage()?.children.length} onClick=${() => setExporting(!exporting)}>Export</button>
+      ${b.id !== "scratchpad" && s.cloud?.signedIn && html`<button class="btn primary sm bd-share" ref=${shareBtn} onClick=${() => setSharing(!sharing)}>Share</button>`}
     </div>
-    <div class="topbar-center bd-tools" data-nodrag role="toolbar" aria-label="Tools">
-      ${TOOLS.map((t) => html`<button class="icon-btn ${b.tool === t.id ? "on" : ""}" title=${`${t.label} (${t.key})`} aria-pressed=${b.tool === t.id}
-          onClick=${() => (t.id === "image" ? pickImages() : bset({ tool: t.id }))}><${Icon} n=${t.icon} s=${16} /></button>`)}
-    </div>
-    <span class="spacer"></span>
-    <div class="hstack" data-nodrag>
-      ${b.working.length > 0 && html`<span class="bd-agent-pill" title="An agent is changing this board: you'll see each change as it lands"><i></i>Agent at work</span>`}
-      ${!b.live && b.id !== "scratchpad" && s.cloud?.signedIn && html`<button class="btn ghost sm" title="Move this board into a team to edit live together" onClick=${() => set({ modal: { kind: "moveToTeam", boardId: b.id, boardName: b.board.name } })}><${Icon} n="users" s=${13} />Move to team</button>`}
-      <button class="icon-btn" title="Undo (⌘Z)" disabled=${!b.past.length} onClick=${undo}><${Icon} n="undo" s=${16} /></button>
-      <button class="icon-btn" title="Redo (⇧⌘Z)" disabled=${!b.future.length} onClick=${redo}><${Icon} n="redo" s=${16} /></button>
+    <div class="bd-right-row">
+      <div class="bd-left-tabs bd-design-tabs" role="tablist">
+        ${[["design", "Design"], ["code", "Code"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${(b.designView ?? "design") === id} class=${(b.designView ?? "design") === id ? "on" : ""} onClick=${() => bset({ designView: id })}>${label}</button>`)}
+      </div>
+      <span class="spacer"></span>
       <button class="btn ghost sm bd-zoom" ref=${zoomBtn} title="Zoom" onClick=${() => setZoomOpen(!zoomOpen)}><${ZoomLabel} /><${Icon} n="down" s=${12} /></button>
-      <button class="btn ghost sm bd-preview" disabled=${!currentPage()?.children.length} title=${`Preview ${node(previewTarget())?.name ?? "the frame"} in your browser (⌥⌘P)`} onClick=${() => previewFrame()}><${Icon} n="play" s=${13} />Preview</button>
-      <button class="btn primary" ref=${exportBtn} disabled=${!currentPage()?.children.length} onClick=${() => setExporting(!exporting)}><${Icon} n="export" s=${15} w=${2} />Export</button>
-      <span class="topbar-sep"></span>
-      <button class="icon-btn ${b.leftOpen ? "on" : ""}" title="Pages and layers (⌥⌘S)" onClick=${() => bset({ leftOpen: !B.leftOpen })}><${Icon} n="sidebar" s=${16} /></button>
-      <button class="icon-btn ${b.rightOpen ? "on" : ""}" title="Design (⌥⌘I)" onClick=${() => bset({ rightOpen: !B.rightOpen })}><${Icon} n="sidebarR" s=${16} /></button>
     </div>
     ${zoomOpen && html`<${Popover} anchor=${zoomBtn.current} onClose=${() => setZoomOpen(false)} width=${210} align="end">
       <div class="bd-menu">
@@ -174,7 +214,45 @@ function BoardTopbar() {
       </div>
     <//>`}
     ${exporting && html`<${ExportPopover} anchor=${exportBtn.current} onClose=${() => setExporting(false)} />`}
-  </header>`;
+    ${sharing && html`<${SharePopover} anchor=${shareBtn.current} onClose=${() => setSharing(false)} />`}
+  </div>`;
+}
+
+/** The selection as HTML with its styles inline: what a developer, or an agent, would be handed. */
+function CodePanel() {
+  const b = useBoard(CANVAS_ONLY);
+  const [copied, setCopied] = useState(false);
+  const ids = b.sel.filter((id) => node(id));
+  if (!ids.length)
+    return html`<div class="bd-code-empty"><${Icon} n="code" s=${20} /><b>Select a layer</b><span>Its HTML and CSS show here, ready to copy.</span></div>`;
+  let text = "";
+  try {
+    text = pageHtml(B.board, ids);
+  } catch {
+    text = "";
+  }
+  const copy = () => navigator.clipboard.writeText(text).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1400))).catch((e) => fail(e, "Couldn't copy"));
+  return html`<div class="bd-codeview">
+    <div class="bd-codeview-head"><span>${ids.length === 1 ? node(ids[0]).name : `${ids.length} layers`}</span><button class="btn sm" onClick=${copy}><${Icon} n=${copied ? "check" : "copy"} s=${13} />${copied ? "Copied" : "Copy"}</button></div>
+    <pre class="bd-codeview-text" tabindex="0">${text.length > 60000 ? `${text.slice(0, 60000)}\n…` : text}</pre>
+  </div>`;
+}
+
+/** You, and whoever else is in the board right now. */
+function PeopleHere() {
+  const b = useBoard(["view", "hover", "guides", "drop", "words"]);
+  const s = useStore();
+  const me = s.cloud?.user;
+  const face = (u, key, title, ring) =>
+    u?.image
+      ? html`<img key=${key} class="bd-face" src=${u.image} alt="" title=${title} style=${ring ? { "--ring": ring } : null} />`
+      : html`<span key=${key} class="bd-face" title=${title} style=${ring ? { "--ring": ring } : null}>${(u?.name || u?.email || "?").trim()[0].toUpperCase()}</span>`;
+  if (!me && !b.peers?.length) return null;
+  return html`<div class="bd-faces">
+    ${me && face(me, "me", `${me.name || me.email} (you)`)}
+    ${(b.peers ?? []).slice(0, 3).map((p) => face(p.user, p.id, p.agent ? `${p.user?.name ?? "A teammate"}'s ${p.agent}` : (p.user?.name ?? "A teammate"), p.color))}
+    ${(b.peers?.length ?? 0) > 3 && html`<span class="bd-face more">+${b.peers.length - 3}</span>`}
+  </div>`;
 }
 
 function ExportPopover({ anchor, onClose }) {

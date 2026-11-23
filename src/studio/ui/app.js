@@ -2,16 +2,17 @@
 // sheets, menus and toasts over them. Everything about a board itself is in board*.js.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Popover, Seg, html } from "./controls.js";
+import { Dropdown, Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { ContextMenu } from "./menu.js";
 import { BoardApp, boardCommand, importToBoard, pickImages } from "./board.js";
-import { bset, closeBoard, newBoard, openBoard, saved as boardSaved } from "./board-state.js";
+import { bset, closeBoard, newBoard, openBoard, restoreTabs, saved as boardSaved } from "./board-state.js";
+import { TabBar } from "./tabs.js";
+import { Gate, onboarded } from "./gate.js";
+import { UpgradeModal } from "./plans.js";
 import { BoardsGrid, refreshBoards, useBoards } from "./board-library.js";
 import { ImportWebsite, looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { ConnectAgent, FigmaMark, ImportFigma, importFigFile, isFigFile, isFigmaClipboard, looksLikeFigma, openImportFigma, pasteFigma, saveFigmaToken } from "./imports.js";
-import { AgentLogo } from "./agent-logos.js";
-import { loadAgents } from "./board-agent.js";
 import { CreateTeamModal, MoveToTeamModal, SignInModal, TeamBoardsGrid, TeamMembersModal, newTeamBoard, refreshAccount, signOutAccount } from "./cloud.js";
 import { S, answerConfirm, answerPrompt, api, dismiss, fail, native, restore, set, setTheme, themeNow, toast, touch, useStore } from "./store.js";
 
@@ -25,41 +26,56 @@ function Home() {
   const s = useStore();
   const boards = useBoards();
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState("edited");
+  const [tab, setTab] = useState("recent");
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem("home:view") === "list" ? "list" : "grid";
+    } catch {
+      return "grid";
+    }
+  });
+  const pickView = (v) => {
+    setView(v);
+    try {
+      localStorage.setItem("home:view", v);
+    } catch {}
+  };
   const cloud = s.cloud ?? {};
   const activeTeam = s.homeView !== "recents" ? (cloud.teams ?? []).find((t) => t.id === s.homeView) : null;
   const first = !activeTeam && boards !== null && !realBoards(boards).length;
   return html`<div class="home">
+    <${TabBar} />
     <aside class="home-side">
-      <div class="home-drag" data-drag></div>
-      <div class="home-brand"><div class="brand-mark"></div><span>${s.opts?.appName ?? "Screenshotter"}</span></div>
+      ${cloud.signedIn && cloud.user
+        ? html`<button class="home-account" title=${cloud.user.email} onClick=${() => set({ modal: { kind: "settings", tab: "account" } })}>
+            ${cloud.user.image ? html`<img class="cloud-av sm" src=${cloud.user.image} alt="" />` : html`<span class="cloud-av sm">${(cloud.user.name || cloud.user.email)[0].toUpperCase()}</span>`}
+            <b class="grow ellipsis">${cloud.user.name || cloud.user.email}</b>
+            ${cloud.offline ? html`<span class="home-offline">Offline</span>` : html`<${Icon} n="down" s=${11} w=${2} />`}
+          </button>`
+        : html`<div class="home-brand"><div class="brand-mark"></div><span>${s.opts?.appName ?? "Glassine"}</span></div>`}
       <label class="home-search"><${Icon} n="search" s=${13} /><input placeholder="Search boards" value=${q} spellcheck=${false} onInput=${(e) => setQ(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} aria-label="Search boards" /></label>
       <nav class="home-nav">
         <button class=${!activeTeam ? "on" : ""} onClick=${() => set({ homeView: "recents" })}><${Icon} n="history" s=${15} />Recents</button>
         <button onClick=${() => openBoard("scratchpad")}><${Icon} n="pen" s=${15} />Scratchpad</button>
       </nav>
+      <div class="home-rule"></div>
       <div class="home-sec-row">
         <p class="home-sec">Teams</p>
-        ${cloud.signedIn && html`<button class="icon-btn xs" title="New team" onClick=${() => set({ modal: { kind: "createTeam" } })}><${Icon} n="plus" s=${13} /></button>`}
+        ${cloud.signedIn && html`<button class="icon-btn xs" title="New team" onClick=${() => set({ modal: { kind: "upgrade" } })}><${Icon} n="plus" s=${13} /></button>`}
       </div>
       <nav class="home-nav home-teams">
         ${cloud.signedIn
           ? cloud.teams.length
             ? cloud.teams.map(
                 (t) => html`<button key=${t.id} class=${activeTeam?.id === t.id ? "on" : ""} onClick=${() => set({ homeView: t.id })}>
-                  <${Icon} n="users" s=${15} /><span class="grow ellipsis">${t.name}</span>
+                  <i class="team-mark" style=${{ background: teamColor(t.id) }}>${(t.name || "?")[0].toUpperCase()}</i><span class="grow ellipsis">${t.name}</span>
                 </button>`,
               )
-            : html`<button onClick=${() => set({ modal: { kind: "createTeam" } })}><${Icon} n="plus" s=${15} />Create a team</button>`
+            : html`<button onClick=${() => set({ modal: { kind: "upgrade" } })}><${Icon} n="plus" s=${15} />Create a team</button>`
           : html`<button onClick=${() => set({ modal: { kind: "signIn" } })}><${Icon} n="users" s=${15} />Sign in to collaborate</button>`}
       </nav>
-      <p class="home-sec">Agents</p>
-      <${AgentsList} />
       <span class="grow"></span>
-      ${cloud.signedIn && cloud.user &&
-      html`<button class="home-account" title=${cloud.user.email} onClick=${() => set({ modal: { kind: "settings", tab: "account" } })}>
-        <span class="cloud-av sm">${(cloud.user.name || cloud.user.email)[0].toUpperCase()}</span>
-        <span class="home-account-t"><b>${cloud.user.name || cloud.user.email}</b><span>${cloud.offline ? "Offline" : cloud.user.email}</span></span>
-      </button>`}
       <nav class="home-nav">
         ${!cloud.signedIn && html`<button onClick=${() => set({ modal: { kind: "signIn" } })}><${Icon} n="user" s=${15} />Sign in</button>`}
         <button onClick=${() => set({ modal: { kind: "settings" } })}><${Icon} n="settings" s=${15} />Settings</button>
@@ -76,29 +92,48 @@ function Home() {
           : html`<${ImportButton} />
               <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.4} />New board</button>`}
       </header>
-      <div class="home-scroll">
+      ${!first && boards !== null &&
+      html`<div class="home-filters">
+        ${!activeTeam && html`<div class="home-tabs" role="tablist">
+          ${[["recent", "Recently edited"], ["shared", "Shared with you"]].map(([id, label]) => html`<button role="tab" data-home-tab=${id} aria-selected=${tab === id} class=${tab === id ? "on" : ""} onClick=${() => setTab(id)}>${label}</button>`)}
+        </div>`}
+        <span class="spacer"></span>
+        ${!activeTeam && tab === "recent" && html`<${Dropdown} value=${sort} options=${[{ value: "edited", label: "Last edited" }, { value: "name", label: "Name" }]} onChange=${setSort} />`}
+        <div class="home-view" role="group" aria-label="View">
+          <button class=${view === "grid" ? "on" : ""} title="Grid" aria-pressed=${view === "grid"} onClick=${() => pickView("grid")}><${Icon} n="grid" s=${14} /></button>
+          <button class=${view === "list" ? "on" : ""} title="List" aria-pressed=${view === "list"} onClick=${() => pickView("list")}><${Icon} n="list" s=${14} /></button>
+        </div>
+      </div>`}
+      <div class="home-scroll ${view === "list" ? "as-list" : ""}">
         ${activeTeam
           ? html`<${TeamBoardsGrid} key=${activeTeam.id} team=${activeTeam} q=${q} />`
           : boards === null
             ? html`<div class="sp-empty"><span class="spinner"></span></div>`
             : first
               ? html`<${StartTiles} />`
-              : html`<${BoardsGrid} q=${q} />`}
+              : tab === "shared"
+                ? html`<${SharedBoards} q=${q} />`
+                : html`<${BoardsGrid} q=${q} sort=${sort} />`}
       </div>
     </main>
   </div>`;
 }
 
-/** The agents on this Mac, each one ready to chat on a board. */
-function AgentsList() {
-  const [agents, setAgents] = useState(null);
-  useEffect(() => {
-    loadAgents().then(setAgents);
-  }, []);
-  if (!agents) return null;
-  if (!agents.length) return html`<nav class="home-nav"><button onClick=${() => set({ modal: { kind: "settings", tab: "agents" } })}><${Icon} n="plus" s=${15} />Add an agent</button></nav>`;
-  return html`<div class="home-agents">${agents.map((a) => html`<span title=${`${a.label} is on this Mac: chat with it on any board, in the Agent tab`}><${AgentLogo} id=${a.id} s=${14} />${a.label}<i></i></span>`)}</div>`;
+/** Every board your teams share, team by team. */
+function SharedBoards({ q }) {
+  const s = useStore();
+  const cloud = s.cloud ?? {};
+  if (!cloud.signedIn) return html`<div class="sp-empty big"><div class="art"><${Icon} n="users" s=${22} /></div><b>Nothing shared yet</b><span>Boards your teams share show up here once you sign in.</span><button class="btn primary sm" onClick=${() => set({ modal: { kind: "signIn" } })}>Sign in</button></div>`;
+  if (!cloud.teams?.length) return html`<div class="sp-empty big"><div class="art"><${Icon} n="users" s=${22} /></div><b>Nothing shared yet</b><span>Start a team to share boards and edit them together, live.</span><button class="btn primary sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>Create a team</button></div>`;
+  return html`${cloud.teams.map((t) => html`<section class="home-team" key=${t.id}>
+    <h2><i class="team-mark" style=${{ background: teamColor(t.id) }}>${(t.name || "?")[0].toUpperCase()}</i>${t.name}</h2>
+    <${TeamBoardsGrid} team=${t} q=${q} />
+  </section>`)}`;
 }
+
+/** A team's colour, the same every time: from its id. */
+const TEAM_COLORS = ["#ff8a4c", "#7c9cff", "#4fd1a1", "#e879c6", "#f5c542", "#9b8cff"];
+const teamColor = (id) => TEAM_COLORS[[...String(id)].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7) % TEAM_COLORS.length];
 
 function ImportButton() {
   const [open, setOpen] = useState(false);
@@ -174,124 +209,170 @@ function KeyRow({ label, placeholder, saved, onSave }) {
   </div></div>`;
 }
 
+/** One setting: what it is on the left, its one control on the right. */
+function SetRow({ label, hint, children, lead }) {
+  return html`<div class="set-row">${lead}<div class="grow"><b>${label}</b>${hint && html`<span>${hint}</span>`}</div>${children}</div>`;
+}
+
+const SETTINGS_NAV = [
+  { value: "account", label: "Account", icon: "user" },
+  { value: "general", label: "Appearance", icon: "sun" },
+  { value: "agents", label: "Agents", icon: "spark" },
+  { value: "keys", label: "Connections", icon: "link" },
+  { value: "shortcuts", label: "Shortcuts", icon: "sliders" },
+  { value: "plan", label: "Plan", icon: "card" },
+];
+
 function Settings() {
   const s = useStore();
   const [info, setInfo] = useState(null);
   const [figma, setFigma] = useState(null);
-  const [tab, setTab] = useState(s.modal?.tab ?? "general");
+  const [tab, setTab] = useState(s.modal?.tab ?? (s.cloud?.signedIn ? "account" : "general"));
+  const [advanced, setAdvanced] = useState(false);
   const load = () => {
     (native ? native.call("getSettings") : Promise.resolve({})).then(setInfo).catch(() => setInfo({}));
     api("/api/figma").then((r) => setFigma(r.hasToken)).catch(() => setFigma(false));
   };
   useEffect(load, []);
-  const TABS = [
-    { value: "general", label: "General" },
-    { value: "account", label: "Account" },
-    { value: "agents", label: "Agents" },
-    { value: "keys", label: "Figma & photos" },
-    { value: "shortcuts", label: "Shortcuts" },
-  ];
+  const close = () => set({ modal: null });
+  useEscape(close);
   const [serverDraft, setServerDraft] = useState(s.cloud?.serverUrl || "");
   useEffect(() => {
     if (s.cloud?.serverUrl && !serverDraft) setServerDraft(s.cloud.serverUrl);
   }, [s.cloud?.serverUrl]);
-  return html`<${Sheet} title="Settings">
-    <div class="settings-tabs"><${Seg} value=${tab} options=${TABS} onChange=${setTab} /></div>
-    ${tab === "account" &&
-    html`<div class="card">
-        <h4><${Icon} n="user" s=${15} />Account</h4>
-        ${s.cloud?.signedIn && s.cloud.user
-          ? html`<div class="cloud-member" style=${{ padding: "4px 0 8px" }}>
-              <span class="cloud-av">${(s.cloud.user.name || s.cloud.user.email)[0].toUpperCase()}</span>
-              <div class="cloud-member-info"><b>${s.cloud.user.name || s.cloud.user.email}</b><span>${s.cloud.user.email}</span></div>
-              <button class="btn sm" onClick=${() => signOutAccount().then(() => set({ modal: null }))}><${Icon} n="logout" s=${13} />Sign out</button>
-            </div>
-            <div class="note">${s.cloud.teams.length ? `In ${s.cloud.teams.length} team${s.cloud.teams.length === 1 ? "" : "s"}: ${s.cloud.teams.map((t) => t.name).join(", ")}.` : "Not in any team yet. Create one from the Teams section on Home."}</div>`
-          : html`<div class="note" style=${{ marginBottom: "10px" }}>Sign in to create teams, share boards and edit live with teammates.</div>
-            <button class="btn primary sm" onClick=${() => set({ modal: { kind: "signIn" } })}>Sign in</button>`}
-      </div>
-      <div class="card">
-        <h4><${Icon} n="globe" s=${15} />Collaboration server</h4>
-        <div class="hstack">
-          <input class="input grow mono" value=${serverDraft} placeholder="https://glassine.thesunset.live" spellcheck=${false} onInput=${(e) => setServerDraft(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
-          <button class="btn sm" disabled=${!serverDraft.trim() || serverDraft.trim() === s.cloud?.serverUrl} onClick=${async () => {
-            try {
-              await api("/api/cloud/server", { serverUrl: serverDraft.trim() });
-              await refreshAccount();
-              toast({ kind: "ok", title: "Server updated" });
-            } catch (e) {
-              fail(e, "Couldn't update server");
-            }
-          }}>Save</button>
+  const user = s.cloud?.signedIn ? s.cloud.user : null;
+  const teams = s.cloud?.teams ?? [];
+  const saveName = async (e) => {
+    const name = e.target.value.trim();
+    if (!name || name === user?.name) return (e.target.value = user?.name ?? "");
+    try {
+      await api("/api/cloud/profile", { name });
+      await refreshAccount();
+      toast({ kind: "ok", title: "Name saved" });
+    } catch (x) {
+      e.target.value = user?.name ?? "";
+      fail(x, "Couldn't save your name");
+    }
+  };
+  const title = SETTINGS_NAV.find((t) => t.value === tab)?.label ?? "Settings";
+  return html`<div class="scrim" onPointerDown=${(e) => e.target === e.currentTarget && close()}>
+    <div class="sheet set-sheet" role="dialog" aria-label="Settings">
+      <nav class="set-nav settings-tabs" role="tablist" aria-label="Settings">
+        <p>Settings</p>
+        ${SETTINGS_NAV.map((t) => html`<button role="tab" aria-selected=${tab === t.value} class=${tab === t.value ? "on" : ""} onClick=${() => setTab(t.value)}><${Icon} n=${t.icon} s=${15} />${t.label}${t.value === "plan" && html`<small>${teams.length ? "Team" : "Free"}</small>`}</button>`)}
+        <span class="grow"></span>
+        ${info?.version && html`<small class="set-version">${s.opts?.appName ?? "Glassine"} ${info.version}</small>`}
+      </nav>
+      <div class="set-main">
+        <div class="set-head"><h2>${title}</h2><button class="icon-btn sm" title="Close (Esc)" onClick=${close}><${Icon} n="x" s=${15} /></button></div>
+        <div class="set-body" key=${tab}>
+          ${tab === "account" &&
+          (user
+            ? html`<section class="card set-sec"><h4>Profile</h4>
+                  <${SetRow} label="Name" hint="Shown by your cursor and comments" lead=${user.image ? html`<img class="cloud-av" src=${user.image} alt="" />` : html`<span class="cloud-av">${(user.name || user.email)[0].toUpperCase()}</span>`}>
+                    <input class="input set-input" defaultValue=${user.name ?? ""} spellcheck=${false} aria-label="Name" onBlur=${saveName} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} />
+                  <//>
+                  <${SetRow} label="Email" hint=${user.email}><span class="set-value">${s.cloud.offline ? "Offline" : "Signed in"}</span><//>
+                </section>
+                <section class="card set-sec"><h4>Teams</h4>
+                  ${teams.map((t) => html`<${SetRow} key=${t.id} label=${t.name} hint=${t.role === "owner" ? "Owner" : "Member"} lead=${html`<i class="gate-team sm">${(t.name || "?")[0].toUpperCase()}</i>`}>
+                    <button class="btn sm" onClick=${() => set({ modal: { kind: "teamMembers", teamId: t.id } })}>Manage</button>
+                  <//>`)}
+                  <${SetRow} label=${teams.length ? "Start another team" : "Start a team"} hint="$16 a person each month, billed yearly"><button class="btn sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>Create team</button><//>
+                </section>
+                <section class="card set-sec"><h4>Session</h4>
+                  <${SetRow} label="Sign out of this Mac" hint="Your boards stay in your account"><button class="btn sm" onClick=${() => signOutAccount().then(close)}>Sign out</button><//>
+                </section>`
+            : html`<section class="card set-sec"><h4>Account</h4>
+                  <${SetRow} label="You're not signed in" hint="Sign in to create teams, share boards and edit live with teammates"><button class="btn primary sm" onClick=${() => set({ modal: { kind: "signIn" } })}>Sign in</button><//>
+                </section>`)}
+          ${tab === "account" &&
+          html`<button class="set-more" aria-expanded=${advanced} onClick=${() => setAdvanced(!advanced)}><${Icon} n=${advanced ? "down" : "right"} s=${12} w=${2} />Advanced</button>
+            ${advanced &&
+            html`<section class="card set-sec">
+              <${SetRow} label="Server" hint="Accounts, teams and live editing connect here">
+                <input class="input set-input mono" value=${serverDraft} placeholder="https://glassine.thesunset.live" spellcheck=${false} onInput=${(e) => setServerDraft(e.target.value)} onKeyDown=${(e) => e.stopPropagation()} />
+                <button class="btn sm" disabled=${!serverDraft.trim() || serverDraft.trim() === s.cloud?.serverUrl} onClick=${async () => {
+                  try {
+                    await api("/api/cloud/server", { serverUrl: serverDraft.trim() });
+                    await refreshAccount();
+                    toast({ kind: "ok", title: "Server updated" });
+                  } catch (e) {
+                    fail(e, "Couldn't update server");
+                  }
+                }}>Save</button>
+              <//>
+            </section>`}`}
+          ${tab === "general" &&
+          html`<section class="card set-sec"><h4>Appearance</h4>
+              <${SetRow} label="Theme" hint="System follows your Mac"><${Seg} value=${s.theme ?? "system"} options=${[{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} onChange=${setTheme} /><//>
+            </section>
+            <section class="card set-sec"><h4>Library</h4>
+              <${SetRow} label="Where your boards live" hint=${shortPath(s.opts?.outputRoot)}>
+                <button class="btn sm" onClick=${() => api("/api/reveal", { path: s.opts.outputRoot }).catch((e) => fail(e))}>Show</button>
+                ${native &&
+                html`<button class="btn sm" onClick=${async () => {
+                  try {
+                    const r = await native.call("chooseOutputFolder");
+                    if (r?.path) toast({ kind: "ok", title: "Library moved", text: `${shortPath(r.path)} · restarting…` });
+                  } catch (e) {
+                    fail(e);
+                  }
+                }}>Change…</button>`}
+              <//>
+            </section>`}
+          ${tab === "agents" &&
+          html`<section class="card set-sec"><h4>From your own terminal</h4>
+              <div class="note">Agents on this Mac chat with you on every board. To use ${s.opts?.appName ?? "Glassine"} from an agent you run yourself, add it to that agent once:</div>
+              <${ConnectAgent} />
+            </section>`}
+          ${tab === "keys" &&
+          html`<section class="card set-sec"><h4>Figma</h4>
+              <div class="note">Importing from a Figma link needs a personal access token: in Figma, Settings › Security › Personal access tokens › Generate, with read access to files.</div>
+              <${KeyRow} label="Token" placeholder="figd_…" saved=${figma} onSave=${async (v) => {
+                await saveFigmaToken(v);
+                setFigma(Boolean(v));
+                toast({ kind: "ok", title: v ? "Figma token saved" : "Figma token removed" });
+              }} />
+            </section>
+            <section class="card set-sec"><h4>Unsplash photos</h4>
+              <div class="note">Agents can put real photos in with <code>unsplash:</code>. It needs a free access key from <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a>.</div>
+              ${native
+                ? html`<${KeyRow} label="Access key" placeholder="Unsplash access key" saved=${info?.hasUnsplashKey} onSave=${async (v) => {
+                    await native.call("setUnsplashKey", { key: v });
+                    toast({ kind: "ok", title: v ? "Unsplash key saved" : "Unsplash key removed", text: "Restarting the engine…" });
+                    load();
+                  }} />`
+                : html`<div class="note">In the browser, the key comes from <code>UNSPLASH_ACCESS_KEY</code>.</div>`}
+            </section>`}
+          ${tab === "shortcuts" &&
+          html`<section class="card set-sec"><div class="shortcuts">
+            ${[
+              ["Move, frame, text, rectangle", "V  F  T  R"],
+              ["Pan", "Space-drag or scroll"],
+              ["Zoom in / out / fit", "⌘+ / ⌘− / ⇧1"],
+              ["Zoom to selection", "⇧2"],
+              ["Undo / redo", "⌘Z / ⇧⌘Z"],
+              ["Duplicate / delete", "⌘D / ⌫"],
+              ["Group / frame selection", "⌘G / ⌥⌘G"],
+              ["Rename", "⌘R"],
+              ["Nudge (×10 with ⇧)", "← ↑ → ↓"],
+              ["Comment", "C"],
+              ["Hide the panels", "⌘\\"],
+              ["New board", "⌘N"],
+              ["All boards", "⇧⌘O"],
+            ].map(([a, b]) => html`<span>${a}</span><span class="kbd">${b}</span>`)}
+          </div></section>`}
+          ${tab === "plan" &&
+          html`<section class="card set-sec"><h4>Your plan</h4>
+              <${SetRow} label=${teams.length ? "Team" : "Free"} hint=${teams.length ? "Shared boards, live editing and comments with your team" : "Unlimited boards, agents, imports and exports, for you"}>
+                ${!teams.length && html`<button class="btn primary sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>See the Team plan</button>`}
+              <//>
+            </section>`}
         </div>
-        <div class="note">Accounts, teams and live sync connect to this server.</div>
-      </div>`}
-    ${tab === "general" &&
-    html`<div class="card">
-        <h4><${Icon} n=${themeNow() === "light" ? "sun" : "moon"} s=${15} />Appearance</h4>
-        <div class="row"><label>Theme</label><${Seg} value=${s.theme ?? "system"} options=${[{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }]} onChange=${setTheme} /></div>
       </div>
-      <div class="card">
-        <h4><${Icon} n="folder" s=${15} />Library</h4>
-        <div class="hstack"><span class="mono grow ellipsis" style=${{ color: "var(--text-2)" }}>${shortPath(s.opts?.outputRoot)}</span>
-          <button class="btn sm" onClick=${() => api("/api/reveal", { path: s.opts.outputRoot }).catch((e) => fail(e))}>Show</button>
-          ${native &&
-          html`<button class="btn sm" onClick=${async () => {
-            try {
-              const r = await native.call("chooseOutputFolder");
-              if (r?.path) toast({ kind: "ok", title: "Library moved", text: `${shortPath(r.path)} · restarting…` });
-            } catch (e) {
-              fail(e);
-            }
-          }}>Change…</button>`}
-        </div>
-        <div class="note">Your boards, their pictures and your exports live here, as files.</div>
-      </div>
-      ${info?.version && html`<div class="note" style=${{ textAlign: "center" }}>${s.opts?.appName ?? "Screenshotter"} ${info.version} · engine on ${location.host}${info.node ? ` · Node ${info.node}` : ""}</div>`}`}
-    ${tab === "agents" &&
-    html`<div class="card"><h4><${Icon} n="code" s=${15} />From your own terminal</h4>
-        <div class="note">Agents on this Mac chat with you in each board's Agent tab. To use Screenshotter from an agent you run yourself, add it to that agent once:</div>
-        <${ConnectAgent} />
-      </div>`}
-    ${tab === "keys" &&
-    html`<div class="card">
-        <h4><${FigmaMark} s=${14} />Figma</h4>
-        <div class="note">Importing from Figma needs a personal access token: in Figma, Settings › Security › Personal access tokens › Generate, with read access to files.</div>
-        <${KeyRow} label="Token" placeholder="figd_…" saved=${figma} onSave=${async (v) => {
-          await saveFigmaToken(v);
-          setFigma(Boolean(v));
-          toast({ kind: "ok", title: v ? "Figma token saved" : "Figma token removed" });
-        }} />
-      </div>
-      <div class="card">
-        <h4><${Icon} n="image" s=${15} />Unsplash photos</h4>
-        <div class="note">Agents can put real photos in with <code>unsplash:</code>. It needs a free access key from <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a>. ${info?.hasUnsplashKey || s.opts?.unsplashKey ? "A key is set." : ""}</div>
-        ${native
-          ? html`<${KeyRow} label="Access key" placeholder="Unsplash access key" saved=${info?.hasUnsplashKey} onSave=${async (v) => {
-              await native.call("setUnsplashKey", { key: v });
-              toast({ kind: "ok", title: v ? "Unsplash key saved" : "Unsplash key removed", text: "Restarting the engine…" });
-              load();
-            }} />`
-          : html`<div class="note">In the browser, the key comes from <code>UNSPLASH_ACCESS_KEY</code>.</div>`}
-      </div>`}
-    ${tab === "shortcuts" &&
-    html`<div class="card"><div class="shortcuts">
-      ${[
-        ["Move, frame, text, rectangle", "V  F  T  R"],
-        ["Pan", "Space-drag or scroll"],
-        ["Zoom in / out / fit", "⌘+ / ⌘− / ⇧1"],
-        ["Zoom to selection", "⇧2"],
-        ["Undo / redo", "⌘Z / ⇧⌘Z"],
-        ["Duplicate / delete", "⌘D / ⌫"],
-        ["Group / frame selection", "⌘G / ⌥⌘G"],
-        ["Nudge (×10 with ⇧)", "← ↑ → ↓"],
-        ["Comment", "C"],
-        ["Hide the panels", "⌘\\"],
-        ["New board", "⌘N"],
-        ["All boards", "⇧⌘O"],
-      ].map(([a, b]) => html`<span>${a}</span><span class="kbd">${b}</span>`)}
-    </div></div>`}
-  <//>`;
+    </div>
+  </div>`;
 }
 
 function Confirm() {
@@ -353,6 +434,7 @@ const MODALS = {
   importWebsite: ImportWebsite,
   importFigma: ImportFigma,
   signIn: () => html`<${SignInModal} Sheet=${Sheet} />`,
+  upgrade: UpgradeModal,
   createTeam: () => html`<${CreateTeamModal} Sheet=${Sheet} />`,
   teamMembers: () => html`<${TeamMembersModal} Sheet=${Sheet} />`,
   moveToTeam: () => html`<${MoveToTeamModal} Sheet=${Sheet} />`,
@@ -367,6 +449,14 @@ function App() {
     return html`<div class="boot"><b>The engine didn't start</b><span>${s.bootError}</span>${native && html`<button class="btn" onClick=${() => native.call("restartEngine")}>Restart the engine</button>`}</div>`;
   if (!s.ready) return html`<div class="boot"><div class="boot-mark"></div></div>`;
   const Modal = s.modal && MODALS[s.modal.kind];
+  // Glassine opens on its sign-in screen, then three short steps the first time.
+  if (s.opts?.requireAccount) {
+    if (!s.cloud?.loaded) return html`<div class="boot"><div class="boot-mark"></div></div>`;
+    if (!s.cloud.signedIn || (s.gate !== false && !onboarded(s.cloud.user)))
+      return html`<${Gate} />
+        ${Modal && html`<${Modal} key=${s.modal.kind} />`}
+        <${Toasts} />`;
+  }
   return html`${s.boardId ? html`<${BoardApp} key=${s.boardId} />` : html`<${Home} />`}
     ${Modal && html`<${Modal} key=${s.modal.kind} />`}
     ${s.dropping && !s.boardId && html`<div class="drop-veil"><div><${Icon} n="upload" s=${22} /><b>Drop to start a board with these</b></div></div>`}
@@ -543,6 +633,7 @@ const booted = new Promise((r) => (bootDone = r));
 async function boot() {
   render(html`<${App} />`, document.getElementById("root"));
   try {
+    restoreTabs();
     const [opts] = await Promise.all([api("/api/options"), restore()]);
     set({ opts });
     if (opts.appName) document.title = opts.appName;

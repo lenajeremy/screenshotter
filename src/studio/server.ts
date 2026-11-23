@@ -11,7 +11,7 @@ import { run } from "../util/exec.js";
 import { cacheDir, ensureDir, outputRoot, slug, timestamp } from "../util/files.js";
 import { noteStudioFolder } from "../util/studio.js";
 import { boardFile, changeBoard, commentsFile, createBoard, deleteBoard, duplicateBoard, getBoard, getSyncMeta, isTeamBoard, listBoards, summarizeBoard, validBoardId, workingNow } from "../board/store.js";
-import { CloudError, cancelDeviceSignIn, cancelTeamInvitation, createTeam, createTeamBoard, deleteTeamBoard, deviceSignInStatus, downloadTeamAsset, getAccount, getTeamDetails, inviteToTeam, listTeamBoards, moveLocalBoardToTeam, renameTeamBoard, setServerUrl, signOut, startDeviceSignIn } from "../cloud/client.js";
+import { CloudError, cancelDeviceSignIn, cancelTeamInvitation, createTeam, createTeamBoard, deleteTeamBoard, deviceSignInStatus, downloadTeamAsset, getAccount, getTeamDetails, inviteToTeam, listTeamBoards, moveLocalBoardToTeam, renameTeamBoard, sendEmailCode, setServerUrl, signInWithEmailCode, signOut, startDeviceSignIn, updateProfile } from "../cloud/client.js";
 import { closeAllLiveRooms, closeLiveRoom, openTeamBoard, pushTeamOps, sendLivePresence, subscribeLive, type PeerPresence } from "../cloud/sync.js";
 import { scheduleBoardThumb } from "../board/thumbs.js";
 import { cachedLodFile, ensureLodFile, lodStatus, warmLodBatch } from "../board/lod.js";
@@ -24,6 +24,7 @@ import { installedAgents, type AgentId } from "../agent/agents.js";
 import { deleteThread, getThread, listThreads, send as sendChat, stop as stopChat } from "../agent/chat.js";
 import { VIDEO_EXT, readVideo } from "../board/video.js";
 import type { Op } from "../board/core.js";
+import { createWelcomeBoard } from "../board/welcome.js";
 import { liveSessions } from "../board/agentman.js";
 import { agentsNow, bringIn, deliver, deliverBatch, editPending, getComments, markBatchSending, markSending, remove, reply, sendPending, setResolved, startThread, type AnchorInput } from "../board/comments.js";
 import { imageSize } from "../util/image.js";
@@ -375,7 +376,9 @@ function appIdentity() {
     : swift
       ? [path.join(swift[1], "Contents", "MacOS", "Screenshotter"), "mcp"]
       : [process.execPath, path.resolve(here, here.includes(`${path.sep}src${path.sep}`) ? "../../dist/index.js" : "../index.js")];
-  return { appName, mcpName: appName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), mcpCommand };
+  // Glassine opens on its sign-in screen; tests and scripts that drive the Studio skip it.
+  const requireAccount = process.env.SCREENSHOTTER_NO_ACCOUNT !== "1";
+  return { appName, mcpName: appName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), mcpCommand, requireAccount };
 }
 
 async function route(req: http.IncomingMessage, res: http.ServerResponse, port: number): Promise<void> {
@@ -603,6 +606,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/images/restore":
       restorePicture((await json<{ path: string }>(req)).path);
       return send(200, { ok: true });
+    case "/api/board/welcome": {
+      // The board a new account starts with: made once, when the first-run steps finish.
+      return send(200, summarizeBoard(createWelcomeBoard(appIdentity().appName)));
+    }
     case "/api/board/new": {
       const b = createBoard((await json<{ name?: string }>(req)).name, "studio");
       return send(200, b);
@@ -631,6 +638,18 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     case "/api/cloud/signin/start": {
       const a = await json<{ serverUrl?: string }>(req);
       return send(200, await startDeviceSignIn(a.serverUrl));
+    }
+    case "/api/cloud/signin/email/send": {
+      const a = await json<{ email: string }>(req);
+      return send(200, await sendEmailCode(a.email ?? ""));
+    }
+    case "/api/cloud/signin/email/verify": {
+      const a = await json<{ email: string; code: string }>(req);
+      return send(200, await signInWithEmailCode(a.email ?? "", a.code ?? ""));
+    }
+    case "/api/cloud/profile": {
+      const a = await json<{ name: string }>(req);
+      return send(200, await updateProfile(a.name ?? ""));
     }
     case "/api/cloud/signin/cancel": {
       cancelDeviceSignIn();

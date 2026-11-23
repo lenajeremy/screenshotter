@@ -17,6 +17,8 @@ import path from "node:path";
 import { chromium, webkit, type Browser, type Page } from "playwright";
 // Tests never ask the Keychain (macOS would ask the person to allow it).
 process.env.SCREENSHOTTER_NO_KEYCHAIN = "1";
+// The checks drive the Studio itself, not the sign-in screen.
+process.env.SCREENSHOTTER_NO_ACCOUNT = "1";
 
 // A library of its own, set before the Studio's modules read where the library is.
 const tmp = mkdtempSync(path.join(os.tmpdir(), "screenshotter-ui-"));
@@ -802,15 +804,15 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(400);
     const resolved = Boolean(talk.getComments(t.id).threads[0].resolved);
     // A resolved thread opens again with a word, not another check mark.
-    await page.click('.bd-left-tabs [data-tab="comments"]');
+    await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "comments" }));
     await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), thread.id);
     await page.waitForTimeout(300);
     const reopen = await S(page, () => document.querySelector(".bd-thread header .bd-reopen")?.textContent ?? "");
     if (reopen !== "Reopen") return `a resolved thread offers "${reopen}" to open it again`;
     await page.keyboard.press("Escape");
-    await page.click('.bd-left-tabs [data-tab="layers"]').catch(() => undefined);
+    await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "design" }));
     const pinGone = await S(page, (id: string) => !document.querySelector(`.bd-pin[data-thread="${id}"]`), thread.id);
-    await page.click('.bd-left-tabs [data-tab="comments"]');
+    await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "comments" }));
     const listed = await S(page, () => document.querySelectorAll(".bd-crow").length);
     return resolved && pinGone && listed === 0 ? "ok" : `resolved: ${resolved}, pin hidden: ${pinGone}, open comments listed: ${listed}`;
   },
@@ -881,6 +883,120 @@ const CHECKS: Record<string, Check> = {
     const after = await state();
     return after.following ? `still following ${after.following} with the view moved away` : "ok";
   },
+  async "the tab bar: an opened board gets a tab, Home keeps it, and closing it lets it go"(page) {
+    const b = boards.createBoard("Tabbed board", "studio");
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).openBoard(id), b.id);
+    await page.waitForSelector(".bd-app .tabbar .tab.on");
+    const onBoard = await S(page, () => document.querySelector(".tabbar .tab.on")?.textContent?.trim());
+    await page.click(".tabbar .tab-home");
+    await page.waitForSelector(".home");
+    const kept = await S(page, (id: string) => Boolean(document.querySelector(`.home .tabbar [data-tab-board="${id}"]`)), b.id);
+    await page.click(`.tabbar [data-tab-board="${b.id}"]`);
+    await page.waitForSelector(".bd-app");
+    const back = await S(page, async () => (await import("/ui/board-state.js" as string)).B.id);
+    await page.click(`.tabbar [data-tab-board="${b.id}"] .tab-x`);
+    await page.waitForSelector(".home");
+    const gone = await S(page, (id: string) => !document.querySelector(`[data-tab-board="${id}"]`), b.id);
+    boards.deleteBoard(b.id);
+    return onBoard === "Tabbed board" && kept && back === b.id && gone ? "ok" : `tab: "${onBoard}", kept on Home: ${kept}, reopened: ${back === b.id}, closed: ${gone}`;
+  },
+  async "Home: boards sort by name, show as a list, and the scratchpad stays in the sidebar"(page) {
+    const made = ["Zebra", "Apple", "Mango"].map((n) => boards.createBoard(n, "studio"));
+    await S(page, async () => (await import("/ui/board-library.js" as string)).refreshBoards());
+    await page.waitForSelector(".home .sp-card");
+    const names = () => S(page, () => [...document.querySelectorAll(".home .sp-card .sp-text b")].map((e) => e.textContent ?? ""));
+    await page.click(".home-filters .dd-btn");
+    await page.locator(".menu-item", { hasText: "Name" }).click();
+    await page.waitForTimeout(250);
+    const sorted = (await names()).filter((n) => ["Zebra", "Apple", "Mango"].includes(n));
+    const scratch = await S(page, () => Boolean(document.querySelector('.home .sp-card[data-board="scratchpad"]')));
+    await page.click('.home-view button[title="List"]');
+    await page.waitForTimeout(200);
+    const rows = await S(page, () => {
+      const cards = [...document.querySelectorAll(".home .sp-card")].map((c) => c.getBoundingClientRect());
+      return cards.length > 1 && cards.every((r) => r.height < 70) && cards[1].top > cards[0].top && Math.abs(cards[1].left - cards[0].left) < 1;
+    });
+    await page.click('.home-view button[title="Grid"]');
+    await page.click(".home-filters .dd-btn");
+    await page.locator(".menu-item", { hasText: "Last edited" }).click();
+    for (const b of made) boards.deleteBoard(b.id);
+    await S(page, async () => (await import("/ui/board-library.js" as string)).refreshBoards());
+    return sorted.join() === "Apple,Mango,Zebra" && !scratch && rows ? "ok" : `by name: ${sorted.join()}, scratchpad among them: ${scratch}, list rows: ${rows}`;
+  },
+  async "on a board: tools dock at the bottom, the chat opens beside Design with Comments, and Code shows the layer's HTML"(page) {
+    const t = await openTestBoard(page);
+    const dock = await S(page, () => {
+      const d = document.querySelector(".bd-dock")?.getBoundingClientRect();
+      const st = document.querySelector(".bd-stage")?.getBoundingClientRect();
+      return d && st ? { low: st.bottom - d.bottom < 40 && d.top > st.top + st.height / 2, mid: Math.abs(d.left + d.width / 2 - (st.left + st.width / 2)) < 2 } : null;
+    });
+    await page.click(".bd-agent-toggle");
+    await page.waitForSelector(".bd-chat-col");
+    const beside = await S(page, () => {
+      const c = document.querySelector(".bd-chat-col")?.getBoundingClientRect();
+      const r = document.querySelector(".bd-right")?.getBoundingClientRect();
+      return Boolean(c && r && c.width > 200 && Math.abs(c.right - r.left) < 2);
+    });
+    await page.click('.bd-chat-tabs [data-tab="comments"]');
+    const comments = await S(page, () => Boolean(document.querySelector(".bd-chat-col .bd-comments, .bd-chat-col [class*=comment]")));
+    await page.click(".bd-chat-bar .icon-btn");
+    const closed = await S(page, () => !document.querySelector(".bd-chat-col"));
+    await S(page, async (id: string) => (await import("/ui/board-state.js" as string)).select([id]), t.byName("Row One"));
+    await page.click('.bd-design-tabs [data-tab="code"]');
+    const code = await S(page, () => document.querySelector(".bd-codeview-text")?.textContent ?? "");
+    await page.click('.bd-design-tabs [data-tab="design"]');
+    const ok = dock?.low && dock.mid && beside && comments && closed && /<div[^>]*style=/.test(code);
+    return ok ? "ok" : `dock: ${JSON.stringify(dock)}, chat beside Design: ${beside}, comments there: ${comments}, closes: ${closed}, code: ${code.slice(0, 60)}`;
+  },
+  async "the sign-in screen: an email gets the code boxes, a wrong code says so, and signing in goes on to the first-run steps"(page) {
+    await S(page, async () => (await import("/ui/board-state.js" as string)).closeBoard());
+    const before = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      const keep = { opts: st.S.opts, cloud: st.S.cloud };
+      st.set({ opts: { ...st.S.opts, requireAccount: true }, cloud: { loaded: true, signedIn: false, teams: [], serverUrl: "" }, gate: undefined });
+      return keep;
+    });
+    await page.route("**/api/cloud/signin/email/send", (r) => r.fulfill({ json: { email: "ada@example.com" } }));
+    let tries = 0;
+    await page.route("**/api/cloud/signin/email/verify", (r) => (tries++ === 0 ? r.fulfill({ status: 400, json: { error: "That code isn't right. Check it and try again." } }) : r.fulfill({ json: { user: { id: "u-test", name: "ada@example.com", email: "ada@example.com" }, teams: [] } })));
+    await page.route("**/api/cloud/account", (r) => r.fulfill({ json: { signedIn: tries > 1, serverUrl: "", user: tries > 1 ? { id: "u-test", name: "ada@example.com", email: "ada@example.com" } : undefined, teams: [] } }));
+    await page.waitForSelector(".gate");
+    const hidden = await S(page, () => !document.querySelector(".home, .bd-app"));
+    await page.fill(".gate-input", "ada@example.com");
+    await page.click(".gate-btn");
+    await page.waitForSelector(".gate-code");
+    await page.keyboard.type("111111");
+    await page.waitForSelector(".gate-err");
+    const wrong = await S(page, () => document.querySelector(".gate-err")?.textContent ?? "");
+    await page.keyboard.type("222222");
+    await page.waitForSelector(".gate-steps", { timeout: 8000 }).catch(() => undefined);
+    const step = await S(page, () => document.querySelector(".gate h1")?.textContent ?? "");
+    await page.unroute("**/api/cloud/signin/email/send");
+    await page.unroute("**/api/cloud/signin/email/verify");
+    await page.unroute("**/api/cloud/account");
+    await S(page, async (keep: Record<string, unknown>) => (await import("/ui/store.js" as string)).set({ ...keep, gate: false }), before as Record<string, unknown>);
+    await page.waitForSelector(".home");
+    return hidden && /isn't right/.test(wrong) && /call you/.test(step) ? "ok" : `app hidden: ${hidden}, wrong code: "${wrong}", then: "${step}"`;
+  },
+  async "Settings has its sections down the side, and the Team plan adds up seats and price"(page) {
+    await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings", tab: "general" } }));
+    await page.waitForSelector(".set-sheet");
+    const size = () => S(page, () => { const r = document.querySelector(".set-sheet")!.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)}`; });
+    const a = await size();
+    await page.locator(".set-nav button", { hasText: "Shortcuts" }).click();
+    const b = await size();
+    await page.locator(".set-nav button", { hasText: "Plan" }).click();
+    await page.locator(".set-row button", { hasText: "See the Team plan" }).click();
+    await page.waitForSelector(".plan-sheet");
+    const total = () => S(page, () => document.querySelector(".plan-total")?.textContent ?? "");
+    const yearly = await total();
+    await page.locator(".plan-opt", { hasText: "Monthly" }).click();
+    await page.click('.plan-step button[title="One more"]');
+    const monthly = await total();
+    await page.keyboard.press("Escape");
+    const closed = await S(page, () => !document.querySelector(".plan-sheet"));
+    return a === b && yearly === "$576.00" && monthly === "$80.00" && closed ? "ok" : `sheet ${a} then ${b}, yearly for 3: ${yearly}, monthly for 4: ${monthly}, Esc closes: ${closed}`;
+  },
   async "the theme: picked in Settings, there from the first frame after a reload, and System follows the Mac"(page) {
     await S(page, async () => (await import("/ui/store.js" as string)).set({ modal: { kind: "settings" } }));
     const appearance = page.locator(".sheet .card", { hasText: "Appearance" });
@@ -940,7 +1056,7 @@ const CHECKS: Record<string, Check> = {
       await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "agent" }));
       await look("board-agent");
       await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "design" }));
-      await page.click('.bd-left-tabs [data-tab="comments"]').catch(() => undefined);
+      await S(page, async () => (await import("/ui/board-state.js" as string)).bset({ rightTab: "comments" }));
       await S(page, async (id: string) => (await import("/ui/board-comments.js" as string)).openThread(id), sent.thread.id);
       await look("board-comments");
       await page.click(".bd-sendbar-count").catch(() => undefined);

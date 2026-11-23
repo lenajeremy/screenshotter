@@ -29,7 +29,7 @@ const STUDIO_FILE = path.join(SUPPORT, "studio.json");
 const LOG = process.env.GLASSINE_LOG_DIR ? path.join(process.env.GLASSINE_LOG_DIR, "engine.log") : path.join(HOME, "Library", "Logs", NAME, "engine.log");
 /** Where the engine lives: inside the app, or this checkout (or SCREENSHOTTER_ENGINE_DIR) in development. */
 const ENGINE_ROOT = process.env.SCREENSHOTTER_ENGINE_DIR || (app.isPackaged ? path.join(process.resourcesPath, "engine") : path.resolve(here, ".."));
-const TOP_BAR = 52;
+const TOP_BAR = 40;
 
 // ---------------------------------------------------------------------------------------------
 // `<app> mcp`: the engine's MCP server on stdin/stdout, for agents (claude mcp add … -- <app> mcp)

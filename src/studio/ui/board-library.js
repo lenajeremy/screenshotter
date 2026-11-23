@@ -26,11 +26,12 @@ export function useBoards() {
 
 const matches = (b, q) => !q.trim() || b.name.toLowerCase().includes(q.trim().toLowerCase());
 
-export function BoardsGrid({ q }) {
+export function BoardsGrid({ q, sort = "edited" }) {
   const boards = useBoards();
   const [renaming, setRenaming] = useState(null);
   if (!boards) return html`<div class="sp-empty"><span class="spinner"></span></div>`;
-  const local = boards.filter((b) => !b.teamId);
+  // The scratchpad lives in the sidebar, not among your boards.
+  const local = boards.filter((b) => !b.teamId && b.id !== "scratchpad");
   if (!local.length)
     return html`<div class="sp-empty big">
       <div class="art"><${Icon} n="frame" s=${24} /></div>
@@ -39,6 +40,8 @@ export function BoardsGrid({ q }) {
       <button class="btn primary sm" onClick=${() => newBoard("Untitled board")}><${Icon} n="plus" s=${13} w=${2.2} />New board</button>
     </div>`;
   const list = local.filter((b) => matches(b, q));
+  if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+  else list.sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
   if (!list.length) return html`<div class="sp-empty"><${Icon} n="search" s=${22} /><b>No boards match “${q.trim()}”</b></div>`;
   return html`<div class="sp-grid">${list.map((b) => html`<${BoardCard} key=${b.id} b=${b} renaming=${renaming === b.id} onRename=${setRenaming} />`)}</div>`;
 }
@@ -83,6 +86,7 @@ function BoardCard({ b, renaming, onRename }) {
       ${b.working.length > 0 && html`<span class="sp-badge"><i></i>Agent at work</span>`}
     </div>
     <div class="sp-info">
+      <i class="brand-mark sp-mark"></i>
       <div class="sp-text">
         ${renaming
           ? html`<input class="input sm" value=${b.name} autoFocus onClick=${(e) => e.stopPropagation()}

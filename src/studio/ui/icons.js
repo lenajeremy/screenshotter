@@ -4,6 +4,7 @@ import { h } from "preact";
 const P = {
   captures: '<rect x="3" y="3" width="7.5" height="11" rx="2"/><rect x="13.5" y="3" width="7.5" height="7" rx="2"/><rect x="13.5" y="13" width="7.5" height="8" rx="2"/><rect x="3" y="17" width="7.5" height="4" rx="1.5"/>',
   background: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8.5 3.5 3.5 8.5"/><path d="M14.5 3.5 3.5 14.5" opacity=".75"/><path d="M20 4 4 20" opacity=".55"/><path d="M20.5 9.5 9.5 20.5" opacity=".35"/><path d="M20.5 15.5l-5 5" opacity=".2"/>',
+  home: '<path d="M4 10.5L12 4l8 6.5V20h-5.5v-5.5h-5V20H4z"/>',
   text: '<path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M9.5 19h5"/>',
   layers: '<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12.2l8.5 4.5 8.5-4.5"/><path d="M3.5 16.2l8.5 4.5 8.5-4.5"/>',
   exports: '<path d="M7 3.5h7l4.5 4.5v11a2 2 0 0 1-2 2h-9.5a2 2 0 0 1-2-2v-13.5a2 2 0 0 1 2-2z"/><path d="M13.5 3.5V8h4.5"/><path d="M12 11v6"/><path d="M9.5 14.5L12 17l2.5-2.5"/>',
