@@ -48,3 +48,24 @@ Asked 2026-11-23: make clicking, dragging and dropping layers easy to understand
 5. Spacing handles on a selected flex frame: drag padding (⌥ both sides) and the gap, with the value
    shown while dragging.
 6. UI checks for each, then the app rebuilt and installed.
+
+## Done (2026-11-23)
+
+- 1, 2 and 3 (commit 507cd1d). Decisions made on the way:
+  - Nearly every Glassine frame is a flex column (block divs and the frame tool both make them), so
+    "a frame laid out by hand" means one whose layers are all placed by hand (most artboards): it
+    takes a drop where it's dropped; a frame whose layers flow, or an empty one, takes it into its flow.
+  - A frame beside the dragged layer in the same flex/grid frame takes it only after a 380 ms rest over
+    its middle (edges: beside it), so dragging along a row reorders instead of nesting.
+  - Double-click: one level deeper for frames, but straight into words on text (the earlier "reach deep
+    layers" fix, d5c8aad, was for that); ⌘ still deepest.
+  - Artboards (top-level frames) go into another frame only if they fit in it.
+  - ⌥ while dragging keeps a layer in its frame.
+- 5 (commit 671fb38): pink padding and gap handles on a selected flex frame, drawn under the resize
+  handles; value shown on hover and while dragging.
+
+## Still to do
+
+- 4: guides that end at the layers they line up with, distances between neighbours while moving, and
+  equal-spacing marks.
+- Multi-layer moves into a grid go in as a flow (appended); a single layer gets its cell.
