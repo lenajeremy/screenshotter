@@ -1531,6 +1531,18 @@ const CHECKS: Record<string, Check> = {
     const told = /Couldn.t save/.test(String(await toasts(page)));
     return after.name === "Kept" && after.undo === 0 && told ? "ok" : `after a refusal: ${JSON.stringify(after)}, told ${told}`;
   },
+  async "the welcome board walks through the app in numbered columns, with real screenshots and an agent's sticky note"(page) {
+    const made = await S(page, async () => (await import("/ui/store.js" as string)).api("/api/board/welcome", {}));
+    const b = boards.getBoard(made.id);
+    const nodes = Object.values(b.nodes);
+    const sheet = nodes.find((n) => n.parent === null && /^Welcome to /.test(n.name));
+    const columns = nodes.filter((n) => n.parent && b.nodes[n.parent]?.name === "Columns");
+    const shots = nodes.filter((n) => n.type === "image");
+    const kept = shots.every((n) => n.src && existsSync(n.src) && n.src.includes(`${path.sep}.studio${path.sep}`));
+    const note = nodes.find((n) => n.shape?.type === "note");
+    boards.deleteBoard(made.id);
+    return sheet && columns.length === 7 && shots.length === 7 && kept && note?.shape?.caption === "Claude Code" ? "ok" : `sheet: ${Boolean(sheet)}, columns: ${columns.length}, screenshots: ${shots.length} (in the library: ${kept}), note: ${note?.shape?.caption}`;
+  },
   async "a sticky note from the Assets panel: handwriting on the canvas, its words and pin in the Design panel"(page) {
     const t = await openTestBoard(page);
     await S(page, async () => (await import("/ui/board-state.js" as string)).select([]));
