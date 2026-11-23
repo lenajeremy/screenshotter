@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Glassine: design with your team and your agents</title>
-<meta name="description" content="A Mac app where people and coding agents design together on one canvas of real HTML and CSS. Comment on a layer, and the agent that made it answers.">
+<meta name="description" content="A Mac app where your team and your coding agents design together on one canvas. Comment on a layer, and the agent that made it answers.">
 <meta property="og:title" content="Glassine: your team and your agents, designing on one canvas">
-<meta property="og:description" content="People and coding agents design together in real HTML and CSS. Comment on a layer, and the agent that made it answers.">
+<meta property="og:description" content="Your team and your coding agents design together on one canvas. Comment on a layer, and the agent that made it answers.">
 <meta property="og:image" content="assets/glassine/editor-1440.webp">
 <meta name="theme-color" content="#111111">
 <link rel="icon" href="favicon.ico" sizes="48x48">
@@ -17,7 +17,16 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&display=swap">
 <link rel="preload" as="image" href="assets/glassine/editor-1440.webp" imagesrcset="assets/glassine/editor-1440.webp 1440w, assets/glassine/editor-2880.webp 2880w" imagesizes="(min-width: 1280px) 1200px, calc(100vw - 32px)">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.css">
 <link rel="stylesheet" href="home.css">
+<script>
+  // The page arrives in motion: hide what will animate in until the script takes over (and give up
+  // after three seconds, so the page always shows). Nothing is hidden for reduced motion.
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.documentElement.classList.add("motion");
+    setTimeout(() => window.__motion || document.documentElement.classList.remove("motion"), 3000);
+  }
+</script>
 </head>
 <body>
 
@@ -39,7 +48,7 @@
   <section class="hero">
     <div class="hero-copy">
       <h1>Your team and your <span class="mark">agents,<span class="cursor claude hero-claude" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Claude Code <i>writing the headline</i></b></span></span> designing on one&nbsp;canvas.</h1>
-      <p class="sub">A Mac app where people and coding agents design together in real HTML and CSS. Comment on a layer, and the agent that made it answers.</p>
+      <p class="sub">A Mac app where your team and your coding agents design side by side. Comment on a layer, and the agent that made it answers.</p>
       <div class="ctas">
         <a class="btn primary" href="downloads/Glassine.dmg">Download for Mac</a>
         <a class="btn" href="#how">See it work</a>
@@ -67,7 +76,7 @@
     <div class="words">
       <span class="cursor codex" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Codex</b></span>
       <h2>Ask for a screen. Watch it land.</h2>
-      <p>Your agent writes real HTML and CSS onto the canvas, change by change. Every change is a step you can undo, and its cursor shows you where it’s working.</p>
+      <p>Your agent designs on the canvas while you watch, change by change. Every change is a step you can undo, and its cursor shows you where it’s working.</p>
     </div>
     <figure class="shot">
       <img src="assets/glassine/follow-1440.webp" srcset="assets/glassine/follow-1440.webp 1440w, assets/glassine/follow-2880.webp 2880w" sizes="(min-width: 1280px) 760px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="Following Codex on the Fern board: the canvas moves to the layers it is changing, outlined in its colour.">
@@ -98,18 +107,18 @@
     <div class="code-head">
       <div>
         <span class="cursor claude" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Claude Code</b></span>
-        <h2>Every layer is code you can ship.</h2>
+        <h2>Start from what you already have.</h2>
       </div>
-      <p>Select anything and copy its HTML and CSS. Bring in a live website or a Figma file, and it arrives as layers you can change.</p>
+      <p>Bring in a live website or a Figma file, and it arrives as layers you and your agents can change. When it’s ready, copy any layer straight into your project.</p>
     </div>
     <div class="pair">
       <figure class="shot">
-        <img src="assets/glassine/code-1440.webp" srcset="assets/glassine/code-1440.webp 1440w, assets/glassine/code-2880.webp 2880w" sizes="(min-width: 1360px) 648px, (min-width: 800px) 50vw, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Code tab showing the selected button as HTML with its styles inline, ready to copy.">
-        <figcaption><b>The Code tab.</b> The selection as HTML, with its styles inline.</figcaption>
-      </figure>
-      <figure class="shot">
         <img src="assets/glassine/import-1440.webp" srcset="assets/glassine/import-1440.webp 1440w, assets/glassine/import-2880.webp 2880w" sizes="(min-width: 1360px) 648px, (min-width: 800px) 50vw, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="Import a website, with linear.app typed in and the page width set to Desktop.">
         <figcaption><b>Import.</b> Any website, read at desktop, tablet or phone width.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/glassine/code-1440.webp" srcset="assets/glassine/code-1440.webp 1440w, assets/glassine/code-2880.webp 2880w" sizes="(min-width: 1360px) 648px, (min-width: 800px) 50vw, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Code tab, showing the selected button ready to copy into a project.">
+        <figcaption><b>Hand-off.</b> Copy any layer straight into your project.</figcaption>
       </figure>
     </div>
   </section>
@@ -126,7 +135,7 @@
           <li>Unlimited boards</li>
           <li>Any agent on your Mac</li>
           <li>Import websites and Figma files</li>
-          <li>Export images and HTML</li>
+          <li>Export images, or copy layers into your project</li>
         </ul>
         <a class="btn" href="downloads/Glassine.dmg">Download for Mac</a>
       </article>
@@ -165,6 +174,10 @@
   <nav aria-label="Footer"><a href="changelog.html">Changelog</a><a href="#pricing">Pricing</a><a href="downloads/Glassine.dmg">Download</a></nav>
 </footer>
 
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.1/dist/gsap.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.1/dist/ScrollTrigger.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.1/dist/SplitText.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.min.js" defer></script>
 <script src="home.js" defer></script>
 </body>
 </html>
