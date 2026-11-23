@@ -9,9 +9,15 @@ import { AgentLogo } from "./agent-logos.js";
 import { loadAgents, pickAgent, pickedAgent } from "./board-agent.js";
 import { openExternal, refreshAccount } from "./cloud.js";
 import { CursorArrow, peerColourOf } from "./board-presence.js";
-import { S, api, native, set, useStore } from "./store.js";
+import { S, api, native, set, touch, useStore } from "./store.js";
 
+/**
+ * First-run marks are kept with the app's saved state, not only in the window's storage: the app's
+ * window is served from a new port at each launch, and a browser keeps storage per port, so marks
+ * kept there alone were forgotten at every launch (the steps came back, and another welcome board).
+ */
 const seen = (key) => {
+  if (S.touched?.[key]) return "1";
   try {
     return localStorage.getItem(key);
   } catch {
@@ -19,6 +25,7 @@ const seen = (key) => {
   }
 };
 const mark = (key, v = "1") => {
+  touch(key);
   try {
     localStorage.setItem(key, v);
   } catch {}

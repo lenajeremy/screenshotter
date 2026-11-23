@@ -1667,8 +1667,28 @@ const CHECKS: Record<string, Check> = {
     const told = /Couldn.t save/.test(String(await toasts(page)));
     return after.name === "Kept" && after.undo === 0 && told ? "ok" : `after a refusal: ${JSON.stringify(after)}, told ${told}`;
   },
+  async "the first run is remembered with the app's saved state, not only the window's storage (a new port each launch)"(page) {
+    const r = await S(page, async () => {
+      const st = await import("/ui/store.js" as string);
+      const gate = await import("/ui/gate.js" as string);
+      const user = { id: "first-run-check" };
+      const key = `onboarded:${user.id}`;
+      const before = gate.onboarded(user);
+      st.touch(key);
+      // A launch on another port starts with empty storage.
+      localStorage.clear();
+      const now = gate.onboarded(user);
+      await new Promise((ok) => setTimeout(ok, 900));
+      const saved = await st.api("/api/state");
+      return { before, now, saved: Boolean(saved?.ui?.touched?.[key]) };
+    });
+    return !r.before && r.now && r.saved ? "ok" : JSON.stringify(r);
+  },
   async "the welcome board walks through the app card by card, over real screenshots, with agents' sticky notes on it"(page) {
     const made = await S(page, async () => (await import("/ui/store.js" as string)).api("/api/board/welcome", {}));
+    // Asked again (another first run, another window): the same board, never a second.
+    const again = await S(page, async () => (await import("/ui/store.js" as string)).api("/api/board/welcome", {}));
+    if (again.id !== made.id) return "a second welcome board was made";
     const b = boards.getBoard(made.id);
     const nodes = Object.values(b.nodes);
     const roots = b.pages[0].children.map((id) => b.nodes[id]);
