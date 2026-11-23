@@ -14,7 +14,7 @@ import { UpgradeModal } from "./plans.js";
 import { BoardsGrid, refreshBoards, useBoards } from "./board-library.js";
 import { ImportWebsite, looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { ConnectAgent, FigmaMark, ImportFigma, importFigFile, isFigFile, isFigmaClipboard, looksLikeFigma, openImportFigma, pasteFigma, saveFigmaToken } from "./imports.js";
-import { CreateTeamModal, MoveToTeamModal, SignInModal, TeamBoardsGrid, TeamMembersModal, newTeamBoard, refreshAccount, refreshTeamBoards, signOutAccount } from "./cloud.js";
+import { CreateTeamModal, MoveToTeamModal, SharedBoardsGrid, SignInModal, TeamBoardsGrid, TeamMembersModal, newTeamBoard, refreshAccount, refreshTeamBoards, signOutAccount } from "./cloud.js";
 import { S, answerConfirm, answerPrompt, api, dismiss, fail, native, restore, set, setTheme, themeNow, toast, touch, useStore } from "./store.js";
 
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
@@ -129,7 +129,7 @@ function SharedBoards({ q }) {
   return html`<${SharedTeams} teams=${cloud.teams} q=${q} />`;
 }
 
-/** Every team's boards on one page. With nothing in any of them it's one invitation, not one per team. */
+/** Every team's boards as one list (each team has its own page in the sidebar). With nothing in any of them, one invitation. */
 function SharedTeams({ teams, q }) {
   const s = useStore();
   useEffect(() => {
@@ -147,11 +147,7 @@ function SharedTeams({ teams, q }) {
       <span>Boards in your teams show up here, and everyone on the team edits them together, live.</span>
       <div class="home-team-start">${teams.map((t) => html`<button class="btn sm" key=${t.id} onClick=${() => newTeamBoard(t)}><${TeamMark} team=${t} />New board in ${t.name}</button>`)}</div>
     </div>`;
-  return html`${teams.map((t, i) => html`<section class="home-team" key=${t.id}>
-    <h2><${TeamMark} team=${t} /><span>${t.name}</span><span class="n">${lists[i].length || ""}</span>
-      ${lists[i].length > 0 && html`<button class="btn sm ghost" onClick=${() => newTeamBoard(t)}><${Icon} n="plus" s=${12} w=${2.2} />New board</button>`}</h2>
-    <${TeamBoardsGrid} team=${t} q=${q} compact />
-  </section>`)}`;
+  return html`<${SharedBoardsGrid} teams=${teams} q=${q} />`;
 }
 
 

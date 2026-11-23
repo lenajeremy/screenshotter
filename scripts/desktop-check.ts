@@ -124,6 +124,20 @@ try {
     return r.bar === "drag" && r.btn === "no-drag" ? true : JSON.stringify(r);
   });
 
+  await check("in full screen the top bar takes back the traffic lights' room, and gives it up again", async () => {
+    // The window isn't really sent full screen (that would take over the screen): the window's own
+    // events are raised, which is what the app listens to.
+    const inset = () => page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".topbar")!).paddingLeft));
+    const before = await inset();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit("enter-full-screen"));
+    await sleep(250);
+    const full = await inset();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit("leave-full-screen"));
+    await sleep(250);
+    const after = await inset();
+    return before >= 70 && full <= 16 && after === before ? true : `the bar starts ${before}px in, ${full}px in full screen, ${after}px after`;
+  });
+
   await check("the window: traffic lights in the top bar, the window's colour, at least 1040 × 660", async () => {
     const r = await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows()[0];

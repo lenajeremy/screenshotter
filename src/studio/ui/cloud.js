@@ -339,8 +339,7 @@ export function MoveToTeamModal({ Sheet }) {
 
 const matches = (b, q) => !q.trim() || b.name.toLowerCase().includes(q.trim().toLowerCase());
 
-/** `compact`: one of several teams on a page, so a team with nothing in it is a line, not a page of its own. */
-export function TeamBoardsGrid({ team, q, compact = false }) {
+export function TeamBoardsGrid({ team, q }) {
   const s = useStore();
   const boards = s.teamBoards[team.id];
   const [renaming, setRenaming] = useState(null);
@@ -352,8 +351,6 @@ export function TeamBoardsGrid({ team, q, compact = false }) {
   }, [team.id]);
 
   if (!boards) return html`<div class="sp-empty"><span class="spinner"></span></div>`;
-  if (!boards.length && compact)
-    return html`<div class="home-team-none"><span>No boards yet</span><button class="btn sm ghost" onClick=${() => newTeamBoard(team)}><${Icon} n="plus" s=${12} w=${2.2} />New team board</button></div>`;
   if (!boards.length)
     return html`<div class="sp-empty big">
       <div class="art"><${Icon} n="users" s=${24} /></div>
@@ -370,7 +367,22 @@ export function TeamBoardsGrid({ team, q, compact = false }) {
   )}</div>`;
 }
 
-function TeamBoardCard({ b, team, renaming, onRename }) {
+/** Every team's boards as one list, newest first, each card tagged with its team: "Shared with you". */
+export function SharedBoardsGrid({ teams, q }) {
+  const s = useStore();
+  const [renaming, setRenaming] = useState(null);
+  const all = teams
+    .flatMap((t) => (s.teamBoards[t.id] ?? []).map((b) => ({ b, team: t })))
+    .sort((x, y) => String(y.b.updatedAt ?? "").localeCompare(String(x.b.updatedAt ?? "")));
+  const list = all.filter(({ b }) => matches(b, q));
+  if (!list.length) return html`<div class="sp-empty"><${Icon} n="search" s=${22} /><b>No boards match “${q.trim()}”</b></div>`;
+  return html`<div class="sp-grid">${list.map(
+    ({ b, team }) => html`<${TeamBoardCard} key=${b.id} b=${b} team=${team} tag renaming=${renaming === b.id} onRename=${setRenaming} />`,
+  )}</div>`;
+}
+
+/** `tag`: say which team the board is in (on a page that mixes teams), at the bottom right of its picture. */
+function TeamBoardCard({ b, team, renaming, onRename, tag = false }) {
   const [loaded, setLoaded] = useState(false);
   const [tall, setTall] = useState(false);
 
@@ -422,7 +434,7 @@ function TeamBoardCard({ b, team, renaming, onRename }) {
               setTall(e.target.naturalHeight / e.target.naturalWidth > 2.4);
             }} />`
         : html`<span class="bd-thumb-empty"><${Icon} n="users" s=${22} /></span>`}
-      <span class="sp-badge team">${team.name}</span>
+      ${tag && html`<span class="sp-team-tag" title=${`In ${team.name}`}><${TeamMark} team=${team} /><span>${team.name}</span></span>`}
     </div>
     <div class="sp-info">
       <div class="sp-text">
@@ -435,6 +447,7 @@ function TeamBoardCard({ b, team, renaming, onRename }) {
               }}
               onBlur=${(e) => rename(e.target.value.trim()).then(() => onRename(null))} />`
           : html`<b title=${b.name}>${b.name}</b>`}
+        ${tag && html`<span class="sp-team-tag inline"><${TeamMark} team=${team} /><span>${team.name}</span></span>`}
         <span class="sp-meta"><span>Rev ${b.rev}</span><span>Edited ${when(b.updatedAt)}</span></span>
       </div>
       <button class="sp-more" title="More" onClick=${more}><${Icon} n="dots" s=${16} /></button>

@@ -278,11 +278,16 @@ function makeWindow() {
     e.preventDefault();
     win.hide();
   });
-  win.on("enter-full-screen", () => win.webContents.executeJavaScript("document.documentElement.classList.toggle('fullscreen', true)").catch(() => {}));
-  win.on("leave-full-screen", () => win.webContents.executeJavaScript("document.documentElement.classList.toggle('fullscreen', false)").catch(() => {}));
+  // In full screen the traffic lights are gone, so the top bar takes back their room. The page is
+  // told (html.fullscreen) as it changes, and again whenever it loads: a page reloaded in full
+  // screen would otherwise forget.
+  const markFullScreen = (on) => !win.isDestroyed() && win.webContents.executeJavaScript(`document.documentElement.classList.toggle('fullscreen', ${Boolean(on)})`).catch(() => {});
+  win.on("enter-full-screen", () => markFullScreen(true));
+  win.on("leave-full-screen", () => markFullScreen(false));
 
   const wc = win.webContents;
   wc.on("did-finish-load", () => {
+    markFullScreen(win.isFullScreen());
     if (!engine.url || !wc.getURL().startsWith(engine.url)) return;
     pageReady = true;
     if (pendingOpen.length) upload(pendingOpen.splice(0));
