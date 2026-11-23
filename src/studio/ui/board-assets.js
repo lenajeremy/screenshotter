@@ -21,13 +21,17 @@ const TINTS = ["#ff3b30", "#ff9f0a", "#ffd60a", "#34c759", "#0a84ff", "#5e5ce6",
 const onTint = (c) => (["#ffffff", "#ffd60a"].includes(c) ? "#1d1d1f" : "#ffffff");
 /** A sticky note's paper: a soft shade of the chosen colour. */
 const PAPER = { "#ff3b30": "#ffc2c2", "#ff9f0a": "#ffd08f", "#ffd60a": "#ffe682", "#34c759": "#bfeaa3", "#0a84ff": "#b0d8ff", "#5e5ce6": "#d0caff", "#ffffff": "#fbfaf5", "#1d1d1f": "#2c2c30" };
-/** The handwriting a sticky note is written in, loaded once so the tile shows it before any note is on the page. */
+/**
+ * The handwriting a sticky note is written in, loaded once when the app starts, so the Assets tile shows
+ * it before any note is on a page. Not when the panel opens: a font arriving makes the canvas redraw.
+ */
 function loadNoteFont() {
   if (document.querySelector("link[data-note-font]")) return;
   const l = Object.assign(document.createElement("link"), { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Gloria+Hallelujah&display=block" });
   l.dataset.noteFont = "";
   document.head.appendChild(l);
 }
+loadNoteFont();
 
 export const BOARD_SHAPES = [
   { id: "rect", label: "Rectangle", w: 160, h: 110, css: (t) => ({ backgroundColor: t, borderRadius: "14px" }) },
@@ -170,7 +174,6 @@ export function AssetsPanel() {
   const s = useStore();
   const [tint, setTint] = useState(() => localStorage.getItem("board:tint") || "#ff3b30");
   const [pictures, setPictures] = useState([]);
-  useEffect(loadNoteFont, []);
   useEffect(() => {
     api("/api/images")
       .then((r) => setPictures(r.images ?? []))
