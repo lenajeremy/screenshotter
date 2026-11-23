@@ -31,6 +31,8 @@ const run = (cmd, args) => {
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed (${r.status})`);
 };
 const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+// The app's name (SCREENSHOTTER_APP_NAME, as the desktop build takes it): Glassine's disk image is Glassine's.
+const NAME = process.env.SCREENSHOTTER_APP_NAME || "Screenshotter";
 
 // The Studio's checks first, against a library of their own (never yours): a failure stops here.
 if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
@@ -56,19 +58,19 @@ if (process.env.SCREENSHOTTER_SKIP_TESTS !== "1") {
 // --electron: the desktop app made with Electron (scripts/build-desktop.mjs) instead of the Swift one.
 const ELECTRON = process.argv.includes("--electron");
 run("node", [ELECTRON ? "scripts/build-desktop.mjs" : "scripts/build-app.mjs", ...process.argv.slice(2).filter((a) => a !== "--electron")]);
-const app = path.join(root, "build", "Screenshotter.app");
-if (!existsSync(app)) throw new Error("build/Screenshotter.app is missing");
+const app = path.join(root, "build", `${NAME}.app`);
+if (!existsSync(app)) throw new Error(`build/${NAME}.app is missing`);
 // The Electron app, as built, on a throwaway library: it starts, its calls answer, it quits.
 if (ELECTRON && process.env.SCREENSHOTTER_SKIP_TESTS !== "1") run("npx", ["tsx", "scripts/desktop-check.ts", "--app"]);
 // Stage the app next to an Applications shortcut, so the window says what to do.
-const stage = path.join(mkdtempSync(path.join(tmpdir(), "screenshotter-dmg-")), "Screenshotter");
+const stage = path.join(mkdtempSync(path.join(tmpdir(), "screenshotter-dmg-")), NAME);
 mkdirSync(stage, { recursive: true });
-cpSync(app, path.join(stage, "Screenshotter.app"), { recursive: true, verbatimSymlinks: true });
+cpSync(app, path.join(stage, `${NAME}.app`), { recursive: true, verbatimSymlinks: true });
 symlinkSync("/Applications", path.join(stage, "Applications"));
 
-const dmg = path.join(root, "build", `Screenshotter-${version}.dmg`);
+const dmg = path.join(root, "build", `${NAME}-${version}.dmg`);
 rmSync(dmg, { force: true });
-run("hdiutil", ["create", "-volname", "Screenshotter", "-srcfolder", stage, "-ov", "-format", "ULMO", dmg]);
+run("hdiutil", ["create", "-volname", NAME, "-srcfolder", stage, "-ov", "-format", "ULMO", dmg]);
 rmSync(path.dirname(stage), { recursive: true, force: true });
 
 const identity = signingIdentity();
@@ -83,15 +85,16 @@ if (identity) {
     run("xcrun", ["stapler", "staple", dmg]);
     state = "signed and notarized";
     // Notarized, it can be offered as an update: sign it with the update key and write the feed.
-    run("node", [path.join(root, "scripts", "release-feed.mjs")]);
+    // Only Screenshotter has a feed: another name's image is a download, not an update for Screenshotter's users.
+    if (NAME === "Screenshotter") run("node", [path.join(root, "scripts", "release-feed.mjs")]);
   }
 }
 
 const site = path.join(root, "site", "downloads");
 mkdirSync(site, { recursive: true });
-copyFileSync(dmg, path.join(site, "Screenshotter.dmg"));
+copyFileSync(dmg, path.join(site, `${NAME}.dmg`));
 const mb = (statSync(dmg).size / 1024 / 1024).toFixed(1);
-console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB, ${state}), copied to site/downloads/Screenshotter.dmg`);
+console.log(`\n✓ ${path.relative(root, dmg)} (${mb} MB, ${state}), copied to site/downloads/${NAME}.dmg`);
 if (identity && state === "signed") {
   console.log("  Not notarized: macOS will still warn people who download it. To notarize, either:");
   console.log("    name a notarytool profile you've already saved: SCREENSHOTTER_NOTARY_PROFILE=<name> npm run app:dmg");
