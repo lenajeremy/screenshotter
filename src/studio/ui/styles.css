@@ -2761,3 +2761,96 @@ button[data-clicked]:focus-visible, [role="tab"][data-clicked]:focus-visible { o
 .tabs-strip::-webkit-scrollbar { display: none; }
 .tab { flex: 0 1 auto; min-width: 96px; }
 .tab.on { flex-shrink: 0; }
+
+/* The name step's preview shows the cursor teammates will see: the canvas's own arrow and name tag, in this person's colour. */
+.gate-preview-cursor { left: 26px; top: 22px; color: inherit; }
+.gate-preview-cursor .bd-cursor-name { max-width: 170px; }
+.gate-preview-cursor .bd-cursor-name b { overflow: hidden; text-overflow: ellipsis; }
+.gate-preview-cursor .bd-cursor-name b.blank { opacity: 0.6; }
+/* Its comment: the words under the name are the only span the text rule is for (the face is a span too, and keeps its own centring). */
+.gate-preview-note span.face { display: grid; font-size: 15px; color: #000; }
+
+/* A row in any menu answers the pointer. Right-click menus light the row they track (.active);
+   the same rows inside a popover (Import, the zoom, which agent) had nothing, so the pointer does it. */
+.ctx-item:hover:not(:disabled) { background: rgb(var(--ink) / 0.08); }
+.ctx-item:hover:not(:disabled) .ctx-ico { color: var(--text-2); }
+.ctx-item.danger:hover:not(:disabled) { background: rgba(255, 90, 90, 0.12); }
+.ctx-item.danger:hover:not(:disabled) .ctx-ico { color: var(--danger-fg); }
+.ctx-item:active:not(:disabled) { background: rgb(var(--ink) / 0.12); }
+
+/* =====================================================================================
+   What answers the pointer and the keyboard. Every button, row and tab has a hover you can
+   see, a pressed state, and a ring when it's reached with the keyboard (Tab); a clicked one
+   keeps no ring. One recipe each, so the same kind of thing answers the same way everywhere.
+   ===================================================================================== */
+.bd-app { --fill-hi: #4a4a4a; }
+:root[data-theme="light"] .bd-app { --fill-hi: #dedee3; }
+.btn { transition: background-color 0.12s, background-image 0.12s, box-shadow 0.12s, color 0.12s, transform 0.08s; }
+.btn:hover:not(:disabled) { background-color: var(--panel-4); box-shadow: inset 0 0 0 1px var(--line-3); }
+.btn:active:not(:disabled) { background-color: var(--panel-3); transform: scale(0.97); }
+.btn.ghost:hover:not(:disabled) { background-color: rgb(var(--ink) / 0.09); box-shadow: none; color: var(--text); }
+.btn.ghost:active:not(:disabled) { background-color: rgb(var(--ink) / 0.14); }
+/* The one filled action: brighter with a soft halo under the pointer, pressed in when clicked. */
+.btn.primary:hover:not(:disabled) { background-color: var(--lime); background-image: linear-gradient(180deg, #edff8f, #dfff5c); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 0 0 3px rgb(215 255 63 / 0.2); }
+.btn.primary:active:not(:disabled) { background-image: linear-gradient(180deg, #cbee36, #c2e62d); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2); transform: scale(0.97); }
+:root[data-theme="light"] .btn.primary:hover:not(:disabled) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(0, 0, 0, 0.1), 0 0 0 3px rgb(101 163 13 / 0.22); }
+.btn.danger:hover:not(:disabled) { background-color: rgba(255, 93, 93, 0.16); box-shadow: inset 0 0 0 1px rgba(255, 93, 93, 0.4); color: var(--danger-fg); }
+.btn.danger-solid { background: var(--danger-strong); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.12); font-weight: 600; }
+.btn.danger-solid:hover:not(:disabled) { background: #e5484d; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 0 3px rgba(229, 72, 77, 0.28); }
+.btn.danger-solid:active:not(:disabled) { background: #c01f1f; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
+.btn:focus-visible, .icon-btn:focus-visible, .dd-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.btn.primary:focus-visible, .btn.danger-solid:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+/* Icon buttons. */
+.icon-btn:hover:not(:disabled) { background-color: rgb(var(--ink) / 0.09); color: var(--text); }
+.icon-btn:active:not(:disabled) { background-color: rgb(var(--ink) / 0.15); }
+.bd-app .panel .icon-btn.sm:hover:not(:disabled) { background: rgb(var(--ink) / 0.1); }
+.bd-app .panel .icon-btn.sm:active:not(:disabled) { background: rgb(var(--ink) / 0.16); }
+.bd-dock .bd-tools .icon-btn:hover:not(.on) { background: rgb(var(--ink) / 0.11); color: var(--text); }
+.bd-dock .bd-tools .icon-btn.on:hover { background: #e3ff6e; }
+.bd-dock .bd-tools .bd-agent-toggle.on:hover { background: rgb(215 255 63 / 0.22); }
+.bd-app .bd-export:active, .bd-app .bd-right .panel-body .btn:not(.primary):active, .bd-app .bd-assets .btn:active { background: var(--fill); }
+/* Tabs and rows: the one you're on is filled; the others lift a little under the pointer. */
+.bd-app .bd-left-tabs button:hover:not(.on), .home .home-tabs button:hover:not(.on) { background: rgb(var(--ink) / 0.07); color: var(--text); }
+.tab:hover:not(.on) { background: rgb(var(--ink) / 0.08); color: var(--text); }
+.tab-x:hover { background: rgb(var(--ink) / 0.14); }
+.home-nav button:hover:not(.on), .set-nav button:hover:not(.on), .home-account:hover { background: rgb(var(--ink) / 0.07); color: var(--text); }
+.home-nav button:active:not(.on), .set-nav button:active:not(.on) { background: rgb(var(--ink) / 0.11); }
+.bd-app .bd-page:hover:not(.on) { background: rgb(var(--ink) / 0.07); }
+.bd-app .bd-right .seg button:hover:not(.on) { color: var(--text); background: rgb(var(--ink) / 0.06); }
+.home .home-filters .dd-btn:hover { background: rgb(var(--ink) / 0.08); color: var(--text); }
+.home-view button:hover:not(.on) { color: var(--text); background: rgb(var(--ink) / 0.07); }
+.sp-card:hover .sp-thumb { background-color: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-3); }
+.sp-more:hover { background: rgb(var(--ink) / 0.1); color: var(--text); }
+/* The sign-in and first-run screens. */
+.gate-google:hover { background: #ededf0; box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.1), 0 0 0 3px rgb(255 255 255 / 0.14); }
+.gate-google:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.gate-item.as-row:hover { background: rgb(var(--ink) / 0.06); }
+.gate-item.as-row:active { background: rgb(var(--ink) / 0.09); }
+.gate-agent.on:hover { background: rgb(var(--accent-rgb) / 0.1); }
+.gate-back:hover { background: rgb(var(--ink) / 0.08); color: var(--text); }
+.plan-opt:hover:not(.on) { box-shadow: inset 0 0 0 1px var(--line-3); }
+
+/* The tool dock, half as big again: 48px tools with 24px icons in a 60px bar. What floats above it moves up with it. */
+.bd-dock { bottom: 16px; }
+.bd-dock .bd-tools { gap: 3px; padding: 6px; border-radius: 30px; }
+.bd-dock .bd-tools .icon-btn { width: 48px; height: 48px; border-radius: 24px; }
+.bd-dock-sep { height: 26px; margin: 0 6px; }
+.bd-sendbar { bottom: 92px; }
+
+/* Home's empty pages, in the editor's hand: a small tile, a line that says what's missing, one way forward. */
+.home .sp-empty { gap: 2px; padding: 88px 0; color: var(--text-3); font-size: 11px; line-height: 16px; }
+.home .sp-empty .art { width: 40px; height: 40px; margin-bottom: 12px; border-radius: 11px; background: var(--panel-3); box-shadow: none; color: var(--text-2); }
+.home .sp-empty b { color: var(--text); font: 500 13px/20px var(--sans); }
+.home .sp-empty > span:not(.spinner) { max-width: 340px; text-wrap: balance; }
+.home .sp-empty .btn { margin-top: 14px; }
+.home-team-start { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+.home .sp-empty .home-team-start .btn { margin-top: 0; gap: 8px; height: 28px; padding: 0 10px 0 8px; font: 500 11px/16px var(--sans); }
+/* Teams on "Shared with you": a heading with what's in it, and a team with nothing is one quiet line. */
+.home-team + .home-team { margin-top: 24px; }
+.home-team h2 { gap: 8px; height: 24px; margin: 0 0 10px; color: var(--text); font: 500 12px/16px var(--sans); }
+.home-team h2 .n { color: var(--text-3); font-weight: 400; }
+.home-team h2 .btn { margin-left: auto; height: 24px; padding: 0 8px 0 6px; gap: 5px; color: var(--text-2); font: 500 11px/16px var(--sans); }
+.home-team-none { display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 8px 0 14px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font-size: 11px; }
+.home-team-none .btn { height: 24px; padding: 0 8px 0 6px; gap: 5px; color: var(--text-2); font: 500 11px/16px var(--sans); }
+/* Under a team's own heading a card needn't say the team again. */
+.home-team .sp-badge.team { display: none; }

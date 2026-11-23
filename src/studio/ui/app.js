@@ -14,7 +14,7 @@ import { UpgradeModal } from "./plans.js";
 import { BoardsGrid, refreshBoards, useBoards } from "./board-library.js";
 import { ImportWebsite, looksLikeUrl, openImportWebsite } from "./web-import.js";
 import { ConnectAgent, FigmaMark, ImportFigma, importFigFile, isFigFile, isFigmaClipboard, looksLikeFigma, openImportFigma, pasteFigma, saveFigmaToken } from "./imports.js";
-import { CreateTeamModal, MoveToTeamModal, SignInModal, TeamBoardsGrid, TeamMembersModal, newTeamBoard, refreshAccount, signOutAccount } from "./cloud.js";
+import { CreateTeamModal, MoveToTeamModal, SignInModal, TeamBoardsGrid, TeamMembersModal, newTeamBoard, refreshAccount, refreshTeamBoards, signOutAccount } from "./cloud.js";
 import { S, answerConfirm, answerPrompt, api, dismiss, fail, native, restore, set, setTheme, themeNow, toast, touch, useStore } from "./store.js";
 
 const shortPath = (p) => (p ?? "").replace(/^\/Users\/[^/]+/, "~");
@@ -126,9 +126,31 @@ function SharedBoards({ q }) {
   const cloud = s.cloud ?? {};
   if (!cloud.signedIn) return html`<div class="sp-empty big"><div class="art"><${Icon} n="users" s=${22} /></div><b>Nothing shared yet</b><span>Boards your teams share show up here once you sign in.</span><button class="btn primary sm" onClick=${() => set({ modal: { kind: "signIn" } })}>Sign in</button></div>`;
   if (!cloud.teams?.length) return html`<div class="sp-empty big"><div class="art"><${Icon} n="users" s=${22} /></div><b>Nothing shared yet</b><span>Start a team to share boards and edit them together, live.</span><button class="btn primary sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>Create a team</button></div>`;
-  return html`${cloud.teams.map((t) => html`<section class="home-team" key=${t.id}>
-    <h2><${TeamMark} team=${t} />${t.name}</h2>
-    <${TeamBoardsGrid} team=${t} q=${q} />
+  return html`<${SharedTeams} teams=${cloud.teams} q=${q} />`;
+}
+
+/** Every team's boards on one page. With nothing in any of them it's one invitation, not one per team. */
+function SharedTeams({ teams, q }) {
+  const s = useStore();
+  useEffect(() => {
+    const load = () => teams.forEach((t) => refreshTeamBoards(t.id));
+    load();
+    const i = setInterval(() => document.visibilityState === "visible" && load(), 5000);
+    return () => clearInterval(i);
+  }, [teams.map((t) => t.id).join()]);
+  const lists = teams.map((t) => s.teamBoards?.[t.id]);
+  if (lists.some((l) => !l)) return html`<div class="sp-empty"><span class="spinner"></span></div>`;
+  if (lists.every((l) => !l.length))
+    return html`<div class="sp-empty big">
+      <div class="art"><${Icon} n="users" s=${20} /></div>
+      <b>Nothing shared yet</b>
+      <span>Boards in your teams show up here, and everyone on the team edits them together, live.</span>
+      <div class="home-team-start">${teams.map((t) => html`<button class="btn sm" key=${t.id} onClick=${() => newTeamBoard(t)}><${TeamMark} team=${t} />New board in ${t.name}</button>`)}</div>
+    </div>`;
+  return html`${teams.map((t, i) => html`<section class="home-team" key=${t.id}>
+    <h2><${TeamMark} team=${t} /><span>${t.name}</span><span class="n">${lists[i].length || ""}</span>
+      ${lists[i].length > 0 && html`<button class="btn sm ghost" onClick=${() => newTeamBoard(t)}><${Icon} n="plus" s=${12} w=${2.2} />New board</button>`}</h2>
+    <${TeamBoardsGrid} team=${t} q=${q} compact />
   </section>`)}`;
 }
 
@@ -396,7 +418,7 @@ function Confirm() {
       <div class="sheet-head"><h2>${m.title}</h2></div>
       <div class="sheet-body"><div class="note" style=${{ fontSize: "13px" }}>${m.text}</div></div>
       <div class="sheet-foot"><button class="btn" onClick=${() => answerConfirm(false)}>${m.cancel ?? "Cancel"}</button>
-        <button class="btn ${m.danger ? "" : "primary"}" style=${m.danger ? { background: "var(--danger-strong)", color: "#fff" } : null} autoFocus onClick=${() => answerConfirm(true)}>${m.confirm ?? "OK"}</button></div>
+        <button class="btn ${m.danger ? "danger-solid" : "primary"}" autoFocus onClick=${() => answerConfirm(true)}>${m.confirm ?? "OK"}</button></div>
     </div>
   </div>`;
 }

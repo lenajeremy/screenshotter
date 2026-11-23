@@ -339,7 +339,8 @@ export function MoveToTeamModal({ Sheet }) {
 
 const matches = (b, q) => !q.trim() || b.name.toLowerCase().includes(q.trim().toLowerCase());
 
-export function TeamBoardsGrid({ team, q }) {
+/** `compact`: one of several teams on a page, so a team with nothing in it is a line, not a page of its own. */
+export function TeamBoardsGrid({ team, q, compact = false }) {
   const s = useStore();
   const boards = s.teamBoards[team.id];
   const [renaming, setRenaming] = useState(null);
@@ -351,6 +352,8 @@ export function TeamBoardsGrid({ team, q }) {
   }, [team.id]);
 
   if (!boards) return html`<div class="sp-empty"><span class="spinner"></span></div>`;
+  if (!boards.length && compact)
+    return html`<div class="home-team-none"><span>No boards yet</span><button class="btn sm ghost" onClick=${() => newTeamBoard(team)}><${Icon} n="plus" s=${12} w=${2.2} />New team board</button></div>`;
   if (!boards.length)
     return html`<div class="sp-empty big">
       <div class="art"><${Icon} n="users" s=${24} /></div>

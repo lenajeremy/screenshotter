@@ -218,9 +218,9 @@ function ToolDock() {
   return html`<div class="bd-dock">
     <div class="bd-tools" role="toolbar" aria-label="Tools">
       ${TOOLS.map((t) => html`<button class="icon-btn ${b.tool === t.id ? "on" : ""}" title=${`${t.label} (${t.key})`} aria-pressed=${b.tool === t.id}
-          onClick=${() => (t.id === "image" ? pickImages() : bset({ tool: t.id }))}><${Icon} n=${t.icon} s=${16} /></button>`)}
+          onClick=${() => (t.id === "image" ? pickImages() : bset({ tool: t.id }))}><${Icon} n=${t.icon} s=${24} w=${1.4} /></button>`)}
       <span class="bd-dock-sep"></span>
-      <button class="icon-btn bd-agent-toggle ${agentOpen ? "on" : ""}" title="Chat with an agent" aria-pressed=${agentOpen} onClick=${() => bset({ rightTab: agentOpen ? "design" : "agent" })}><${Icon} n="spark" s=${16} /><${AgentDot} /></button>
+      <button class="icon-btn bd-agent-toggle ${agentOpen ? "on" : ""}" title="Chat with an agent" aria-pressed=${agentOpen} onClick=${() => bset({ rightTab: agentOpen ? "design" : "agent" })}><${Icon} n="spark" s=${24} w=${1.4} /><${AgentDot} /></button>
     </div>
   </div>`;
 }

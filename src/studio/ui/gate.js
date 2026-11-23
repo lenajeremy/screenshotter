@@ -8,6 +8,7 @@ import { Avatar, TeamMark } from "./avatars.js";
 import { AgentLogo } from "./agent-logos.js";
 import { loadAgents, pickAgent, pickedAgent } from "./board-agent.js";
 import { openExternal, refreshAccount } from "./cloud.js";
+import { CursorArrow, peerColourOf } from "./board-presence.js";
 import { S, api, native, set, useStore } from "./store.js";
 
 const seen = (key) => {
@@ -242,7 +243,9 @@ function Name({ onNext }) {
       <input class="gate-input" value=${name} autoFocus spellcheck=${false} autocomplete="name" placeholder="Your name" onInput=${(e) => (setName(e.target.value), setErr(""))} onKeyDown=${(e) => e.stopPropagation()} />
     </label>
     <div class="gate-preview" aria-hidden="true">
-      <div class="gate-preview-cursor"><${Icon} n="pointer" s=${16} /><em class=${name.trim() ? "" : "blank"}>${shown}</em></div>
+      <div class="gate-preview-cursor" style=${{ "--c": peerColourOf(user?.id ?? user?.email), "--inv": 1 }}>
+        <div class="bd-cursor-in"><${CursorArrow} /><span class="bd-cursor-name"><b class=${name.trim() ? "" : "blank"}>${shown}</b></span></div>
+      </div>
       <div class="gate-preview-note">
         <${Avatar} user=${user} cls="gate-av" />
         <div><b class=${name.trim() ? "" : "blank"}>${shown}</b><span>Looks good to me.</span></div>

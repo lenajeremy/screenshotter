@@ -957,8 +957,12 @@ export function fit(ids, { instant = false } = {}) {
   const maxX = Math.max(...boxes.map((b) => b.x + b.width));
   const maxY = Math.max(...boxes.map((b) => b.y + b.height));
   const pad = 72;
-  const z = Math.max(MIN_ZOOM, Math.min(ids?.length ? 4 : 1, (c.width - pad * 2) / Math.max(1, maxX - minX), (c.height - pad * 2 - 24) / Math.max(1, maxY - minY)));
-  setView({ z, x: (c.width - (maxX - minX) * z) / 2 - minX * z, y: (c.height - (maxY - minY) * z) / 2 - minY * z + 12 }, !instant);
+  // The tool dock floats over the bottom of the canvas (60px, 16px up): what's fitted stays clear of it.
+  const foot = 92;
+  // 24px above the first artboard is its name.
+  const room = c.height - pad - foot - 24;
+  const z = Math.max(MIN_ZOOM, Math.min(ids?.length ? 4 : 1, (c.width - pad * 2) / Math.max(1, maxX - minX), room / Math.max(1, maxY - minY)));
+  setView({ z, x: (c.width - (maxX - minX) * z) / 2 - minX * z, y: pad + 24 + (room - (maxY - minY) * z) / 2 - minY * z }, !instant);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -25,6 +25,15 @@ const stepOf = (p) => Math.max(70, Math.min(260, 4200 / Math.max(1, p.ids?.lengt
 const COLOURS = ["#7c6cff", "#f0508c", "#1ba7c4", "#e8890c", "#2f9e57", "#e2603f", "#4c6ef5", "#b350d6"];
 const VERBS = { edit: "changing", write: "adding", import: "bringing in", look: "looking at", read: "reading" };
 
+/** The arrow someone else's pointer is drawn as, in their colour (--c): on the canvas, and wherever a cursor is shown. */
+export const CursorArrow = () => html`<svg width="18" height="20" viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z" fill="var(--c)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>`;
+/**
+ * The colour teammates see someone's cursor in. The collaboration server picks it from the
+ * person's id (server/src/live.ts: the same list, the same sum), so this is the colour they'll get.
+ */
+const PEER_COLOURS = ["#e5484d", "#f76b15", "#ffb224", "#46a758", "#12a594", "#0090ff", "#3e63dd", "#8e4ec6", "#d6409f", "#ab4aba"];
+export const peerColourOf = (id) => PEER_COLOURS[[...String(id ?? "")].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % PEER_COLOURS.length];
+
 export function colourOf(key) {
   let h = 0;
   for (const ch of String(key)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -243,7 +252,7 @@ export function Presence() {
         </div>`)}
         ${cur && html`<div class="bd-cursor bd-peer-cursor" data-peer=${p.id} style=${{ left: cur.x + "px", top: cur.y + "px" }}>
           <div class="bd-cursor-in">
-            <svg width="18" height="20" viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z" fill="var(--c)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+            <${CursorArrow} />
             <span class="bd-cursor-name"><b>${label}</b>${p.agent && html`<span class="bd-cursor-doing">${p.agent}</span>`}</span>
           </div>
         </div>`}
@@ -266,7 +275,7 @@ export function Presence() {
         ${boxes.slice(0, walking ? step + 1 : boxes.length).map(([id, r], i) => html`<div key=${p.at + id} class="bd-agent-flash" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px", animationDelay: walking ? "0s" : `${Math.min(i, 12) * 40}ms`, animationDuration: walking ? `${Math.max(0.45, (stepOf(p) * 5) / 1000)}s` : undefined }}></div>`)}
         <div class="bd-cursor" data-agent=${p.key} style=${{ left: tip.x + "px", top: tip.y + "px" }}>
           <div class="bd-cursor-in">
-            <svg width="18" height="20" viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z" fill="var(--c)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+            <${CursorArrow} />
             <span class="bd-cursor-name"><b>${p.name}</b><span class="bd-cursor-doing">${phase === "thinking" ? html`thinking<i class="bd-dots"><i></i><i></i><i></i></i>` : doingNow(p)}</span></span>
           </div>
         </div>
