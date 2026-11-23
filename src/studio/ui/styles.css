@@ -2858,3 +2858,12 @@ button[data-clicked]:focus-visible, [role="tab"][data-clicked]:focus-visible { o
 
 /* In full screen there are no traffic lights, so the top bar starts at the window's edge, in line with the panel under it. */
 .native.fullscreen .topbar { --traffic: 8px; }
+
+/* An agent at work. On the dock it's a thin arc in the accent turning round the chat's button, the
+   mark still in the middle (it was a dot under the mark, which pushed the mark off centre). On the
+   Agent tab and in the chat it's a small dot in the same accent, so "working" is one colour everywhere. */
+.ag-dot, .ag-live { background: var(--accent); }
+.bd-dock .bd-agent-toggle .ag-dot { position: absolute; inset: 2px; width: auto; height: auto; margin: 0; border: 2px solid rgb(var(--accent-rgb) / 0.16); border-top-color: var(--accent); border-radius: 50%; background: none; opacity: 1; pointer-events: none; animation: rot 0.9s linear infinite; }
+.bd-dock .bd-agent-toggle:has(.ag-dot) { color: var(--accent); }
+.bd-app .bd-chat-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+@media (prefers-reduced-motion: reduce) { .bd-dock .bd-agent-toggle .ag-dot { animation: none; border-color: rgb(var(--accent-rgb) / 0.5); } }
