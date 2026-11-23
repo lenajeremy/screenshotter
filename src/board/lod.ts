@@ -18,7 +18,7 @@ import { newPage } from "../render/browser.js";
 import { scaledImage } from "../studio/assets.js";
 import { cacheDir } from "../util/files.js";
 import { BOARD_CSS, fontFaceCss, fontFamilies, fontLinks, mapCssUrls, nodeHtml, subtree, tokenCss, type Board } from "./core.js";
-import { maskFontsFor, shaderScript } from "./render.js";
+import { effectsScript, maskFontsFor, shaderScript } from "./render.js";
 import { getBoard } from "./store.js";
 
 const LOD_VERSION = "v1";
@@ -295,7 +295,7 @@ async function renderBatch(batch: PendingJob[]) {
     const slots = valid
       .map((j) => `<div class="lod-slot" data-lod-hash="${j.hash}"><div class="lod-inner">${nodeHtml(board, j.rootId, { ids: true, src: resolve, still: true, code: true })}</div></div>`)
       .join("");
-    const html = `<!doctype html><html><head><meta charset="utf-8">${shaderScript(board, roots, "still")}${links}<style>${fontFaceCss(board, resolve)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-batch{position:relative}.lod-slot{position:relative;display:inline-block;vertical-align:top}.lod-inner>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-batch">${slots}</div></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8">${shaderScript(board, roots, "still")}${effectsScript(board, roots)}${links}<style>${fontFaceCss(board, resolve)}${BOARD_CSS}html,body{margin:0;background:transparent}:root{${tokenCss(board)}}#bd-batch{position:relative}.lod-slot{position:relative;display:inline-block;vertical-align:top}.lod-inner>*{position:relative!important;left:auto!important;top:auto!important}</style></head><body><div id="bd-batch">${slots}</div></body></html>`;
     await writeFile(file, html);
 
     page = await newPage();
@@ -305,7 +305,7 @@ async function renderBatch(batch: PendingJob[]) {
       await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 4000))]);
       await Promise.all(Array.from(document.images).map((img) => (img.complete ? Promise.resolve() : img.decode().catch(() => undefined))));
     });
-    await page.evaluate("Promise.all([window.BoardShaders ? BoardShaders.ready() : null, window.BoardEffects ? BoardEffects.ready() : null])");
+    await page.evaluate("(async () => { if (window.BoardShaders) await BoardShaders.ready(); if (window.BoardEffects) await BoardEffects.ready(); })()");
 
     // Pack scaled slots into a compact 2D grid (<= 3200px wide, well under Chromium's 16,384px
     // GPU texture height limit) so none of the 24 slots ever clip out of bounds.

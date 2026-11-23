@@ -4,12 +4,41 @@
 import "./board-effects-runtime.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { EFFECT_CATEGORIES, EFFECT_DEFS, cleanEffects, defaultEffect, effectDefOf, newId, round } from "./board-core.js";
-import { B, CANVAS_ONLY, node, useBoard } from "./board-state.js";
+import { B, CANVAS_ONLY, node, onBoard, useBoard } from "./board-state.js";
 import { Dropdown, Num, Popover, Section, Seg, Slider, html } from "./controls.js";
 import { Icon } from "./icons.js";
 
 const BE = globalThis.BoardEffects;
 const frameEl = (id) => document.querySelector(`.bd-canvas [data-bid="${id}"]`);
+
+// When any non-glass-param layer change lands on the board (e.g. moving/editing layers underneath
+// a Glass lens), refresh WebGL Liquid Glass backdrops cleanly on the next frame. When ONLY a glass
+// layer's own `effects` sliders change, skip backdrop re-capture so sliders run at 0.3ms GPU speed!
+let lastNodesRef = null;
+onBoard(() => {
+  if (!BE?.refreshGlass || !B.board) return;
+  const cur = B.board.nodes;
+  if (cur === lastNodesRef) return;
+  const prev = lastNodesRef;
+  lastNodesRef = cur;
+  if (prev) {
+    const curKeys = Object.keys(cur);
+    if (curKeys.length === Object.keys(prev).length) {
+      let onlyGlassParams = true;
+      for (let i = 0; i < curKeys.length; i++) {
+        const k = curKeys[i];
+        const a = prev[k], b = cur[k];
+        if (a === b) continue;
+        if (!a || !b || !b.effects?.some((e) => e.type === "glass") || a.style !== b.style || a.text !== b.text || a.children !== b.children || a.hidden !== b.hidden) {
+          onlyGlassParams = false;
+          break;
+        }
+      }
+      if (onlyGlassParams) return;
+    }
+  }
+  BE.refreshGlass();
+});
 
 // ---------------------------------------------------------------------------------------------
 // Canvas element hook: attaches/updates/detaches BoardEffects on any mounted layer with effects.
@@ -29,12 +58,14 @@ export function syncElementEffects(el, n, board) {
   }
   const tokenKey = board?.tokens?.map((t) => `${t.name}=${t.value}`).join("|") ?? "";
   const st = n.style || {};
-  const styleHint = `${st.width || ""}|${st.height || ""}|${st.borderRadius || ""}|${st.borderTopLeftRadius || ""}|${st.borderTopRightRadius || ""}|${st.borderBottomRightRadius || ""}|${st.borderBottomLeftRadius || ""}`;
+  const styleHint = `${st.width || ""}|${st.height || ""}|${st.borderRadius || ""}|${st.borderTopLeftRadius || ""}|${st.borderTopRightRadius || ""}|${st.borderBottomRightRadius || ""}|${st.borderBottomLeftRadius || ""}|${st.background || ""}|${st.backgroundColor || ""}`;
+  const posHint = `${st.left || ""}|${st.top || ""}|${st.right || ""}|${st.bottom || ""}|${st.transform || ""}`;
   const opts = {
     baseBackdropFilter: st.backdropFilter ?? st.WebkitBackdropFilter ?? "",
     baseFilter: st.filter ?? "",
     tokenKey,
     styleHint,
+    posHint,
   };
   if (existing) existing.update(fx, opts);
   else activeHandles.set(el, BE.attach(el, fx, opts));

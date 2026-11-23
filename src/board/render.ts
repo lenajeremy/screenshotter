@@ -160,7 +160,7 @@ export async function drawArtboard(board: Board, rootId: string, ids: string[], 
       page.evaluate(async () => {
         await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 6000))]);
         await Promise.all(Array.from(document.images).map((img) => (img.complete ? Promise.resolve() : img.decode().catch(() => undefined))));
-      }).then(() => page.evaluate("Promise.all([window.BoardShaders ? BoardShaders.ready() : null, window.BoardEffects ? BoardEffects.ready() : null])"));
+      }).then(() => page.evaluate("(async () => { if (window.BoardShaders) await BoardShaders.ready(); if (window.BoardEffects) await BoardEffects.ready(); })()"));
     await settle();
     const measure = () =>
       page.evaluate(() => {
