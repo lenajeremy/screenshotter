@@ -104,7 +104,7 @@
     // ---------------------------------------------------------- chapters, pricing and the ending
     $$(".ch-head").forEach((head) => {
       const tl = gsap.timeline({ scrollTrigger: { trigger: head, start: "top 82%" } });
-      tl.from($(".num", head), { autoAlpha: 0, y: 10, duration: 0.7 }, 0).add(rise($("h2", head)), 0.05).from($(":scope > p", head), { autoAlpha: 0, y: 16, duration: 0.9 }, 0.25);
+      tl.add(rise($("h2", head)), 0).from($(":scope > p", head), { autoAlpha: 0, y: 16, duration: 0.9 }, 0.25);
     });
     $$(".chapter .shot").forEach((shot, i) => {
       const img = $("img", shot);
