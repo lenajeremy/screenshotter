@@ -32,14 +32,33 @@ export function shaderRuntime(): string {
 /** Whether any shown layer in these is a shader. */
 const hasShaders = (board: Board, ids: string[]) => ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.shader && !board.nodes[x].hidden));
 
+let effectsRuntimeText: string | undefined;
+/** The optical/layer effects runtime's source, read once. */
+export function effectsRuntime(): string {
+  if (effectsRuntimeText !== undefined) return effectsRuntimeText;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const file = [path.join(here, "..", "studio", "ui", "board-effects-runtime.js"), path.join(here, "..", "..", "src", "studio", "ui", "board-effects-runtime.js")].find((f) => existsSync(f));
+  effectsRuntimeText = file ? readFileSync(file, "utf8") : "";
+  return effectsRuntimeText;
+}
+
+const hasEffects = (board: Board, ids: string[]) => ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.effects?.some((e) => !e.disabled) && !board.nodes[x].hidden));
+
+/** The script that mounts optical/layer effects (Liquid Glass, Pattern refraction, Bloom, etc.). */
+export function effectsScript(board: Board, ids: string[]): string {
+  if (!hasEffects(board, ids) || !effectsRuntime()) return "";
+  return `<script data-board-effects>${effectsRuntime().replace(/<\/script/gi, "<\\/script")}\nBoardEffects.auto();</script>`;
+}
+
 /**
  * The script that draws a page's shaders, or nothing when it has none: "live" plays them
  * (Preview, a page copied out), "still" draws each once at its time (pictures of the board).
  */
 export function shaderScript(board: Board, ids: string[], mode: "live" | "still"): string {
-  if (!hasShaders(board, ids) || !shaderRuntime()) return "";
-  const start = JSON.stringify(mode === "still" ? { mode, badges: false } : { mode });
-  return `<script data-board-shaders>${shaderRuntime().replace(/<\/script/gi, "<\\/script")}\nBoardShaders.auto(${start});</script>`;
+  const sh = !hasShaders(board, ids) || !shaderRuntime()
+    ? ""
+    : `<script data-board-shaders>${shaderRuntime().replace(/<\/script/gi, "<\\/script")}\nBoardShaders.auto(${JSON.stringify(mode === "still" ? { mode, badges: false } : { mode })});</script>`;
+  return sh + effectsScript(board, ids);
 }
 
 /**
@@ -112,7 +131,7 @@ export function previewDocument(board: Board, id: string, opts: { width?: number
     `max-width:100%;margin:0 auto;${styleText(inherit)}}#bd-frame>*{position:relative!important;left:auto!important;top:auto!important;max-width:100%${page ? ";width:100%!important;min-height:100vh" : ""}}`;
   // Videos that autoplay with sound start without it when the browser won't allow sound before a click.
   // Every second, while the tab shows: if the board changed, take the new frame from this same address.
-  const live = `<script>const play=()=>{for(const v of document.querySelectorAll("video[autoplay]"))v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})};play();let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title;play();shaders(d)}catch{}},1000);const shaders=(d)=>{if(window.BoardShaders)return BoardShaders.scan(document);const s=d.querySelector("script[data-board-shaders]");if(s){const n=document.createElement("script");n.textContent=s.textContent;document.head.appendChild(n)}}</script>`;
+  const live = `<script>const play=()=>{for(const v of document.querySelectorAll("video[autoplay]"))v.play().catch(()=>{v.muted=true;v.play().catch(()=>{})})};play();let rev=${board.rev};setInterval(async()=>{if(document.hidden)return;try{const r=await(await fetch("/api/board/rev?id=${encodeURIComponent(board.id)}")).json();if(r.rev<=rev)return;rev=r.rev;const d=new DOMParser().parseFromString(await(await fetch(location.href,{cache:"no-store"})).text(),"text/html");const f=d.getElementById("bd-frame");if(!f){document.body.innerHTML=d.body.innerHTML;return}document.getElementById("bd-frame").replaceWith(f);document.getElementById("bd-css").textContent=d.getElementById("bd-css").textContent;document.title=d.title;play();shaders(d);effects(d)}catch{}},1000);const shaders=(d)=>{if(window.BoardShaders)return BoardShaders.scan(document);const s=d.querySelector("script[data-board-shaders]");if(s){const n=document.createElement("script");n.textContent=s.textContent;document.head.appendChild(n)}};const effects=(d)=>{if(window.BoardEffects)return BoardEffects.scan(document);const s=d.querySelector("script[data-board-effects]");if(s){const n=document.createElement("script");n.textContent=s.textContent;document.head.appendChild(n)}}</script>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(n.name)} · ${esc(board.name)}</title>${shaderScript(board, [id], "live")}${links}<style id="bd-css">${css}</style></head><body><div id="bd-frame">${body}</div>${live}</body></html>`;
 }
 
@@ -141,7 +160,7 @@ export async function drawArtboard(board: Board, rootId: string, ids: string[], 
       page.evaluate(async () => {
         await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 6000))]);
         await Promise.all(Array.from(document.images).map((img) => (img.complete ? Promise.resolve() : img.decode().catch(() => undefined))));
-      }).then(() => page.evaluate("window.BoardShaders ? BoardShaders.ready() : null"));
+      }).then(() => page.evaluate("(async () => { if (window.BoardShaders) await BoardShaders.ready(); if (window.BoardEffects) await BoardEffects.ready(); })()"));
     await settle();
     const measure = () =>
       page.evaluate(() => {

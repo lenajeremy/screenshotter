@@ -14,6 +14,7 @@ import { api, fail, fileUrl, toast } from "./store.js";
 import { areaRects, areasValid, gridOf, gridPatch, isGrid, parsePlacement, parseTracks, placementCss, placementSpan, trackArgs, trackKind, trackLabel } from "./board-core.js";
 import { AXES as GRID_AXES, changeGrids, gridGeometry, inGrid, insertTrackOps, layoutOf, moveTrackOps, removeTrackOps, setLayout, trackCountOps, trackSizeOps } from "./board-grid.js";
 import { ShaderChooser, ShaderFill } from "./board-shaders.js";
+import { EffectsSection } from "./board-effects.js";
 
 /** What the panel doesn't draw from: the view and the pointer (it does show the words picked in a text). */
 const PANEL_SKIPS = CANVAS_ONLY.filter((k) => k !== "words");
@@ -103,6 +104,7 @@ export function Inspector() {
       ${n.type !== "svg" && html`<${LineSection} kind="border" />`}
       <${LineSection} kind="outline" />
       ${n.type !== "svg" && html`<${ShadowSection} />`}
+      <${EffectsSection} list=${list} Color=${BoardColor} commit=${commit} />
       <${FiltersSection} />
       <${SelectionColors} />
       ${!many && n.type === "svg" && !n.svg && html`<${AttrsSection} key=${"a" + n.id} />`}

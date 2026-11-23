@@ -106,12 +106,21 @@ fetch(new URL("./board-shader-runtime.js", import.meta.url))
   .then((t) => (runtimeText = t))
   .catch(() => undefined);
 
-/** Layers as HTML for a page of their own (Copy as HTML): with shaders, the runtime goes first, and each carries its code. */
+let effectsRuntimeText = "";
+fetch(new URL("./board-effects-runtime.js", import.meta.url))
+  .then((r) => (r.ok ? r.text() : ""))
+  .then((t) => (effectsRuntimeText = t))
+  .catch(() => undefined);
+
+/** Layers as HTML for a page of their own (Copy as HTML): with shaders or effects, their runtime goes first. */
 export function pageHtml(board, ids) {
   const shaders = ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.shader));
+  const effects = ids.some((id) => subtree(board, id).some((x) => board.nodes[x]?.effects?.some((e) => !e.disabled)));
   const body = ids.map((id) => nodeHtml(board, id, shaders ? { code: true } : {})).join("\n");
-  if (!shaders || !runtimeText) return body;
-  return `<script data-board-shaders>${runtimeText.replace(/<\/script/gi, "<\\/script")}\nBoardShaders.auto();</script>\n${body}`;
+  const scripts = [];
+  if (shaders && runtimeText) scripts.push(`<script data-board-shaders>${runtimeText.replace(/<\/script/gi, "<\\/script")}\nBoardShaders.auto();</script>`);
+  if (effects && effectsRuntimeText) scripts.push(`<script data-board-effects>${effectsRuntimeText.replace(/<\/script/gi, "<\\/script")}\nBoardEffects.auto();</script>`);
+  return scripts.length ? `${scripts.join("\n")}\n${body}` : body;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -63,6 +63,7 @@ import { importFig } from "./fig-import.js";
 import { importWebsite } from "./web-import.js";
 import { describeAnchor, getComments, keysOf, reply, sentOnly, startThread, threadForAgent } from "./comments.js";
 import { SHADER_PRESETS, cleanShaderCode, cleanShaderParams, cleanShaderSpec, parseShaderParams, presetOf, shaderCatalog, shaderCode, shaderKey, shaderPresetName, shaderUsers, shaderValues, type ShaderSpec } from "./core.js";
+import { EFFECT_TYPES, cleanEffects, defaultEffect, effectsCatalog } from "./core.js";
 import { compileShaders, errorWords } from "./shader-check.js";
 
 type Content = CallToolResult["content"];
@@ -291,6 +292,13 @@ const ChangeSchema = z.discriminatedUnion("do", [
     y: z.number().optional(),
     name: z.string().optional(),
   }),
+  z.object({
+    do: z.literal("effects"),
+    id: z.string().describe("Layer to add, replace or clear optical/layer effects on (glass, pattern-refraction, lens-distortion, warp, moving-blobs, slice-shift, pixel-stretch, gooey-merge, bloom, bokeh-blur, gradient-map, color-adjust, pixelate, crt-screen, outlines, chromatic-metal)."),
+    effects: z.array(z.record(z.string(), z.unknown())).optional().describe("Full stack of effects to set on the layer (empty array clears them)."),
+    add: z.record(z.string(), z.unknown()).optional().describe('Append one effect (e.g. { type: "glass", refraction: 100, depth: 100, dispersion: 100, frost: 0 }).'),
+    remove: z.boolean().optional().describe("Remove all effects from this layer."),
+  }),
   z.object({ do: z.literal("detach"), id: z.string().describe("A copy of a component, to make ordinary layers.") }),
   z.object({ do: z.literal("reset"), id: z.string().describe("A copy (or a layer in one) to make match its component again.") }),
 ]);
@@ -507,7 +515,7 @@ export function registerBoardTools(server: McpServer) {
           return [text({ id: b.id, name: b.name, rev: b.rev, pages: s.pages, tokens: b.tokens, ...(b.shaders?.length ? { shaderPresets: b.shaders.map((x) => x.name) } : {}), layers: s.layers, editedAt: b.updatedAt, lastEditBy: b.by })];
         }
         if (what === "tokens") return [text(b.tokens.length ? b.tokens : "No tokens yet. Add one with board_edit { do: \"token\", name, value }.")];
-        if (what === "shaders") return [text(`Shader presets (board_edit { do: "shader", preset, params }, or <div data-shader="…" data-params='{…}'>). Each param: its range and default, or "colour", or its words.\n${shaderCatalog(b.shaders ?? [])}`)];
+        if (what === "shaders") return [text(`Shader presets (board_edit { do: "shader", preset, params }, or <div data-shader="…" data-params='{…}'>). Each param: its range and default, or "colour", or its words.\n${shaderCatalog(b.shaders ?? [])}\n\nOptical & layer effects (board_edit { do: "effects", id, add: { type: "glass", ... } }, or <div data-glass> / <div data-effects='[...]'>):\n${effectsCatalog()}`)];
         if (what === "html") return [text(ids.map((id) => nodeHtml(b, id, { ids: true })).join("\n\n") || "The page is empty.")];
         let out = ids.map((id) => treeText(b, id, a.depth ?? 4)).join("\n\n") || "The page is empty.";
         if (a.measure && ids.length) {
@@ -918,6 +926,22 @@ export function registerBoardTools(server: McpServer) {
             }
             case "shader": {
               results.push(await shaderChange(b, c, ops, need, touched));
+              break;
+            }
+            case "effects": {
+              const n = need(c.id);
+              if (c.remove || (c.effects && !c.effects.length)) {
+                ops.push({ op: "set", id: n.id, effects: null });
+                touched.push(n.id);
+                results.push({ removedEffects: n.id });
+                break;
+              }
+              const list = c.add ? [...(n.effects ?? []), c.add] : c.effects ?? [defaultEffect("glass")];
+              const cleaned = cleanEffects(list);
+              if (!cleaned) throw new Error(`No valid effects given. Available types: ${EFFECT_TYPES.join(", ")}.`);
+              ops.push({ op: "set", id: n.id, effects: cleaned });
+              touched.push(n.id);
+              results.push({ effects: n.id, count: cleaned.length, types: cleaned.map((e) => e.type) });
               break;
             }
             case "detach":

@@ -425,7 +425,21 @@ export function nodeHtml(n: FigmaNode, parent: FigmaNode | null, ctx: Ctx): stri
   // Placed by hand inside: this frame is what they're placed against.
   if (kids.some((c) => !(n.layoutMode && n.layoutMode !== "NONE") || c.layoutPositioning === "ABSOLUTE")) st.position ||= "relative";
   const inner = kids.map((c) => nodeHtml(c, n, ctx)).join("");
-  return `<div${name} style="${attr(css(st))}">${inner}</div>`;
+  const glassFx = (visible(n.effects) as any[]).find((e) => e.type === "GLASS");
+  const glassAttr = glassFx
+    ? ` data-glass="${attr(
+        JSON.stringify({
+          refraction: Math.round((glassFx.refraction ?? 0.8) * (glassFx.refraction > 1 ? 1 : 100)),
+          depth: Math.round((glassFx.depth ?? 0.65) * (glassFx.depth > 1 ? 1 : 100)),
+          dispersion: Math.round((glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.5) * ((glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.5) > 1 ? 1 : 100)),
+          frost: Math.round(Math.min(100, (glassFx.radius ?? glassFx.frost ?? 0) * 2)),
+          splay: Math.round((glassFx.splay ?? 0) * ((glassFx.splay ?? 0) > 1 ? 1 : 100)),
+          lightAngle: Math.round(glassFx.specularAngle ?? glassFx.lightAngle ?? -60),
+          lightIntensity: Math.round((glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8) * ((glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8) > 1 ? 1 : 100)),
+        }),
+      )}"`
+    : "";
+  return `<div${name}${glassAttr} style="${attr(css(st))}">${inner}</div>`;
 }
 
 // ---------------------------------------------------------------------------------------------

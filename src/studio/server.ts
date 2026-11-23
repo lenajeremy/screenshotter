@@ -412,10 +412,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
     res.end(readFileSync(file, "utf8").replace(/\n\/\/# sourceMappingURL=.*$/, ""));
     return;
   }
-  // Boards: the canvas works on boards with the engine's own core (HTML in and out, every change).
-  // (and its shader model, which it imports as ./shaders.js).
-  if (req.method === "GET" && (url.pathname === "/ui/board-core.js" || url.pathname === "/ui/shaders.js")) {
-    const name = url.pathname === "/ui/shaders.js" ? "shaders.js" : "core.js";
+  // Boards: the canvas works on boards with the engine's own core (HTML in and out, every change)
+  // and its pure shader & effects models (./shaders.js, ./effects.js).
+  if (req.method === "GET" && (url.pathname === "/ui/board-core.js" || url.pathname === "/ui/shaders.js" || url.pathname === "/ui/effects.js")) {
+    const name = url.pathname === "/ui/shaders.js" ? "shaders.js" : url.pathname === "/ui/effects.js" ? "effects.js" : "core.js";
     const file = [path.join(here, "..", "board", name), path.join(here, "..", "..", "dist", "board", name)].find((f) => existsSync(f));
     if (!file) throw new HttpError(404, "Not found");
     res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
