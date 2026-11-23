@@ -1508,6 +1508,109 @@ function sizeLabel(id, box) {
   return `${word("width", box.width)} × ${word("height", box.height)}`;
 }
 
+/**
+ * The spacing of a selected flex frame, on the canvas: a short bar in the middle of each side's padding
+ * and of each gap between its layers. Pointing at one shades the space it sets and shows its size;
+ * dragging it changes it (padding: ⌥ both sides, ⇧ all four).
+ */
+function SpacingHandles({ id, box, active }) {
+  const n = node(id);
+  const el = elOf(id);
+  if (!n || !el) return null;
+  const z = B.view.z;
+  const cs = getComputedStyle(el);
+  const px = (v) => parseFloat(v) || 0;
+  const bw = { top: px(cs.borderTopWidth), right: px(cs.borderRightWidth), bottom: px(cs.borderBottomWidth), left: px(cs.borderLeftWidth) };
+  const pad = { top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft) };
+  const inner = { x: box.x + bw.left * z, y: box.y + bw.top * z, width: box.width - (bw.left + bw.right) * z, height: box.height - (bw.top + bw.bottom) * z };
+  const spaces = [];
+  // Padding: only where there's room for a handle beside the resize handles.
+  const bands = {
+    top: { x: inner.x, y: inner.y, width: inner.width, height: pad.top * z },
+    bottom: { x: inner.x, y: inner.y + inner.height - pad.bottom * z, width: inner.width, height: pad.bottom * z },
+    left: { x: inner.x, y: inner.y, width: pad.left * z, height: inner.height },
+    right: { x: inner.x + inner.width - pad.right * z, y: inner.y, width: pad.right * z, height: inner.height },
+  };
+  for (const side of ["top", "bottom", "left", "right"]) {
+    // Beneath the resize handles, and only with room to stay clear of them.
+    if (pad[side] * z < 14 || inner.width < 48 || inner.height < 48) continue;
+    spaces.push({ key: `pad-${side}`, rect: bands[side], value: pad[side], across: side === "top" || side === "bottom" });
+  }
+  // Gaps between the layers in its flow (not when they're spread out, where the gap isn't what sets the space).
+  const row = !(n.style.flexDirection ?? "row").startsWith("column");
+  const spread = /space-/.test(n.style.justifyContent ?? "");
+  const gap = px(row ? cs.columnGap : cs.rowGap);
+  if (!spread) {
+    const kids = (n.children ?? []).filter((k) => { const kn = node(k); return kn && !kn.hidden && kn.style.position !== "absolute" && kn.style.position !== "fixed"; }).map((k) => screenBox(k)).filter(Boolean);
+    const content = { x: inner.x + pad.left * z, y: inner.y + pad.top * z, width: inner.width - (pad.left + pad.right) * z, height: inner.height - (pad.top + pad.bottom) * z };
+    for (let i = 0; i + 1 < kids.length; i++) {
+      const a = kids[i];
+      const c = kids[i + 1];
+      const r = row ? { x: a.x + a.width, y: content.y, width: c.x - (a.x + a.width), height: content.height } : { x: content.x, y: a.y + a.height, width: content.width, height: c.y - (a.y + a.height) };
+      // A wrapped line's first layer starts back at the beginning: that's not a gap to show.
+      if ((row ? r.width : r.height) < 6 || (row ? r.width : r.height) > gap * z + 2) continue;
+      spaces.push({ key: `gap-${i}`, rect: r, value: gap, across: !row, gap: true });
+    }
+  }
+  return spaces.map((sp) => {
+    const on = active && (active.which === sp.key || (sp.gap && active.which === "gap"));
+    const r = sp.rect;
+    const bar = sp.across ? { width: 16, height: 4 } : { width: 4, height: 16 };
+    return html`<div key=${sp.key} class="bd-space ${sp.gap ? "gap" : "pad"} ${on ? "on" : ""}">
+      <div class="bd-space-band" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>
+      <div class="bd-space-h" data-space=${sp.gap ? "gap" : sp.key} title=${sp.gap ? "Drag to change the gap" : "Drag to change the padding (⌥ both sides, ⇧ all four)"} style=${{ left: r.x + r.width / 2 - bar.width / 2 + "px", top: r.y + r.height / 2 - bar.height / 2 + "px", width: bar.width + "px", height: bar.height + "px", cursor: sp.across ? "ns-resize" : "ew-resize" }}></div>
+      <div class="bd-space-v" style=${{ left: r.x + r.width / 2 + "px", top: r.y + r.height / 2 + "px" }}>${Math.round(on ? active.value : sp.value)}</div>
+    </div>`;
+  });
+}
+
+/** Drag a spacing handle: the frame's gap, or one side of its padding (⌥ the opposite side too, ⇧ all four). */
+function spaceDrag(e, id, which) {
+  e.stopPropagation();
+  e.preventDefault();
+  const base = B.board;
+  const n = node(id);
+  const el = elOf(id);
+  if (!n || !el) return;
+  const cs = getComputedStyle(el);
+  const px = (v) => parseFloat(v) || 0;
+  const pad = { top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft) };
+  const row = !(n.style.flexDirection ?? "row").startsWith("column");
+  const gap0 = px(row ? cs.columnGap : cs.rowGap);
+  const opposite = { top: "bottom", bottom: "top", left: "right", right: "left" };
+  const z = B.view.z;
+  let ops = [];
+  drag(e, {
+    threshold: 0,
+    kind: "spacing",
+    move: (ev) => {
+      const dx = (ev.clientX - e.clientX) / z;
+      const dy = (ev.clientY - e.clientY) / z;
+      if (which === "gap") {
+        const v = Math.max(0, Math.round(gap0 + (row ? dx : dy)));
+        B.spacing = { which, value: v };
+        ops = [{ op: "set", id, style: { gap: `${v}px`, rowGap: null, columnGap: null } }];
+      } else {
+        const side = which.slice(4);
+        const d = side === "top" ? dy : side === "bottom" ? -dy : side === "left" ? dx : -dx;
+        const v = Math.max(0, Math.round(pad[side] + d));
+        const next = { ...pad, [side]: v };
+        if (ev.shiftKey) for (const k of Object.keys(next)) next[k] = v;
+        else if (ev.altKey) next[opposite[side]] = v;
+        B.spacing = { which, value: v };
+        ops = [{ op: "set", id, style: { padding: null, paddingTop: `${next.top}px`, paddingRight: `${next.right}px`, paddingBottom: `${next.bottom}px`, paddingLeft: `${next.left}px` } }];
+      }
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      B.spacing = null;
+      if (!moved || !ops.length) return notify();
+      B.board = base;
+      commit(ops, { label: which === "gap" ? "Gap" : "Padding" });
+    },
+  });
+}
+
 function Overlay() {
   // It follows everything: the view, the pointer, the selection.
   const b = useBoard();
@@ -1544,6 +1647,7 @@ function Overlay() {
     ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
     ${!busy && html`<${MaskLines} />`}
+    ${box && !locked && !b.editing && (!busy || busy === "spacing") && isFlex(node(one)) && html`<${SpacingHandles} id=${one} box=${box} active=${b.spacing} />`}
     ${box && !locked && !b.editing && !busy &&
     HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} style=${{ left: box.x + (h.includes("w") ? 0 : h.includes("e") ? box.width : box.width / 2) + "px", top: box.y + (h.includes("n") ? 0 : h.includes("s") ? box.height : box.height / 2) + "px" }}></div>`)}
     ${box && !b.editing && (!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}
@@ -1875,6 +1979,8 @@ function down(e) {
   if (B.tool === "comment") return comment(e);
   // Working on the design closes a comment's thread.
   if (B.thread || B.draft) closeThread();
+  const space = e.target.closest?.("[data-space]");
+  if (space && B.sel.length === 1) return spaceDrag(e, B.sel[0], space.dataset.space);
   const handle = e.target.closest?.("[data-handle]");
   if (handle && B.tool === "scale") return scaleDrag(e, handle.dataset.group ? B.sel.filter((id) => !node(id)?.locked) : B.sel.slice(0, 1), handle.dataset.handle);
   if (handle && handle.dataset.group) return resizeMany(e, B.sel.filter((id) => !node(id)?.locked), handle.dataset.handle);

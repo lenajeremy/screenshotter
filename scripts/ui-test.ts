@@ -675,6 +675,43 @@ const CHECKS: Record<string, Check> = {
     boards.deleteBoard(t.id);
     return verdict;
   },
+  async "spacing: a selected flex frame shows its padding and gaps on the canvas, and dragging them changes them"(page) {
+    const t = await openMaskBoard(page, DRAG_STAGE);
+    const column = t.byName("Column");
+    await sel(page, [column]);
+    await page.waitForTimeout(400);
+    const handles = await S(page, () => [...document.querySelectorAll(".bd-space-h")].map((h) => (h as HTMLElement).dataset.space));
+    const pads = handles.filter((h) => h!.startsWith("pad-")).sort().join();
+    const gaps = handles.filter((h) => h === "gap").length;
+    const k = (await boxOf(page, t.byName("Stage"))).width / 800;
+    const pull = async (sel: string, dx: number, dy: number, mod?: string) => {
+      const h = (await page.locator(sel).first().boundingBox())!;
+      await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+      if (mod) await page.keyboard.down(mod);
+      await page.mouse.down();
+      await page.mouse.move(h.x + h.width / 2 + dx / 2, h.y + h.height / 2 + dy / 2);
+      await page.mouse.move(h.x + h.width / 2 + dx, h.y + h.height / 2 + dy);
+      await page.waitForTimeout(80);
+      const shown = await S(page, () => document.querySelector(".bd-space.on .bd-space-v")?.textContent ?? "");
+      await page.mouse.up();
+      if (mod) await page.keyboard.up(mod);
+      await page.waitForTimeout(400);
+      return shown;
+    };
+    // Hovered: its space shaded and its size shown.
+    const g = (await page.locator('.bd-space-h[data-space="gap"]').first().boundingBox())!;
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await page.waitForTimeout(250);
+    await picture(page, "spacing-gap-hover");
+    const shownGap = await pull('.bd-space-h[data-space="gap"]', 0, 8 * k);
+    const gap = styleOf(t, column).gap;
+    const shownPad = await pull('.bd-space-h[data-space="pad-top"]', 0, 10 * k, "Alt");
+    const st = styleOf(t, column);
+    boards.deleteBoard(t.id);
+    if (pads !== "pad-bottom,pad-left,pad-right,pad-top" || gaps !== 2) return `handles: ${handles.join()}`;
+    if (gap !== "20px" || shownGap !== "20") return `the gap after dragging: ${gap} (shown ${shownGap})`;
+    return st.paddingTop === "26px" && st.paddingBottom === "26px" && st.paddingLeft === "16px" && shownPad === "26" ? "ok" : `padding after an ⌥-drag of the top: ${st.paddingTop} ${st.paddingRight} ${st.paddingBottom} ${st.paddingLeft} (shown ${shownPad})`;
+  },
   async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {
     const t = await openTestBoard(page);
     const one = await boxOf(page, t.byName("Row One"));
