@@ -1531,6 +1531,29 @@ const CHECKS: Record<string, Check> = {
     const told = /Couldn.t save/.test(String(await toasts(page)));
     return after.name === "Kept" && after.undo === 0 && told ? "ok" : `after a refusal: ${JSON.stringify(after)}, told ${told}`;
   },
+  async "a sticky note from the Assets panel: handwriting on the canvas, its words and pin in the Design panel"(page) {
+    const t = await openTestBoard(page);
+    await S(page, async () => (await import("/ui/board-state.js" as string)).select([]));
+    await page.locator(".bd-left-tabs button", { hasText: "Assets" }).click();
+    await page.waitForTimeout(400);
+    await page.locator(".bd-asset.shape", { hasText: "Sticky note" }).click();
+    await page.waitForTimeout(600);
+    const made = Object.values(boards.getBoard(t.id).nodes).find((n) => n.name === "Sticky note");
+    if (!made?.shape || made.shape.type !== "note") return "no sticky note landed on the page";
+    await page.waitForSelector(".bd-note-words");
+    await page.fill(".bd-note-words", "Swapped Inter for Geist everywhere");
+    await page.locator(".bd-right .dd-btn", { hasText: "Tape" }).click();
+    await page.locator(".menu-item", { hasText: "Pin" }).click();
+    await page.waitForTimeout(500);
+    const after = boards.getBoard(t.id).nodes[made.id];
+    const drawn = await S(page, (id: string) => {
+      const el = document.querySelector(`.bd-world [data-bid="${id}"]`);
+      const text = el?.querySelector("text");
+      return { family: text ? getComputedStyle(text).fontFamily : "", words: [...(el?.querySelectorAll("text") ?? [])].map((x) => x.textContent).join(" "), loaded: document.fonts.check("20px 'Gloria Hallelujah'") };
+    }, made.id);
+    const ok = after.shape?.text === "Swapped Inter for Geist everywhere" && after.shape?.attach === "pin" && /Gloria Hallelujah/.test(drawn.family) && /Geist/.test(drawn.words);
+    return ok ? "ok" : `words: ${after.shape?.text}, held by: ${after.shape?.attach}, drawn in: ${drawn.family}, shows: "${drawn.words}"`;
+  },
   async "on a board, assets from the rest of the app go into the selected frame, and filters apply"(page) {
     const t = await openTestBoard(page);
     const phone = t.byName("Phone");

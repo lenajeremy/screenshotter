@@ -2883,3 +2883,6 @@ button[data-clicked]:focus-visible, [role="tab"][data-clicked]:focus-visible { o
 .bd-app .bd-uses { height: 24px; font: 11px/16px var(--sans); color: var(--text-3); }
 .bd-app .bd-token .icon-btn.sm { width: 20px; height: 20px; color: var(--text-3); opacity: 0; }
 .bd-app .bd-token:hover .icon-btn.sm, .bd-app .bd-token .icon-btn.sm:focus-visible { opacity: 1; }
+
+/* A sticky note's words in the Design panel: a few lines, growing if pulled. */
+.bd-app .bd-note-words { display: block; width: 100%; height: auto; min-height: 62px; margin: 2px 0 8px; padding: 6px 8px; resize: vertical; line-height: 1.45; white-space: pre-wrap; }

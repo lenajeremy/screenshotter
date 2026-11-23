@@ -51,7 +51,7 @@ import {
 } from "./core.js";
 import { drawLayers } from "./render.js";
 import { builtinSvg, stickerNames, artNames } from "../render/images.js";
-import { SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
+import { NOTE_ATTACH, SHAPE_TYPES, shapeInBox } from "../render/shapes.js";
 import { cacheDir } from "../util/files.js";
 import { htmlToNodes, normalizeGridStyle, type BoardNode } from "./core.js";
 import { cssWithPhotos, isUnsplash, placePhotos, unsplashPicture } from "./photos.js";
@@ -91,7 +91,8 @@ export const BOARD_INSTRUCTIONS = `Boards (design and prototype UI before it's b
 - Masks, as in Figma: a layer used as a mask isn't drawn; the layers above it in its frame (after it, up to the next mask) show only where it is. Write one with data-mask on the element, at the back, with the layers to mask after it: <div style="position:relative;width:320px;height:320px"><div data-mask style="position:absolute;left:0;top:0;width:320px;height:320px;border-radius:50%;background:#000"></div><img style="position:absolute;left:0;top:0;width:320px;height:320px;object-fit:cover" src="…"></div>. Any layer can be the mask: a frame (its corners and fills: a gradient to transparent fades what's above it), a picture (its see-through parts), an svg, or words (the photo shows through the letters). data-mask="vector" masks by its outline, data-mask="luminance" by its brightness (white shows, black hides); plain data-mask is alpha. A mask and what it masks are placed by hand (position:absolute, left, top, width, height): in a flex or grid frame they go in a frame of their own (a mask group), which is one item of the layout. board_edit mask makes one from existing layers (several ids: a new mask group, the one at the back masking the rest), changes its type, or removes it; board_read tree marks masks and what each masks; hiding a mask shows its layers whole.
 - Video: <video src="/path/to/clip.mp4" autoplay loop muted style="width:…;height:…"> puts in a video layer (MP4, MOV or WebM; the attributes are how it plays in Preview, as HTML has them). Like Figma, the canvas shows its first frame until the person presses play, and board_screenshot and exports show that frame too. The person's screen recordings and exported videos are in Screenshotter's library folder (recordings/ and videos/). board_edit image with a video file replaces a video layer's video.
 - Real photos: <img src="unsplash:ramen bowl"> (or a CSS background of url(unsplash:skatepark)) puts in the top free Unsplash photo for those words, shaped to the layer; "unsplash:ramen bowl#2" takes the second. It searches with the key the person saved in Screenshotter's Settings › Photos, and the result names each photo's photographer: credit them where the design is shown.
-- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" for its stickers and illustrations; board_edit shape for its arrows, badges, laurels and ratings; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
+- Screenshotter's own assets work here too: <img src="sticker:heart"> or "art:squiggle" for its stickers and illustrations; board_edit shape for its arrows, badges, laurels, ratings and sticky notes; board_edit device to show a screenshot, or one of the board's artboards, in Apple's device frame. Blur and filters are CSS (filter, backdrop-filter).
+- Sticky notes: board_edit shape with type "note" puts a handwritten note on the page, signed with your name. Leave one beside the work to say what you're doing or why ("Three hero variations below. B keeps the photo."), in a sentence or two. A note is a layer on the board, not a comment, and it stays until someone moves or deletes it: take yours away when it no longer applies. Answer the person's comments with board_comment, never with a note.
 - Shaders: live graphics drawn by the GPU (WebGL fragment shaders), as a frame's fill: a moving hero backdrop, a texture, or a finish laid over a picture. Any frame can have one, drawn over its CSS fills and behind its layers, so a shader frame lays out like any frame (a grid cell, an item in a stack) and holds words and pictures over its shader. Built-in presets: ${SHADER_PRESETS.map((p) => p.id).join(", ")} (film-grain is see-through: as a fill it blends as Overlay with the frame's fills under it, a photo say). In HTML: <section data-shader="aurora" data-params='{"intensity":1.3}' style="display:flex;flex-direction:column;justify-content:center;padding:64px;height:560px;border-radius:24px"><h1 style="color:#fff">…</h1></section>, or one with nothing in it as a layer of its own (<div data-shader="mesh-gradient" style="width:400px;height:300px"></div>; <canvas data-shader="…"> works too); data-blend="overlay" mixes it with the frame's own fills. board_edit { do: "shader", id: aFrame, preset: "mesh-gradient", params: { color1: "var(--brand)", warp: 1.2 } } gives a frame one (or changes it; remove: true takes it away); without id it adds a new frame with one (into, width, height). board_read what "shaders" lists every preset's params (numbers with their ranges, colours, choices). It plays on the canvas and in Preview; board_screenshot and exports show it frozen at its time (time / data-time, in seconds): pick a moment that looks good. Writing your own: board_edit { do: "shader", code } or <canvas data-shader="custom"><script type="x-shader/x-fragment">…</script></canvas>. It's GLSL ES 1.00 (or "#version 300 es" first): a main() that sets gl_FragColor (Shadertoy's mainImage, iTime and iResolution work too), given uniform float uTime (seconds), vec2 uRes (the size drawn, in pixels) and float uPx (pixels per design pixel: gl_FragCoord.xy / uPx is in the design's px); precision is set for you. Declare each parameter as a uniform with a comment and the person gets a slider, a colour picker (with the board's tokens) or a choice for it: "uniform float uWarp; // @param 0..2 = 1", "uniform float uSpacing; // @param 4..40 = 12 px" (a length in design px, given to you in drawn px), "uniform vec3 uTint; // @color = #ff5a1f", "uniform int uMode; // @choice soft|hard = soft"; its key in params is its name without the u (warp, tint). Your code is compiled as you write it and errors come back with their line numbers: fix them and send the code again (until then the layer shows the error). savePreset keeps a good one on the board to place again by name. Keep shaders light (a few noise octaves, short loops): one too slow to play is stopped at its still and says so.
 - Comments: the person pins comments to layers or regions of a board and sends them to the agents that worked on it. One for you arrives as a message starting "(From Screenshotter)", with the board's and the comment's ids and the layers it's on. The person usually sends several at once, as one numbered list: make every change it asks for with the tools above, then answer each in its thread (board_comment's \`replies\` answers them all in one call); the person sees your reply by the comment and resolves it when they're happy. board_comments lists the open ones for you.`;
 
@@ -242,7 +243,11 @@ const ChangeSchema = z.discriminatedUnion("do", [
   }),
   z.object({
     do: z.literal("shape"),
-    type: z.enum(SHAPE_TYPES).describe("One of Screenshotter's shapes: an arrow or line, an ellipse or box (outlines), a triangle, star, number badge, laurel, rating, burst, ribbon, bubble or tag."),
+    type: z
+      .enum(SHAPE_TYPES)
+      .describe(
+        "One of Screenshotter's shapes: an arrow or line, an ellipse or box (outlines), a triangle, star, number badge, laurel, rating, burst, ribbon, bubble or tag; or a sticky note (note): a sentence or two in handwriting on coloured paper, signed with your name, that says what you're doing or why, beside the work (about 220×220). A note is a layer on the page, not a comment.",
+      ),
     width: z.number().positive(),
     height: z.number().positive(),
     into: z.string().optional().describe('A frame to put it in, or "page".'),
@@ -254,7 +259,11 @@ const ChangeSchema = z.discriminatedUnion("do", [
     fill: z.string().optional(),
     stroke: z.string().optional(),
     strokeWidth: z.number().optional().describe("In px."),
-    text: z.string().optional().describe("The words of a laurel, rating, burst, ribbon, bubble or tag."),
+    text: z.string().optional().describe("The words of a laurel, rating, burst, ribbon, bubble, tag or sticky note (\\n starts a new line on a note)."),
+    caption: z.string().optional().describe("A laurel's smaller line under its words. A sticky note's signature: yours unless you give another (\"\" for none)."),
+    attach: z.enum(NOTE_ATTACH).optional().describe("A sticky note: held on with tape (the default), a pin, or nothing."),
+    curl: z.boolean().optional().describe("A sticky note: its bottom corner curls up (the default)."),
+    tilt: z.number().min(-12).max(12).optional().describe("A sticky note: how far the paper is turned, in degrees (a degree or two either way unless set)."),
     label: z.string().optional().describe("A badge's number or letter."),
     labelColor: z.string().optional(),
     value: z.number().optional().describe("A rating's stars, 0–5."),
@@ -897,12 +906,19 @@ export function registerBoardTools(server: McpServer) {
               const where = placeFor(b, c, need);
               const { do: _d, width, height, into: _i, before: _b, after: _a, index: _ix, x, y, name, ...settings } = c;
               const shape = { ...settings } as Record<string, unknown>;
+              if (c.type === "note") {
+                if (!c.text?.trim()) throw new Error("A sticky note needs its words in `text`: what you're doing, or why.");
+                // Signed by whoever put it there, and turned its own way.
+                if (shape.caption === undefined) shape.caption = (await whoAmI()).name;
+                shape.seed = 1 + Math.floor(Math.random() * 997);
+                if (shape.fill === undefined) shape.fill = "#ffe682";
+              }
               const id = newId();
               const style: Record<string, string> = { width: `${width}px`, height: `${height}px`, flexShrink: "0" };
               const parentFlex = where.parent ? b.nodes[where.parent]?.style.display === "flex" : false;
               if (!where.parent) Object.assign(style, { left: `${Math.round(x ?? freeSpot(b, where.page!, width).left)}px`, top: `${Math.round(y ?? 0)}px` });
               else if (!parentFlex || x !== undefined) Object.assign(style, { position: "absolute", left: `${Math.round(x ?? 0)}px`, top: `${Math.round(y ?? 0)}px` });
-              const n: BoardNode = { id, type: "svg", name: name ?? c.type, parent: where.parent, shape, svg: shapeInBox(shape as never, width, height), style };
+              const n: BoardNode = { id, type: "svg", name: name ?? (c.type === "note" ? "Sticky note" : c.type), parent: where.parent, shape, svg: shapeInBox(shape as never, width, height), style };
               ops.push({ op: "add", nodes: { [id]: n }, ids: [id], parent: where.parent, page: where.page, index: where.index, place: !where.parent && x === undefined });
               touched.push(id);
               results.push({ shape: id, type: c.type });
