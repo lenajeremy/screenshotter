@@ -3,579 +3,168 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Screenshotter: design with your agent, and ship App Store screenshots</title>
-<meta name="description" content="A Mac app where your coding agent designs screens on a canvas of real HTML and CSS while you watch, and where your app becomes App Store screenshots and videos.">
-<meta property="og:title" content="Screenshotter: design with your agent, on one canvas">
-<meta property="og:description" content="Your coding agent designs screens in real HTML and CSS while you watch. Then your app becomes App Store screenshots and videos.">
-<meta name="theme-color" content="#0a0a0b">
+<title>Glassine: design with your team and your agents</title>
+<meta name="description" content="A Mac app where people and coding agents design together on one canvas of real HTML and CSS. Comment on a layer, and the agent that made it answers.">
+<meta property="og:title" content="Glassine: your team and your agents, designing on one canvas">
+<meta property="og:description" content="People and coding agents design together in real HTML and CSS. Comment on a layer, and the agent that made it answers.">
+<meta property="og:image" content="assets/glassine/editor-1440.webp">
+<meta name="theme-color" content="#111111">
 <link rel="icon" href="favicon.ico" sizes="48x48">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="manifest" href="site.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="site.css">
-<style>
-/* The landing page's own parts; the rest is in site.css. */
-
-/* ------------------------------------------------------------------ hero */
-.hero { position: relative; padding-top: clamp(56px, 9vw, 112px); }
-.hero::before { content: ""; position: absolute; inset: -64px 0 auto; height: 760px; z-index: -1; background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1.3px); background-size: 18px 18px; -webkit-mask-image: radial-gradient(50% 60% at 50% 30%, #000, transparent 75%); mask-image: radial-gradient(50% 60% at 50% 30%, #000, transparent 75%); }
-.hero-copy { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; }
-.news { display: inline-flex; align-items: center; gap: 10px; padding: 5px 12px 5px 5px; border: 1px solid var(--line-2); border-radius: 6px; font: 500 12.5px var(--mono); color: var(--text-2); transition: border-color 150ms ease, color 150ms ease; }
-.news:hover { border-color: var(--line-3); color: var(--text); }
-.news b { padding: 3px 7px; border-radius: 4px; background: var(--lime-soft); color: var(--lime); font-weight: 500; font-size: 11px; letter-spacing: 0.06em; }
-h1 { font: 600 clamp(46px, 7.4vw, 92px)/1 var(--sans); letter-spacing: -0.045em; }
-h1 span { color: var(--text-3); }
-.hero .sub { font-size: clamp(17px, 1.6vw, 20px); line-height: 1.5; color: var(--text-2); max-width: 31em; text-wrap: balance; }
-.ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 6px; }
-.fine { font: 500 12px var(--mono); color: var(--text-3); }
-.fine span + span::before { content: "·"; margin: 0 8px; color: var(--text-4); }
-.window { position: relative; margin: clamp(56px, 7vw, 80px) 0 0; padding: 8px; border: 1px solid var(--line-2); border-radius: 14px; background: var(--bg-2); }
-.window::before { content: ""; position: absolute; inset: -8% 12% 35%; z-index: -1; background: radial-gradient(50% 50% at 50% 50%, rgba(120, 140, 255, 0.16), transparent 70%); filter: blur(30px); }
-.window img { width: 100%; border-radius: 8px; }
-
-/* ------------------------------------------------------------------ capture bar drawing */
-.bar-art { container-type: inline-size; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 26px; }
-.sel { position: absolute; left: 16%; right: 16%; top: 58px; bottom: 88px; border: 1px dashed rgba(255, 255, 255, 0.35); border-radius: 2px; background: rgba(210, 255, 77, 0.025); }
-.sel i { position: absolute; width: 7px; height: 7px; background: var(--text); border-radius: 1px; }
-.sel i:nth-child(1) { left: -4px; top: -4px; } .sel i:nth-child(2) { right: -4px; top: -4px; } .sel i:nth-child(3) { left: -4px; bottom: -4px; } .sel i:nth-child(4) { right: -4px; bottom: -4px; }
-.kbd { position: absolute; left: 50%; top: 20px; translate: -50% 0; display: inline-flex; gap: 3px; }
-.kbd kbd { min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border: 1px solid var(--line-3); border-bottom-width: 2px; border-radius: 5px; font: 500 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--text-2); background: var(--bg-2); }
-.cbar { position: relative; z-index: 1; display: flex; align-items: center; gap: 0.25em; height: 3.9em; padding: 0 0.6em; border-radius: 1.2em; font-size: min(10px, 2.55cqw); background: rgba(18, 18, 20, 0.97); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 1.6em 3.2em -1em rgba(0, 0, 0, 0.9); color: rgba(255, 255, 255, 0.55); }
-.cbar .ib { width: 2.7em; height: 2.7em; display: grid; place-items: center; border-radius: 0.7em; }
-.cbar .ib.on { background: rgba(255, 255, 255, 0.14); color: #fff; }
-.cbar .ib svg { width: 1.6em; height: 1.6em; }
-.cbar .ib.mini { width: 2.2em; }
-.cbar .sep { width: 1px; height: 1.8em; background: rgba(255, 255, 255, 0.1); margin: 0 0.25em; }
-.cbar .go { width: 4.2em; height: 2.7em; display: grid; place-items: center; border-radius: 0.75em; background: var(--lime); color: var(--lime-ink); }
-.cbar .go svg { width: 1.5em; height: 1.5em; }
-
-/* ------------------------------------------------------------------ App Store */
-.flow { margin-block: auto; padding-top: 32px; display: grid; grid-template-columns: minmax(0, 0.2fr) auto minmax(0, 1fr); gap: 18px; align-items: center; }
-.flow img { border-radius: 10px; box-shadow: 0 0 0 1px var(--line-2); }
-.flow .raw { border-radius: 12px; }
-.flow .to { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line-3); border-radius: 50%; color: var(--lime); }
-@media (max-width: 560px) { .flow { grid-template-columns: minmax(0, 1fr); } .flow .raw { width: 36%; } .flow .to { transform: rotate(90deg); } }
-.reel { margin: auto auto -28px; padding-top: 28px; width: min(100%, 200px); }
-.reel video { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 14px 14px 0 0; box-shadow: 0 0 0 1px var(--line-3); background: #000; }
-@media (max-width: 560px) { .reel { margin-bottom: -22px; } }
-
-/* ------------------------------------------------------------------ Boards */
-.pic { margin: auto 0 -28px; padding-top: 28px; }
-.pic img { display: block; width: 100%; height: auto; border-radius: 10px 10px 0 0; box-shadow: 0 0 0 1px var(--line-2); }
-.pic.fill { flex: 1; min-height: 0; display: flex; }
-.pic.fill img { height: 100%; min-height: 280px; object-fit: cover; object-position: right top; }
-@media (max-width: 560px) { .pic { margin-bottom: -22px; } }
-
-/* ------------------------------------------------------------------ agent session */
-.sess { padding: 18px; font: 12.5px/1.6 var(--mono); }
-.sess .ln { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; color: var(--text-2); transition: opacity 300ms ease, transform 400ms var(--ease); }
-.sess .you { color: var(--text); padding-bottom: 10px; }
-.sess .you .pr { color: var(--lime); }
-.sess .st { width: 14px; flex: none; color: var(--lime); display: inline-grid; place-items: center; }
-.sess .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sess .nm b { color: var(--text); font-weight: 500; }
-.sess .tm { color: var(--text-3); font-variant-numeric: tabular-nums; }
-.sess .done { color: var(--text); padding-top: 8px; }
-.spin { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--line-3); border-top-color: var(--lime); animation: spin 700ms linear infinite; }
-@keyframes spin { to { transform: rotate(1turn); } }
-.sess.play .ln:not(.on) { opacity: 0; transform: translateY(4px); }
-
-
-/* ------------------------------------------------------------------ FAQ */
-.faq { display: grid; grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr); gap: 32px; }
-.faq .h2 { margin-bottom: 0; }
-.qa { border-top: 1px solid var(--line-2); }
-.qa details { border-bottom: 1px solid var(--line-2); }
-.qa summary { list-style: none; display: flex; align-items: center; gap: 16px; padding: 18px 0; font: 500 14px/1.5 var(--mono); cursor: pointer; }
-.qa summary::-webkit-details-marker { display: none; }
-.qa summary .pm { position: relative; flex: none; width: 20px; height: 20px; border: 1px solid var(--line-3); border-radius: 4px; }
-.qa summary .pm::before, .qa summary .pm::after { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 1.5px; background: var(--text-2); translate: -50% -50%; transition: rotate 250ms var(--ease); }
-.qa summary .pm::after { rotate: 90deg; }
-.qa details[open] summary .pm::after { rotate: 0deg; }
-.qa summary:hover .pm { border-color: #4a4a50; }
-.qa .a { padding: 0 0 22px 36px; color: var(--text-2); font-size: 15px; max-width: 44em; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.qa .a b { color: var(--text); font-weight: 500; }
-.qa .a .pre { position: relative; }
-.qa .a pre { margin: 0; padding: 12px 48px 12px 14px; border-radius: 6px; background: var(--bg-3); border: 1px solid var(--line-2); font-size: 12px; line-height: 1.7; color: var(--text-2); overflow-x: auto; }
-.qa .a .copy { top: 7px; right: 7px; width: 28px; height: 28px; }
-.qa .a a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-3); text-underline-offset: 3px; }
-@media (max-width: 760px) { .faq { grid-template-columns: minmax(0, 1fr); } .qa .a { padding-left: 0; } }
-
-</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&display=swap">
+<link rel="preload" as="image" href="assets/glassine/editor-1440.webp" imagesrcset="assets/glassine/editor-1440.webp 1440w, assets/glassine/editor-2880.webp 2880w" imagesizes="(min-width: 1280px) 1200px, calc(100vw - 32px)">
+<link rel="stylesheet" href="home.css">
 </head>
 <body>
 
-<header class="nav" id="top">
-  <div class="wrap">
-    <a class="brand" href="#top"><img src="favicon.svg" alt="" width="24" height="24">Screenshotter</a>
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#top" aria-label="Glassine, home"><img src="assets/icon.svg" alt="" width="24" height="24">Glassine</a>
     <nav class="links" aria-label="Sections">
-      <a href="#boards">Boards</a>
-      <a href="#how">Screenshots</a>
       <a href="#agents">Agents</a>
-      <a href="features.html">Features</a>
-      <a href="changelog.html">What's new</a>
+      <a href="#teams">Teams</a>
+      <a href="#pricing">Pricing</a>
+      <a href="changelog.html">Changelog</a>
     </nav>
     <a class="btn primary sm" href="#download">Download</a>
   </div>
 </header>
 
-<main>
-<!-- ============================================================ hero -->
-<section class="hero">
-  <div class="wrap">
+<main id="top">
+
+  <section class="hero">
     <div class="hero-copy">
-      <a class="news" href="changelog.html"><b>0.15</b>Shaders, grids and masks <span class="arrow" aria-hidden="true">→</span></a>
-      <h1>Design with your agent, <span>on one canvas.</span></h1>
-      <p class="sub">Your coding agent designs screens in real HTML and CSS while you watch, and answers your comments. Then turn your app into App Store screenshots and videos.</p>
+      <h1>Your team and your <span class="mark">agents,<span class="cursor claude hero-claude" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Claude Code <i>writing the headline</i></b></span></span> designing on one&nbsp;canvas.</h1>
+      <p class="sub">A Mac app where people and coding agents design together in real HTML and CSS. Comment on a layer, and the agent that made it answers.</p>
       <div class="ctas">
-        <a class="btn primary" href="downloads/Screenshotter.dmg">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.9A4.9 4.9 0 0 0 3.7 9.4c-1.8 3-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.5 1.3 0 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 0 0 1.4-2.9c0-.1-2.9-1.1-2.9-4Zm-2.5-7.3A4.4 4.4 0 0 0 14.9 2a4.5 4.5 0 0 0-3 1.5 4.2 4.2 0 0 0-1 3.1 3.7 3.7 0 0 0 3-1.3Z"/></svg>
-          Download for Mac
-        </a>
-        <a class="btn ghost" href="#boards">See Boards</a>
+        <a class="btn primary" href="downloads/Glassine.dmg">Download for Mac</a>
+        <a class="btn" href="#how">See it work</a>
+        <span class="cursor maya hero-maya" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Maya</b></span>
       </div>
-      <p class="fine"><span>Version 0.15.1</span><span>macOS 14+</span><span>Apple silicon</span></p>
+      <p class="fine">Free for one person · macOS 14 or later</p>
     </div>
-    <figure class="window rv">
-      <img src="assets/boards-editor.webp" alt="A board in Screenshotter: three phone artboards for a recipe app, its layers on the left, the selected screenshot's settings on the right, and an agent at work on the third artboard" width="2880" height="1800" fetchpriority="high">
+    <figure class="shot hero-shot">
+      <img src="assets/glassine/editor-1440.webp" srcset="assets/glassine/editor-1440.webp 1440w, assets/glassine/editor-2880.webp 2880w" sizes="(min-width: 1280px) 1200px, calc(100vw - 32px)" width="1440" height="900" alt="Glassine editing the Patchwork landing page: the layers on the left, the page on the canvas with Claude Code's cursor changing the headline and Maya's cursor by the button, the agent's chat with its three changes, and the Design panel on the right.">
     </figure>
-  </div>
-</section>
+  </section>
 
-<!-- ============================================================ boards -->
-<section class="sec" id="boards">
-  <div class="wrap">
-    <h2 class="h2 rv">Boards.<span>Where you and your agent design.</span></h2>
-    <div class="cells g3">
-      <article class="cell c2 rv">
-        <h3>A canvas of real HTML and CSS</h3>
-        <p>Draw artboards, nudge them and lay them out with flex, as in Figma; every layer is code you can ship.</p>
-        <div class="pic"><img src="assets/boards-canvas.webp" alt="Three phone artboards on a board, close up: two App Store screenshot designs and a recipe screen an agent is working on, with a row of chips selected" width="2880" height="1800" loading="lazy"></div>
-      </article>
-      <article class="cell rv">
-        <h3>Comment, and your agent answers</h3>
-        <p>Pin a comment to a layer and tag an agent: it gets the message and replies on the board.</p>
-        <div class="pic fill"><img src="assets/boards-comment.webp" alt="A comment on a headline asking an agent to make it warmer, and the agent's reply saying what it changed" width="800" height="952" loading="lazy"></div>
-      </article>
-    </div>
-    <div class="cells g3">
-      <article class="cell c2 rv">
-        <h3>Grids and masks, as in Figma</h3>
-        <p>Lay frames out on a real CSS grid, with spans and named areas, and show a picture through any shape, words included.</p>
-        <div class="pic"><img src="assets/boards-grid-masks.webp" alt="Six handmade ceramics in a grid, each photo masked into an arch, standing on kiln shelves" width="1200" height="1200" loading="lazy"></div>
-      </article>
-      <article class="cell rv">
-        <h3>Shaders, live</h3>
-        <p>Mesh gradients, grain, chrome and light as layers that move. Or have your agent write one.</p>
-        <div class="pic fill"><img src="assets/boards-shaders.webp" alt="Eight shaders: mesh gradient, liquid chrome, aurora, light rays, grain gradient, halftone, waves and contours" width="640" height="1380" loading="lazy"></div>
-      </article>
-    </div>
-    <div class="cells g3">
-      <article class="cell rv">
-        <h3>Follow your agent</h3>
-        <p>Each agent has a cursor that goes where it works. Click its face to follow along.</p>
-        <div class="pic fill"><img src="assets/boards-follow.webp" alt="An agent's cursor with its name on the row it is changing, and Following Design agent at the top of the canvas" width="612" height="660" loading="lazy"></div>
-      </article>
-      <article class="cell rv">
-        <h3>Bring in your website</h3>
-        <p>Type its address and it lands as layers to change, with its pictures and fonts.</p>
-      </article>
-      <article class="cell rv">
-        <h3>Comments go together</h3>
-        <p>Write as many as you like, then send: your agent gets one list, not a message a minute.</p>
-      </article>
-    </div>
-    <div class="cells g3">
-      <article class="cell rv">
-        <h3>Agents design while you watch</h3>
-        <p>Ask yours for a screen and it lands on the board change by change, each one a step you can undo.</p>
-      </article>
-      <article class="cell rv">
-        <h3>Preview it in the browser</h3>
-        <p><b>⌥⌘P</b> opens a frame as a live web page that updates as the board changes.</p>
-      </article>
-      <article class="cell rv">
-        <h3>Scale everything at once</h3>
-        <p><b>K</b> scales a layer with its type, padding, corners and shadows, all in proportion.</p>
-      </article>
-    </div>
-    <div class="cells g3">
-      <article class="cell rv">
-        <h3>Components and tokens</h3>
-        <p>Make a button once and place copies that follow it; name colours and sizes once and use them everywhere.</p>
-      </article>
-      <article class="cell rv">
-        <h3>Video, the Figma way</h3>
-        <p>Drop in an MP4: the canvas shows its first frame, and Preview plays it.</p>
-      </article>
-      <article class="cell rv">
-        <h3>A scratchpad for every idea</h3>
-        <p>One board that's always there, with a page per try. Tell your agent to use it.</p>
-      </article>
-    </div>
-  </div>
-</section>
+  <section class="agents" id="agents">
+    <p>Bring the coding agent you already use. It runs on your Mac, on your own subscription.</p>
+    <ul aria-label="Agents that work with Glassine">
+      <li><img src="assets/glassine/claude.svg" alt="" width="22" height="22">Claude Code</li>
+      <li><img src="assets/glassine/openai.svg" alt="" width="22" height="22">Codex</li>
+      <li><img src="assets/glassine/opencode.svg" alt="" width="22" height="22">opencode</li>
+      <li><img src="assets/glassine/antigravity.svg" alt="" width="22" height="22">Antigravity</li>
+      <li class="any">and any MCP agent</li>
+    </ul>
+  </section>
 
-<!-- ============================================================ how it works -->
-<section class="sec" id="how">
-  <div class="wrap">
-    <h2 class="h2 rv">App Store screenshots.<span>Capture, polish, export.</span></h2>
-    <div class="cells g3">
-      <article class="cell rv">
-        <span class="label"><b>01</b> · Capture</span>
-        <h3>Grab your screen</h3>
-        <p>Press ⌘⇧2 for a screenshot or a recording. Or bring in the iOS Simulator or a website.</p>
-        <div class="art bar-art dots" aria-hidden="true">
-          <div class="kbd"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>2</kbd></div>
-          <div class="sel"><i></i><i></i><i></i><i></i></div>
-          <div class="cbar">
-            <span class="ib mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/></svg></span>
-            <span class="sep"></span>
-            <span class="ib on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8M21 16v2.5a2.5 2.5 0 0 1-2.5 2.5H16M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/><rect x="7" y="9" width="10" height="7.5" rx="1.6"/><circle cx="12" cy="12.8" r="2"/></svg></span>
-            <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg></span>
-            <span class="sep"></span>
-            <span class="ib on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.4"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/></svg></span>
-            <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9h17"/></svg></span>
-            <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16v4"/></svg></span>
-            <span class="sep"></span>
-            <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8.5" width="13" height="11.5" rx="2"/><path d="M7.5 5.5h10a2.5 2.5 0 0 1 2.5 2.5v8.5"/></svg></span>
-            <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M10 14l5-5M11 9h4v4"/></svg></span>
-            <span class="go"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.2 4.5h5.6l1.4 2H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2h2.8l1.4-2Zm2.8 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></svg></span>
-            <span class="ib mini"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg></span>
-          </div>
-        </div>
-      </article>
-      <article class="cell rv">
-        <span class="label"><b>02</b> · Polish</span>
-        <h3>It opens looking finished</h3>
-        <p>Framed on a wallpaper, with rounded corners and a shadow. Add a device or a headline.</p>
-        <div class="art" aria-hidden="true">
-          <svg viewBox="0 0 360 208">
-            <defs>
-              <radialGradient id="wall" cx=".25" cy=".15" r="1"><stop offset="0" stop-color="#2c3d12"/><stop offset=".55" stop-color="#151a12"/><stop offset="1" stop-color="#0f1011"/></radialGradient>
-              <filter id="soft" x="-20%" y="-20%" width="140%" height="160%"><feGaussianBlur stdDeviation="9"/></filter>
-            </defs>
-            <rect x="44" y="12" width="272" height="168" rx="4" fill="url(#wall)" stroke="var(--line-3)"/>
-            <rect x="72" y="44" width="216" height="120" rx="10" fill="#000" opacity=".7" filter="url(#soft)"/>
-            <rect x="64" y="30" width="232" height="132" rx="9" fill="#141416" stroke="#2f2f34"/>
-            <path d="M64 50h232" class="s-line"/>
-            <circle cx="76" cy="40" r="2.5" class="s-dot"/><circle cx="84" cy="40" r="2.5" class="s-dot"/><circle cx="92" cy="40" r="2.5" class="s-dot"/>
-            <rect x="78" y="62" width="70" height="7" rx="3.5" class="s-sk"/>
-            <rect x="78" y="78" width="96" height="54" rx="6" class="s-sk2"/><rect x="182" y="78" width="96" height="54" rx="6" class="s-sk2"/>
-            <rect x="78" y="140" width="120" height="6" rx="3" class="s-sk2"/>
-            <path d="M44 96h20M44 91v10M64 91v10" stroke="var(--lime)"/>
-            <text x="54" y="114" class="t hi" text-anchor="middle">5%</text>
-            <path d="M278 30a18 18 0 0 1 18 18" fill="none" stroke="var(--lime)" stroke-width="1.5"/>
-            <text x="302" y="30" class="t hi">3%</text>
-            <text x="180" y="200" class="t" text-anchor="middle">SHADOW · WALLPAPER</text>
-          </svg>
-        </div>
-      </article>
-      <article class="cell rv">
-        <span class="label"><b>03</b> · Export</span>
-        <h3>Ready for the App Store</h3>
-        <p>Every size Apple asks for, as images or a preview video. Up to 4K.</p>
-        <div class="art" aria-hidden="true">
-          <svg viewBox="0 0 360 208">
-            <rect x="34" y="20" width="72" height="152" rx="10" class="s-fill"/>
-            <rect x="46" y="34" width="48" height="6" rx="3" class="s-sk"/><rect x="52" y="44" width="36" height="6" rx="3" fill="var(--lime)" opacity=".7"/>
-            <rect x="48" y="60" width="44" height="98" rx="9" fill="#18181b" stroke="var(--line-3)"/>
-            <rect x="132" y="44" width="100" height="128" rx="8" class="s-fill"/>
-            <rect x="152" y="58" width="60" height="6" rx="3" class="s-sk"/><rect x="162" y="68" width="40" height="6" rx="3" fill="var(--lime)" opacity=".7"/>
-            <rect x="150" y="84" width="64" height="76" rx="6" fill="#18181b" stroke="var(--line-3)"/>
-            <rect x="258" y="20" width="72" height="152" rx="10" class="s-fill"/>
-            <rect x="270" y="34" width="48" height="6" rx="3" class="s-sk"/>
-            <circle cx="294" cy="100" r="15" fill="var(--lime)" class="glow"/>
-            <path d="M289 92.5v15l12-7.5z" fill="var(--lime-ink)"/>
-            <rect x="270" y="156" width="48" height="3" rx="1.5" fill="#2a2a2e"/><rect x="270" y="156" width="20" height="3" rx="1.5" fill="var(--lime)"/>
-            <text x="70" y="194" class="t" text-anchor="middle">IPHONE</text>
-            <text x="182" y="194" class="t" text-anchor="middle">IPAD</text>
-            <text x="294" y="194" class="t" text-anchor="middle">VIDEO</text>
-          </svg>
-        </div>
-      </article>
+  <section class="feature" id="how">
+    <div class="words">
+      <span class="cursor codex" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Codex</b></span>
+      <h2>Ask for a screen. Watch it land.</h2>
+      <p>Your agent writes real HTML and CSS onto the canvas, change by change. Every change is a step you can undo, and its cursor shows you where it’s working.</p>
     </div>
-  </div>
-</section>
+    <figure class="shot">
+      <img src="assets/glassine/follow-1440.webp" srcset="assets/glassine/follow-1440.webp 1440w, assets/glassine/follow-2880.webp 2880w" sizes="(min-width: 1280px) 760px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="Following Codex on the Fern board: the canvas moves to the layers it is changing, outlined in its colour.">
+    </figure>
+  </section>
 
-<!-- ============================================================ recordings -->
-<section class="sec" id="record">
-  <div class="wrap">
-    <h2 class="h2 rv">Record your screen.<span>Edit it like Screen Studio.</span></h2>
-    <div class="cells g2">
-      <article class="cell rv">
-        <h3>Your camera, your voice</h3>
-        <p>A camera bubble you can drag and shape, with your mic and the Mac’s sound.</p>
-        <div class="art" aria-hidden="true">
-          <svg viewBox="0 0 440 250">
-            <defs>
-              <clipPath id="bubble"><circle cx="366" cy="172" r="42"/></clipPath>
-              <radialGradient id="limeGlow"><stop offset="0" stop-color="#d2ff4d" stop-opacity=".28"/><stop offset="1" stop-color="#d2ff4d" stop-opacity="0"/></radialGradient>
-            </defs>
-            <rect x="12" y="10" width="416" height="240" rx="10" class="s-fill"/>
-            <path d="M12 34h416" class="s-line"/>
-            <circle cx="28" cy="22" r="3.5" class="s-dot"/><circle cx="40" cy="22" r="3.5" class="s-dot"/><circle cx="52" cy="22" r="3.5" class="s-dot"/>
-            <path d="M118 34v216" class="s-line"/>
-            <rect x="26" y="50" width="76" height="8" rx="4" class="s-sk"/>
-            <rect x="26" y="68" width="60" height="8" rx="4" class="s-sk2"/>
-            <rect x="26" y="86" width="68" height="8" rx="4" class="s-sk2"/>
-            <rect x="26" y="104" width="52" height="8" rx="4" class="s-sk2"/>
-            <rect x="134" y="52" width="138" height="12" rx="6" class="s-sk"/>
-            <rect x="134" y="78" width="132" height="72" rx="8" class="s-sk2"/>
-            <rect x="278" y="78" width="132" height="72" rx="8" class="s-sk2"/>
-            <rect x="134" y="164" width="180" height="8" rx="4" class="s-sk2"/>
-            <circle cx="214" cy="114" r="17" class="ripple r2"/><circle cx="214" cy="114" r="9" class="ripple"/>
-            <path d="M214 114v17.5l4.7-4.5 3.5 7.8 3.1-1.4-3.4-7.6 6.5-.3z" class="cursor"/>
-            <circle cx="366" cy="172" r="62" fill="url(#limeGlow)"/>
-            <circle cx="366" cy="172" r="42" fill="#17171a"/>
-            <g clip-path="url(#bubble)"><circle cx="366" cy="160" r="14" fill="#3a3a41"/><ellipse cx="366" cy="208" rx="30" ry="24" fill="#3a3a41"/></g>
-            <circle cx="366" cy="172" r="42" fill="none" stroke="var(--lime)" stroke-width="2"/>
-            <rect x="150" y="208" width="138" height="28" rx="14" fill="#151518" stroke="var(--line-3)"/>
-            <circle cx="168" cy="222" r="4.5" fill="var(--red)"/>
-            <text x="180" y="225.5" class="t w" style="font-size:10px;letter-spacing:.04em">00:42</text>
-            <rect x="236" y="217" width="3" height="10" rx="1" fill="#cfcfd4"/><rect x="242" y="217" width="3" height="10" rx="1" fill="#cfcfd4"/>
-            <rect x="258" y="217" width="10" height="10" rx="2" fill="#cfcfd4"/>
-            <path d="M276 218l6 6M282 218l-6 6" stroke="#77777f" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </div>
-      </article>
-      <article class="cell rv">
-        <h3>Zoom in on clicks</h3>
-        <p>The view follows your clicks, calmly. Drag, change or delete any zoom.</p>
-        <div class="art" aria-hidden="true">
-          <svg viewBox="0 0 360 208">
-            <rect x="10" y="8" width="340" height="196" rx="8" class="s-fill"/>
-            <rect x="28" y="26" width="90" height="8" rx="4" class="s-sk"/>
-            <rect x="28" y="44" width="140" height="40" rx="6" class="s-sk2"/>
-            <rect x="28" y="96" width="120" height="7" rx="3.5" class="s-sk2"/>
-            <rect x="186" y="106" width="70" height="40" rx="6" class="s-sk2"/><rect x="264" y="106" width="70" height="40" rx="6" class="s-sk2"/>
-            <rect x="186" y="156" width="120" height="7" rx="3.5" class="s-sk2"/>
-            <rect x="22" y="20" width="156" height="90" rx="5" class="s-dash"/>
-            <rect x="174" y="92" width="168" height="94" rx="6" fill="none" stroke="var(--lime)" stroke-width="1.5" class="glow"/>
-            <rect x="174" y="74" width="64" height="15" rx="3" fill="var(--lime-soft)" stroke="rgba(210,255,77,.45)"/>
-            <text x="206" y="84.5" class="t hi" text-anchor="middle">ZOOM 1.8×</text>
-            <circle cx="220" cy="126" r="12" class="ripple r2"/><circle cx="220" cy="126" r="6" class="ripple"/><circle cx="220" cy="126" r="2.4" fill="var(--lime)"/>
-            <circle cx="298" cy="128" r="12" class="ripple r2"/><circle cx="298" cy="128" r="6" class="ripple"/><circle cx="298" cy="128" r="2.4" fill="var(--lime)"/>
-            <circle cx="244" cy="160" r="6" class="ripple"/><circle cx="244" cy="160" r="2.4" fill="var(--lime)"/>
-          </svg>
-        </div>
-      </article>
+  <section class="feature flip">
+    <div class="words">
+      <span class="cursor you" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>You</b></span>
+      <h2>Comment on a layer. Its agent answers.</h2>
+      <p>Pin a note to anything on the board. Send a few at once and the agent gets them as one list, then replies right where you left them.</p>
     </div>
-    <div class="cells g2">
-      <article class="cell rv">
-        <h3>Cursor effects</h3>
-        <p>A smooth cursor, sized as you like, with a ripple on every click.</p>
-        <div class="art" aria-hidden="true">
-          <svg viewBox="0 0 360 208">
-            <polyline points="28,170 40,160 50,168 62,150 74,156 86,138 100,145 112,128 126,134 138,116 152,122 164,104 178,111 190,94 204,100 216,84 230,90 242,74 256,80 270,64" fill="none" stroke="var(--text-4)" stroke-linejoin="round"/>
-            <path d="M28 182C120 178 190 128 290 70" fill="none" stroke="var(--lime)" stroke-width="2" class="glow"/>
-            <circle cx="290" cy="70" r="18" class="ripple r2"/><circle cx="290" cy="70" r="10" class="ripple"/>
-            <path d="M290 70v22l6-5.7 4.4 9.8 3.9-1.8-4.3-9.6 8.2-.4z" class="cursor"/>
-            <text x="28" y="140" class="t">RECORDED</text>
-            <text x="120" y="196" class="t hi">SMOOTHED</text>
-          </svg>
-        </div>
-      </article>
-      <article class="cell rv">
-        <h3>Cut on the timeline</h3>
-        <p><b>⌘B</b> to cut, <b>⌫</b> to remove. Sound, camera and zooms stay in sync.</p>
-        <div class="art" aria-hidden="true">
-          <svg viewBox="0 0 360 208">
-            <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0v6" stroke="#3a3a40" stroke-width="2"/></pattern></defs>
-            <g class="t"><text x="78" y="22">0S</text><text x="138" y="22">1S</text><text x="198" y="22">2S</text><text x="258" y="22">3S</text><text x="318" y="22">4S</text></g>
-            <path d="M76 30H348" class="s-line"/>
-            <text x="10" y="66" class="t">FOOTAGE</text>
-            <rect x="76" y="50" width="96" height="28" rx="4" fill="#1a1a1e" stroke="var(--line-3)"/>
-            <rect x="174" y="50" width="54" height="28" rx="4" fill="url(#hatch)" stroke="var(--text-4)" stroke-dasharray="3 3"/>
-            <text x="201" y="68" class="t w" text-anchor="middle" style="font-size:11px">⌫</text>
-            <rect x="230" y="50" width="118" height="28" rx="4" fill="#1a1a1e" stroke="var(--line-3)"/>
-            <text x="10" y="110" class="t">SOUND</text>
-            <g fill="#4a4a52">
-              <rect x="78" y="100" width="2" height="12" rx="1"/><rect x="84" y="96" width="2" height="20" rx="1"/><rect x="90" y="102" width="2" height="8" rx="1"/><rect x="96" y="94" width="2" height="24" rx="1"/><rect x="102" y="99" width="2" height="14" rx="1"/><rect x="108" y="97" width="2" height="18" rx="1"/><rect x="114" y="102" width="2" height="8" rx="1"/><rect x="120" y="95" width="2" height="22" rx="1"/><rect x="126" y="100" width="2" height="12" rx="1"/><rect x="132" y="98" width="2" height="16" rx="1"/><rect x="138" y="103" width="2" height="6" rx="1"/><rect x="144" y="96" width="2" height="20" rx="1"/><rect x="150" y="100" width="2" height="12" rx="1"/><rect x="156" y="98" width="2" height="16" rx="1"/><rect x="162" y="101" width="2" height="10" rx="1"/><rect x="168" y="99" width="2" height="14" rx="1"/>
-              <g opacity=".3"><rect x="180" y="98" width="2" height="16" rx="1"/><rect x="186" y="102" width="2" height="8" rx="1"/><rect x="192" y="96" width="2" height="20" rx="1"/><rect x="198" y="100" width="2" height="12" rx="1"/><rect x="204" y="97" width="2" height="18" rx="1"/><rect x="210" y="101" width="2" height="10" rx="1"/><rect x="216" y="99" width="2" height="14" rx="1"/><rect x="222" y="103" width="2" height="6" rx="1"/></g>
-              <rect x="234" y="99" width="2" height="14" rx="1"/><rect x="240" y="95" width="2" height="22" rx="1"/><rect x="246" y="101" width="2" height="10" rx="1"/><rect x="252" y="97" width="2" height="18" rx="1"/><rect x="258" y="100" width="2" height="12" rx="1"/><rect x="264" y="94" width="2" height="24" rx="1"/><rect x="270" y="99" width="2" height="14" rx="1"/><rect x="276" y="102" width="2" height="8" rx="1"/><rect x="282" y="97" width="2" height="18" rx="1"/><rect x="288" y="100" width="2" height="12" rx="1"/><rect x="294" y="96" width="2" height="20" rx="1"/><rect x="300" y="101" width="2" height="10" rx="1"/><rect x="306" y="98" width="2" height="16" rx="1"/><rect x="312" y="102" width="2" height="8" rx="1"/><rect x="318" y="99" width="2" height="14" rx="1"/><rect x="324" y="97" width="2" height="18" rx="1"/><rect x="330" y="100" width="2" height="12" rx="1"/><rect x="336" y="103" width="2" height="6" rx="1"/><rect x="342" y="99" width="2" height="14" rx="1"/>
-            </g>
-            <text x="10" y="152" class="t">ZOOMS</text>
-            <rect x="96" y="142" width="58" height="14" rx="4" fill="var(--lime-soft)" stroke="rgba(210,255,77,.5)"/>
-            <rect x="250" y="142" width="70" height="14" rx="4" fill="var(--lime-soft)" stroke="rgba(210,255,77,.5)"/>
-            <path d="M173 34V178" stroke="var(--lime)" stroke-width="1.5"/>
-            <rect x="155" y="178" width="36" height="18" rx="4" fill="var(--lime)"/>
-            <text x="173" y="190.5" class="t" text-anchor="middle" style="fill:var(--lime-ink);font-weight:600">⌘B</text>
-          </svg>
-        </div>
-      </article>
-    </div>
-  </div>
-</section>
+    <figure class="shot">
+      <img src="assets/glassine/comments-1440.webp" srcset="assets/glassine/comments-1440.webp 1440w, assets/glassine/comments-2880.webp 2880w" sizes="(min-width: 1280px) 760px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="A comment on the Keel board asking for the waterline to sit lower, and Claude Code's reply under it in the same thread.">
+    </figure>
+  </section>
 
-<!-- ============================================================ App Store -->
-<section class="sec" id="store">
-  <div class="wrap">
-    <h2 class="h2 rv">App Store ready.<span>Screenshots and preview videos.</span></h2>
-    <div class="cells g3">
-      <article class="cell c2 rv">
-        <h3>One screenshot in, finished designs out</h3>
-        <p>Pick a design made from your screenshot, in Apple’s own devices.</p>
-        <div class="flow">
-          <img class="raw" src="assets/raw-tonight.webp" alt="A plain screenshot of a recipe app" width="520" height="1131" loading="lazy">
-          <span class="to" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-          <img src="assets/recipes.webp" alt="The same screenshot as five finished designs: tilted in 3D, on a painting, a bold hero, a risograph print and an editorial layout" width="2000" height="687" loading="lazy">
-        </div>
-      </article>
-      <article class="cell rv">
-        <h3>Preview videos</h3>
-        <p>The same design, animated, at Apple’s preview sizes.</p>
-        <div class="reel"><video src="assets/motion-reel.mp4" poster="assets/motion-reel.poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A short preview video of a recipe app: the headline comes into focus word by word, a push to the next screen, then a tilted phone"></video></div>
-      </article>
-    </div>
-  </div>
-</section>
+  <section class="team" id="teams">
+    <span class="cursor maya" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Maya</b></span>
+    <h2>Your whole team, and every agent, on the same&nbsp;board.</h2>
+    <p>Team boards are live: you see each other’s cursors and each other’s agents at work. Invite people by email, and anyone on the team can edit.</p>
+    <figure class="shot wide">
+      <img src="assets/glassine/share-1440.webp" srcset="assets/glassine/share-1440.webp 1440w, assets/glassine/share-2880.webp 2880w" sizes="(min-width: 1360px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Keel board shared with the Northwind team: four people listed in the Share menu, and Maya's and Sam's cursors on the canvas.">
+    </figure>
+  </section>
 
-<!-- ============================================================ agents -->
-<section class="sec agents" id="agents">
-  <div class="wrap split">
-    <div class="rv">
-      <h2 class="h2">Add it to your agent.<span>Claude Code, Codex, OpenCode.</span></h2>
-      <p class="lead">One command, then ask it to design a screen on a board while you watch.</p>
-      <p class="lead">Or ask for App Store screenshots: it captures your app, designs the set and hands you the files.</p>
-      <p class="lead">Rather ask in the app? Press <kbd>⌘K</kbd>.</p>
-    </div>
-    <div class="agent-card rv">
-      <div class="box">
-        <div class="tabs" role="tablist" aria-label="Add Screenshotter to your agent">
-          <button role="tab" id="t-claude" aria-selected="true" aria-controls="p-claude"><i></i>Claude Code</button>
-          <button role="tab" id="t-codex" aria-selected="false" aria-controls="p-codex" tabindex="-1"><i></i>Codex</button>
-          <button role="tab" id="t-opencode" aria-selected="false" aria-controls="p-opencode" tabindex="-1"><i></i>OpenCode</button>
-        </div>
-        <div class="install" role="tabpanel" id="p-claude" aria-labelledby="t-claude">
-<pre><span class="k">claude mcp add</span> screenshotter <span class="f">--scope user --</span> \
-  <span class="p">/Applications/Screenshotter.app/Contents/MacOS/Screenshotter</span> <span class="k">mcp</span></pre>
-          <button class="copy" type="button" aria-label="Copy the command" data-copy="claude mcp add screenshotter --scope user -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp"><svg class="cp" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><svg class="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
-        </div>
-        <div class="install" role="tabpanel" id="p-codex" aria-labelledby="t-codex" hidden>
-<pre><span class="k">codex mcp add</span> screenshotter <span class="f">--</span> \
-  <span class="p">/Applications/Screenshotter.app/Contents/MacOS/Screenshotter</span> <span class="k">mcp</span></pre>
-          <p class="note">Then add <code>tool_timeout_sec = 600</code> under <code>[mcp_servers.screenshotter]</code> in <code>~/.codex/config.toml</code>, so videos have time.</p>
-          <button class="copy" type="button" aria-label="Copy the command" data-copy="codex mcp add screenshotter -- /Applications/Screenshotter.app/Contents/MacOS/Screenshotter mcp"><svg class="cp" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><svg class="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
-        </div>
-        <div class="install" role="tabpanel" id="p-opencode" aria-labelledby="t-opencode" hidden>
-<pre><span class="f">// ~/.config/opencode/opencode.json, inside "mcp"</span>
-<span class="s">"screenshotter"</span>: {
-  <span class="s">"type"</span>: <span class="s">"local"</span>,
-  <span class="s">"command"</span>: [
-    <span class="p">"/Applications/Screenshotter.app/Contents/MacOS/Screenshotter"</span>,
-    <span class="p">"mcp"</span>
-  ]
-}</pre>
-          <button class="copy" type="button" aria-label="Copy the settings" data-copy='"screenshotter": {
-  "type": "local",
-  "command": [
-    "/Applications/Screenshotter.app/Contents/MacOS/Screenshotter",
-    "mcp"
-  ]
-}'><svg class="cp" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><svg class="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
-        </div>
+  <section class="code">
+    <div class="code-head">
+      <div>
+        <span class="cursor claude" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Claude Code</b></span>
+        <h2>Every layer is code you can ship.</h2>
       </div>
-      <div class="box sess" data-term aria-label="An agent making App Store screenshots with Screenshotter">
-        <div class="ln you"><span class="pr">›</span><span>Make App Store screenshots of Mise</span></div>
-        <div class="ln call"><span class="st">✓</span><span class="nm"><b>capture_screenshot</b> ×5</span><span class="tm">12.6s</span></div>
-        <div class="ln call"><span class="st">✓</span><span class="nm"><b>create_mockup_set</b></span><span class="tm">11.8s</span></div>
-        <div class="ln done"><span class="st">✓</span><span>Five screenshots, 1320 × 2868</span></div>
-      </div>
+      <p>Select anything and copy its HTML and CSS. Bring in a live website or a Figma file, and it arrives as layers you can change.</p>
     </div>
-  </div>
-</section>
+    <div class="pair">
+      <figure class="shot">
+        <img src="assets/glassine/code-1440.webp" srcset="assets/glassine/code-1440.webp 1440w, assets/glassine/code-2880.webp 2880w" sizes="(min-width: 1360px) 648px, (min-width: 800px) 50vw, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Code tab showing the selected button as HTML with its styles inline, ready to copy.">
+        <figcaption><b>The Code tab.</b> The selection as HTML, with its styles inline.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/glassine/import-1440.webp" srcset="assets/glassine/import-1440.webp 1440w, assets/glassine/import-2880.webp 2880w" sizes="(min-width: 1360px) 648px, (min-width: 800px) 50vw, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="Import a website, with linear.app typed in and the page width set to Desktop.">
+        <figcaption><b>Import.</b> Any website, read at desktop, tablet or phone width.</figcaption>
+      </figure>
+    </div>
+  </section>
 
-<!-- ============================================================ download -->
-<section class="sec" id="download">
-  <div class="wrap">
-    <div class="get rv">
-      <div class="side">
-        <a href="changelog.html">What’s new in 0.15 <span class="arrow" aria-hidden="true">→</span></a>
-        <a href="features.html">Everything it does <span class="arrow" aria-hidden="true">→</span></a>
-      </div>
-      <a class="big" href="downloads/Screenshotter.dmg">
-        <span><strong>Download Screenshotter for Mac</strong><small>Notarized by Apple · updates itself</small></span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12M6.5 10.5 12 16l5.5-5.5M5 20h14"/></svg>
-      </a>
+  <section class="pricing" id="pricing">
+    <h2>Free for you. Paid for teams.</h2>
+    <p class="sub">Your agents use their own accounts. Glassine never sees your keys.</p>
+    <div class="plans">
+      <article class="plan">
+        <h3>Free</h3>
+        <p class="price">$0</p>
+        <p class="for">For one person and their agents</p>
+        <ul>
+          <li>Unlimited boards</li>
+          <li>Any agent on your Mac</li>
+          <li>Import websites and Figma files</li>
+          <li>Export images and HTML</li>
+        </ul>
+        <a class="btn" href="downloads/Glassine.dmg">Download for Mac</a>
+      </article>
+      <article class="plan team-plan">
+        <h3>Team</h3>
+        <p class="price">$16</p>
+        <p class="for">A person a month, billed yearly. $20 billed monthly.</p>
+        <ul>
+          <li>Everything in Free</li>
+          <li>Live team boards, with everyone’s cursors</li>
+          <li>Comments for your team and its agents</li>
+          <li>Invites and roles</li>
+        </ul>
+        <a class="btn primary" href="#download">Start a team</a>
+        <span class="cursor maya" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Maya</b></span>
+      </article>
     </div>
-    <p class="dl-meta"><span>Version 0.15.1</span><span>68 MB</span><span>macOS 14+</span><span>Apple silicon</span></p>
-  </div>
-</section>
+  </section>
 
-<!-- ============================================================ FAQ -->
-<section class="sec" id="faq">
-  <div class="wrap faq">
-    <h2 class="h2 rv">Questions.<span>Answered.</span></h2>
-    <div class="qa rv">
-      <details>
-        <summary><span class="pm" aria-hidden="true"></span>What does it need?</summary>
-        <div class="a"><p>A Mac with Apple silicon on macOS 14 or later, and <b>Chrome, Edge, Brave or Arc</b>, which it uses to draw designs. Everything else is inside the app.</p></div>
-      </details>
-      <details>
-        <summary><span class="pm" aria-hidden="true"></span>Does Ask AI need an API key?</summary>
-        <div class="a"><p>Not if Claude Code or Codex is signed in on your Mac. An Anthropic API key works too.</p></div>
-      </details>
-      <details>
-        <summary><span class="pm" aria-hidden="true"></span>How do updates work?</summary>
-        <div class="a"><p>It checks once a day and installs a new version in one click. Every update is signed and notarized by Apple.</p></div>
-      </details>
-      <details>
-        <summary><span class="pm" aria-hidden="true"></span>Can I build it from source?</summary>
-        <div class="a">
-          <div class="pre"><pre>npm install &amp;&amp; npm run app:build &amp;&amp; open build/Screenshotter.app</pre><button class="copy" type="button" aria-label="Copy the command" data-copy="npm install && npm run app:build && open build/Screenshotter.app"><svg class="cp" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><svg class="ok" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button></div>
-          <p>The app’s ffmpeg is GPL; its source is beside each release: <a href="downloads/sources/ffmpeg-8.1.3.tar.xz">ffmpeg</a>, <a href="downloads/sources/x264-b35605ace3dd.tar.gz">x264</a>, <a href="downloads/sources/libvpx-6df3ec345578.tar.gz">libvpx</a>, <a href="downloads/sources/opus-1.6.1.tar.gz">Opus</a>.</p>
-        </div>
-      </details>
+  <section class="end" id="download">
+    <h2>Design with your team and your agents.</h2>
+    <div class="gather">
+      <a class="btn primary lg" href="downloads/Glassine.dmg">Download for Mac</a>
+      <span class="cursor you g1" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>You</b></span>
+      <span class="cursor claude g2" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Claude Code</b></span>
+      <span class="cursor maya g3" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Maya</b></span>
+      <span class="cursor codex g4" aria-hidden="true"><svg viewBox="0 0 18 20"><path d="M1.5 1.5l13.6 7.1-6 1.4-2.9 5.8z"/></svg><b>Codex</b></span>
     </div>
-  </div>
-</section>
+    <p class="fine">Free for one person · macOS 14 or later</p>
+  </section>
+
 </main>
 
-<footer>
-  <div class="wrap">
-    <div class="row">
-      <a class="brand" href="#top"><img src="favicon.svg" alt="" width="24" height="24">Screenshotter</a>
-      <nav aria-label="Footer"><a href="features.html">Features</a><a href="changelog.html">What’s new</a><a href="#agents">For agents</a><a href="downloads/Screenshotter.dmg">Download</a></nav>
-    </div>
-    <div class="small"><span>Every image here was made with Screenshotter. Mise is a made-up app; its food photos are from <a href="https://unsplash.com">Unsplash</a>.</span><span>Version 0.15.1</span></div>
-  </div>
+<footer class="foot">
+  <a class="brand" href="#top"><img src="assets/icon.svg" alt="" width="20" height="20">Glassine</a>
+  <nav aria-label="Footer"><a href="changelog.html">Changelog</a><a href="#pricing">Pricing</a><a href="downloads/Glassine.dmg">Download</a></nav>
 </footer>
 
-<script src="site.js"></script>
-<script>
-(() => {
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const $ = (s, el = document) => el.querySelector(s);
-  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  // The agent session plays once: the request, each tool call with a spinner, then the result.
-  const term = $("[data-term]");
-  if (term && !reduced && "IntersectionObserver" in window) {
-    const lines = $$(".ln", term), calls = $$(".call", term);
-    const times = calls.map((c) => c.querySelector(".tm").textContent);
-    term.classList.add("play");
-    calls.forEach((c) => { c.querySelector(".st").innerHTML = '<span class="spin"></span>'; c.querySelector(".tm").textContent = ""; });
-    const run = async () => {
-      await wait(400);
-      lines[0].classList.add("on");
-      await wait(700);
-      for (const [i, c] of calls.entries()) {
-        c.classList.add("on");
-        await wait(800 + i * 200);
-        c.querySelector(".st").textContent = "✓";
-        c.querySelector(".tm").textContent = times[i];
-        await wait(160);
-      }
-      lines.slice(calls.length + 1).forEach((l) => l.classList.add("on"));
-    };
-    new IntersectionObserver(([e], o) => { if (e.isIntersecting) { o.disconnect(); run(); } }, { threshold: 0.4 }).observe(term);
-  }
-})();
-</script>
+<script src="home.js" defer></script>
 </body>
 </html>
