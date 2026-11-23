@@ -266,6 +266,9 @@ async function openGridBoard(page: Page) {
   const byName = (name: string) => Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === name)!.id;
   return { id: b.id, byName };
 }
+/** An artboard laid out by hand holding a flex column (a stretched title, a flex box with a layer and words in it, a footer) and a loose layer. */
+const DRAG_STAGE = `<div data-name="Stage" style="position:relative;width:800px;height:600px;background:#ffffff"><div data-name="Column" style="position:absolute;left:40px;top:40px;width:320px;display:flex;flex-direction:column;gap:12px;padding:16px;background:#eeeeee"><div data-name="Title" style="height:40px;background:#ff9999"></div><div data-name="Box" style="display:flex;align-items:center;gap:8px;padding:8px;height:60px;background:#99ccff"><div data-name="Inner" style="width:40px;height:40px;background:#003366"></div><p data-name="Words" style="margin:0;font-size:14px">Some words</p></div><div data-name="Footer" style="height:30px;background:#99cc99"></div></div><div data-name="Loose" style="position:absolute;left:500px;top:300px;width:80px;height:50px;background:#ffcc33"></div></div>`;
+
 /** A board with one artboard written from `html`, open on the page; `byName` finds a layer's id. */
 async function openMaskBoard(page: Page, htmlText: string) {
   const b = boards.createBoard("Mask test board", "studio");
@@ -575,6 +578,102 @@ const CHECKS: Record<string, Check> = {
     if (!even.radius) return "corners that differ don't show each corner";
     await picture(page, "padding-two-fields");
     return "ok";
+  },
+  async "selection: a double-click goes one level deeper at a time; on words it goes straight into them"(page) {
+    const t = await openMaskBoard(page, DRAG_STAGE);
+    const inner = await boxOf(page, t.byName("Inner"));
+    const names = () => S(page, async () => { const m = await import("/ui/board-state.js" as string); return { sel: m.B.sel.map((id: string) => m.B.board.nodes[id].name).join(), editing: Boolean(m.B.editing) }; });
+    await page.mouse.click(inner.x + 20, inner.y + 20);
+    const first = (await names()).sel;
+    await page.mouse.dblclick(inner.x + 20, inner.y + 20);
+    await page.waitForTimeout(250);
+    const second = (await names()).sel;
+    await page.mouse.dblclick(inner.x + 20, inner.y + 20);
+    await page.waitForTimeout(250);
+    const third = (await names()).sel;
+    await sel(page, []);
+    const words = await boxOf(page, t.byName("Words"));
+    await page.mouse.dblclick(words.x + 6, words.y + words.height / 2);
+    await page.waitForTimeout(300);
+    const w = await names();
+    await page.keyboard.press("Escape");
+    boards.deleteBoard(t.id);
+    return first === "Column" && second === "Box" && third === "Inner" && w.sel === "Words" && w.editing ? "ok" : `click: ${first}, then ${second}, then ${third}; on the words: ${w.sel} (typing: ${w.editing})`;
+  },
+  async "dragging: out of a flex frame onto its artboard, into a frame inside the same flex frame, off the artboard, and a loose layer into the flow"(page) {
+    const drag = async (from: { x: number; y: number }, to: { x: number; y: number }, rest = 0) => {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      for (let k = 1; k <= 12; k++) await page.mouse.move(from.x + ((to.x - from.x) * k) / 12, from.y + ((to.y - from.y) * k) / 12);
+      if (rest) {
+        await page.waitForTimeout(rest);
+        await page.mouse.move(to.x + 1, to.y + 1);
+      }
+      await page.waitForTimeout(100);
+      await page.mouse.up();
+      await page.waitForTimeout(600);
+    };
+    const mid = (b: { x: number; y: number; width: number; height: number }) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+    const t = await openMaskBoard(page, DRAG_STAGE);
+    const stage = t.byName("Stage");
+    const column = t.byName("Column");
+    const box = t.byName("Box");
+    const title = t.byName("Title");
+    const footer = t.byName("Footer");
+    const loose = t.byName("Loose");
+    // Room around the artboard to drop things off it.
+    await S(page, async () => { const m = await import("/ui/board-state.js" as string); m.bset({ view: { ...m.B.view, z: m.B.view.z * 0.6 } }); });
+    await page.waitForTimeout(400);
+    const sb = await boxOf(page, stage);
+    const canvas = (await page.locator(".bd-canvas").boundingBox())!;
+    const k = sb.width / 800;
+    // 1. The title (as wide as the column, by stretching) out onto open artboard space: same size, where dropped.
+    await sel(page, [title]);
+    await page.waitForTimeout(200);
+    const tb = await boxOf(page, title);
+    await drag({ x: tb.x + 20, y: tb.y + 10 }, { x: sb.x + 470 * k, y: sb.y + 480 * k });
+    const t1 = nodeOf(t, title);
+    const out = t1.parent === stage && t1.style.position === "absolute" && t1.style.width === "288px" && Math.abs(parseFloat(t1.style.left!) - (470 - 20 / k)) <= 3 && Math.abs(parseFloat(t1.style.top!) - (480 - 10 / k)) <= 3;
+    // 2. The footer onto the box beside it in the same column, resting there a moment: into the box.
+    await sel(page, [footer]);
+    await page.waitForTimeout(200);
+    const fb = await boxOf(page, footer);
+    await drag({ x: fb.x + 30, y: fb.y + fb.height / 2 }, mid(await boxOf(page, box)), 600);
+    // It filled the column's width; in the box (a row) it fills along the row, so it still shows.
+    const footerDrawn = await boxOf(page, footer);
+    const nested = nodeOf(t, footer).parent === box && footerDrawn.width > 20;
+    // 3. The loose layer off the artboard: a layer of its own on the page, the same size.
+    const lb = await boxOf(page, loose);
+    await sel(page, [loose]);
+    await page.waitForTimeout(200);
+    await drag(mid(lb), { x: Math.min(sb.x + sb.width + 80, canvas.x + canvas.width - 30), y: lb.y + lb.height / 2 });
+    const l1 = nodeOf(t, loose);
+    const onPage = l1.parent === null && boards.getBoard(t.id).pages[0].children.includes(loose) && l1.style.width === "80px" && !l1.style.position;
+    // 4. Back from the page into the column's flow, between its layers: it joins the flow.
+    const lb2 = await boxOf(page, loose);
+    const cb = await boxOf(page, column);
+    const bx = await boxOf(page, box);
+    await sel(page, [loose]);
+    await page.waitForTimeout(200);
+    await drag(mid(lb2), { x: cb.x + cb.width / 2, y: bx.y - 3 });
+    const l2 = nodeOf(t, loose);
+    const joined = l2.parent === column && !l2.style.position && !l2.style.left && childNames(t, column).startsWith("Loose");
+    const drawn = await boxOf(page, loose);
+    await picture(page, "drag-into-flow");
+    const name = (id: string | null) => (id ? boards.getBoard(t.id).nodes[id]?.name : "the page");
+    const verdict = !out
+      ? `out onto the artboard: in ${name(t1.parent)}, ${JSON.stringify({ position: t1.style.position, width: t1.style.width, left: t1.style.left, top: t1.style.top })}`
+      : !nested
+        ? `the footer went into ${name(nodeOf(t, footer).parent)}, not the box beside it`
+        : !onPage
+          ? `off the artboard: in ${name(l1.parent)}, width ${l1.style.width}, position ${l1.style.position}`
+          : !joined
+            ? `into the flow: in ${name(l2.parent)}, position ${l2.style.position}, order ${childNames(t, column)}`
+            : Math.abs(drawn.width - 80 * k) <= 2
+              ? "ok"
+              : `it joined the flow ${drawn.width / k}px wide`;
+    boards.deleteBoard(t.id);
+    return verdict;
   },
   async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {
     const t = await openTestBoard(page);
