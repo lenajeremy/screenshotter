@@ -74,19 +74,20 @@ export function ImportWebsite() {
     <div class="sheet web-import" role="dialog" aria-label="Import a website">
       <div class="sheet-head"><h2>Import a website</h2><button class="icon-btn" title="Close (Esc)" disabled=${Boolean(busy)} onClick=${() => set({ modal: null })}><${Icon} n="x" s=${16} /></button></div>
       <div class="sheet-body">
-        <p class="note">It comes in as an artboard of layers you can change: its layout, words, pictures and fonts. ${m.board ? "It goes beside the artboards on this board." : "It gets a board of its own."}</p>
         <label class="wi-url ${busy ? "off" : ""}">
           <${Icon} n="globe" s=${15} />
-          <input ref=${field} autofocus class="input grow" type="url" inputmode="url" placeholder="example.com" spellcheck=${false} autocomplete="off" value=${url} disabled=${Boolean(busy)} onInput=${(e) => setUrl(e.target.value)} onKeyDown=${onKey} aria-label="Website address" />
+          <input ref=${field} autofocus class="wi-field" type="url" inputmode="url" placeholder="example.com" spellcheck=${false} autocomplete="off" value=${url} disabled=${Boolean(busy)} onInput=${(e) => setUrl(e.target.value)} onKeyDown=${onKey} aria-label="Website address" />
         </label>
-        <div class="row"><label>Read it at</label><${Seg} value=${width} options=${WIDTHS} onChange=${(v) => !busy && setWidth(v)} /></div>
-        <div class="row"><label></label><${Switch} checked=${whole} onChange=${(v) => !busy && setWhole(v)} label="The whole page, not just the first screen" /></div>
+        <div class="wi-opts">
+          <div class="wi-opt"><div><b>Width</b><span>The size the page is read at</span></div><${Seg} value=${width} options=${WIDTHS} onChange=${(v) => !busy && setWidth(v)} /></div>
+          <div class="wi-opt"><div><b>Whole page</b><span>Everything, not just the first screen</span></div><${Switch} checked=${whole} onChange=${(v) => !busy && setWhole(v)} /></div>
+        </div>
         ${busy
           ? html`<div class="wi-progress" aria-live="polite">
               <div class="wi-bar"><i style=${{ width: `${Math.round(busy.fraction * 100)}%` }}></i></div>
               <span>${busy.step}…</span>
             </div>`
-          : html`<p class="note faint">Only bring in sites you have the right to use. Pages behind a sign-in come in as the browser sees them signed out.</p>`}
+          : html`<p class="wi-fine">It comes in as layers you can change${m.board ? ", beside the artboards on this board" : ", on a board of its own"}. Only bring in sites you have the right to use.</p>`}
       </div>
       <div class="sheet-foot">
         <button class="btn" disabled=${Boolean(busy)} onClick=${() => set({ modal: null })}>Cancel</button>

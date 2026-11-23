@@ -2,6 +2,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { Popover, html } from "./controls.js";
 import { Icon } from "./icons.js";
+import { Avatar, TeamMark } from "./avatars.js";
 import { B } from "./board-state.js";
 import { api, set, toast, useStore } from "./store.js";
 
@@ -45,9 +46,9 @@ export function SharePopover({ anchor, onClose }) {
             ${err && html`<p class="share-err" role="alert">${err}</p>`}
             <div class="share-list">
               <p>Who can open this</p>
-              <div class="share-row"><i class="gate-team sm">${(live.teamName || "T")[0].toUpperCase()}</i><div class="grow"><b>Everyone at ${live.teamName || "the team"}</b><span>${details ? `${details.members.length} ${details.members.length === 1 ? "person" : "people"}` : "Loading…"}</span></div><em>Can edit</em></div>
+              <div class="share-row"><${TeamMark} team=${{ id: live.teamId, name: live.teamName }} cls="gate-team sm" /><div class="grow"><b>Everyone at ${live.teamName || "the team"}</b><span>${details ? `${details.members.length} ${details.members.length === 1 ? "person" : "people"}` : "Loading…"}</span></div><em>Can edit</em></div>
               ${(details?.members ?? []).slice(0, 5).map((m) => html`<div class="share-row" key=${m.id}>
-                ${m.user?.image ? html`<img class="cloud-av" src=${m.user.image} alt="" />` : html`<span class="cloud-av">${(m.user?.name || m.user?.email || "?").trim()[0].toUpperCase()}</span>`}
+                <${Avatar} user=${m.user} />
                 <div class="grow"><b>${m.user?.name || m.user?.email}${m.user?.email === me?.email && html`<small> (you)</small>`}</b><span>${m.user?.email}</span></div>
                 <em>${m.role === "owner" ? "Owner" : "Can edit"}</em>
               </div>`)}

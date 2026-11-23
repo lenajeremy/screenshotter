@@ -35,6 +35,8 @@ const ENV: Record<string, string> = {
   SCREENSHOTTER_CACHE_DIR: path.join(tmp, "cache"),
   SCREENSHOTTER_AGENTMAN_SOCKET: path.join(tmp, "none.sock"),
   SCREENSHOTTER_NO_KEYCHAIN: "1",
+  // The shell is what's checked here; signing in has its own check in the UI's tests.
+  SCREENSHOTTER_NO_ACCOUNT: "1",
   SCREENSHOTTER_NO_SHELL_ENV: "1",
   SCREENSHOTTER_APP_NAME: "Glassine Check",
   GLASSINE_USER_DATA: path.join(tmp, "user-data"),
@@ -128,8 +130,8 @@ try {
       return { min: w.getMinimumSize(), lights: w.getWindowButtonPosition?.() ?? null, bg: w.getBackgroundColor() };
     });
     if (r.min[0] !== 1040 || r.min[1] !== 660) return `minimum ${r.min}`;
-    if (!r.lights || r.lights.x !== 20 || r.lights.y < 14 || r.lights.y > 22) return `traffic lights at ${JSON.stringify(r.lights)}`;
-    return /^#0b0b0d|^#e7e7ea/i.test(r.bg) ? true : `background ${r.bg}`;
+    if (!r.lights || r.lights.x !== 20 || r.lights.y < 10 || r.lights.y > 22) return `traffic lights at ${JSON.stringify(r.lights)}`;
+    return /^#1e1e1e|^#efeff1/i.test(r.bg) ? true : `background ${r.bg}`;
   });
 
   await check("the menus: Edit has the text commands, View zooms the board, not the page", async () => {

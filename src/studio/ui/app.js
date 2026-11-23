@@ -4,6 +4,7 @@ import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Dropdown, Popover, Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
+import { Avatar, TeamMark } from "./avatars.js";
 import { ContextMenu } from "./menu.js";
 import { BoardApp, boardCommand, importToBoard, pickImages } from "./board.js";
 import { bset, closeBoard, newBoard, openBoard, restoreTabs, saved as boardSaved } from "./board-state.js";
@@ -49,7 +50,7 @@ function Home() {
     <aside class="home-side">
       ${cloud.signedIn && cloud.user
         ? html`<button class="home-account" title=${cloud.user.email} onClick=${() => set({ modal: { kind: "settings", tab: "account" } })}>
-            ${cloud.user.image ? html`<img class="cloud-av sm" src=${cloud.user.image} alt="" />` : html`<span class="cloud-av sm">${(cloud.user.name || cloud.user.email)[0].toUpperCase()}</span>`}
+            <${Avatar} user=${cloud.user} cls="cloud-av sm" />
             <b class="grow ellipsis">${cloud.user.name || cloud.user.email}</b>
             ${cloud.offline ? html`<span class="home-offline">Offline</span>` : html`<${Icon} n="down" s=${11} w=${2} />`}
           </button>`
@@ -69,7 +70,7 @@ function Home() {
           ? cloud.teams.length
             ? cloud.teams.map(
                 (t) => html`<button key=${t.id} class=${activeTeam?.id === t.id ? "on" : ""} onClick=${() => set({ homeView: t.id })}>
-                  <i class="team-mark" style=${{ background: teamColor(t.id) }}>${(t.name || "?")[0].toUpperCase()}</i><span class="grow ellipsis">${t.name}</span>
+                  <${TeamMark} team=${t} /><span class="grow ellipsis">${t.name}</span>
                 </button>`,
               )
             : html`<button onClick=${() => set({ modal: { kind: "upgrade" } })}><${Icon} n="plus" s=${15} />Create a team</button>`
@@ -126,14 +127,11 @@ function SharedBoards({ q }) {
   if (!cloud.signedIn) return html`<div class="sp-empty big"><div class="art"><${Icon} n="users" s=${22} /></div><b>Nothing shared yet</b><span>Boards your teams share show up here once you sign in.</span><button class="btn primary sm" onClick=${() => set({ modal: { kind: "signIn" } })}>Sign in</button></div>`;
   if (!cloud.teams?.length) return html`<div class="sp-empty big"><div class="art"><${Icon} n="users" s=${22} /></div><b>Nothing shared yet</b><span>Start a team to share boards and edit them together, live.</span><button class="btn primary sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>Create a team</button></div>`;
   return html`${cloud.teams.map((t) => html`<section class="home-team" key=${t.id}>
-    <h2><i class="team-mark" style=${{ background: teamColor(t.id) }}>${(t.name || "?")[0].toUpperCase()}</i>${t.name}</h2>
+    <h2><${TeamMark} team=${t} />${t.name}</h2>
     <${TeamBoardsGrid} team=${t} q=${q} />
   </section>`)}`;
 }
 
-/** A team's colour, the same every time: from its id. */
-const TEAM_COLORS = ["#ff8a4c", "#7c9cff", "#4fd1a1", "#e879c6", "#f5c542", "#9b8cff"];
-const teamColor = (id) => TEAM_COLORS[[...String(id)].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7) % TEAM_COLORS.length];
 
 function ImportButton() {
   const [open, setOpen] = useState(false);
@@ -269,13 +267,13 @@ function Settings() {
           ${tab === "account" &&
           (user
             ? html`<section class="card set-sec"><h4>Profile</h4>
-                  <${SetRow} label="Name" hint="Shown by your cursor and comments" lead=${user.image ? html`<img class="cloud-av" src=${user.image} alt="" />` : html`<span class="cloud-av">${(user.name || user.email)[0].toUpperCase()}</span>`}>
+                  <${SetRow} label="Name" hint="Shown by your cursor and comments" lead=${html`<${Avatar} user=${user} />`}>
                     <input class="input set-input" defaultValue=${user.name ?? ""} spellcheck=${false} aria-label="Name" onBlur=${saveName} onKeyDown=${(e) => (e.stopPropagation(), e.key === "Enter" && e.target.blur())} />
                   <//>
                   <${SetRow} label="Email" hint=${user.email}><span class="set-value">${s.cloud.offline ? "Offline" : "Signed in"}</span><//>
                 </section>
                 <section class="card set-sec"><h4>Teams</h4>
-                  ${teams.map((t) => html`<${SetRow} key=${t.id} label=${t.name} hint=${t.role === "owner" ? "Owner" : "Member"} lead=${html`<i class="gate-team sm">${(t.name || "?")[0].toUpperCase()}</i>`}>
+                  ${teams.map((t) => html`<${SetRow} key=${t.id} label=${t.name} hint=${t.role === "owner" ? "Owner" : "Member"} lead=${html`<${TeamMark} team=${t} cls="gate-team sm" />`}>
                     <button class="btn sm" onClick=${() => set({ modal: { kind: "teamMembers", teamId: t.id } })}>Manage</button>
                   <//>`)}
                   <${SetRow} label=${teams.length ? "Start another team" : "Start a team"} hint="$16 a person each month, billed yearly"><button class="btn sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>Create team</button><//>
@@ -366,7 +364,14 @@ function Settings() {
           ${tab === "plan" &&
           html`<section class="card set-sec"><h4>Your plan</h4>
               <${SetRow} label=${teams.length ? "Team" : "Free"} hint=${teams.length ? "Shared boards, live editing and comments with your team" : "Unlimited boards, agents, imports and exports, for you"}>
-                ${!teams.length && html`<button class="btn primary sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>See the Team plan</button>`}
+                ${teams.length ? html`<span class="set-tag">${teams.length} team${teams.length === 1 ? "" : "s"}</span>` : html`<button class="btn primary sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>See the Team plan</button>`}
+              <//>
+            </section>
+            <section class="card set-sec"><h4>Team pricing</h4>
+              <${SetRow} label="Yearly" hint="$192 a person, billed once a year"><span class="set-price"><b>$16</b> a person / month</span><//>
+              <${SetRow} label="Monthly" hint="Billed each month"><span class="set-price"><b>$20</b> a person / month</span><//>
+              <${SetRow} label="Billing" hint="Payments aren't switched on yet, so nothing is charged">
+                ${teams.length > 0 && html`<button class="btn sm" onClick=${() => set({ modal: { kind: "upgrade" } })}>Start another team</button>`}
               <//>
             </section>`}
         </div>

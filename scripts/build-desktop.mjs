@@ -104,7 +104,7 @@ rmSync(path.join(resources, "electron.icns"), { force: true });
 const appDir = path.join(resources, "app");
 mkdirSync(appDir, { recursive: true });
 for (const f of ["main.js", "preload.cjs"]) copyFileSync(path.join(root, "desktop", f), path.join(appDir, f));
-writeFileSync(path.join(appDir, "package.json"), JSON.stringify({ name: NAME.toLowerCase().replace(/[^a-z0-9]+/g, "-"), productName: NAME, version: pkg.version, main: "main.js", type: "module" }, null, 2));
+writeFileSync(path.join(appDir, "package.json"), JSON.stringify({ name: NAME.toLowerCase().replace(/[^a-z0-9]+/g, "-"), productName: NAME, displayName: (process.env.SCREENSHOTTER_PRODUCT_NAME || NAME).replace(/[^A-Za-z0-9 ._-]/g, ""), version: pkg.version, main: "main.js", type: "module" }, null, 2));
 
 // Engine: compiled JS (no source maps), docs, and production dependencies.
 const engine = path.join(resources, "engine");

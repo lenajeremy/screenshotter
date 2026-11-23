@@ -378,7 +378,9 @@ function appIdentity() {
       : [process.execPath, path.resolve(here, here.includes(`${path.sep}src${path.sep}`) ? "../../dist/index.js" : "../index.js")];
   // Glassine opens on its sign-in screen; tests and scripts that drive the Studio skip it.
   const requireAccount = process.env.SCREENSHOTTER_NO_ACCOUNT !== "1";
-  return { appName, mcpName: appName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), mcpCommand, requireAccount };
+  // A copy can be installed under another name ("Glassine New UI") and still call itself Glassine.
+  const shown = process.env.SCREENSHOTTER_PRODUCT_NAME || appName;
+  return { appName: shown, mcpName: appName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), mcpCommand, requireAccount };
 }
 
 async function route(req: http.IncomingMessage, res: http.ServerResponse, port: number): Promise<void> {
@@ -608,7 +610,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       return send(200, { ok: true });
     case "/api/board/welcome": {
       // The board a new account starts with: made once, when the first-run steps finish.
-      return send(200, summarizeBoard(createWelcomeBoard(appIdentity().appName)));
+      const made = createWelcomeBoard(appIdentity().appName);
+      // Its picture straight away: it's the first card a new person sees on Home.
+      scheduleBoardThumb(made.id, 0);
+      return send(200, summarizeBoard(made));
     }
     case "/api/board/new": {
       const b = createBoard((await json<{ name?: string }>(req)).name, "studio");

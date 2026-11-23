@@ -953,6 +953,64 @@ const CHECKS: Record<string, Check> = {
     const ok = dock?.low && dock.mid && beside && comments && closed && /<div[^>]*style=/.test(code);
     return ok ? "ok" : `dock: ${JSON.stringify(dock)}, chat beside Design: ${beside}, comments there: ${comments}, closes: ${closed}, code: ${code.slice(0, 60)}`;
   },
+  async "on a board: menus in the chat open by their buttons, the two right panels share one header rule, fields are 24px, and a selected frame lights what's inside it"(page) {
+    const t = await openTestBoard(page);
+    await page.click(".bd-agent-toggle");
+    await page.waitForSelector(".bd-chat-col");
+    await page.waitForTimeout(450);
+    // The chat column slides in; a menu opened inside it must still land by its button.
+    let menu: { near: boolean; inside: boolean } | "none" | null = "none";
+    if (await page.locator(".ag-pick:not(:disabled)").count()) {
+      await page.click(".ag-pick");
+      await page.waitForTimeout(250);
+      menu = await S(page, () => {
+        const b = document.querySelector(".ag-pick")?.getBoundingClientRect();
+        const p = document.querySelector(".ag-composer .pop")?.getBoundingClientRect();
+        return b && p ? { near: Math.abs(p.left - b.left) < 24 && Math.abs(p.bottom - b.top) < 24, inside: p.left >= 0 && p.right <= innerWidth && p.top >= 0 && p.bottom <= innerHeight } : null;
+      });
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(150);
+    }
+    const rule = await S(page, () => {
+      const a = document.querySelector(".bd-chat-col .ag-head")?.getBoundingClientRect();
+      const r = document.querySelector(".bd-right-head")?.getBoundingClientRect();
+      return a && r ? Math.round(a.bottom - r.bottom) : null;
+    });
+    await page.click('.bd-chat-tabs [data-tab="comments"]');
+    await page.waitForTimeout(200);
+    const rule2 = await S(page, () => {
+      const a = document.querySelector(".bd-comments > .bd-head")?.getBoundingClientRect();
+      const r = document.querySelector(".bd-right-head")?.getBoundingClientRect();
+      return a && r ? Math.round(a.bottom - r.bottom) : null;
+    });
+    await page.click(".bd-chat-bar .icon-btn");
+    // A frame with layers inside, open in the list.
+    const phone = t.byName("Phone");
+    await S(page, async (id: string) => {
+      const s = await import("/ui/board-state.js" as string);
+      s.bset({ open: new Set([id]) });
+      s.select([id]);
+    }, phone);
+    await page.waitForTimeout(250);
+    const look = await S(page, () => {
+      const rows = [...document.querySelectorAll(".bd-row")];
+      const on = rows.filter((r) => r.classList.contains("on"));
+      const under = rows.filter((r) => r.classList.contains("under"));
+      const lit = rows.filter((r) => r.classList.contains("on") || r.classList.contains("under"));
+      const num = document.querySelector(".bd-right .num")?.getBoundingClientRect();
+      const h3 = document.querySelector(".bd-right .section-head h3");
+      return {
+        on: on.length,
+        under: under.length,
+        caps: lit.length > 1 && /cap-t/.test(lit[0].className) && /cap-b/.test(lit[lit.length - 1].className) && lit.slice(1, -1).every((r) => !/cap-/.test(r.className)),
+        row: Math.round(rows[0]?.getBoundingClientRect().height ?? 0),
+        field: Math.round(num?.height ?? 0),
+        type: h3 ? getComputedStyle(h3).fontSize : "",
+      };
+    });
+    const ok = (menu === "none" || (menu && menu.near && menu.inside)) && (rule === 0 || (rule === null && menu === "none")) && rule2 === 0 && look.on === 1 && look.under >= 3 && look.caps && look.row === 24 && look.field === 24 && look.type === "11px";
+    return ok ? "ok" : `the agent menu: ${JSON.stringify(menu)}, chat rule off by ${rule}px, comments rule off by ${rule2}px, layers: ${JSON.stringify(look)}`;
+  },
   async "the sign-in screen: an email gets the code boxes, a wrong code says so, and signing in goes on to the first-run steps"(page) {
     await S(page, async () => (await import("/ui/board-state.js" as string)).closeBoard());
     const need = (sel: string) => page.waitForSelector(sel, { timeout: 8000 }).then(() => true, () => false);
@@ -1000,7 +1058,7 @@ const CHECKS: Record<string, Check> = {
     await page.locator(".set-nav button", { hasText: "Plan" }).click();
     await page.locator(".set-row button", { hasText: "See the Team plan" }).click();
     await page.waitForSelector(".plan-sheet");
-    const total = () => S(page, () => document.querySelector(".plan-total")?.textContent ?? "");
+    const total = async () => (await page.waitForTimeout(350), S(page, () => document.querySelector(".plan-total")?.textContent ?? ""));
     const yearly = await total();
     await page.locator(".plan-opt", { hasText: "Monthly" }).click();
     await page.click('.plan-step button[title="One more"]');
@@ -2523,7 +2581,13 @@ const CHECKS: Record<string, Check> = {
     const f0 = await frameNo();
     await page.waitForTimeout(500);
     const f1 = await frameNo();
-    if (f1 !== f0) return `with only stills, the shader runtime still ran ${f1 - f0} frames in half a second`;
+    if (f1 !== f0) {
+      // What drew, and what might have asked it to: the pointer on a tile, a tile not at its still, the panel changing size.
+      const why = await page.evaluate(
+        "JSON.stringify({ first: BoardShaders.stats().layers[0], layers: BoardShaders.stats().layers.length, under: [...document.querySelectorAll(':hover')].slice(-2).map((e) => e.tagName + '.' + String(e.className).slice(0, 40)), notStill: [...document.querySelectorAll('canvas[data-shader-state]')].filter((c) => c.dataset.shaderState !== 'paused').map((c) => c.dataset.shaderState + ' in ' + String(c.parentElement && c.parentElement.className).slice(0, 40)).slice(0, 4), assets: [document.querySelector('.bd-assets').clientWidth, document.querySelector('.bd-assets').scrollHeight] })",
+      );
+      return `with only stills, the shader runtime still ran ${f1 - f0} frames in half a second: ${why}`;
+    }
     // The pointer on one plays it, only it; off it, it's a still again.
     await page.locator(".bd-asset.shader", { hasText: "Liquid chrome" }).hover();
     await page.waitForTimeout(400);
@@ -2817,7 +2881,7 @@ const CHECKS: Record<string, Check> = {
       await page.locator(".bd-resizer").dblclick();
       await page.waitForTimeout(300);
       const d = await look("Deepest words");
-      if (d.panel !== 248 || (await S(page, () => localStorage.getItem("board:left-w")))) return `double-clicked, the panel is ${d.panel}px wide`;
+      if (d.panel !== 240 || (await S(page, () => localStorage.getItem("board:left-w")))) return `double-clicked, the panel is ${d.panel}px wide`;
       return "ok";
     } finally {
       await S(page, async () => {

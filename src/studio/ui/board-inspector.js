@@ -1364,7 +1364,7 @@ function BoardPanel() {
   const tokens = b.board.tokens;
   const uses = tokenUses(b.board);
   const setToken = (name, value, key) => commit([{ op: "token", name, value }], { key: key ? `token:${name}` : null, label: "Token" });
-  return html`<div class="panel-head"><h2>${b.board.name}</h2><span class="sub">${page?.children.length ?? 0} artboard${page?.children.length === 1 ? "" : "s"}</span></div>
+  return html`<div class="panel-head bd-ihead"><span class="ico"><${Icon} n="page" s=${15} /></span><h2>${b.board.pages.length > 1 ? (page?.name ?? b.board.name) : b.board.name}</h2><span class="sub">${page?.children.length ?? 0} artboard${page?.children.length === 1 ? "" : "s"}</span></div>
     <div class="panel-body bd-insp">
       <${Section} title="Tokens" count=${tokens.length || undefined} right=${html`<button class="icon-btn sm" title="Add a token" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${14} /></button>`}>
         ${!tokens.length && !adding && html`<p class="bd-note">Name a colour, size or font once and use it on any layer.</p>`}

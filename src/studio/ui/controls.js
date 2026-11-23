@@ -133,7 +133,16 @@ let pressedAt = -1e9;
 let clickedFocus = null;
 if (typeof addEventListener === "function") {
   addEventListener("pointerdown", () => (pressedAt = performance.now()), true);
-  addEventListener("focusin", (e) => (clickedFocus = performance.now() - pressedAt < 600 ? e.target : null), true);
+  addEventListener(
+    "focusin",
+    (e) => {
+      clickedFocus = performance.now() - pressedAt < 600 ? e.target : null;
+      // Marked, so the styles can leave a clicked button without the ring a tabbed-to one gets.
+      if (clickedFocus?.dataset && !/^(INPUT|TEXTAREA|SELECT)$/.test(clickedFocus.tagName)) clickedFocus.dataset.clicked = "";
+    },
+    true,
+  );
+  addEventListener("focusout", (e) => e.target?.dataset && delete e.target.dataset.clicked, true);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -358,6 +367,10 @@ export function Popover({ anchor, onClose, children, class: cls = "", align = "s
       const hgt = el.offsetHeight;
       let left = align === "end" ? a.right - w : align === "center" ? a.left + a.width / 2 - w / 2 : a.left;
       left = clamp(left, 8, window.innerWidth - w - 8);
+      // Inside something transformed (a panel sliding in), "fixed" is measured from that thing, not
+      // the window: take its corner off, or the popover lands a panel's width away.
+      const host = el.offsetParent && el.offsetParent !== document.body ? el.offsetParent.getBoundingClientRect() : null;
+      const at = (p) => setPos(host ? { left: p.left - host.left, top: p.top - host.top } : p);
       // `avoid`: an element to keep in view (what the popover changes). Try below, above, then
       // either side of the anchor, and take the first spot that fits and leaves it uncovered.
       if (avoid) {
@@ -371,12 +384,12 @@ export function Popover({ anchor, onClose, children, class: cls = "", align = "s
         const fits = (p) => p.left >= 8 && p.top >= 8 && p.left + w <= window.innerWidth - 8 && p.top + hgt <= window.innerHeight - 8;
         const clear = (p) => p.left >= k.right || p.left + w <= k.left || p.top >= k.bottom || p.top + hgt <= k.top;
         const spot = spots.find((p) => fits(p) && clear(p));
-        if (spot) return setPos(spot);
+        if (spot) return at(spot);
       }
       let top = a.bottom + offset;
       if (top + hgt > window.innerHeight - 8 && a.top - offset - hgt > 8) top = a.top - offset - hgt;
       // Kept whole on screen: a tall one near the bottom moves up rather than running off it.
-      setPos({ left, top: clamp(top, 8, Math.max(8, window.innerHeight - hgt - 8)) });
+      at({ left, top: clamp(top, 8, Math.max(8, window.innerHeight - hgt - 8)) });
     };
     place();
     const ro = new ResizeObserver(place);

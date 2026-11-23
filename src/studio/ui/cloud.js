@@ -3,6 +3,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { Seg, html } from "./controls.js";
 import { Icon } from "./icons.js";
+import { Avatar, TeamMark } from "./avatars.js";
 import { openMenu } from "./menu.js";
 import { S, api, confirmDialog, fail, fileUrl, native, set, toast, useStore, when } from "./store.js";
 import { closeBoard, openTeamBoard, openTeamBoardResult } from "./board-state.js";
@@ -263,7 +264,7 @@ export function TeamMembersModal({ Sheet }) {
         ? html`<div class="note">Loading…</div>`
         : html`<div class="cloud-list">${details.members.map(
             (m) => html`<div class="cloud-member" key=${m.id}>
-              <span class="cloud-av">${(m.user?.name || m.user?.email || "?").trim()[0].toUpperCase()}</span>
+              <${Avatar} user=${m.user} />
               <div class="cloud-member-info"><b>${m.user?.name || m.user?.email}</b><span>${m.user?.email}</span></div>
               <span class="cloud-role">${m.role}</span>
             </div>`,

@@ -1473,12 +1473,14 @@ export function BoardCanvas() {
     <${Presence} />
     <${PresenceBar} />
     ${!page.children.length && html`<div class="bd-empty">
-      <b>What are we making?</b><span>Tell an agent, or start one of these ways.</span>
+      <b>What are we making?</b>
+      <button class="bd-ask" onClick=${() => (bset({ rightTab: "agent" }), setTimeout(() => document.querySelector(".ag-composer textarea")?.focus(), 80))}>
+        <${Icon} n="spark" s=${16} /><span>Describe a screen to an agent…</span><kbd>↵</kbd>
+      </button>
       <div class="bd-starts">
-        <button onClick=${() => bset({ rightTab: "agent" })}><i><${Icon} n="spark" s=${16} /></i><span><b>Ask an agent</b><small>Describe a screen</small></span></button>
-        <button onClick=${() => bset({ tool: "frame" })}><i><${Icon} n="frame" s=${16} /></i><span><b>Draw a frame</b><small>Press F and drag</small></span></button>
-        <button onClick=${() => window.studio?.command("importWebsite")}><i><${Icon} n="globe" s=${16} /></i><span><b>Import a website</b><small>A page as layers</small></span></button>
-        <button onClick=${() => window.studio?.command("importFigma")}><i><${Icon} n="component" s=${16} /></i><span><b>Import from Figma</b><small>A .fig file, or copied frames</small></span></button>
+        <button onClick=${() => bset({ tool: "frame" })}><${Icon} n="frame" s=${14} />Draw a frame<kbd>F</kbd></button>
+        <button onClick=${() => window.studio?.command("importWebsite")}><${Icon} n="globe" s=${14} />Import a website</button>
+        <button onClick=${() => window.studio?.command("importFigma")}><${Icon} n="component" s=${14} />Import from Figma</button>
       </div>
     </div>`}
   </div>`;

@@ -15,7 +15,7 @@ function savedLeftWidth() {
   }
 }
 /** How narrow and how wide the left panel can be dragged. */
-export const LEFT_MIN = 248;
+export const LEFT_MIN = 240;
 export const LEFT_MAX = 560;
 
 export const B = {

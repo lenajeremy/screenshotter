@@ -1,11 +1,33 @@
 // The Team plan: what it adds, what it costs, and the way into a team.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { AgentLogo } from "./agent-logos.js";
 import { set, toast, useStore } from "./store.js";
 
 const PRICE = { yearly: 16, monthly: 20 };
+
+/** A number that glides to its new value (a fifth of a second, easing out) instead of jumping. */
+function useGlide(target, ms = 200) {
+  const [shown, setShown] = useState(target);
+  const from = useRef(target);
+  useEffect(() => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return setShown(target);
+    const start = from.current;
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms);
+      const v = start + (target - start) * (1 - Math.pow(1 - k, 3));
+      from.current = v;
+      setShown(v);
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+  return shown;
+}
 const BENEFITS = [
   ["pointer", "Live editing with cursors"],
   ["comment", "Comments from teammates"],
@@ -26,6 +48,7 @@ export function UpgradeModal() {
   const each = PRICE[period];
   const total = period === "yearly" ? each * 12 * seats : each * seats;
   const money = (n) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+  const gliding = Math.round(useGlide(total));
   const go = () => {
     // Payments aren't wired yet: say so, and let the team be made.
     set({ modal: { kind: "createTeam" } });
@@ -58,7 +81,7 @@ export function UpgradeModal() {
         <div class="plan-seats"><span>Seats</span><div class="plan-step"><button title="One fewer" disabled=${seats <= 1} onClick=${() => setSeats(seats - 1)}><${Icon} n="minus" s=${12} /></button><b>${seats}</b><button title="One more" disabled=${seats >= 99} onClick=${() => setSeats(seats + 1)}><${Icon} n="plus" s=${12} /></button></div></div>
         <div class="plan-sum">
           <div><span>${seats} seat${seats === 1 ? "" : "s"} × $${period === "yearly" ? each * 12 : each}</span><span>${money(total)}</span></div>
-          <div class="due"><b>Due ${period === "yearly" ? "each year" : "each month"}</b><b key=${total} class="plan-total">${money(total)}</b></div>
+          <div class="due"><b>Due ${period === "yearly" ? "each year" : "each month"}</b><b class="plan-total" data-total=${money(total)}>${money(gliding)}</b></div>
         </div>
         <span class="grow"></span>
         <button class="btn primary plan-go" onClick=${go}>Continue</button>

@@ -10,6 +10,8 @@ import { pageOf, rootOf } from "./board-core.js";
 import { B, bset, useBoard } from "./board-state.js";
 import { canvasEl, centerOn, elOf, followGliding, frameBox, worldBox } from "./board-canvas.js";
 import { html } from "./controls.js";
+import { faceOf } from "./avatars.js";
+import { AgentLogo, logoFor } from "./agent-logos.js";
 
 /** After its last move, an agent Agentman can't vouch for stays this long (it may be thinking). */
 const GRACE_MS = 3 * 60_000;
@@ -294,16 +296,17 @@ export function PresenceBar() {
       const fkey = `peer:${p.id}`;
       const c = p.color || colourOf(p.user?.id || p.id);
       const label = peerFull(p);
-      return html`<button key=${fkey} class="bd-avatar ${b.following === fkey ? "on" : ""}" style=${{ "--c": c }}
+      const face = p.user?.image ? null : faceOf(p.user ?? { id: p.id });
+      return html`<button key=${fkey} class="bd-avatar ${face ? "face" : ""} ${b.following === fkey ? "on" : ""}" style=${{ "--c": c, background: face?.tint }}
         title=${`${label}. ${b.following === fkey ? "Click to stop following" : "Click to follow"}`}
         aria-label=${b.following === fkey ? `Stop following ${label}` : `Follow ${label}`} aria-pressed=${b.following === fkey}
         onClick=${() => (b.following === fkey ? unfollow() : follow(fkey))}>
-        ${p.user?.image ? html`<img src=${p.user.image} alt="" />` : (peerName(p)[0] ?? "?").toUpperCase()}
+        ${face ? face.emoji : html`<img src=${p.user.image} alt="" />`}
       </button>`;
     })}
     ${agents.map((p) => html`<button key=${p.key} class="bd-avatar ${p.key === b.following ? "on" : ""} ${phaseOf(p)}" style=${{ "--c": colourOf(p.key) }}
         title=${`${describe(p)}. ${p.key === b.following ? "Click to stop following" : "Click to follow"}`}
         aria-label=${p.key === b.following ? `Stop following ${p.name}` : `Follow ${p.name}`} aria-pressed=${p.key === b.following}
-        onClick=${() => (p.key === b.following ? unfollow() : follow(p.key))}>${(p.name.trim()[0] ?? "A").toUpperCase()}</button>`)}
+        onClick=${() => (p.key === b.following ? unfollow() : follow(p.key))}><${AgentLogo} id=${logoFor(p.key, p.name)} s=${13} /></button>`)}
   </div>`;
 }

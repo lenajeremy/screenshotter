@@ -18,5 +18,11 @@ export function AgentLogo({ id, s = 14 }) {
       <path fill="currentColor" opacity="0.4" d="M11.925 0L1.5 6v12l10.425-6V0z" /><path fill="currentColor" opacity="0.7" d="M22.35 6L11.925 24V12L22.35 6z" /><path fill="currentColor" d="M22.35 6l-10.425 6L1.5 6h20.85z" /></svg>`;
   if (id === "opencode") return html`<svg width=${s} height=${s} viewBox="0 0 24 24" aria-hidden="true" style=${{ flex: "none" }}><path fill="currentColor" fill-rule="evenodd" d=${OPENCODE} /></svg>`;
   if (id === "agy") return html`<svg width=${s} height=${s} viewBox="0 0 24 24" aria-hidden="true" style=${{ flex: "none" }}><path fill="currentColor" d=${ANTIGRAVITY} /></svg>`;
-  return html`<${Icon} n="code" s=${s} />`;
+  return html`<${Icon} n=${id === "agent" ? "spark" : "code"} s=${s} />`;
 }
+
+/** Which mark an agent gets, from whatever names it: its id, its kind or its name ("Claude Code", "codex-2"). */
+export const logoFor = (...names) => {
+  const t = names.filter(Boolean).join(" ").toLowerCase();
+  return /claude/.test(t) ? "claude" : /codex|openai|gpt/.test(t) ? "codex" : /cursor/.test(t) ? "cursor" : /opencode/.test(t) ? "opencode" : /antigravity|\bagy\b/.test(t) ? "agy" : "agent";
+};

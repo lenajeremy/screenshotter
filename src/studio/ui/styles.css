@@ -1994,7 +1994,7 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .gate-steps i { width: 28px; height: 4px; border-radius: 2px; background: var(--panel-3); transition: background 0.3s var(--ease); }
 .gate-steps i.on { background: var(--lime); }
 .gate-card { width: min(360px, 100%); }
-.gate-in { display: flex; flex-direction: column; animation: gate-in 0.26s var(--ease) both; }
+.gate-in { display: flex; flex-direction: column; animation: gate-in 0.26s var(--ease) backwards; }
 .gate-in form { display: flex; flex-direction: column; }
 @keyframes gate-in { from { opacity: 0; transform: translateY(6px); } }
 .gate-mark { width: 48px; height: 48px; margin-bottom: 20px; border-radius: 13px; }
@@ -2053,14 +2053,14 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .gate-team.plain { background: var(--panel-3); color: var(--text); }
 .gate-show { position: relative; overflow: hidden; background: #161616; box-shadow: inset 1px 0 0 var(--line); }
 :root[data-theme="light"] .gate-show { background: #e6e6e9; }
-.gate-show img { position: absolute; left: 9%; top: 13%; width: max(980px, 118%); border-radius: 12px; opacity: 0.72; box-shadow: 0 0 0 1px var(--line-2), 0 40px 100px rgb(0 0 0 / calc(0.5 * var(--shade))); animation: gate-show 0.6s var(--ease) both; -webkit-user-drag: none; }
+.gate-show img { position: absolute; left: 9%; top: 13%; width: max(980px, 118%); border-radius: 12px; opacity: 0.72; box-shadow: 0 0 0 1px var(--line-2), 0 40px 100px rgb(0 0 0 / calc(0.5 * var(--shade))); animation: gate-show 0.6s var(--ease) backwards; -webkit-user-drag: none; }
 @keyframes gate-show { from { opacity: 0; transform: translateY(10px); } }
 .gate-fade { position: absolute; inset: 0 0 0 1px; background: linear-gradient(90deg, #161616 0%, rgb(22 22 22 / 0) 26%), linear-gradient(0deg, #161616 0%, rgb(22 22 22 / 0) 38%), linear-gradient(180deg, #161616 5%, rgb(22 22 22 / 0) 28%), linear-gradient(270deg, #161616 0%, rgb(22 22 22 / 0) 26%); }
 :root[data-theme="light"] .gate-fade { background: linear-gradient(90deg, #e6e6e9 0%, rgb(230 230 233 / 0) 26%), linear-gradient(0deg, #e6e6e9 0%, rgb(230 230 233 / 0) 38%), linear-gradient(180deg, #e6e6e9 5%, rgb(230 230 233 / 0) 28%), linear-gradient(270deg, #e6e6e9 0%, rgb(230 230 233 / 0) 26%); }
 @media (max-width: 900px) { .gate { grid-template-columns: minmax(0, 1fr); } .gate-show { display: none; } }
 
 /* The Team plan */
-.plan-sheet { display: grid; grid-template-columns: minmax(0, 1fr) 340px; width: min(860px, calc(100vw - 48px)); padding: 0; overflow: hidden; border-radius: 14px; animation: sheet-in 0.2s var(--ease) both; }
+.plan-sheet { display: grid; grid-template-columns: minmax(0, 1fr) 340px; width: min(860px, calc(100vw - 48px)); padding: 0; overflow: hidden; border-radius: 14px; animation: sheet-in 0.2s var(--ease) backwards; }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
 .plan-why { display: flex; flex-direction: column; gap: 20px; padding: 30px 30px 28px; min-width: 0; }
 .plan-why h2 { margin: 0; font: 600 22px var(--display); letter-spacing: -0.02em; }
@@ -2076,7 +2076,7 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .plan-cursor { position: absolute; left: 124px; top: 136px; color: #f24822; animation: plan-drift 3.6s ease-in-out infinite alternate; }
 .plan-cursor em { left: 12px; top: 12px; border-radius: 0 5px 5px 5px; background: #f24822; }
 @keyframes plan-drift { to { transform: translate(14px, -8px); } }
-.plan-note { position: absolute; left: 248px; top: 22px; width: 190px; padding: 10px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line-2), 0 5px 17px rgb(0 0 0 / calc(0.4 * var(--shade))); font-size: 11px; line-height: 1.45; display: flex; flex-direction: column; gap: 2px; animation: gate-in 0.3s 0.12s var(--ease) both; }
+.plan-note { position: absolute; left: 248px; top: 22px; width: 190px; padding: 10px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line-2), 0 5px 17px rgb(0 0 0 / calc(0.4 * var(--shade))); font-size: 11px; line-height: 1.45; display: flex; flex-direction: column; gap: 2px; animation: gate-in 0.3s 0.12s var(--ease) backwards; }
 .plan-note b { font-weight: 560; }
 .plan-note.agent { top: 104px; flex-direction: row; align-items: center; gap: 8px; color: var(--text-2); animation-delay: 0.32s; }
 .plan-list { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
@@ -2116,15 +2116,15 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .sp-thumb { transition: background-color 0.15s, box-shadow 0.15s; }
 .sp-thumb img { transition: opacity 0.2s ease-out, transform 0.25s var(--ease); }
 .sp-card:hover .sp-thumb img { transform: scale(1.015); }
-.sp-grid > * { animation: gate-in 0.24s var(--ease) both; }
-.bd-chat-col { animation: col-in 0.2s var(--ease) both; }
+.sp-grid > * { animation: gate-in 0.24s var(--ease) backwards; }
+.bd-chat-col { animation: col-in 0.2s var(--ease) backwards; }
 @keyframes col-in { from { opacity: 0; transform: translateX(10px); } }
-.bd-dock { animation: dock-in 0.3s 0.05s var(--ease) both; }
+.bd-dock { animation: dock-in 0.3s 0.05s var(--ease) backwards; }
 @keyframes dock-in { from { opacity: 0; transform: translate(-50%, 10px); } }
 .bd-dock .bd-tools .icon-btn { transition: background 0.14s, color 0.14s, transform 0.08s; }
-.tab { animation: tab-in 0.18s var(--ease) both; }
+.tab { animation: tab-in 0.18s var(--ease) backwards; }
 @keyframes tab-in { from { opacity: 0; transform: translateY(3px); } }
-.sheet { animation: sheet-in 0.2s var(--ease) both; }
+.sheet { animation: sheet-in 0.2s var(--ease) backwards; }
 @media (prefers-reduced-motion: reduce) {
   .gate-in, .gate-show img, .gate-code.bad, .gate-code span.has, .plan-sheet, .plan-note, .plan-cursor, .plan-total, .sp-grid > *, .bd-chat-col, .bd-dock, .tab, .sheet { animation: none; }
   .sp-card:hover .sp-thumb img, .btn:active, .icon-btn:active { transform: none; }
@@ -2149,7 +2149,7 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .set-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .set-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 18px 16px 6px 26px; }
 .set-head h2 { margin: 0; font: 600 16px var(--display); letter-spacing: -0.01em; }
-.set-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 26px 24px; display: flex; flex-direction: column; gap: 6px; animation: gate-in 0.2s var(--ease) both; }
+.set-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 26px 24px; display: flex; flex-direction: column; gap: 6px; animation: gate-in 0.2s var(--ease) backwards; }
 .set-sec { padding: 0; border-radius: 0; background: none; box-shadow: none; }
 .set-sec h4 { margin: 0; padding: 12px 0 6px; font: 500 12px var(--sans); color: var(--text-4); }
 .set-sec > .note { margin: 0 0 10px; }
@@ -2169,8 +2169,8 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .gate-note .gate-plain b { color: var(--text-2); font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* The agent's chat: your words on the right, its work as a card, what to ask next as chips. */
-.ag-you { max-width: 86%; padding: 8px 11px; border-radius: 14px 14px 4px 14px; background: var(--panel-3); box-shadow: none; animation: gate-in 0.2s var(--ease) both; }
-.ag-reply { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 8px; animation: gate-in 0.24s var(--ease) both; }
+.ag-you { max-width: 86%; padding: 8px 11px; border-radius: 14px 14px 4px 14px; background: var(--panel-3); box-shadow: none; animation: gate-in 0.2s var(--ease) backwards; }
+.ag-reply { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 8px; animation: gate-in 0.24s var(--ease) backwards; }
 .ag-reply > * { grid-column: 1 / -1; min-width: 0; }
 .ag-reply > .ag-who { grid-column: 1; font-size: 12px; font-weight: 560; color: var(--text); }
 .ag-reply > .ag-worked { grid-column: 2; grid-row: 1; align-self: center; justify-self: end; font-size: 11px; }
@@ -2194,7 +2194,7 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 /* An empty page: four ways to start, in the middle of the canvas. */
 .bd-empty > b { font: 600 18px var(--display); letter-spacing: -0.02em; }
 .bd-starts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: min(440px, calc(100% - 48px)); margin-top: 18px; pointer-events: auto; }
-.bd-starts button { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); text-align: left; transition: background 0.12s, box-shadow 0.12s, transform 0.08s; animation: gate-in 0.26s var(--ease) both; }
+.bd-starts button { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); text-align: left; transition: background 0.12s, box-shadow 0.12s, transform 0.08s; animation: gate-in 0.26s var(--ease) backwards; }
 .bd-starts button:nth-child(2) { animation-delay: 0.03s; }
 .bd-starts button:nth-child(3) { animation-delay: 0.06s; }
 .bd-starts button:nth-child(4) { animation-delay: 0.09s; }
@@ -2245,10 +2245,519 @@ input.bd-token-name { margin-left: 0; height: 28px; font-size: 11.5px; padding: 
 .bd-codeview { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .bd-codeview-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 8px 14px; font-size: 12.5px; font-weight: 600; }
 .bd-codeview-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bd-codeview-text { flex: 1; min-height: 0; margin: 0 8px 8px; padding: 10px 12px; overflow: auto; border-radius: 8px; background: var(--win); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; cursor: text; animation: gate-in 0.2s var(--ease) both; }
+.bd-codeview-text { flex: 1; min-height: 0; margin: 0 8px 8px; padding: 10px 12px; overflow: auto; border-radius: 8px; background: var(--win); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; cursor: text; animation: gate-in 0.2s var(--ease) backwards; }
 .bd-code-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px; text-align: center; color: var(--text-4); font-size: 12px; }
 .bd-code-empty b { margin-top: 6px; color: var(--text); font-size: 13px; font-weight: 560; }
 @media (prefers-reduced-motion: reduce) { .bd-codeview-text { animation: none; } }
 
 .bd-empty { width: min(460px, calc(100% - 48px)); max-width: none; }
 .bd-starts { width: 100%; }
+
+/* The sign-in screen's right side: the app itself, sharp, on a stage lit in Glassine's green. The
+   picture runs off the right and bottom and dissolves there (a mask on the picture, so nothing
+   grey is laid over it). */
+.gate-show { background:
+    radial-gradient(60% 55% at 78% 88%, rgb(215 255 63 / 0.2), rgb(215 255 63 / 0) 70%),
+    radial-gradient(45% 40% at 18% 8%, rgb(255 255 255 / 0.07), rgb(255 255 255 / 0) 70%),
+    #121212; }
+.gate-show::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgb(255 255 255 / 0.09) 1px, transparent 1.5px); background-size: 22px 22px; -webkit-mask-image: radial-gradient(70% 60% at 40% 30%, #000, transparent 75%); mask-image: radial-gradient(70% 60% at 40% 30%, #000, transparent 75%); }
+.gate-show img { left: 11%; top: 15%; width: max(1040px, 124%); opacity: 1; border-radius: 12px; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12), 0 30px 80px rgb(0 0 0 / 0.55), 0 0 140px rgb(215 255 63 / 0.1);
+  -webkit-mask-image: linear-gradient(to right, #000 58%, rgb(0 0 0 / 0) 96%), linear-gradient(to bottom, #000 62%, rgb(0 0 0 / 0) 98%); mask-image: linear-gradient(to right, #000 58%, rgb(0 0 0 / 0) 96%), linear-gradient(to bottom, #000 62%, rgb(0 0 0 / 0) 98%); -webkit-mask-composite: source-in; mask-composite: intersect; }
+.gate-fade { display: none; }
+:root[data-theme="light"] .gate-show { background:
+    radial-gradient(60% 55% at 78% 88%, rgb(190 235 40 / 0.45), rgb(190 235 40 / 0) 70%),
+    radial-gradient(45% 40% at 18% 8%, rgb(255 255 255 / 0.9), rgb(255 255 255 / 0) 70%),
+    #e4e4e8; }
+:root[data-theme="light"] .gate-show::before { background-image: radial-gradient(rgb(0 0 0 / 0.1) 1px, transparent 1.5px); }
+:root[data-theme="light"] .gate-show img { box-shadow: 0 0 0 1px rgb(0 0 0 / 0.14), 0 30px 80px rgb(0 0 0 / 0.22); }
+
+/* The name step: the field, then how teammates will see it, then the way on. All one column. */
+.gate-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 500; color: var(--text-3); }
+.gate-preview { position: relative; display: flex; align-items: center; justify-content: flex-end; height: 92px; margin-top: 12px; padding: 0 14px; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; background-image: radial-gradient(rgb(var(--ink) / 0.07) 1px, transparent 1.5px); background-size: 18px 18px; }
+.gate-preview-cursor { position: absolute; left: 22px; top: 20px; color: var(--accent); animation: plan-drift 4s ease-in-out infinite alternate; }
+.gate-preview-cursor em { position: absolute; left: 13px; top: 14px; max-width: 150px; padding: 2px 8px; border-radius: 0 7px 7px 7px; background: var(--lime); color: var(--lime-ink); font: 600 11.5px var(--sans); font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gate-preview-note { display: flex; align-items: center; gap: 10px; max-width: 190px; padding: 9px 12px 9px 9px; border-radius: 10px; background: var(--panel-3); box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.3 * var(--shade))); }
+.gate-preview-note .gate-av { width: 28px; height: 28px; font-size: 12px; }
+.gate-preview-note b { display: block; max-width: 130px; font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gate-preview-note span { display: block; font-size: 11.5px; color: var(--text-3); }
+.gate-preview .blank { opacity: 0.45; }
+@media (prefers-reduced-motion: reduce) { .gate-preview-cursor { animation: none; } }
+
+/* Faces without photos: an animal, or a team's emblem, on a soft colour. Never a letter. */
+.face { display: grid; place-items: center; font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-style: normal; font-weight: 400; line-height: 1; color: #000; }
+.cloud-av.face { font-size: 15px; }
+.cloud-av.sm.face { font-size: 13px; }
+.bd-face.face { font-size: 13px; }
+.gate-av.face { font-size: 22px; }
+.gate-preview-note .gate-av.face { font-size: 15px; }
+.team-mark.face { font-size: 10px; }
+.gate-team.face { font-size: 16px; background: none; }
+.gate-team.sm.face { font-size: 15px; }
+
+/* The team step: one list. Teams you're in, then the row that starts a new one. */
+.gate-item { min-height: 52px; padding: 8px 14px; }
+.gate-item b.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-item small { flex: none; white-space: nowrap; }
+.gate-item.as-row { width: 100%; border: 0; border-radius: 0; background: none; font: inherit; transition: background 0.12s; }
+.gate-item.as-row:hover { background: rgb(var(--ink) / 0.04); }
+.gate-item.as-row b { color: var(--text-2); font-weight: 500; }
+.gate-team { border-radius: 9px; }
+
+/* The total glides to its new value; it doesn't flash or jump, and its digits don't shift the line. */
+.plan-total { animation: none; min-width: 9ch; text-align: right; }
+.plan-sum, .plan-price b, .plan-step b { font-variant-numeric: tabular-nums; }
+
+/* The agent step: a choice, one row each. */
+.gate-agent b { color: var(--text) !important; font-weight: 560 !important; }
+.gate-agent > svg { color: var(--text); flex: none; }
+.gate-radio { position: relative; width: 16px; height: 16px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--line-3); transition: background 0.14s, box-shadow 0.14s; }
+.gate-agent.on { background: rgb(var(--accent-rgb) / 0.07); }
+.gate-agent.on .gate-radio { background: var(--lime); box-shadow: none; }
+.gate-agent.on .gate-radio::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--lime-ink); animation: gate-digit 0.16s var(--ease); }
+.gate-fine.tight { margin-top: 12px; }
+
+/* Panels on the right drag wider from their left edge; the Design panel is back to a width its fields fit. */
+.bd-right { position: relative; width: var(--bd-right-w, 272px); }
+.bd-chat-col { position: relative; width: var(--bd-chat-w, 300px); }
+.bd-edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; z-index: 6; cursor: col-resize; }
+.bd-app > .panel.bd-right, .bd-app > .panel.bd-chat-col { overflow: visible; }
+.bd-edge::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: var(--accent); opacity: 0; transition: opacity 0.15s; }
+.bd-edge:hover::after, .bd-app.resizing .bd-edge:hover::after { opacity: 0.9; }
+.bd-resizer::after { background: var(--accent); }
+.bd-right .panel-body { padding: 2px 14px 18px 16px; }
+.bd-right-head { padding: 6px 10px 6px 16px; }
+
+/* Tabs along the top keep to one line. */
+.tab { max-width: 220px; }
+.tab span.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The left panel: one left edge for everything (16px), and the tabs' rule runs the full width. */
+.bd-file-head { padding: 10px 8px 2px; }
+.bd-file-head .scene-name { padding: 0 8px; }
+.bd-head-sub { padding-left: 8px; }
+.bd-left > .bd-left-tabs { margin: 6px 0 0; padding: 0 8px 8px; }
+.bd-left .bd-head { padding: 10px 8px 4px 16px; }
+.bd-left-tabs button:focus-visible { outline-offset: -2px; }
+
+/* An empty page: one line to an agent, and three quiet ways to start by hand. */
+.bd-empty { gap: 0; width: min(440px, calc(100% - 48px)); }
+.bd-empty > b { margin-bottom: 16px; font: 600 17px var(--display); letter-spacing: -0.02em; }
+.bd-ask { display: flex; align-items: center; gap: 10px; width: 100%; height: 44px; padding: 0 10px 0 14px; border: 0; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-3); font: 13.5px var(--sans); text-align: left; pointer-events: auto; cursor: text; transition: background 0.14s, box-shadow 0.14s; animation: gate-in 0.26s var(--ease) backwards; }
+.bd-ask:hover { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-3); }
+.bd-ask svg { color: var(--accent); flex: none; }
+.bd-ask span { flex: 1; }
+.bd-ask kbd, .bd-starts kbd { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 5px; background: rgb(var(--ink) / 0.07); color: var(--text-3); font: 500 11px var(--sans); }
+.bd-starts { display: flex; flex-wrap: wrap; justify-content: center; grid-template-columns: none; gap: 4px; width: 100%; margin-top: 10px; }
+.bd-starts button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text-2); font: 500 12.5px var(--sans); animation: gate-in 0.26s 0.05s var(--ease) backwards; }
+.bd-starts button:nth-child(n) { animation-delay: 0.05s; }
+.bd-starts button:hover { background: rgb(var(--ink) / 0.06); box-shadow: none; color: var(--text); }
+.bd-starts button svg { color: var(--text-3); }
+.bd-starts kbd { margin-left: 2px; min-width: 18px; height: 18px; font-size: 10.5px; }
+
+/* The tool dock: lighter on its feet. A hairline, one soft shadow, tools that answer the pointer. */
+.bd-dock .bd-tools { gap: 2px; padding: 4px; background: var(--panel-2); box-shadow: 0 0 0 1px var(--line-2), inset 0 1px 0 rgb(var(--ink) / 0.04), 0 4px 14px rgb(0 0 0 / calc(0.22 * var(--shade))); }
+.bd-dock .bd-tools .icon-btn { color: var(--text-2); }
+.bd-dock .bd-tools .icon-btn:hover:not(.on) { background: rgb(var(--ink) / 0.07); color: var(--text); }
+.bd-dock .bd-tools .icon-btn.on { background: var(--lime); color: var(--lime-ink); }
+.bd-dock-sep { margin: 0 4px; height: 18px; }
+.bd-dock .bd-tools .bd-agent-toggle { color: var(--accent); }
+.bd-dock .bd-tools .bd-agent-toggle.on { background: var(--lime-soft); color: var(--accent); }
+
+/* Green everywhere but the canvas. The app's accent for focus, choice and progress is Glassine's
+   green; the blue that marks a selection on a design stays inside the canvas, where it has to show
+   on any colour. Done at the tokens, so nothing in the panels or sheets is left blue. */
+:root, :root[data-theme="light"] { --iris: var(--accent); --iris-soft: rgb(var(--accent-rgb) / 0.14); --iris-soft-panel: var(--row-on); --iris-fg: var(--accent); }
+.bd-stage { --iris: #4c8dff; --iris-soft: rgba(76, 141, 255, 0.16); --iris-fg: #4c8dff; --iris-strong: #2f6fed; }
+:root[data-theme="light"] .bd-stage { --iris: #2f6fed; --iris-soft: rgba(47, 111, 237, 0.12); --iris-fg: #1a52c7; }
+/* What sat on the blue with white words: a quiet highlight with the panel's own ink instead. */
+.menu-item:hover, .menu-item.active, .cp-tool.on { background: rgb(var(--ink) / 0.1); color: var(--text); }
+.menu-item:hover .hint, .menu-item.active .hint { color: var(--text-3); }
+/* A field inside a field (the address box, the code box): only the outer one shows focus. */
+.wi-url .input, .wi-url .input:focus, .bd-code-box textarea:focus, .home-search input:focus { box-shadow: none; outline: none; background: transparent; }
+.wi-url:focus-within { box-shadow: inset 0 0 0 1px var(--focus), 0 0 0 3px rgb(var(--accent-rgb) / 0.14); }
+input:focus-visible, textarea:focus-visible { outline: none; }
+
+/* =====================================================================================
+   The editor, as drawn on the board ("9 · Editor"): Figma's density, so someone coming from
+   Figma is at home. 11px type on 24px controls; fields are filled, not outlined; sections are
+   ruled from edge to edge; the two panels on the right share one header height, so their rules
+   meet. Corners are a step rounder than Figma's (6px), and a block inside another keeps the same
+   centre: its radius is the outer one less the gap between them.
+   It comes last and is scoped to the board, so it settles what the blocks above left at odds.
+   ===================================================================================== */
+.bd-app { --edge: #383838; --fill: #383838; --fill-hi: #444444; --sunk: #252525; --r: 6px; --bd-row-on: #454d2a; --bd-row-in: #363a2a; }
+:root[data-theme="light"] .bd-app { --edge: rgba(0, 0, 0, 0.09); --fill: #f0f0f2; --fill-hi: #e6e6ea; --sunk: #f7f7f8; --bd-row-on: #dde6cc; --bd-row-in: #eef3e5; }
+.bd-app > .panel { font-size: 11px; line-height: 16px; letter-spacing: 0.005em; color: var(--text); }
+.bd-app .bd-left { width: var(--bd-left-w, 240px); box-shadow: inset -1px 0 0 var(--edge); }
+.bd-app .bd-chat-col { width: var(--bd-chat-w, 288px); box-shadow: inset 1px 0 0 var(--edge); }
+.bd-app .bd-right { width: var(--bd-right-w, 240px); box-shadow: inset 1px 0 0 var(--edge); }
+.bd-app .tabbar { box-shadow: inset 0 -1px 0 var(--edge); }
+
+/* Tabs: File / Assets, Agent / Comments, Design / Code. */
+.bd-app .bd-left-tabs { gap: 4px; margin: 0; padding: 0; border-radius: 0; background: none; box-shadow: none; }
+.bd-app .bd-left-tabs button { flex: none; height: 24px; padding: 0 8px; border-radius: var(--r); background: none; color: var(--text-2); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-left-tabs button:hover { color: var(--text); }
+.bd-app .bd-left-tabs button.on { background: var(--fill); color: var(--text); }
+.bd-app .bd-left-tabs button .n { margin-left: 5px; font: 500 10px/16px var(--sans); color: var(--text-3); }
+.bd-app .panel .icon-btn.sm { width: 24px; height: 24px; border-radius: var(--r); color: var(--text); }
+.bd-app .panel .icon-btn.sm:hover { background: var(--fill); }
+.bd-app .panel .icon-btn.sm:disabled { color: var(--text-off); opacity: 1; }
+
+/* The left panel. One left edge at 16px: the name, the tabs' words, the headings, the rows' words. */
+.bd-app .bd-file-head { gap: 2px; padding: 12px 8px 8px 16px; }
+.bd-app .bd-file-head .scene-name { width: calc(100% + 6px); height: 20px; margin-left: -6px; padding: 0 5px; border-radius: 5px; color: var(--text); font: 500 13px/20px var(--sans); letter-spacing: -0.003em; }
+.bd-app .bd-head-sub { padding: 0; font-size: 11px; line-height: 16px; color: var(--text-3); }
+.bd-app .bd-file-head .bd-team-pill { align-self: flex-start; height: 16px; margin: 0; padding: 0 5px 0 4px; gap: 5px; border-radius: 4px; background: var(--lime-soft); color: var(--accent); font: 500 10px/16px var(--sans); }
+.bd-app .bd-left > .bd-left-tabs { margin: 0; padding: 4px 8px 8px; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-pages { max-height: 34%; padding: 8px; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-layers { padding-top: 8px; }
+.bd-app .bd-left .bd-head { height: 24px; margin-bottom: 4px; padding: 0 0 0 8px; gap: 0; }
+.bd-app .bd-layers > .bd-head { margin: 0 8px 4px; }
+.bd-app .bd-left .bd-head h3 { font: 500 11px/16px var(--sans); letter-spacing: inherit; color: var(--text); }
+.bd-app .bd-page { height: 24px; margin: 0; padding: 0 8px; gap: 6px; border-radius: var(--r); font-size: 11px; color: var(--text); }
+.bd-app .bd-page:hover { background: rgb(var(--ink) / 0.05); }
+.bd-app .bd-page.on { background: var(--fill); font-weight: 500; }
+.bd-app .bd-page > svg { width: 12px; height: 12px; flex: none; color: var(--text-3); }
+.bd-app .bd-page .n { font: 11px/16px var(--sans); color: var(--text-3); }
+.bd-app .bd-rows { padding: 0 8px 16px; }
+.bd-app .bd-row { height: 24px; border-radius: var(--r); font-size: 11px; color: var(--text); }
+.bd-app .bd-row.root { font-weight: 500; }
+.bd-app .bd-row .ico { color: var(--text-2); }
+.bd-app .bd-row .ico svg { width: 12px; height: 12px; }
+.bd-app .bd-row .tw svg { width: 9px; height: 9px; }
+.bd-app .bd-row.hover { --row-bg: var(--panel-2); }
+.bd-app .bd-row.under { --row-bg: var(--bd-row-in); background: var(--row-bg); border-radius: 0; }
+.bd-app .bd-row.on { --row-bg: var(--bd-row-on); background: var(--row-bg); border-radius: 0; }
+.bd-app .bd-row.cap-t, .bd-app .bd-row.cap-tb { border-top-left-radius: var(--r); border-top-right-radius: var(--r); }
+.bd-app .bd-row.cap-b, .bd-app .bd-row.cap-tb { border-bottom-left-radius: var(--r); border-bottom-right-radius: var(--r); }
+.bd-app .bd-row .acts .icon-btn.sm { width: 20px; height: 20px; border-radius: 4px; }
+.bd-app .bd-row .acts .icon-btn.sm:hover { background: rgb(var(--ink) / 0.1); }
+.bd-app .bd-hint { padding: 4px 8px; font-size: 11px; line-height: 16px; color: var(--text-3); }
+
+/* The chat column. Its head is the right panel's, mirrored: a 40px row, a 32px row, one rule. */
+.bd-app .bd-chat-bar { height: 40px; padding: 8px; box-shadow: none; font-size: 11px; }
+.bd-app .ag-head { gap: 8px; padding: 0 8px 8px; border-bottom: 1px solid var(--edge); }
+.ag-chats { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 24px; padding: 0 6px 0 8px; border: 0; border-radius: var(--r); background: var(--fill); color: var(--text); font: inherit; letter-spacing: inherit; text-align: left; transition: background 0.12s; }
+.ag-chats:not(:disabled):hover { background: var(--fill-hi); }
+.ag-chats:disabled { background: none; }
+.ag-chats svg { flex: none; color: var(--text-3); }
+.bd-app .ag-title { font: inherit; }
+.ag-chats:disabled .ag-title { font-weight: 500; }
+.bd-app .ag-new { background: var(--fill); }
+.bd-app .ag-new:hover:not(:disabled) { background: var(--fill-hi); }
+.bd-app .ag-new:disabled { visibility: hidden; }
+.bd-app .ag-thread { gap: 14px; padding: 12px; font-size: 12px; line-height: 18px; }
+.bd-app .ag-you { max-width: 232px; padding: 8px 10px; border-radius: 14px 14px 4px 14px; background: var(--fill); box-shadow: none; font-size: 12px; line-height: 18px; }
+.bd-app .ag-answer { font-size: 12px; line-height: 18px; }
+.bd-app .ag-reply > .ag-who { font-size: 12px; font-weight: 500; color: var(--text); }
+.bd-app .ag-note, .bd-app .ag-step, .bd-app .ag-error { font-size: 11px; line-height: 16px; }
+.bd-app .ag-card { border-radius: 10px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--edge); }
+.bd-app .ag-change { height: 24px; font-size: 11px; }
+.bd-app .ag-starts { justify-content: flex-start; gap: 0; padding: 0 12px 4px; overflow: hidden; }
+.ag-hello { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 20px 24px; text-align: center; animation: gate-in 0.3s var(--ease) backwards; }
+.ag-hello i { display: grid; place-items: center; width: 36px; height: 36px; margin-bottom: 10px; border-radius: 10px; background: var(--fill); color: var(--accent); }
+.ag-hello b { font: 500 13px/20px var(--sans); color: var(--text); }
+.ag-hello span { max-width: 216px; font-size: 11px; line-height: 16px; color: var(--text-3); text-wrap: balance; }
+.ag-ideas { flex: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.bd-app .ag-idea, .bd-app .ag-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; height: 24px; padding: 0 9px; border: 0; border-radius: 999px; background: none; box-shadow: inset 0 0 0 1px var(--line-3); color: var(--text); font: 11px/16px var(--sans); letter-spacing: inherit; transition: background 0.12s, box-shadow 0.12s; }
+.bd-app .ag-idea:hover, .bd-app .ag-chip:hover { background: var(--fill); box-shadow: inset 0 0 0 1px transparent; }
+.bd-app .ag-idea svg { flex: none; color: var(--accent); }
+.bd-app .ag-idea:not(:first-child) svg { display: none; }
+.bd-app .ag-idea span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-app .ag-idea:nth-child(1) { animation: gate-in 0.24s 0.04s var(--ease) backwards; }
+.bd-app .ag-idea:nth-child(2) { animation: gate-in 0.24s 0.08s var(--ease) backwards; }
+.bd-app .ag-idea:nth-child(3) { animation: gate-in 0.24s 0.12s var(--ease) backwards; }
+.bd-app .ag-composer { margin: 8px; padding: 10px 8px 8px 10px; gap: 12px; border-radius: 10px; background: var(--fill); box-shadow: none; transition: box-shadow 0.14s; }
+.bd-app .ag-composer:focus-within { box-shadow: inset 0 0 0 1px var(--line-3); }
+.bd-app .ag-composer textarea { min-height: 18px; font: 12px/18px var(--sans); letter-spacing: 0; }
+.bd-app .ag-composer textarea::placeholder { color: var(--text-4); }
+.bd-app .ag-row { gap: 8px; min-height: 22px; }
+.bd-app .ag-pick { height: 20px; margin-left: -3px; padding: 0 4px 0 3px; gap: 5px; border-radius: 5px; background: none; box-shadow: none; color: var(--text-2); font: 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .ag-pick:hover:not(:disabled) { background: rgb(var(--ink) / 0.08); color: var(--text); }
+.ag-ctx { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 112px; height: 18px; padding: 0 5px; border-radius: 4px; background: var(--panel); color: var(--text-2); font-size: 11px; line-height: 16px; animation: gate-in 0.16s var(--ease) backwards; }
+.ag-ctx svg { flex: none; }
+.ag-ctx span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-app .ag-send { width: 22px; height: 22px; background: var(--text); color: var(--win); }
+.bd-app .ag-send svg { width: 12px; height: 12px; }
+.bd-app .ag-send:disabled { background: rgb(var(--ink) / 0.12); color: var(--text-off); }
+.bd-app .ag-send:not(:disabled):hover { transform: scale(1.06); }
+.bd-app .ag-send.stop { background: var(--text); }
+
+/* Comments, in the same column: the same 32px second row. */
+.bd-app .bd-comments > .bd-head { height: 32px; margin: 0; padding: 0 8px 8px 16px; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-comments > .bd-head h3 { font: 500 11px/16px var(--sans); letter-spacing: inherit; color: var(--text); }
+.bd-app .bd-crows { padding: 8px; }
+.bd-app .bd-crows > .bd-hint { padding: 8px; }
+.bd-app .bd-crow { gap: 8px; padding: 8px; border-radius: 8px; }
+.bd-app .bd-crow:hover { background: rgb(var(--ink) / 0.05); }
+.bd-app .bd-crow.on { background: var(--bd-row-in); }
+.bd-app .bd-crow .top b { font-size: 11px; font-weight: 500; }
+.bd-app .bd-crow .txt { font-size: 11px; line-height: 16px; }
+.bd-app .bd-crow .meta { font-size: 11px; color: var(--text-3); }
+
+/* The right panel's head: who's here, Preview, Export and Share; then Design / Code and the zoom. */
+.bd-app .bd-right-head { gap: 0; padding: 0; box-shadow: none; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-right-row { height: 40px; padding: 8px 8px 8px 12px; gap: 8px; }
+.bd-app .bd-right-row + .bd-right-row { height: 32px; padding: 0 8px 8px; }
+.bd-app .bd-design-tabs { margin: 0; }
+.bd-app .bd-right-row .btn.sm { height: 24px; padding: 0 10px; border-radius: var(--r); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-export { background: var(--fill); box-shadow: none; color: var(--text); }
+.bd-app .bd-export:hover { background: var(--fill-hi); }
+.bd-app .bd-right-row .btn.primary.sm { font-weight: 600; }
+.bd-app .bd-preview { width: 24px; height: 24px; border-radius: var(--r); color: var(--text); }
+.bd-app .bd-preview:hover { background: var(--fill); }
+.bd-app .bd-right-row .bd-zoom { min-width: 0; padding: 0 4px 0 8px; gap: 4px; background: none; box-shadow: none; color: var(--text); font: 400 11px/16px var(--sans); font-variant-numeric: tabular-nums; }
+.bd-app .bd-right-row .bd-zoom:hover { background: var(--fill); }
+.bd-app .bd-zoom svg { width: 10px; height: 10px; color: var(--text-3); }
+.bd-app .bd-face { width: 24px; height: 24px; }
+
+/* The Design panel: a 40px line for what's selected, then sections ruled from edge to edge. */
+.bd-app .bd-right .panel-head { flex: none; height: 40px; min-height: 40px; padding: 0 8px 0 16px; gap: 6px; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-right .panel-head h2 { font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-right .panel-head .sub { padding-right: 8px; font-size: 11px; font-weight: 400; color: var(--text-3); }
+.bd-app .bd-ihead .ico { color: var(--text-2); }
+.bd-app .bd-ihead .ico svg { width: 12px; height: 12px; }
+.bd-app .bd-right .panel-body { gap: 0; padding: 0 0 24px; }
+.bd-app .bd-insp > * { padding: 8px 8px 12px 16px; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-insp > .section, .bd-app .bd-insp > .section + .section { gap: 8px; padding-top: 8px; border-top: 0; }
+.bd-app .bd-insp > .section:not(:has(> :nth-child(2))) { padding-bottom: 8px; }
+.bd-app .bd-insp > .section:not(:has(> :nth-child(2))) h3 { color: var(--text-2); }
+.bd-app .bd-insp > .bd-check { padding: 8px 8px 8px 16px; }
+.bd-app .bd-insp > .bd-note { padding: 12px 16px; }
+.bd-app .section-head { min-height: 24px; gap: 4px; }
+.bd-app .section-head h3 { font: 500 11px/16px var(--sans); letter-spacing: inherit; color: var(--text); }
+.bd-app .section-head .count { margin-left: 4px; font: 400 11px/16px var(--sans); color: var(--text-3); }
+.bd-app .section.collapsible .chev { width: 9px; height: 9px; margin-left: -12px; color: var(--text-3); }
+.bd-app .bd-note { font-size: 11px; line-height: 16px; color: var(--text-3); }
+.bd-app .bd-keys { gap: 6px 12px; font-size: 11px; line-height: 16px; }
+.bd-app .bd-keys dt { font: 500 11px/16px var(--sans); }
+
+/* Fields: filled, 24px, the panel's own type. A field you're in is ringed in the accent. */
+.bd-app .bd-right .num, .bd-app .bd-right .dd-btn, .bd-app .bd-right .input, .bd-app .bd-right .bd-prow-main { height: 24px; border-radius: var(--r); background: var(--fill); box-shadow: none; font-size: 11px; transition: box-shadow 0.12s; }
+.bd-app .bd-right .num:hover, .bd-app .bd-right .dd-btn:hover, .bd-app .bd-right .input:hover, .bd-app .bd-right .bd-prow-main:hover { background: var(--fill); box-shadow: inset 0 0 0 1px var(--line-2); }
+.bd-app .bd-right .num:focus-within, .bd-app .bd-right .input:focus, .bd-app .bd-right .dd-btn.open, .bd-app .bd-right .bd-prow.open .bd-prow-main { background: var(--fill); box-shadow: inset 0 0 0 1px var(--focus); }
+.bd-app .bd-right .num .scrub { width: 24px; color: var(--text-3); font: 400 11px/16px var(--sans); }
+.bd-app .bd-right .num .scrub svg { width: 12px; height: 12px; }
+.bd-app .bd-right .num input { padding: 0; font: 11px/16px var(--sans); font-variant-numeric: tabular-nums; letter-spacing: inherit; }
+.bd-app .bd-right .num .unit { padding-right: 8px; font: 11px/16px var(--sans); color: var(--text-3); }
+.bd-app .bd-right .dd-btn { padding: 0 6px 0 8px; gap: 4px; }
+.bd-app .bd-right .dd-btn svg { width: 10px; height: 10px; }
+.bd-app .bd-right .bd-size-field .num .scrub { width: 22px; padding: 0 0 0 8px; justify-items: start; }
+.bd-app .bd-right .bd-mode { width: 46px; padding: 0 4px 0 6px; }
+.bd-app .bd-right .seg { height: 24px; padding: 1px; border-radius: var(--r); background: var(--fill); box-shadow: none; }
+.bd-app .bd-right .seg button { height: 22px; padding: 0 6px; gap: 4px; border-radius: 5px; color: var(--text-2); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-right .seg button.on { color: var(--text); }
+.bd-app .bd-right .seg button svg { width: 12px; height: 12px; }
+.bd-app .bd-right .seg .thumb { top: 1px; bottom: 1px; border-radius: 5px; background: var(--panel); box-shadow: 0 0 0 0.5px var(--line-3); }
+.bd-app .bd-check { gap: 8px; min-height: 24px; font-size: 11px; color: var(--text); }
+.bd-app .bd-check input { appearance: none; -webkit-appearance: none; flex: none; width: 14px; height: 14px; margin: 0; border-radius: 4px; background: transparent center / 10px 10px no-repeat; box-shadow: inset 0 0 0 1px var(--line-3); transition: background-color 0.12s, box-shadow 0.12s; }
+.bd-app .bd-check input:hover { box-shadow: inset 0 0 0 1px var(--text-3); }
+.bd-app .bd-check input:checked { background-color: var(--lime); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%2316190a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5.2l2 2 4-4.4'/%3E%3C/svg%3E"); box-shadow: none; }
+
+/* Rows keep one rhythm: two fields and a 24px slot for the row's own button, used or not. */
+.bd-app .bd-right .grid2 { gap: 8px; padding-right: 32px; }
+.bd-app .bd-right .bd-pads, .bd-app .bd-right .bd-radius { grid-template-columns: 1fr 1fr 24px; gap: 8px; }
+.bd-app .bd-right .bd-radius > .num { grid-column: 1; }
+.bd-app .bd-right .bd-radius > .icon-btn { grid-column: 3; }
+.bd-app .bd-right .bd-pads.four, .bd-app .bd-right .bd-radius.four { grid-template-columns: repeat(4, 1fr) 24px; gap: 4px; }
+.bd-app .bd-right .bd-radius.four > .num, .bd-app .bd-right .bd-radius.four > .icon-btn { grid-column: auto; }
+.bd-app .bd-flex { grid-template-columns: 1fr 1fr; gap: 8px; padding-right: 32px; }
+.bd-app .bd-flex > .bd-pad { height: 56px; aspect-ratio: auto; padding: 6px; gap: 0; border-radius: var(--r); background: var(--fill); box-shadow: none; }
+.bd-app .bd-flex > .bd-pad button { border-radius: 3px; }
+.bd-app .bd-flex > .bd-pad button:hover { background: rgb(var(--ink) / 0.08); }
+.bd-app .bd-flex > .bd-pad button i { width: 2px; height: 2px; background: rgb(var(--ink) / 0.3); }
+.bd-app .bd-flex > .bd-pad button.on i { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+.bd-app .bd-flex-side { gap: 8px; }
+.bd-app .bd-flex-opts { gap: 12px; }
+.bd-app .bd-prow { gap: 4px; }
+.bd-app .bd-right .bd-prow-main { padding: 0 8px 0 4px; gap: 8px; }
+.bd-app .bd-prow-main .bd-swatch { width: 16px; height: 16px; border-radius: 3px; }
+.bd-app .bd-prow-main .lbl { font-size: 11px; font-weight: 400; color: var(--text); }
+.bd-app .bd-prow-main .sub { font: 11px/16px var(--sans); color: var(--text-3); }
+.bd-app .bd-right .row { grid-template-columns: 64px 1fr; gap: 8px; min-height: 24px; }
+.bd-app .bd-right .row > label, .bd-app .bd-right .lbl { font-size: 11px; font-weight: 400; color: var(--text-3); }
+/* Width and height: the number and how it's sized (Fixed, Hug, Fill) are one field, so the row takes the panel's full width. */
+.bd-app .bd-right .grid2:has(> .bd-size-field) { padding-right: 0; }
+.bd-app .bd-right .bd-size-field { gap: 1px; }
+.bd-app .bd-right .bd-size-field .num { border-radius: var(--r) 0 0 var(--r); }
+.bd-app .bd-right .bd-size-field .bd-mode { border-radius: 0 var(--r) var(--r) 0; }
+.bd-app .bd-right .seg .thumb { box-shadow: 0 0 0 0.5px rgb(var(--ink) / 0.16), 0 1px 1.5px rgb(0 0 0 / calc(0.3 * var(--shade))); }
+/* The panels' switches in the top bar: lit when the panel is showing, no box around them. */
+.bd-app .tabbar .hstack .icon-btn { color: var(--text-3); background: none; box-shadow: none; }
+.bd-app .tabbar .hstack .icon-btn:hover:not(:disabled) { background: rgb(var(--ink) / 0.07); color: var(--text); }
+.bd-app .tabbar .hstack .icon-btn.on { color: var(--text); }
+.bd-app .tabbar .hstack .icon-btn:disabled { color: var(--text-off); opacity: 1; }
+/* A field's label is an icon (a 24px square) or a word (as wide as the word). */
+.bd-app .bd-right .num .scrub { width: auto; min-width: 24px; padding: 0 6px 0 8px; }
+.bd-app .bd-right .num .scrub:has(svg) { width: 24px; padding: 0; }
+.bd-app .bd-right .bd-size-field .num .scrub { min-width: 0; width: 22px; padding: 0 0 0 8px; }
+.bd-app .bd-right .bd-mode { width: 52px; }
+/* The rest of the panel's controls, at the same size: colours, buttons, long fields, tracks. */
+.bd-app .bd-right .color-btn { height: 24px; padding: 0 8px 0 4px; gap: 8px; border-radius: var(--r); background: var(--fill); box-shadow: none; font: 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-right .color-btn:hover { background: var(--fill); box-shadow: inset 0 0 0 1px var(--line-2); }
+.bd-app .bd-right .color-btn .chip-color { width: 16px; height: 16px; border-radius: 3px; }
+.bd-app .bd-right .panel-body .btn:not(.primary) { height: 24px; padding: 0 10px; border-radius: var(--r); background: var(--fill); box-shadow: none; color: var(--text); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-right .panel-body .btn:not(.primary):hover { background: var(--fill-hi); }
+.bd-app .bd-right .panel-body .btn.ghost:not(.primary) { background: none; }
+.bd-app .bd-right .panel-body .btn.ghost:not(.primary):hover { background: var(--fill); }
+.bd-app .bd-right .panel-body .btn.primary { height: 24px; padding: 0 10px; border-radius: var(--r); font: 600 11px/16px var(--sans); }
+.bd-app .bd-right .textarea { padding: 6px 8px; border-radius: var(--r); background: var(--fill); box-shadow: none; font-size: 11px; line-height: 16px; }
+.bd-app .bd-right .textarea:focus { box-shadow: inset 0 0 0 1px var(--focus); }
+.bd-app .bd-right .bd-css { font: 11px/16px var(--mono); }
+.bd-app .bd-right .slider { grid-template-columns: 1fr 36px; gap: 8px; }
+.bd-app .bd-right .slider .val { font: 11px/16px var(--sans); font-variant-numeric: tabular-nums; }
+.bd-app .bd-src { font-size: 11px; color: var(--text-2); }
+.bd-app .bd-font .input { font-size: 11px; }
+.bd-app .bd-track { height: 24px; border-radius: var(--r); background: var(--fill); box-shadow: none; font: 11px/16px var(--sans); }
+.bd-app .bd-track-raw { border-radius: var(--r); background: var(--fill); box-shadow: none; }
+.bd-app .bd-selcolor .n { font: 11px/16px var(--sans); }
+.bd-app .bd-right .cb-token { font-size: 10.5px; }
+.bd-app .bd-compbox { padding: 8px 10px; border-radius: 8px; background: var(--fill); box-shadow: none; }
+.bd-app .bd-compbox .t, .bd-app .bd-compbox .t span { font-size: 11px; }
+.bd-app .bd-presets button { height: 24px; padding: 0 8px; border-radius: var(--r); font-size: 11px; }
+.bd-app .bd-presets .dim { font: 11px/16px var(--sans); }
+/* A select's second word (a weight's number) shows in its menu, not in the field. */
+.bd-app .bd-right .grid2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.bd-app .bd-right .grid2 .dd-btn .label .muted { display: none; }
+/* The Code tab, in the panel's own type: a 40px line with Copy, then the code in a well. */
+.bd-app .bd-codeview-head { height: 40px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--edge); font: 500 11px/16px var(--sans); }
+.bd-app .bd-codeview-head .btn.sm { height: 24px; padding: 0 8px 0 7px; gap: 5px; border-radius: var(--r); background: var(--fill); box-shadow: none; font: 500 11px/16px var(--sans); }
+.bd-app .bd-codeview-head .btn.sm:hover { background: var(--fill-hi); }
+.bd-app .bd-codeview-head .btn.sm svg { width: 12px; height: 12px; }
+.bd-app .bd-codeview-text { margin: 0; padding: 12px 12px 24px 16px; border-radius: 0; background: none; box-shadow: none; color: var(--text-2); font: 10.5px/17px var(--mono); letter-spacing: 0; }
+.bd-app .bd-code-empty, .bd-cnone { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 24px 48px; text-align: center; color: var(--text-3); font-size: 11px; line-height: 16px; }
+.bd-app .bd-code-empty svg { color: var(--text-3); }
+.bd-app .bd-code-empty b, .bd-cnone b { margin-top: 10px; color: var(--text); font: 500 13px/20px var(--sans); }
+.bd-cnone { height: 100%; animation: gate-in 0.3s var(--ease) backwards; }
+.bd-cnone i { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--fill); color: var(--text-2); }
+.bd-cnone span { max-width: 216px; text-wrap: balance; }
+.bd-app .bd-cnone .btn.sm { height: 24px; margin-top: 12px; padding: 0 6px 0 10px; gap: 8px; border-radius: var(--r); background: var(--fill); box-shadow: none; color: var(--text); font: 500 11px/16px var(--sans); }
+.bd-app .bd-cnone .btn.sm:hover { background: var(--fill-hi); }
+.bd-cnone kbd { display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 4px; background: rgb(var(--ink) / 0.1); color: var(--text-2); font: 500 10px/16px var(--sans); }
+.bd-app .bd-crows:has(> .bd-cnone) { display: flex; }
+/* Assets: the same ruled sections as the Design panel; tiles are filled, not outlined. */
+.bd-app .bd-assets { gap: 0; padding: 0 0 24px; }
+.bd-app .bd-assets > .section, .bd-app .bd-assets > .section + .section { gap: 8px; padding: 8px 8px 12px 16px; border-top: 0; border-bottom: 1px solid var(--edge); }
+.bd-app .bd-assets > .section.closed { padding-bottom: 8px; }
+.bd-app .bd-assets .btn { height: 24px; padding: 0 10px; border-radius: var(--r); background: var(--fill); box-shadow: none; color: var(--text); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-assets .btn:hover { background: var(--fill-hi); }
+.bd-app .bd-assets .btn svg { width: 12px; height: 12px; }
+.bd-app .bd-assets .input { height: 24px; border-radius: var(--r); background: var(--fill); box-shadow: none; font-size: 11px; }
+.bd-app .bd-assets .input:focus { box-shadow: inset 0 0 0 1px var(--focus); }
+.bd-app .bd-asset-grid { gap: 4px; }
+.bd-app .bd-asset { border-radius: 8px; background: var(--fill); box-shadow: none; }
+.bd-app .bd-asset:hover { background: var(--fill-hi); box-shadow: none; }
+.bd-app .bd-asset.shape .nm { font-size: 10px; line-height: 14px; color: var(--text-2); }
+.bd-app .bd-asset.row { height: 24px; padding: 0 8px; font-size: 11px; }
+.bd-app .bd-asset.shader .nm { font-size: 10.5px; }
+/* Earlier chats, under the field that opens them. */
+.bd-app .ag-history { padding: 4px; }
+.bd-app .ag-hrow { gap: 8px; padding: 6px 8px; border-radius: 6px; }
+.bd-app .ag-hrow b { font: 500 11px/16px var(--sans); }
+.bd-app .ag-hrow small { font-size: 11px; line-height: 16px; color: var(--text-3); }
+
+/* Home, in the editor's type (the board's "6 · Home"): 11px, medium weights. */
+.home { font-size: 11px; line-height: 16px; letter-spacing: 0.005em; }
+.home .home-account b { font: 500 12px/16px var(--sans); }
+.home .home-search input { font-size: 11px; letter-spacing: inherit; }
+.home .home-nav button { gap: 8px; color: var(--text); font: 400 11px/16px var(--sans); letter-spacing: inherit; }
+.home .home-nav button.on { font-weight: 500; }
+.home .home-teams .ellipsis { font-size: 11px; }
+.home .home-sec, .home .home-sec-row .home-sec { color: var(--text-3); font: 500 11px/16px var(--sans); }
+.home .home-head .btn.sm { height: 28px; padding: 0 10px; font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.home .home-head .btn.primary.sm { font-weight: 600; }
+.home .home-tabs button { color: var(--text-2); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.home .home-tabs button.on { color: var(--text); }
+.home .home-filters .dd-btn { min-width: 0; padding: 0 6px 0 8px; gap: 6px; font-size: 11px; }
+.home .home-filters .dd-btn svg { width: 10px; height: 10px; }
+.home .sp-text b { font: 500 12px/16px var(--sans); letter-spacing: 0; }
+.home .sp-meta { gap: 0; color: var(--text-3); font-size: 11px; line-height: 16px; }
+.home .sp-meta span + span::before { content: "·"; margin: 0 5px; }
+
+/* Import a website: the address, then each choice as a row with its control on the right. */
+.web-import { width: min(480px, calc(100vw - 48px)); }
+.web-import .sheet-body { gap: 12px; padding-top: 4px; }
+.wi-url { height: 40px; gap: 10px; padding: 0 12px; border-radius: 10px; background: var(--panel-3); box-shadow: none; }
+.wi-url:focus-within { background: var(--panel-3); box-shadow: inset 0 0 0 1px var(--focus), 0 0 0 3px rgb(var(--accent-rgb) / 0.14); }
+.wi-url > svg { flex: none; color: var(--text-3); }
+.wi-field { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--text); font: 14px var(--sans); }
+.wi-field::placeholder { color: var(--text-4); }
+.wi-opts { display: flex; flex-direction: column; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.wi-opt { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 54px; padding: 8px 12px 8px 14px; }
+.wi-opt + .wi-opt { box-shadow: inset 0 1px 0 var(--line); }
+.wi-opt > div:first-child { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.wi-opt > div:first-child b { color: var(--text); font: 500 13px/18px var(--sans); }
+.wi-opt > div:first-child span { color: var(--text-3); font-size: 12px; line-height: 16px; }
+.wi-opt .seg { flex: none; width: 228px; }
+.wi-opt .switch { flex: none; gap: 0; }
+.wi-fine { margin: 0; color: var(--text-3); font-size: 12px; line-height: 17px; }
+.wi-progress { gap: 8px; font-size: 12px; color: var(--text-2); }
+.wi-bar { height: 4px; background: rgb(var(--ink) / 0.1); }
+.wi-bar i { background: var(--lime); }
+:root[data-theme="light"] .wi-bar i { background: var(--accent); }
+
+/* Settings: which agent the setup is for (a logo beside its name, on one line), and the plan's prices. */
+.connect-tabs { gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel-3); box-shadow: none; }
+.connect-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; color: var(--text-2); font: 500 12px var(--sans); white-space: nowrap; }
+.connect-tabs button svg { flex: none; }
+.connect-tabs button.on { background: var(--panel); color: var(--text); box-shadow: 0 0 0 0.5px rgb(var(--ink) / 0.16), 0 1px 1.5px rgb(0 0 0 / calc(0.3 * var(--shade))); }
+.sheet .connect-cmd { border-radius: 10px; background: var(--win); box-shadow: inset 0 0 0 1px var(--line); }
+.set-tag { flex: none; height: 20px; padding: 0 7px; border-radius: 5px; background: var(--lime-soft); color: var(--accent); font: 500 11px/20px var(--sans); }
+.set-price { flex: none; color: var(--text-3); font-size: 12px; }
+.set-row .set-price b { display: inline; margin-right: 2px; color: var(--text); font: 600 13px var(--sans); }
+
+/* A button that was clicked keeps no ring when the next key is pressed; one reached with Tab does. */
+button[data-clicked]:focus-visible, [role="tab"][data-clicked]:focus-visible { outline: none; }
+
+/* An empty page: the three ways to start by hand stay on one line, and the line to an agent steps aside when the chat is already open. */
+.bd-empty { width: min(480px, calc(100% - 48px)); }
+.bd-starts { flex-wrap: nowrap; gap: 2px; }
+.bd-starts button { flex: none; padding: 0 9px; font: 500 12px var(--sans); white-space: nowrap; }
+.bd-app:has(> .bd-chat-col) .bd-ask { display: none; }
+.bd-app:has(> .bd-chat-col) .bd-empty > b { margin-bottom: 8px; }
+/* Selected words are marked in the accent, as focus is; on the canvas they keep the blue that shows on any design. */
+::selection { background: rgb(var(--accent-rgb) / 0.32); }
+.bd-stage ::selection { background: rgba(76, 141, 255, 0.45); }
+
+/* A face in a comment is the person's animal on their colour, as everywhere else. */
+.bd-thread .av.face, .bd-comments .av.face { color: #000; font: 400 12px/1 "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
+/* No agent on this Mac: what to install, in the panel's own type. */
+.bd-app .ag-none { gap: 8px; padding: 16px; }
+.bd-app .ag-none b { font: 500 13px/20px var(--sans); }
+.bd-app .ag-none p { color: var(--text-3); font-size: 11px; line-height: 16px; }
+.bd-app .ag-links { gap: 0; }
+.bd-app .ag-links a { height: 24px; padding: 0; gap: 8px; font-size: 11px; }
+.bd-app .ag-none .btn.sm { height: 24px; padding: 0 10px; border-radius: var(--r); background: var(--fill); box-shadow: none; color: var(--text); font: 500 11px/16px var(--sans); }
+.bd-app .ag-none .btn.sm:hover { background: var(--fill-hi); }
+/* The left panel's drag edge sits on the panel's own edge (240px unless it was dragged). */
+.bd-app .bd-resizer { left: calc(var(--bd-left-w, 240px) - 3px); }
+/* The Comments head ends on the same line as the chat's and the Design panel's (its rule is part of its height). */
+.bd-app .bd-comments > .bd-head { height: 33px; }
+
+/* Who can be followed, over the canvas: a face (or an agent's mark) ringed in that one's own colour. */
+.bd-avatar { background: var(--panel); color: var(--text); box-shadow: 0 0 0 2px var(--stage), 0 0 0 3.5px var(--c); }
+.bd-avatar.face { color: #000; font: 400 14px/1 "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
+.bd-avatar.on { box-shadow: 0 0 0 2px var(--stage), 0 0 0 5px var(--c); }
+.bd-presence-bar { top: 12px; right: 14px; gap: 10px; }
+/* The same people in the Design panel's head overlap, so three of them leave Export and Share their room. */
+.bd-app .bd-faces { flex: none; }
+.bd-app .bd-face { margin-left: -6px; }
+.bd-app .bd-face:first-child { margin-left: 0; }
+.bd-app .bd-face.more { background: var(--fill); color: var(--text); font: 500 10px/24px var(--sans); }
+/* A part of a section that opens (a grid's flow and areas): a quiet line, not a second heading. */
+.bd-app .bd-more { gap: 6px; padding: 0; color: var(--text-2); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
+.bd-app .bd-more:hover { color: var(--text); }
+
+/* The sign-in picture in light mode: the dark window runs off the bottom and the right instead of fading into a pale ground, and the glow is quieter. */
+:root[data-theme="light"] .gate-show { background:
+    radial-gradient(60% 55% at 78% 88%, rgb(190 235 40 / 0.3), rgb(190 235 40 / 0) 70%),
+    radial-gradient(45% 40% at 18% 8%, rgb(255 255 255 / 0.9), rgb(255 255 255 / 0) 70%),
+    #e4e4e8; }
+:root[data-theme="light"] .gate-show img { top: 16%; width: max(1180px, 140%); -webkit-mask-image: none; mask-image: none; }
+
+/* More tabs than fit: they narrow to a point, then the strip scrolls sideways (the open one stays in sight) and New stays where it is. */
+.tabs { flex: 0 1 auto; min-width: 0; }
+.tabs-strip { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tabs-strip::-webkit-scrollbar { display: none; }
+.tab { flex: 0 1 auto; min-width: 96px; }
+.tab.on { flex-shrink: 0; }

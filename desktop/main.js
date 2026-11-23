@@ -20,6 +20,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // name: a development run is its own copy, so it never touches the installed app's library.
 const NAME = app.isPackaged ? app.getName() : process.env.SCREENSHOTTER_APP_NAME || "Glassine Dev";
 app.setName(NAME);
+// What the app calls itself in its own words: the copy's name unless the build gave it another.
+const PRODUCT = (() => {
+  try {
+    return JSON.parse(readFileSync(path.join(app.getAppPath(), "package.json"), "utf8")).displayName || NAME;
+  } catch {
+    return NAME;
+  }
+})();
 // Tests and benchmarks run a copy with everything of its own (never the person's settings).
 if (process.env.GLASSINE_USER_DATA) app.setPath("userData", process.env.GLASSINE_USER_DATA);
 const NO_KEYCHAIN = Boolean(process.env.SCREENSHOTTER_NO_KEYCHAIN);
@@ -37,7 +45,7 @@ const TOP_BAR = 40;
 async function mcp() {
   app.dock?.hide();
   const args = process.argv.slice(process.argv.indexOf("mcp") + 1);
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", SCREENSHOTTER_APP_NAME: NAME };
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", SCREENSHOTTER_APP_NAME: NAME, SCREENSHOTTER_PRODUCT_NAME: PRODUCT };
   env.SCREENSHOTTER_STUDIO_FILE ||= STUDIO_FILE;
   const keys = await savedKeys();
   if (!env.UNSPLASH_ACCESS_KEY && keys.unsplash) env.UNSPLASH_ACCESS_KEY = keys.unsplash;
@@ -155,7 +163,7 @@ async function startEngine() {
   const entry = path.join(ENGINE_ROOT, "dist", "index.js");
   if (!existsSync(entry)) return setEngine("failed", `${NAME}'s engine is missing from the app (${entry}). Build it with npm run build.`);
   const keys = await savedKeys();
-  const env = { ...base, ELECTRON_RUN_AS_NODE: "1", SCREENSHOTTER_OUTPUT_DIR: outputFolder(), SCREENSHOTTER_APP: "1", SCREENSHOTTER_APP_NAME: NAME };
+  const env = { ...base, ELECTRON_RUN_AS_NODE: "1", SCREENSHOTTER_OUTPUT_DIR: outputFolder(), SCREENSHOTTER_APP: "1", SCREENSHOTTER_APP_NAME: NAME, SCREENSHOTTER_PRODUCT_NAME: PRODUCT };
   // A library for tests and benchmarks, set from outside, wins over the app's own.
   env.SCREENSHOTTER_STUDIO_FILE = process.env.SCREENSHOTTER_STUDIO_FILE || STUDIO_FILE;
   if (process.env.SCREENSHOTTER_OUTPUT_DIR && !settings().outputFolder) env.SCREENSHOTTER_OUTPUT_DIR = process.env.SCREENSHOTTER_OUTPUT_DIR;
@@ -227,7 +235,8 @@ let win = null;
 let pageReady = false;
 let pendingOpen = [];
 
-const windowColour = () => (nativeTheme.shouldUseDarkColors ? "#0b0b0d" : "#e7e7ea");
+// The page's own ground (--win in the UI's styles), so nothing flashes behind it as it loads or resizes.
+const windowColour = () => (nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#efeff1");
 
 function makeWindow() {
   const saved = settings().bounds;
@@ -628,7 +637,7 @@ function statusPage() {
   const body = failed ? escapeHtml(engine.reason).replace(/\n/g, "<br>") : "Warming up the engine…";
   const actions = failed ? `<button class="primary" onclick="post('restartEngine')">Try again</button><button onclick="post('showLog')">Show log</button>` : "";
   return `<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{margin:0;height:100%;background:#0b0b0d;color:#f4f4f5;font:13px/1.5 -apple-system,system-ui,sans-serif;-webkit-user-select:none;cursor:default}
+html,body{margin:0;height:100%;background:#1e1e1e;color:#f4f4f5;font:13px/1.5 -apple-system,system-ui,sans-serif;-webkit-user-select:none;cursor:default}
 body{-webkit-app-region:drag}
 .wrap{height:100%;display:grid;place-items:center;text-align:center;padding:40px}
 .card{max-width:460px;display:flex;flex-direction:column;align-items:center;gap:14px}

@@ -16,6 +16,7 @@ import { CommentsPanel, closeThread, openCount } from "./board-comments.js";
 import { Popover, Seg, html } from "./controls.js";
 import { pageHtml } from "./board-shaders.js";
 import { Icon } from "./icons.js";
+import { Avatar, TeamMark } from "./avatars.js";
 import { openMenu } from "./menu.js";
 import { gridShortcut, intoGridStyle, setLayout, wrapInGrid } from "./board-grid.js";
 import { S, api, fail, native, set, toast, useStore } from "./store.js";
@@ -47,7 +48,7 @@ export function BoardApp() {
   }, [b.id]);
   if (!b.board) return html`<div class="bd-app"><div class="boot"><div class="boot-mark"></div></div></div>`;
   const chat = b.rightTab === "agent" || b.rightTab === "comments" ? b.rightTab : null;
-  return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}" style=${{ "--bd-left-w": b.leftW ? b.leftW + "px" : null }}>
+  return html`<div class="bd-app ${b.leftOpen ? "" : "left-closed"} ${b.rightOpen ? "" : "right-closed"}" style=${{ "--bd-left-w": b.leftW ? b.leftW + "px" : null, "--bd-right-w": savedWidth("right"), "--bd-chat-w": savedWidth("chat") }}>
     <${BoardTopbar} />
     ${b.leftOpen && html`<aside class="panel bd-left">
       <${BoardHead} />
@@ -59,6 +60,7 @@ export function BoardApp() {
     ${b.leftOpen && html`<${LeftResizer} />`}
     <main class="bd-stage"><${BoardCanvas} /><${ToolDock} /></main>
     ${chat && html`<aside class="panel bd-chat-col">
+      <${EdgeResizer} name="chat" min=${264} max=${560} />
       <div class="bd-chat-bar">
         <div class="bd-left-tabs bd-chat-tabs" role="tablist">
           ${[["agent", "Agent"], ["comments", "Comments"]].map(([id, label]) => html`<button role="tab" data-tab=${id} aria-selected=${chat === id} class=${chat === id ? "on" : ""} onClick=${() => bset({ rightTab: id })}>${label}${id === "agent" ? html`<${AgentDot} />` : openCount() > 0 && html`<span class="n">${openCount()}</span>`}</button>`)}
@@ -68,10 +70,56 @@ export function BoardApp() {
       ${chat === "comments" ? html`<${CommentsPanel} />` : html`<${AgentPanel} />`}
     </aside>`}
     ${b.rightOpen && html`<aside class="panel bd-right">
+      <${EdgeResizer} name="right" min=${232} max=${480} />
       <${RightHead} />
       ${b.designView === "code" ? html`<${CodePanel} />` : html`<${Inspector} />`}
     </aside>`}
   </div>`;
+}
+
+const savedWidth = (name) => {
+  try {
+    const w = Number(localStorage.getItem(`board:${name}W`));
+    return w >= 224 && w <= 640 ? `${w}px` : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The left edge of a panel on the right (the Design panel, the chat): drag it wider or narrower; double-click for the usual width. */
+function EdgeResizer({ name, min, max }) {
+  const reset = (ev) => {
+    ev.currentTarget.closest(".bd-app").style.removeProperty(`--bd-${name}-w`);
+    try {
+      localStorage.removeItem(`board:${name}W`);
+    } catch {}
+  };
+  const down = (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const app = ev.currentTarget.closest(".bd-app");
+    const w0 = ev.currentTarget.parentElement.offsetWidth;
+    // The canvas keeps at least 340px.
+    const most = Math.max(min, Math.min(max, w0 + app.querySelector(".bd-stage").offsetWidth - 340));
+    const x0 = ev.clientX;
+    let w = w0;
+    app.classList.add("resizing");
+    const move = (e) => {
+      w = Math.round(Math.min(most, Math.max(min, w0 - (e.clientX - x0))));
+      app.style.setProperty(`--bd-${name}-w`, `${w}px`);
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      app.classList.remove("resizing");
+      try {
+        localStorage.setItem(`board:${name}W`, String(w));
+      } catch {}
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
+  return html`<div class="bd-edge" title="Drag to resize. Double-click for the usual width." onPointerDown=${down} onDblClick=${reset}></div>`;
 }
 
 /** The left panel's edge: drag it wider for deep layers or long names; double-click for the usual width. */
@@ -192,7 +240,7 @@ function RightHead() {
       <${PeopleHere} />
       <span class="spacer"></span>
       <button class="icon-btn bd-preview" disabled=${!currentPage()?.children.length} title=${`Preview ${node(previewTarget())?.name ?? "the frame"} in your browser (⌥⌘P)`} onClick=${() => previewFrame()}><${Icon} n="play" s=${15} /></button>
-      <button class="btn sm" ref=${exportBtn} disabled=${!currentPage()?.children.length} onClick=${() => setExporting(!exporting)}>Export</button>
+      <button class="btn sm bd-export" ref=${exportBtn} disabled=${!currentPage()?.children.length} onClick=${() => setExporting(!exporting)}>Export</button>
       ${b.id !== "scratchpad" && s.cloud?.signedIn && html`<button class="btn primary sm bd-share" ref=${shareBtn} onClick=${() => setSharing(!sharing)}>Share</button>`}
     </div>
     <div class="bd-right-row">
@@ -244,14 +292,12 @@ function PeopleHere() {
   const s = useStore();
   const me = s.cloud?.user;
   const face = (u, key, title, ring) =>
-    u?.image
-      ? html`<img key=${key} class="bd-face" src=${u.image} alt="" title=${title} style=${ring ? { "--ring": ring } : null} />`
-      : html`<span key=${key} class="bd-face" title=${title} style=${ring ? { "--ring": ring } : null}>${(u?.name || u?.email || "?").trim()[0].toUpperCase()}</span>`;
+    html`<${Avatar} key=${key} user=${u} cls="bd-face" title=${title} style=${ring ? { "--ring": ring } : null} />`;
   if (!me && !b.peers?.length) return null;
   return html`<div class="bd-faces">
     ${me && face(me, "me", `${me.name || me.email} (you)`)}
-    ${(b.peers ?? []).slice(0, 3).map((p) => face(p.user, p.id, p.agent ? `${p.user?.name ?? "A teammate"}'s ${p.agent}` : (p.user?.name ?? "A teammate"), p.color))}
-    ${(b.peers?.length ?? 0) > 3 && html`<span class="bd-face more">+${b.peers.length - 3}</span>`}
+    ${(b.peers ?? []).slice(0, (b.peers?.length ?? 0) > 2 ? 1 : 2).map((p) => face(p.user, p.id, p.agent ? `${p.user?.name ?? "A teammate"}'s ${p.agent}` : (p.user?.name ?? "A teammate"), p.color))}
+    ${(b.peers?.length ?? 0) > 2 && html`<span class="bd-face more" title=${b.peers.slice(1).map((p) => p.user?.name ?? "A teammate").join(", ")}>+${b.peers.length - 1}</span>`}
   </div>`;
 }
 
@@ -372,18 +418,23 @@ function LayersList() {
   const rows = [];
   const picked = new Set(b.sel);
   let deepest = 0;
-  const walk = (id, depth, masked) => {
+  const walk = (id, depth, masked, inside) => {
     const n = b.board.nodes[id];
     if (!n) return;
-    rows.push({ id, depth, n, on: picked.has(id), open: b.open.has(id), hovered: b.hover === id, renaming: b.renaming === id, masked });
+    const on = picked.has(id);
+    rows.push({ id, depth, n, on, under: inside && !on, open: b.open.has(id), hovered: b.hover === id, renaming: b.renaming === id, masked });
     if (depth > deepest) deepest = depth;
     if (!n.children?.length || !b.open.has(id)) return;
     const marks = maskMarks(b.board, n);
-    for (const c of n.children) walk(c, depth + 1, marks?.get(c));
+    for (const c of n.children) walk(c, depth + 1, marks?.get(c), inside || on);
   };
   for (const id of page?.children ?? []) walk(id, 0);
+  // A selected layer and the layers inside it are lit as one block, and the block's corners are
+  // the rounded ones: "t" where a block starts, "b" where it ends.
+  const lit = (r) => Boolean(r && (r.on || r.under));
+  for (let i = 0; i < rows.length; i++) rows[i].cap = lit(rows[i]) ? (lit(rows[i - 1]) ? "" : "t") + (lit(rows[i + 1]) ? "" : "b") : "";
   const { step, width } = indentFor(deepest, room);
-  const ROW_H = 28;
+  const ROW_H = 24;
   const virtual = rows.length > 150;
   const firstIdx = virtual ? Math.max(0, Math.floor(scroll.top / ROW_H) - 16) : 0;
   const lastIdx = virtual ? Math.min(rows.length, Math.ceil((scroll.top + scroll.h) / ROW_H) + 16) : rows.length;
@@ -493,14 +544,14 @@ function reveal(list, row, { vertical = true } = {}) {
 class Row extends Component {
   shouldComponentUpdate(next) {
     const p = this.props;
-    return next.n !== p.n || next.depth !== p.depth || next.on !== p.on || next.open !== p.open || next.hovered !== p.hovered || next.renaming !== p.renaming || next.masked !== p.masked;
+    return next.n !== p.n || next.depth !== p.depth || next.on !== p.on || next.open !== p.open || next.hovered !== p.hovered || next.renaming !== p.renaming || next.masked !== p.masked || next.under !== p.under || next.cap !== p.cap;
   }
   render(props) {
     return LayerRow(props);
   }
 }
 
-function LayerRow({ id, depth, n, on, open, hovered, renaming, masked }) {
+function LayerRow({ id, depth, n, on, open, hovered, renaming, masked, under, cap }) {
   const toggle = (e) => {
     e.stopPropagation();
     const o = new Set(B.open);
@@ -513,7 +564,7 @@ function LayerRow({ id, depth, n, on, open, hovered, renaming, masked }) {
   };
   const name = n.type === "text" && /^Text$|^Text \d+$/.test(n.name) ? plainText(n.text).slice(0, 40) || n.name : n.name;
   // Each level steps in by the chevron and its gap, so a layer's chevron sits under its parent's icon.
-  return html`<div class="bd-row ${on ? "on" : ""} ${hovered ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ "--d": depth }}
+  return html`<div class="bd-row ${on ? "on" : ""} ${under ? "under" : ""} ${cap ? `cap-${cap}` : ""} ${hovered ? "hover" : ""} ${n.hidden ? "hidden" : ""} ${!n.parent ? "root" : ""} ${n.hidden || n.locked ? "kept" : ""}" data-lid=${id} style=${{ "--d": depth }}
       onPointerEnter=${() => bset({ hover: id })} onPointerLeave=${() => B.hover === id && bset({ hover: null })}
       onDblClick=${(e) => (e.stopPropagation(), bset({ renaming: id }))}
       onContextMenu=${(e) => {

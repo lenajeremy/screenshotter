@@ -10,7 +10,9 @@ import { canvasEl, centerOn, screenBox, worldBox } from "./board-canvas.js";
 import { Switch, html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { openMenu } from "./menu.js";
-import { api, fail, toast } from "./store.js";
+import { S, api, fail, toast } from "./store.js";
+import { Avatar } from "./avatars.js";
+import { AgentLogo, logoFor } from "./agent-logos.js";
 
 // ---------------------------------------------------------------------------------------------
 // Who's who
@@ -20,7 +22,8 @@ const agentName = (key, fallback) => B.comments.agents?.[key]?.name ?? live.othe
 const KINDS = { claude: "Claude", codex: "Codex", "cursor-cli": "Cursor", opencode: "OpenCode", kiro: "Kiro", antigravity: "Antigravity", muse: "Muse", agent: "Agent" };
 const kindName = (k) => KINDS[k] ?? k;
 const authorOf = (m) => (m.by === "person" ? "You" : agentName(m.by, m.name));
-const initial = (m) => (m.by === "person" ? "Y" : (agentName(m.by, m.name).trim()[0] ?? "A").toUpperCase());
+/** Who wrote it: your face, or the agent's mark. */
+const Face = ({ m }) => (m.by === "person" ? html`<${Avatar} user=${S.cloud?.user ?? { id: "you" }} cls="av" />` : html`<span class="av agent"><${AgentLogo} id=${logoFor(m.by, agentName(m.by, m.name))} s=${11} /></span>`);
 
 export function ago(iso) {
   const s = (Date.now() - Date.parse(iso)) / 1000;
@@ -634,7 +637,7 @@ function Message({ t, m }) {
   const [editing, setEditing] = useState(false);
   if (m.pending) {
     return html`<div class="bd-msg pending">
-      <div class="who"><span class="av">${initial(m)}</span><b>${authorOf(m)}</b><span class="bd-pending-tag">Not sent</span></div>
+      <div class="who"><${Face} m=${m} /><b>${authorOf(m)}</b><span class="bd-pending-tag">Not sent</span></div>
       ${editing ? html`<${EditPending} t=${t} m=${m} done=${() => setEditing(false)} />` : html`<div class="txt bd-md">${markdown(m.text)}</div>`}
       ${!editing &&
       html`<p class="bd-sent">
@@ -643,7 +646,7 @@ function Message({ t, m }) {
     </div>`;
   }
   return html`<div class="bd-msg">
-    <div class="who"><span class="av ${m.by === "person" ? "" : "agent"}">${initial(m)}</span><b>${authorOf(m)}</b><span class="when">${ago(m.createdAt)}</span></div>
+    <div class="who"><${Face} m=${m} /><b>${authorOf(m)}</b><span class="when">${ago(m.createdAt)}</span></div>
     <div class="txt bd-md">${markdown(m.text)}</div>
     ${(m.to ?? []).map((key) => html`<${DeliveryLine} key=${key} t=${t} m=${m} k=${key} />`)}
   </div>`;
@@ -856,7 +859,7 @@ export function CommentsPanel() {
   const pageName = (id) => (b.board.pages.length > 1 ? b.board.pages.find((p) => p.id === id)?.name : null);
   const list = agents();
   return html`<div class="bd-comments">
-    <div class="bd-head"><h3>Comments</h3>${resolvedCount > 0 && html`<${Switch} checked=${b.showResolved} onChange=${(v) => bset({ showResolved: v })} label=${`Resolved (${resolvedCount})`} />`}</div>
+    <div class="bd-head"><h3>${(() => { const n = b.comments.threads.filter((t) => !t.resolved).length; return n ? `${n} open` : b.comments.threads.length ? "All resolved" : "On this board"; })()}</h3>${resolvedCount > 0 && html`<${Switch} checked=${b.showResolved} onChange=${(v) => bset({ showResolved: v })} label=${`Resolved (${resolvedCount})`} />`}</div>
     <div class="bd-crows">
       ${threads.length
         ? threads.map((t) => {
@@ -866,7 +869,7 @@ export function CommentsPanel() {
             const busy = waitingOn(t).find((w) => w.doing === "working");
             const state = allPending(t) ? "Not sent yet" : t.resolved ? "Resolved" : hasPending(t) ? "Reply not sent yet" : notSent(t) ? "Not sent to everyone" : busy ? `${agentName(busy.key)} is working on it…` : unseen(t) ? `New from ${authorOf(last)}` : replies ? `${replies} repl${replies === 1 ? "y" : "ies"}` : "";
             return html`<button key=${t.id} class="bd-crow ${b.thread === t.id ? "on" : ""} ${t.resolved ? "done" : ""}" data-thread=${t.id} onClick=${() => openThread(t.id)}>
-              <span class="av ${first.by === "person" ? "" : "agent"}">${initial(first)}</span>
+              <${Face} m=${first} />
               <span class="body">
                 <span class="top"><b>${anchorLabel(t.anchor)}</b><span class="when">${ago(t.updatedAt)}</span></span>
                 <span class="txt">${plainWords(first.text)}</span>
@@ -874,7 +877,14 @@ export function CommentsPanel() {
               </span>
             </button>`;
           })
-        : html`<p class="bd-hint">${b.comments.threads.length ? "Every comment is resolved." : "No comments yet. Press C, then click a layer or drag over part of an artboard. Your comments wait on the board until you send them all; then the agents that worked there get them as one list, through Agentman, and their answers show here."}</p>`}
+        : b.comments.threads.length
+          ? html`<p class="bd-hint">Every comment is resolved.</p>`
+          : html`<div class="bd-cnone">
+              <i><${Icon} n="comment" s=${18} /></i>
+              <b>No comments yet</b>
+              <span>Point at what should change. Your comments go to the agents together, and their answers show here.</span>
+              <button class="btn sm" onClick=${() => bset({ tool: "comment" })}>Add a comment<kbd>C</kbd></button>
+            </div>`}
     </div>
     ${list.length > 0 &&
     html`<div class="bd-cagents">

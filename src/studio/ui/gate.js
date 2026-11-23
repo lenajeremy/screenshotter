@@ -1,10 +1,12 @@
 // Before the app: sign in (Google through the browser, or a six-digit code by email), then three
 // short steps the first time: your name, your team, your agents.
+import { refreshBoards } from "./board-library.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
+import { Avatar, TeamMark } from "./avatars.js";
 import { AgentLogo } from "./agent-logos.js";
-import { loadAgents } from "./board-agent.js";
+import { loadAgents, pickAgent, pickedAgent } from "./board-agent.js";
 import { openExternal, refreshAccount } from "./cloud.js";
 import { S, api, native, set, useStore } from "./store.js";
 
@@ -39,6 +41,14 @@ export function Gate() {
   useEffect(() => {
     if (step === "done") finish(cloud.user);
   }, [step]);
+  // The board that shows the way around is made as the first-run steps start, so its picture is
+  // drawn by the time Home opens. Once per person on this Mac.
+  useEffect(() => {
+    const id = cloud.user?.id ?? cloud.user?.email;
+    if (!cloud.signedIn || !id || onboarded(cloud.user) || seen(`welcomed:${id}`)) return;
+    mark(`welcomed:${id}`);
+    api("/api/board/welcome", {}).catch(() => undefined);
+  }, [cloud.signedIn]);
   const steps = ["name", "team", "agents"];
   const at = steps.indexOf(step);
   return html`<div class="gate">
@@ -63,8 +73,8 @@ function finish(user) {
   const first = Boolean(user) && !seen(key);
   if (user) mark(key);
   set({ gate: false });
-  // The first time on this Mac: a board that shows the way around, there when Home opens.
-  if (first) api("/api/board/welcome", {}).then(() => api("/api/boards")).then((boards) => set({ boards })).catch(() => undefined);
+  // The first time on this Mac: the welcome board (made as the steps began) is there when Home opens.
+  if (first) refreshBoards().catch(() => undefined);
 }
 
 function Welcome({ email, setEmail, onCode, onBrowser }) {
@@ -224,52 +234,70 @@ function Name({ onNext }) {
       setBusy(false);
     }
   };
+  const shown = name.trim() || "Your name";
   return html`<form class="gate-in" onSubmit=${go}>
     <h1>What should we call you?</h1>
     <p class="gate-lede">Teammates see this next to your cursor and comments.</p>
-    <div class="gate-row">
-      ${user.image ? html`<img class="gate-av" src=${user.image} alt="" />` : html`<span class="gate-av">${(name || user.email || "?")[0].toUpperCase()}</span>`}
-      <label class="grow"><span>Name</span><input class="gate-input" value=${name} autoFocus spellcheck=${false} onInput=${(e) => (setName(e.target.value), setErr(""))} onKeyDown=${(e) => e.stopPropagation()} /></label>
+    <label class="gate-field"><span>Name</span>
+      <input class="gate-input" value=${name} autoFocus spellcheck=${false} autocomplete="name" placeholder="Your name" onInput=${(e) => (setName(e.target.value), setErr(""))} onKeyDown=${(e) => e.stopPropagation()} />
+    </label>
+    <div class="gate-preview" aria-hidden="true">
+      <div class="gate-preview-cursor"><${Icon} n="pointer" s=${16} /><em class=${name.trim() ? "" : "blank"}>${shown}</em></div>
+      <div class="gate-preview-note">
+        <${Avatar} user=${user} cls="gate-av" />
+        <div><b class=${name.trim() ? "" : "blank"}>${shown}</b><span>Looks good to me.</span></div>
+      </div>
     </div>
     ${err && html`<p class="gate-err" role="alert">${err}</p>`}
-    <div class="gate-foot"><span></span><button class="btn primary gate-next" type="submit" disabled=${busy || !name.trim()}>Continue</button></div>
+    <button class="btn primary gate-btn" type="submit" disabled=${busy || !name.trim()}>${busy ? html`<span class="spinner"></span>` : "Continue"}</button>
   </form>`;
 }
 
 function Team({ onBack, onNext }) {
   const s = useStore();
   const teams = s.cloud?.teams ?? [];
+  const role = (t) => (t.role === "owner" ? "Owner" : t.role === "admin" ? "Admin" : "Member");
   return html`<div class="gate-in">
-    <h1>${teams.length ? "Your team is here" : "Work with a team?"}</h1>
-    <p class="gate-lede">Teams share boards and edit them together, live. You can also do this later.</p>
-    ${teams.length > 0 && html`<div class="gate-list">${teams.map((t) => html`<div class="gate-item" key=${t.id}>
-      <i class="gate-team">${(t.name || "?")[0].toUpperCase()}</i>
-      <div class="grow"><b>${t.name}</b><span>You're ${t.role === "owner" ? "the owner" : `a ${t.role ?? "member"}`}</span></div>
-      <${Icon} n="check" s=${16} />
-    </div>`)}</div>`}
-    <button class="gate-item as-btn" onClick=${() => (set({ modal: { kind: "upgrade" } }))}>
-      <i class="gate-team plain"><${Icon} n="plus" s=${15} /></i>
-      <div class="grow"><b>Create a team</b><span>$16 a person each month, billed yearly</span></div>
-      <em>Team plan</em>
-    </button>
-    <div class="gate-foot"><button class="gate-back in-foot" onClick=${onBack}>Back</button><button class="btn ${teams.length ? "primary" : ""} gate-next" onClick=${onNext}>${teams.length ? "Continue" : "Skip, I'll work alone"}</button></div>
+    <h1>${teams.length > 1 ? "Your teams" : teams.length ? "Your team" : "Work with a team?"}</h1>
+    <p class="gate-lede">${teams.length ? "Boards in a team are shared and edited together, live." : "Teams share boards and edit them together, live. You can also do this later."}</p>
+    <div class="gate-list">
+      ${teams.map((t) => html`<div class="gate-item" key=${t.id}>
+        <${TeamMark} team=${t} cls="gate-team" />
+        <b class="grow ellipsis">${t.name}</b>
+        <small>${role(t)}</small>
+      </div>`)}
+      <button class="gate-item as-row" onClick=${() => set({ modal: { kind: "upgrade" } })}>
+        <i class="gate-team plain"><${Icon} n="plus" s=${15} /></i>
+        <b class="grow ellipsis">${teams.length ? "Start another team" : "Create a team"}</b>
+        <small>$16 a person / month</small>
+      </button>
+    </div>
+    <div class="gate-foot"><button class="gate-back in-foot" onClick=${onBack}>Back</button><button class="btn ${teams.length ? "primary" : ""} gate-next" onClick=${onNext}>${teams.length ? "Continue" : "Skip for now"}</button></div>
   </div>`;
 }
 
 function Agents({ onBack, onNext }) {
   const [agents, setAgents] = useState(null);
+  const [pick, setPick] = useState(null);
   useEffect(() => {
-    loadAgents().then(setAgents);
+    loadAgents().then((list) => (setAgents(list), setPick(pickedAgent() ?? list[0]?.id ?? null)));
   }, []);
+  const choose = (id) => (setPick(id), pickAgent(id));
   const none = agents && !agents.length;
+  const n = agents?.length ?? 0;
   return html`<div class="gate-in">
-    <h1>${none ? "Bring an agent" : "Your agents are ready"}</h1>
-    <p class="gate-lede">${none ? "Glassine works with the coding agents on your Mac. Install one and it shows up here." : "We found these on your Mac. They design on your boards with their own accounts; Glassine never sees your keys."}</p>
-    <div class="gate-list">
-      ${agents === null && html`<div class="gate-item"><span class="spinner"></span><div class="grow"><b>Looking on this Mac…</b></div></div>`}
-      ${(agents ?? []).map((a, i) => html`<div class="gate-item" key=${a.id}><${AgentLogo} id=${a.id} s=${18} /><div class="grow"><b>${a.label}</b>${i === 0 && html`<span>Default</span>`}</div><small><i></i>Ready</small></div>`)}
-      ${none && html`<div class="gate-item"><${Icon} n="code" s=${18} /><div class="grow"><b>Claude Code, Codex, opencode or Antigravity</b><span>Install any of them, then reopen Glassine</span></div></div>`}
+    <h1>${none ? "Bring an agent" : "Pick your agent"}</h1>
+    <p class="gate-lede">${none ? "Glassine designs with the coding agents on your Mac. Install one and it shows up here." : `We found ${n === 1 ? "one" : n} on your Mac. Choose the one new chats start with; you can switch any time.`}</p>
+    <div class="gate-list" role="radiogroup" aria-label="Agent">
+      ${agents === null && html`<div class="gate-item"><span class="spinner"></span><b class="grow">Looking on this Mac…</b></div>`}
+      ${(agents ?? []).map((a) => html`<button class="gate-item as-row gate-agent ${pick === a.id ? "on" : ""}" role="radio" aria-checked=${pick === a.id} key=${a.id} onClick=${() => choose(a.id)}>
+        <${AgentLogo} id=${a.id} s=${18} />
+        <b class="grow ellipsis">${a.label}</b>
+        <i class="gate-radio"></i>
+      </button>`)}
+      ${none && html`<div class="gate-item"><${Icon} n="code" s=${18} /><b class="grow">Claude Code, Codex, opencode or Antigravity</b></div>`}
     </div>
-    <div class="gate-foot"><button class="gate-back in-foot" onClick=${onBack}>Back</button><button class="btn primary gate-next" onClick=${onNext}>Open ${S.opts?.appName ?? "Glassine"}</button></div>
+    ${!none && html`<p class="gate-fine tight">Agents use their own accounts. ${S.opts?.appName ?? "Glassine"} never sees your keys.</p>`}
+    <div class="gate-foot"><button class="gate-back in-foot" onClick=${onBack}>Back</button><button class="btn primary gate-next" onClick=${onNext}>Get started</button></div>
   </div>`;
 }

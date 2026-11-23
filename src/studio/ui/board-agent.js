@@ -7,6 +7,7 @@ import { Icon } from "./icons.js";
 import { AgentLogo } from "./agent-logos.js";
 import { B, currentPage, node, useBoard } from "./board-state.js";
 import { api, fail, when } from "./store.js";
+import { layerIcon } from "./board.js";
 
 // ---------------------------------------------------------------------------------------------
 // State: the agents on this Mac, the board's chats, the chat open, kept outside the panel so a
@@ -35,6 +36,14 @@ const remember = (k, v) => {
     v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v);
   } catch {}
 };
+
+/** Which agent a new chat starts with. */
+export function pickAgent(id) {
+  A.pick = id;
+  remember("agent:pick", id);
+  emit();
+}
+export const pickedAgent = () => A.pick;
 
 export async function loadAgents() {
   if (A.agents) return A.agents;
@@ -151,13 +160,13 @@ function ChatHead() {
   const a = useAgent();
   const [open, setOpen] = useState(false);
   const btn = useRef();
-  const title = a.thread?.title ?? (a.open ? "" : "New chat");
+  const title = a.thread?.title ?? (a.open ? "…" : "New chat");
+  const has = a.chats.length > 0;
   return html`<div class="ag-head">
-    <span class="ag-title" title=${title}>${title}</span>
-    ${a.chats.length > 0 && html`<button class="icon-btn sm" ref=${btn} title="Earlier chats" onClick=${() => setOpen(!open)}><${Icon} n="history" s=${14} /></button>`}
-    <button class="icon-btn sm" title="New chat" disabled=${!a.open} onClick=${() => openChat(null)}><${Icon} n="pen" s=${14} /></button>
+    <button class="ag-chats" ref=${btn} disabled=${!has} title=${has ? "Earlier chats" : null} onClick=${() => setOpen(!open)}><span class="ag-title">${title}</span>${has && html`<${Icon} n="down" s=${10} w=${2} />`}</button>
+    <button class="icon-btn sm ag-new" title="New chat" disabled=${!a.open} onClick=${() => openChat(null)}><${Icon} n="plus" s=${14} /></button>
     ${open &&
-    html`<${Popover} anchor=${btn.current} onClose=${() => setOpen(false)} width=${250} align="end">
+    html`<${Popover} anchor=${btn.current} onClose=${() => setOpen(false)} width=${Math.max(220, btn.current?.offsetWidth ?? 240)} align="start">
       <div class="ag-history">
         ${a.chats.map(
           (c) => html`<button class=${`ag-hrow ${c.id === a.open ? "on" : ""}`} onClick=${() => (openChat(c.id), setOpen(false))}>
@@ -176,20 +185,29 @@ function ideasNow() {
   const first = page?.children.map((id) => node(id)).find((n) => n && !n.hidden);
   const sel = B.sel.length === 1 ? node(B.sel[0]) : null;
   const q = (n) => `“${n.name}”`;
+  const short = (n) => (n.name.length > 26 ? `${n.name.slice(0, 24).trimEnd()}…` : n.name);
   const narrow = first && parseFloat(first.style?.width) < 600;
+  // Each: what the row says, and the whole request it puts in the field (which names the layer).
   const ideas = sel
-    ? [`Make ${q(sel)} feel more premium`, `Three variations of ${q(sel)}, side by side`, `Tighten the spacing and type in ${q(sel)}`]
+    ? [["Make it feel more premium", `Make ${q(sel)} feel more premium`], ["Three variations, side by side", `Three variations of ${q(sel)}, side by side`], ["Tighten the spacing and type", `Tighten the spacing and type in ${q(sel)}`]]
     : first
-      ? [narrow ? `Make a desktop version of ${q(first)}` : `Make a phone version of ${q(first)}`, `Try three colour directions for ${q(first)}`, `Tighten the spacing and type on ${q(first)}`]
-      : ["Design a sign-up screen for an iPhone app", "A pricing page with three plans", "A settings screen, light and dark"];
-  return { ideas, onBoard: Boolean(first || sel) };
+      ? [[narrow ? "Make a desktop version" : "Make a phone version", `Make a ${narrow ? "desktop" : "phone"} version of ${q(first)}`], ["Try three colour directions", `Try three colour directions for ${q(first)}`], ["Tighten the spacing and type", `Tighten the spacing and type on ${q(first)}`]]
+      : [["A sign-up screen for an iPhone app", "Design a sign-up screen for an iPhone app"], ["A pricing page with three plans", "A pricing page with three plans"], ["A settings screen, light and dark", "A settings screen, light and dark"]];
+  const about = sel ? `It works on “${short(sel)}”, the layer you have selected.` : first ? `Select a layer to change just that, or ask about “${short(first)}”.` : "Describe a screen and it lands here as layers you can change.";
+  return { ideas: ideas.map(([label, ask]) => ({ label, ask })), about };
 }
 
+/** An empty chat: who you're talking to, what it will work on, and a few things to ask. */
 function Starts() {
-  const { ideas, onBoard } = ideasNow();
+  const a = useAgent();
+  const { ideas, about } = ideasNow();
   return html`<div class="ag-starts">
-    <p>${onBoard ? "Ask for a change, or try:" : "Describe a screen, or try:"}</p>
-    ${ideas.map((t) => html`<button class="ag-idea" onClick=${() => fillComposer(t)}>${t}</button>`)}
+    <div class="ag-hello">
+      <i>${a.pick ? html`<${AgentLogo} id=${a.pick} s=${20} />` : html`<${Icon} n="spark" s=${18} />`}</i>
+      <b>Design with ${a.pick ? agentLabel(a.pick) : "an agent"}</b>
+      <span>${about}</span>
+    </div>
+    <div class="ag-ideas">${ideas.map((t) => html`<button class="ag-idea" key=${t.label} title=${t.ask} onClick=${() => fillComposer(t.ask)}><${Icon} n="spark" s=${12} /><span>${t.label}</span></button>`)}</div>
   </div>`;
 }
 
@@ -288,7 +306,7 @@ function Reply({ m, last, onRetry }) {
       <button class="icon-btn sm" title="Try again" onClick=${onRetry}><${Icon} n="refresh" s=${13} /></button>
     </div>`}
     ${last && !live && m.status !== "error" &&
-    html`<div class="ag-next">${ideasNow().ideas.map((t) => html`<button class="ag-chip" key=${t} onClick=${() => fillComposer(t)}>${t}</button>`)}</div>`}
+    html`<div class="ag-next">${ideasNow().ideas.map((t) => html`<button class="ag-chip" key=${t.label} title=${t.ask} onClick=${() => fillComposer(t.ask)}>${t.label}</button>`)}</div>`}
   </div>`;
 }
 
@@ -340,6 +358,7 @@ function Composer() {
       <button class="ag-pick" ref=${pickBtn} disabled=${!a.agents?.length} onClick=${() => setPicking(!picking)} title="Which agent">
         ${a.pick && html`<${AgentLogo} id=${a.pick} s=${12} />`}<span>${a.pick ? agentLabel(a.pick) : "…"}</span><${Icon} n="down" s=${10} w=${2.2} />
       </button>
+      ${B.sel.length > 0 && html`<span class="ag-ctx" title="The agent is told what you have selected"><${Icon} n=${B.sel.length === 1 && node(B.sel[0]) ? layerIcon(node(B.sel[0])) : "layers"} s=${11} /><span>${B.sel.length === 1 ? (node(B.sel[0])?.name ?? "Layer") : `${B.sel.length} layers`}</span></span>`}
       <span class="grow"></span>
       ${run
         ? html`<button class="ag-send stop" title="Stop" onClick=${stopIt}><i></i></button>`
