@@ -15,7 +15,7 @@
  * else ad hoc.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, openSync, readSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -147,6 +147,19 @@ for (const size of [16, 32, 128, 256, 512])
   }
 execFileSync("iconutil", ["-c", "icns", iconset, "-o", path.join(resources, "AppIcon.icns")]);
 
+/** Whether a file is a Mach-O program or library (thin or universal), the kind that has to be signed. */
+function isMachO(file) {
+  try {
+    const fd = openSync(file, "r");
+    const b = Buffer.alloc(4);
+    readSync(fd, b, 0, 4, 0);
+    closeSync(fd);
+    return [0xfeedfacf, 0xcffaedfe, 0xfeedface, 0xcefaedfe, 0xcafebabe, 0xbebafeca].includes(b.readUInt32BE(0));
+  } catch {
+    return false;
+  }
+}
+
 // Signing, inside out: Electron's libraries and frameworks, its helpers, then the app.
 const identity = signingIdentity();
 const ent = (() => {
@@ -166,7 +179,14 @@ if (identity) {
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() && !d.isSymbolicLink() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]));
   for (const fw of readdirSync(frameworks).filter((f) => f.endsWith(".framework"))) {
     const dir = path.join(frameworks, fw);
-    for (const f of walk(dir)) if (/\.(dylib|so|node)$/.test(f) || (statSync(f).mode & 0o111 && !f.includes(".app/") && path.basename(f) !== path.basename(fw, ".framework") && !/Resources/.test(f))) sign(f);
+    // Every program and library in it (helpers like chrome_crashpad_handler, Squirrel's ShipIt under
+    // Resources), judged by what the file is, not where it sits; apps nested in it are signed whole below.
+    // (The path tested is inside the framework: the whole path always has Glassine.app/ in it.)
+    for (const f of walk(dir)) {
+      const inside = path.relative(dir, f);
+      if (inside.includes(".app/") || path.basename(f) === path.basename(fw, ".framework")) continue;
+      if (/\.(dylib|so|node)$/.test(f) || (statSync(f).mode & 0o111 && isMachO(f))) sign(f);
+    }
     for (const inner of walk(dir).filter((f) => f.endsWith(".app/Contents/Info.plist"))) sign(path.dirname(path.dirname(inner)));
     sign(dir);
   }

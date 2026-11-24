@@ -3,13 +3,12 @@ import { useEffect, useRef } from "preact/hooks";
 import { html } from "./controls.js";
 import { Icon } from "./icons.js";
 import { S, useStore } from "./store.js";
-import { closeBoard, dropTab, newBoard, openBoard } from "./board-state.js";
+import { closeBoard, dropTab, newBoard, switchBoard } from "./board-state.js";
 
 /** Go to a board from wherever you are. */
 export async function switchToBoard(id) {
   if (S.boardId === id) return;
-  if (S.boardId) closeBoard();
-  await openBoard(id);
+  await switchBoard(id);
 }
 
 export function closeTab(id) {

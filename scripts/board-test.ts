@@ -813,6 +813,18 @@ const rowHtml = await call("board_read", { board, what: "html", node: row });
 check((rowHtml.text.match(/<svg/g) ?? []).length === 2 && rowHtml.text.includes("currentColor") && !rowHtml.text.includes("sticker:"), "stickers and illustrations in an agent's HTML come in as vectors (one-ink art takes its colour)");
 const shaped = await call("board_edit", { board, changes: [{ do: "shape", type: "burst", width: 120, height: 120, into: row, fill: "#ff3b30", text: "NEW", labelColor: "#fff" }, { do: "shape", type: "arrow", width: 160, height: 90, x: 1200, y: 40, stroke: "#0a84ff", strokeWidth: 5 }] });
 check(shaped.json.results.every((r: any) => r.shape), "an agent adds Screenshotter's shapes, in a frame or on the page");
+// A sticky note: the agent's words in handwriting, signed with its name; one without words is refused.
+const noted = await call("board_edit", { board, changes: [{ do: "shape", type: "note", width: 220, height: 220, text: "Trying a calmer hero here." }] });
+const noteNode = await call("board_read", { board, what: "html", node: noted.json.results[0].shape });
+// The words wrap to the paper, so they're read back line by line.
+const noteWords = [...noteNode.text.matchAll(/>([^<]*)<\/text>/g)].map((m) => m[1]).join(" ");
+const noteOk = /Gloria Hallelujah/.test(noteNode.text) && noteWords.startsWith("Trying a calmer hero here.") && /— \S/.test(noteWords) && /Sticky note/.test(noteNode.text);
+if (!noteOk) console.log(noteWords);
+check(noteOk, "an agent's sticky note is written in handwriting and signed with its name");
+// The note was a check of its own: it leaves, so the board's artboards are as the rest of the test expects.
+await call("board_edit", { board, changes: [{ do: "delete", ids: [noted.json.results[0].shape] }] });
+const wordless = await call("board_edit", { board, changes: [{ do: "shape", type: "note", width: 220, height: 220 }] }, true);
+check(/needs its words/.test(wordless.text), "a sticky note without words is refused, with what to put in it");
 // In one batch, each change works from the ones before it: a copy placed after its component was restyled has the new style.
 const pillMade = await call("board_write_html", { board, target: art, html: `<div data-name="Pill" style="display:flex;padding:6px 12px;background:#dddddd"><span>Pill</span></div>` });
 const pill = pillMade.json.created[0].id;

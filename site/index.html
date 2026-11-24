@@ -8,7 +8,8 @@
 <meta property="og:title" content="Glassine: the design canvas for teams and their agents">
 <meta property="og:description" content="Draw screens, ask your coding agents for more, and review it all on one canvas. On your Mac, with your team.">
 <meta property="og:image" content="assets/glassine/hero-1440.webp">
-<meta name="theme-color" content="#08090a">
+<meta name="theme-color" content="#08090a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
 <link rel="icon" href="favicon.ico" sizes="48x48">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -16,7 +17,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&display=swap">
-<link rel="preload" as="image" href="assets/glassine/hero-1440.webp" imagesrcset="assets/glassine/hero-1440.webp 1440w, assets/glassine/hero-2880.webp 2880w" imagesizes="(min-width: 1440px) 1320px, calc(100vw - 32px)">
+<link rel="preload" as="image" href="assets/glassine/hero-1440.webp" imagesrcset="assets/glassine/hero-1440.webp 1440w, assets/glassine/hero-2880.webp 2880w" media="(prefers-color-scheme: dark)" imagesizes="(min-width: 1440px) 1320px, calc(100vw - 32px)">
+<link rel="preload" as="image" href="assets/glassine/hero-light-1440.webp" imagesrcset="assets/glassine/hero-light-1440.webp 1440w, assets/glassine/hero-light-2880.webp 2880w" media="(prefers-color-scheme: light)" imagesizes="(min-width: 1440px) 1320px, calc(100vw - 32px)">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lenis@1.3.27/dist/lenis.css">
 <link rel="stylesheet" href="home.css">
 <script>
@@ -40,7 +42,7 @@
       <a href="#pricing">Pricing</a>
       <a href="changelog.html">Changelog</a>
     </nav>
-    <a class="btn light sm" href="downloads/Glassine.dmg">Download</a>
+    <a class="btn light sm" href="downloads/Glassine.dmg" download>Download</a>
   </div>
 </header>
 
@@ -50,24 +52,27 @@
     <h1>The design canvas for teams and their agents</h1>
     <div class="hero-row">
       <p class="lede">Draw screens, ask your coding agents for more, and review it all on one canvas. On your Mac, with your team.</p>
-      <div class="ctas">
-        <a class="btn primary" href="downloads/Glassine.dmg">Download for Mac</a>
-        <a class="more" href="#design">See how it works <span aria-hidden="true">→</span></a>
+      <div class="get">
+        <div class="ctas">
+          <a class="btn primary" href="downloads/Glassine.dmg" download>Download for Mac</a>
+          <a class="more" href="#design">See how it works <span aria-hidden="true">→</span></a>
+        </div>
+        <p class="req">Free · macOS 14 or later · Apple silicon</p>
       </div>
     </div>
   </section>
 
   <figure class="window">
-    <img src="assets/glassine/hero-1440.webp" srcset="assets/glassine/hero-1440.webp 1440w, assets/glassine/hero-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" alt="The editor with the Patchwork landing page open: Claude Code is changing the selected headline, Maya's cursor is by the button, and the agent's chat lists the three changes it made.">
+    <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/hero-light-1440.webp 1440w, assets/glassine/hero-light-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)"><img src="assets/glassine/hero-1440.webp" srcset="assets/glassine/hero-1440.webp 1440w, assets/glassine/hero-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" alt="The editor with the Patchwork landing page open: Claude Code is changing the selected headline, Maya's cursor is by the button, and the agent's chat lists the three changes it made."></picture>
   </figure>
 
   <section class="works" aria-label="Agents it works with">
     <p>Works with the coding agents your team already uses</p>
     <ul>
       <li><img src="assets/glassine/claude.svg" alt="" width="20" height="20">Claude Code</li>
-      <li><img src="assets/glassine/openai.svg" alt="" width="20" height="20">Codex</li>
-      <li><img src="assets/glassine/opencode.svg" alt="" width="20" height="20">opencode</li>
-      <li><img src="assets/glassine/antigravity.svg" alt="" width="20" height="20">Antigravity</li>
+      <li><img class="mono" src="assets/glassine/openai.svg" alt="" width="20" height="20">Codex</li>
+      <li><img class="mono" src="assets/glassine/opencode.svg" alt="" width="20" height="20">opencode</li>
+      <li><img class="mono" src="assets/glassine/antigravity.svg" alt="" width="20" height="20">Antigravity</li>
       <li class="any">and any MCP agent</li>
     </ul>
   </section>
@@ -136,7 +141,7 @@
       <p>Frames, auto layout, grids, components and tokens on an endless canvas. Every layer is named and editable; nothing on the board is a flat picture.</p>
     </div>
     <figure class="shot">
-      <img src="assets/glassine/design-1440.webp" srcset="assets/glassine/design-1440.webp 1440w, assets/glassine/design-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Fern landing page's hero selected on the canvas, with its layers listed on the left and its size, auto layout and fill in the Design panel.">
+      <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/design-light-1440.webp 1440w, assets/glassine/design-light-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)"><img src="assets/glassine/design-1440.webp" srcset="assets/glassine/design-1440.webp 1440w, assets/glassine/design-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Fern landing page's hero selected on the canvas, with its layers listed on the left and its size, auto layout and fill in the Design panel."></picture>
     </figure>
   </section>
 
@@ -146,7 +151,7 @@
       <p>Your coding agent designs on the same board while you watch. Follow its cursor as it works, and undo any step it took.</p>
     </div>
     <figure class="shot">
-      <img src="assets/glassine/agents-1440.webp" srcset="assets/glassine/agents-1440.webp 1440w, assets/glassine/agents-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="Following Codex on the Keel board: the view frames the layers it is changing, outlined in its colour, with its cursor on the headline.">
+      <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/agents-light-1440.webp 1440w, assets/glassine/agents-light-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)"><img src="assets/glassine/agents-1440.webp" srcset="assets/glassine/agents-1440.webp 1440w, assets/glassine/agents-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="Following Codex on the Keel board: the view frames the layers it is changing, outlined in its colour, with its cursor on the headline."></picture>
     </figure>
   </section>
 
@@ -156,7 +161,7 @@
       <p>Pin notes to layers and send them together. The agent that made each layer answers in the thread and makes the change.</p>
     </div>
     <figure class="shot">
-      <img src="assets/glassine/review-1440.webp" srcset="assets/glassine/review-1440.webp 1440w, assets/glassine/review-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="A comment on the Fern headline asking for it to fit on one line, and Claude Code's reply in the same thread saying it's done.">
+      <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/review-light-1440.webp 1440w, assets/glassine/review-light-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)"><img src="assets/glassine/review-1440.webp" srcset="assets/glassine/review-1440.webp 1440w, assets/glassine/review-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="A comment on the Fern headline asking for it to fit on one line, and Claude Code's reply in the same thread saying it's done."></picture>
     </figure>
   </section>
 
@@ -166,7 +171,7 @@
       <p>Team boards show everyone’s cursors and everyone’s agents as they work. Invite people by email, and anyone on the team can edit.</p>
     </div>
     <figure class="shot">
-      <img src="assets/glassine/team-1440.webp" srcset="assets/glassine/team-1440.webp 1440w, assets/glassine/team-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Keel board shared with the Northwind team: the Share menu lists four people, and Maya's, Sam's and Codex's cursors are on the canvas.">
+      <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/team-light-1440.webp 1440w, assets/glassine/team-light-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)"><img src="assets/glassine/team-1440.webp" srcset="assets/glassine/team-1440.webp 1440w, assets/glassine/team-2880.webp 2880w" sizes="(min-width: 1440px) 1320px, calc(100vw - 32px)" width="1440" height="900" loading="lazy" alt="The Keel board shared with the Northwind team: the Share menu lists four people, and Maya's, Sam's and Codex's cursors are on the canvas."></picture>
     </figure>
   </section>
 
@@ -177,10 +182,10 @@
     </div>
     <div class="pair">
       <figure class="shot crop">
-        <img class="import" src="assets/glassine/import-1440.webp" srcset="assets/glassine/import-1440.webp 1440w, assets/glassine/import-2880.webp 2880w" sizes="(min-width: 1440px) 1564px, 120vw" width="1440" height="900" loading="lazy" alt="Import a website, with linear.app typed in and the page width set to Desktop.">
+        <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/import-light-1440.webp 1440w, assets/glassine/import-light-2880.webp 2880w" sizes="(min-width: 1440px) 1564px, 120vw"><img class="import" src="assets/glassine/import-1440.webp" srcset="assets/glassine/import-1440.webp 1440w, assets/glassine/import-2880.webp 2880w" sizes="(min-width: 1440px) 1564px, 120vw" width="1440" height="900" loading="lazy" alt="Import a website, with linear.app typed in and the page width set to Desktop."></picture>
       </figure>
       <figure class="shot crop">
-        <img class="handoff" src="assets/glassine/code-1440.webp" srcset="assets/glassine/code-1440.webp 1440w, assets/glassine/code-2880.webp 2880w" sizes="(min-width: 1440px) 1189px, 90vw" width="1440" height="900" loading="lazy" alt="The Code tab showing the selected button ready to copy into a project.">
+        <picture><source media="(prefers-color-scheme: light)" srcset="assets/glassine/code-light-1440.webp 1440w, assets/glassine/code-light-2880.webp 2880w" sizes="(min-width: 1440px) 1189px, 90vw"><img class="handoff" src="assets/glassine/code-1440.webp" srcset="assets/glassine/code-1440.webp 1440w, assets/glassine/code-2880.webp 2880w" sizes="(min-width: 1440px) 1189px, 90vw" width="1440" height="900" loading="lazy" alt="The Code tab showing the selected button ready to copy into a project."></picture>
       </figure>
     </div>
   </section>
@@ -200,7 +205,7 @@
           <li>Import websites and Figma files</li>
           <li>Export, or copy layers into your project</li>
         </ul>
-        <a class="btn ghost" href="downloads/Glassine.dmg">Download for Mac</a>
+        <a class="btn ghost" href="downloads/Glassine.dmg" download>Download for Mac</a>
       </article>
       <article class="plan team-plan">
         <h3>Team</h3>
@@ -211,7 +216,7 @@
           <li>Comments for the team and its agents</li>
           <li>Invites and roles</li>
         </ul>
-        <a class="btn primary" href="downloads/Glassine.dmg">Start a team</a>
+        <a class="btn primary" href="downloads/Glassine.dmg" download>Start a team</a>
       </article>
     </div>
   </section>
@@ -219,9 +224,10 @@
   <section class="end">
     <h2>Design with your team<br><span>and your agents. Today.</span></h2>
     <div class="ctas">
-      <a class="btn primary" href="downloads/Glassine.dmg">Download for Mac</a>
+      <a class="btn primary" href="downloads/Glassine.dmg" download>Download for Mac</a>
       <a class="more" href="#pricing">See pricing <span aria-hidden="true">→</span></a>
     </div>
+    <p class="req">Free · macOS 14 or later · Apple silicon</p>
   </section>
 
 </main>
@@ -229,10 +235,10 @@
 <footer class="foot">
   <div class="foot-brand">
     <a class="brand" href="#top"><img src="assets/icon.svg" alt="" width="20" height="20">Glassine</a>
-    <span>macOS 14 or later</span>
+    <span>macOS 14 or later, on Apple silicon</span>
   </div>
   <nav aria-label="Product"><b>Product</b><a href="#design">Design</a><a href="#agents">Agents</a><a href="#team">Teams</a><a href="#pricing">Pricing</a></nav>
-  <nav aria-label="Get started"><b>Get started</b><a href="downloads/Glassine.dmg">Download for Mac</a><a href="#review">Review with agents</a><a href="#ship">Import from Figma</a></nav>
+  <nav aria-label="Get started"><b>Get started</b><a href="downloads/Glassine.dmg" download>Download for Mac</a><a href="#review">Review with agents</a><a href="#ship">Import from Figma</a></nav>
   <nav aria-label="More"><b>More</b><a href="changelog.html">Changelog</a></nav>
 </footer>
 

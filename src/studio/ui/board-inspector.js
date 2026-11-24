@@ -15,6 +15,7 @@ import { areaRects, areasValid, gridOf, gridPatch, isGrid, parsePlacement, parse
 import { AXES as GRID_AXES, changeGrids, gridGeometry, inGrid, insertTrackOps, layoutOf, moveTrackOps, removeTrackOps, setLayout, trackCountOps, trackSizeOps } from "./board-grid.js";
 import { ShaderChooser, ShaderFill } from "./board-shaders.js";
 import { EffectsSection } from "./board-effects.js";
+import { noteTilt } from "./shapes.js";
 
 /** What the panel doesn't draw from: the view and the pointer (it does show the words picked in a text). */
 const PANEL_SKIPS = CANVAS_ONLY.filter((k) => k !== "words");
@@ -1080,7 +1081,7 @@ function SelectionColors() {
 }
 
 // A shape (an arrow, a star, a badge…): its own settings, drawn again as they change.
-const SHAPE_NAMES = { arrow: "Arrow", line: "Line", ellipse: "Ellipse", rect: "Box", triangle: "Triangle", star: "Star", badge: "Number badge", laurel: "Laurel", rating: "Rating", burst: "Burst", ribbon: "Ribbon", bubble: "Bubble", tag: "Tag" };
+const SHAPE_NAMES = { arrow: "Arrow", line: "Line", ellipse: "Ellipse", rect: "Box", triangle: "Triangle", star: "Star", badge: "Number badge", laurel: "Laurel", rating: "Rating", burst: "Burst", ribbon: "Ribbon", bubble: "Bubble", tag: "Tag", note: "Sticky note" };
 function ShapeSection() {
   const id = ids()[0];
   const n = node(id);
@@ -1088,9 +1089,17 @@ function ShapeSection() {
   const t = sh.type;
   const set = (patch, key) => commit([{ op: "set", id, shape: { ...sh, ...patch } }], { key: key ? `shape:${id}:${key}` : null, label: "Shape" });
   const line = t === "arrow" || t === "line";
-  const words = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"].includes(t);
+  const words = ["laurel", "rating", "burst", "ribbon", "bubble", "tag", "note"].includes(t);
+  const note = t === "note";
+  const stop = (e) => e.stopPropagation();
   return html`<${Section} title=${SHAPE_NAMES[t] ?? "Shape"}>
-    ${!line && html`<div class="row"><label>Fill</label><${BoardColor} value=${sh.fill && sh.fill !== "none" ? sh.fill : undefined} auto="None" onChange=${(c) => set({ fill: c ?? "none" }, "fill")} /></div>`}
+    ${note && html`<textarea class="input bd-note-words" rows="3" aria-label="Words" placeholder="What you're doing, or why" value=${sh.text ?? ""} onKeyDown=${stop} onInput=${(e) => set({ text: e.target.value }, "text")}></textarea>
+      <div class="row"><label>Signed</label><input class="input" value=${sh.caption ?? ""} placeholder="Nobody" onKeyDown=${stop} onInput=${(e) => set({ caption: e.target.value }, "cap")} /></div>
+      <div class="grid2">
+        <${Dropdown} value=${sh.attach ?? "tape"} options=${[{ value: "tape", label: "Tape" }, { value: "pin", label: "Pin" }, { value: "none", label: "Nothing on top" }]} onChange=${(v) => set({ attach: v })} />
+        <${Num} label="Tilt" title="How far the paper is turned, in degrees" unit="°" digits=${1} step=${0.5} value=${sh.tilt ?? noteTilt(sh.seed ?? 1)} min=${-12} max=${12} onChange=${(v) => set({ tilt: v ?? 0 }, "tilt")} />
+      </div>`}
+    ${!line && html`<div class="row"><label>${note ? "Paper" : "Fill"}</label><${BoardColor} value=${sh.fill && sh.fill !== "none" ? sh.fill : undefined} auto="None" onChange=${(c) => set({ fill: c ?? "none" }, "fill")} /></div>`}
     ${!words && html`<div class="row"><label>Stroke</label><${BoardColor} value=${sh.stroke && sh.stroke !== "none" ? sh.stroke : undefined} auto="None" onChange=${(c) => set({ stroke: c ?? "none" }, "stroke")} /></div>
       ${sh.stroke && sh.stroke !== "none" && html`<div class="grid2">
         <${Num} label="W" title="Stroke width" value=${sh.strokeWidth ?? 4} min=${0} onChange=${(v) => set({ strokeWidth: v ?? 0 }, "sw")} />
@@ -1103,13 +1112,14 @@ function ShapeSection() {
     ${t === "star" && html`<${Num} label="Points" value=${sh.points ?? 5} min=${3} max=${12} onChange=${(v) => set({ points: v ?? 5 }, "pts")} />`}
     ${t === "rect" && html`<${Num} label="Round" title="Corner rounding, % of the shorter side" unit="%" value=${Math.round((sh.radius ?? 0) * 100)} min=${0} max=${50} onChange=${(v) => set({ radius: (v ?? 0) / 100 }, "rad")} />`}
     ${t === "badge" && html`<div class="row"><label>Label</label><input class="input" value=${sh.label ?? "1"} maxLength="4" onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ label: e.target.value }, "label")} /></div>`}
-    ${words && html`<div class="row"><label>Words</label><input class="input" value=${sh.text ?? ""} onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ text: e.target.value }, "text")} /></div>`}
+    ${words && !note && html`<div class="row"><label>Words</label><input class="input" value=${sh.text ?? ""} onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ text: e.target.value }, "text")} /></div>`}
     ${t === "laurel" && html`<div class="row"><label>Under it</label><input class="input" value=${sh.caption ?? ""} placeholder="App Store" onKeyDown=${(e) => e.stopPropagation()} onInput=${(e) => set({ caption: e.target.value }, "cap")} /></div>`}
     ${t === "rating" && html`<${Num} label="Stars" digits=${1} step=${0.1} value=${sh.value ?? 5} min=${0} max=${5} onChange=${(v) => set({ value: v ?? 5 }, "val")} />`}
-    ${(t === "badge" || words) && html`<div class="row"><label>Words colour</label><${BoardColor} value=${sh.labelColor} allowAuto=${false} onChange=${(c) => c && set({ labelColor: c }, "lc")} /></div>`}
+    ${(t === "badge" || words) && html`<div class="row"><label>${note ? "Ink" : "Words colour"}</label><${BoardColor} value=${sh.labelColor} allowAuto=${false} onChange=${(c) => c && set({ labelColor: c }, "lc")} /></div>`}
     <div class="bd-flex-opts">
       ${!words && html`<label class="bd-check"><input type="checkbox" checked=${Boolean(sh.sketch)} onChange=${(e) => set({ sketch: e.target.checked })} />Hand-drawn</label>`}
-      <label class="bd-check"><input type="checkbox" checked=${Boolean(sh.shadow)} onChange=${(e) => set({ shadow: e.target.checked })} />Shadow</label>
+      ${note && html`<label class="bd-check"><input type="checkbox" checked=${sh.curl ?? true} onChange=${(e) => set({ curl: e.target.checked })} />Curled corner</label>`}
+      <label class="bd-check"><input type="checkbox" checked=${sh.shadow ?? note} onChange=${(e) => set({ shadow: e.target.checked })} />Shadow</label>
     </div>
   <//>`;
 }
@@ -1138,7 +1148,7 @@ function VectorSection() {
 const WEIGHTS = [
   [100, "Thin"], [200, "Extra light"], [300, "Light"], [400, "Regular"], [500, "Medium"], [600, "Semibold"], [700, "Bold"], [800, "Extra bold"], [900, "Black"],
 ].map(([v, l]) => ({ value: String(v), label: l, hint: String(v) }));
-const FONTS = ["Inter", "SF Pro", "Geist", "Manrope", "DM Sans", "Plus Jakarta Sans", "Space Grotesk", "IBM Plex Sans", "Work Sans", "Poppins", "Montserrat", "Playfair Display", "Fraunces", "Instrument Serif", "Newsreader", "Lora", "JetBrains Mono", "Geist Mono", "IBM Plex Mono"];
+const FONTS = ["Inter", "SF Pro", "Geist", "Manrope", "DM Sans", "Plus Jakarta Sans", "Space Grotesk", "IBM Plex Sans", "Work Sans", "Poppins", "Montserrat", "Playfair Display", "Fraunces", "Instrument Serif", "Newsreader", "Lora", "Gloria Hallelujah", "JetBrains Mono", "Geist Mono", "IBM Plex Mono"];
 
 function TypeSection() {
   const list = ids();
@@ -1151,7 +1161,9 @@ function TypeSection() {
   const ls = n.style.letterSpacing;
   const align = shared((m) => m.style.textAlign ?? "left");
   const color = shared((m) => m.style.color);
-  const fontValue = (name) => (!name ? null : name === "SF Pro" ? "-apple-system, 'SF Pro Text', system-ui, sans-serif" : `${/\s/.test(name) ? `'${name}'` : name}, system-ui, sans-serif`);
+  // A handwriting face falls back to a hand, not to a plain sans.
+  const HANDS = ["Gloria Hallelujah"];
+  const fontValue = (name) => (!name ? null : name === "SF Pro" ? "-apple-system, 'SF Pro Text', system-ui, sans-serif" : `${/\s/.test(name) ? `'${name}'` : name}, ${HANDS.includes(name) ? "'Bradley Hand', cursive" : "system-ui, sans-serif"}`);
   const typing = B.editing && list.includes(B.editing);
   return html`<${Section} title="Text">
     ${typing && html`<${WordBar} />`}

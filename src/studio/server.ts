@@ -609,7 +609,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, port: 
       restorePicture((await json<{ path: string }>(req)).path);
       return send(200, { ok: true });
     case "/api/board/welcome": {
-      // The board a new account starts with: made once, when the first-run steps finish.
+      // The board a new account starts with: made once, when the first-run steps finish. One there
+      // already (from an earlier first run) is the one: never a second.
+      const name = `Welcome to ${appIdentity().appName}`;
+      const had = listBoards().find((b) => b.name === name && !b.teamId);
+      if (had) return send(200, had);
       const made = createWelcomeBoard(appIdentity().appName);
       // Its picture straight away: it's the first card a new person sees on Home.
       scheduleBoardThumb(made.id, 0);

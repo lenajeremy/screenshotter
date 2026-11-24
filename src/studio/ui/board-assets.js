@@ -19,6 +19,19 @@ import { S, api, fail, fileUrl, thumbUrl, useStore } from "./store.js";
 
 const TINTS = ["#ff3b30", "#ff9f0a", "#ffd60a", "#34c759", "#0a84ff", "#5e5ce6", "#ffffff", "#1d1d1f"];
 const onTint = (c) => (["#ffffff", "#ffd60a"].includes(c) ? "#1d1d1f" : "#ffffff");
+/** A sticky note's paper: a soft shade of the chosen colour. */
+const PAPER = { "#ff3b30": "#ffc2c2", "#ff9f0a": "#ffd08f", "#ffd60a": "#ffe682", "#34c759": "#bfeaa3", "#0a84ff": "#b0d8ff", "#5e5ce6": "#d0caff", "#ffffff": "#fbfaf5", "#1d1d1f": "#2c2c30" };
+/**
+ * The handwriting a sticky note is written in, loaded once when the app starts, so the Assets tile shows
+ * it before any note is on a page. Not when the panel opens: a font arriving makes the canvas redraw.
+ */
+function loadNoteFont() {
+  if (document.querySelector("link[data-note-font]")) return;
+  const l = Object.assign(document.createElement("link"), { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Gloria+Hallelujah&display=block" });
+  l.dataset.noteFont = "";
+  document.head.appendChild(l);
+}
+loadNoteFont();
 
 export const BOARD_SHAPES = [
   { id: "rect", label: "Rectangle", w: 160, h: 110, css: (t) => ({ backgroundColor: t, borderRadius: "14px" }) },
@@ -38,6 +51,7 @@ export const BOARD_SHAPES = [
   { id: "bubble", label: "Bubble", w: 190, h: 84, shape: () => ({ type: "bubble", fill: "#ffffff", text: "So easy!", labelColor: "#1d1d1f" }) },
   { id: "laurel", label: "Laurel", w: 270, h: 108, shape: () => ({ type: "laurel", fill: "#e9c46a", text: "App of the Day" }) },
   { id: "rating", label: "Rating", w: 250, h: 74, shape: () => ({ type: "rating", fill: "#ffd60a", value: 5, text: "4.9 · 2K ratings" }) },
+  { id: "note", label: "Sticky note", w: 220, h: 220, shape: (t) => ({ type: "note", fill: PAPER[t] ?? "#ffe682", labelColor: t === "#1d1d1f" ? "#f2f2ee" : "#2b2719", text: "Trying a calmer hero here", attach: "tape", curl: true }) },
 ];
 
 /** What an asset becomes: the new layers (not yet on the board), made with no parent. */
@@ -49,6 +63,8 @@ async function layersFor(a) {
     const id = newId();
     if (k.css) return [{ id, type: "frame", name: k.label, parent: null, style: { width: `${k.w}px`, height: `${k.h}px`, flexShrink: "0", ...k.css(a.tint) }, children: [] }];
     const shape = k.shape(a.tint);
+    // A note you add is signed with your first name, and turned its own way.
+    if (shape.type === "note") Object.assign(shape, { seed: 1 + Math.floor(Math.random() * 997), caption: (S.cloud?.user?.name ?? "").trim().split(/\s+/)[0] ?? "" });
     return [{ id, type: "svg", name: k.label, parent: null, shape, svg: shapeInBox(shape, k.w, k.h), style: { width: `${k.w}px`, height: `${k.h}px`, flexShrink: "0" } }];
   }
   if (a.kind === "sticker" || a.kind === "art") {

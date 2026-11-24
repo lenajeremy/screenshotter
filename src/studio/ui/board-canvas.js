@@ -1508,6 +1508,109 @@ function sizeLabel(id, box) {
   return `${word("width", box.width)} × ${word("height", box.height)}`;
 }
 
+/**
+ * The spacing of a selected flex frame, on the canvas: a short bar in the middle of each side's padding
+ * and of each gap between its layers. Pointing at one shades the space it sets and shows its size;
+ * dragging it changes it (padding: ⌥ both sides, ⇧ all four).
+ */
+function SpacingHandles({ id, box, active }) {
+  const n = node(id);
+  const el = elOf(id);
+  if (!n || !el) return null;
+  const z = B.view.z;
+  const cs = getComputedStyle(el);
+  const px = (v) => parseFloat(v) || 0;
+  const bw = { top: px(cs.borderTopWidth), right: px(cs.borderRightWidth), bottom: px(cs.borderBottomWidth), left: px(cs.borderLeftWidth) };
+  const pad = { top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft) };
+  const inner = { x: box.x + bw.left * z, y: box.y + bw.top * z, width: box.width - (bw.left + bw.right) * z, height: box.height - (bw.top + bw.bottom) * z };
+  const spaces = [];
+  // Padding: only where there's room for a handle beside the resize handles.
+  const bands = {
+    top: { x: inner.x, y: inner.y, width: inner.width, height: pad.top * z },
+    bottom: { x: inner.x, y: inner.y + inner.height - pad.bottom * z, width: inner.width, height: pad.bottom * z },
+    left: { x: inner.x, y: inner.y, width: pad.left * z, height: inner.height },
+    right: { x: inner.x + inner.width - pad.right * z, y: inner.y, width: pad.right * z, height: inner.height },
+  };
+  for (const side of ["top", "bottom", "left", "right"]) {
+    // Beneath the resize handles, and only with room to stay clear of them.
+    if (pad[side] * z < 14 || inner.width < 48 || inner.height < 48) continue;
+    spaces.push({ key: `pad-${side}`, rect: bands[side], value: pad[side], across: side === "top" || side === "bottom" });
+  }
+  // Gaps between the layers in its flow (not when they're spread out, where the gap isn't what sets the space).
+  const row = !(n.style.flexDirection ?? "row").startsWith("column");
+  const spread = /space-/.test(n.style.justifyContent ?? "");
+  const gap = px(row ? cs.columnGap : cs.rowGap);
+  if (!spread) {
+    const kids = (n.children ?? []).filter((k) => { const kn = node(k); return kn && !kn.hidden && kn.style.position !== "absolute" && kn.style.position !== "fixed"; }).map((k) => screenBox(k)).filter(Boolean);
+    const content = { x: inner.x + pad.left * z, y: inner.y + pad.top * z, width: inner.width - (pad.left + pad.right) * z, height: inner.height - (pad.top + pad.bottom) * z };
+    for (let i = 0; i + 1 < kids.length; i++) {
+      const a = kids[i];
+      const c = kids[i + 1];
+      const r = row ? { x: a.x + a.width, y: content.y, width: c.x - (a.x + a.width), height: content.height } : { x: content.x, y: a.y + a.height, width: content.width, height: c.y - (a.y + a.height) };
+      // A wrapped line's first layer starts back at the beginning: that's not a gap to show.
+      if ((row ? r.width : r.height) < 6 || (row ? r.width : r.height) > gap * z + 2) continue;
+      spaces.push({ key: `gap-${i}`, rect: r, value: gap, across: !row, gap: true });
+    }
+  }
+  return spaces.map((sp) => {
+    const on = active && (active.which === sp.key || (sp.gap && active.which === "gap"));
+    const r = sp.rect;
+    const bar = sp.across ? { width: 16, height: 4 } : { width: 4, height: 16 };
+    return html`<div key=${sp.key} class="bd-space ${sp.gap ? "gap" : "pad"} ${on ? "on" : ""}">
+      <div class="bd-space-band" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>
+      <div class="bd-space-h" data-space=${sp.gap ? "gap" : sp.key} title=${sp.gap ? "Drag to change the gap" : "Drag to change the padding (⌥ both sides, ⇧ all four)"} style=${{ left: r.x + r.width / 2 - bar.width / 2 + "px", top: r.y + r.height / 2 - bar.height / 2 + "px", width: bar.width + "px", height: bar.height + "px", cursor: sp.across ? "ns-resize" : "ew-resize" }}></div>
+      <div class="bd-space-v" style=${{ left: r.x + r.width / 2 + "px", top: r.y + r.height / 2 + "px" }}>${Math.round(on ? active.value : sp.value)}</div>
+    </div>`;
+  });
+}
+
+/** Drag a spacing handle: the frame's gap, or one side of its padding (⌥ the opposite side too, ⇧ all four). */
+function spaceDrag(e, id, which) {
+  e.stopPropagation();
+  e.preventDefault();
+  const base = B.board;
+  const n = node(id);
+  const el = elOf(id);
+  if (!n || !el) return;
+  const cs = getComputedStyle(el);
+  const px = (v) => parseFloat(v) || 0;
+  const pad = { top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft) };
+  const row = !(n.style.flexDirection ?? "row").startsWith("column");
+  const gap0 = px(row ? cs.columnGap : cs.rowGap);
+  const opposite = { top: "bottom", bottom: "top", left: "right", right: "left" };
+  const z = B.view.z;
+  let ops = [];
+  drag(e, {
+    threshold: 0,
+    kind: "spacing",
+    move: (ev) => {
+      const dx = (ev.clientX - e.clientX) / z;
+      const dy = (ev.clientY - e.clientY) / z;
+      if (which === "gap") {
+        const v = Math.max(0, Math.round(gap0 + (row ? dx : dy)));
+        B.spacing = { which, value: v };
+        ops = [{ op: "set", id, style: { gap: `${v}px`, rowGap: null, columnGap: null } }];
+      } else {
+        const side = which.slice(4);
+        const d = side === "top" ? dy : side === "bottom" ? -dy : side === "left" ? dx : -dx;
+        const v = Math.max(0, Math.round(pad[side] + d));
+        const next = { ...pad, [side]: v };
+        if (ev.shiftKey) for (const k of Object.keys(next)) next[k] = v;
+        else if (ev.altKey) next[opposite[side]] = v;
+        B.spacing = { which, value: v };
+        ops = [{ op: "set", id, style: { padding: null, paddingTop: `${next.top}px`, paddingRight: `${next.right}px`, paddingBottom: `${next.bottom}px`, paddingLeft: `${next.left}px` } }];
+      }
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      B.spacing = null;
+      if (!moved || !ops.length) return notify();
+      B.board = base;
+      commit(ops, { label: which === "gap" ? "Gap" : "Padding" });
+    },
+  });
+}
+
 function Overlay() {
   // It follows everything: the view, the pointer, the selection.
   const b = useBoard();
@@ -1544,6 +1647,7 @@ function Overlay() {
     ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
     ${!busy && html`<${MaskLines} />`}
+    ${box && !locked && !b.editing && (!busy || busy === "spacing") && isFlex(node(one)) && html`<${SpacingHandles} id=${one} box=${box} active=${b.spacing} />`}
     ${box && !locked && !b.editing && !busy &&
     HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} style=${{ left: box.x + (h.includes("w") ? 0 : h.includes("e") ? box.width : box.width / 2) + "px", top: box.y + (h.includes("n") ? 0 : h.includes("s") ? box.height : box.height / 2) + "px" }}></div>`)}
     ${box && !b.editing && (!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}
@@ -1875,6 +1979,8 @@ function down(e) {
   if (B.tool === "comment") return comment(e);
   // Working on the design closes a comment's thread.
   if (B.thread || B.draft) closeThread();
+  const space = e.target.closest?.("[data-space]");
+  if (space && B.sel.length === 1) return spaceDrag(e, B.sel[0], space.dataset.space);
   const handle = e.target.closest?.("[data-handle]");
   if (handle && B.tool === "scale") return scaleDrag(e, handle.dataset.group ? B.sel.filter((id) => !node(id)?.locked) : B.sel.slice(0, 1), handle.dataset.handle);
   if (handle && handle.dataset.group) return resizeMany(e, B.sel.filter((id) => !node(id)?.locked), handle.dataset.handle);
@@ -2038,49 +2144,209 @@ function moveVectors(e, ids) {
   });
 }
 
+/** The frame-relative place of a world point: inside `parent`'s border (or the page's own coordinates). */
+function placeIn(parent, wx, wy) {
+  if (!parent) return { left: Math.round(wx), top: Math.round(wy) };
+  const pb = worldBox(parent);
+  const pel = elOf(parent);
+  const cs = pel ? getComputedStyle(pel) : null;
+  return { left: Math.round(wx - pb.x - (cs ? parseFloat(cs.borderLeftWidth) || 0 : 0)), top: Math.round(wy - pb.y - (cs ? parseFloat(cs.borderTopWidth) || 0 : 0)) };
+}
+
+/**
+ * Steps that keep a layer looking the same as it leaves a layout for a frame laid out by hand (or the
+ * page): a size its layout gave it (filling the row, stretched across the column, a share of a grid
+ * cell) becomes the size it is now, and what only meant something in that layout goes.
+ */
+function leaveFlowStyle(base, id, box) {
+  const style = { flexGrow: null, flexShrink: null, flexBasis: null, flex: null, alignSelf: null, justifySelf: null, order: null };
+  for (const axis of ["width", "height"]) {
+    const v = base.nodes[id].style[axis];
+    if (sizeWord(base, id, axis) === "fill" || (typeof v === "string" && /%$/.test(v))) style[axis] = `${Math.round(axis === "width" ? box.width : box.height)}px`;
+  }
+  return style;
+}
+
+/** What a layer placed by hand stops needing as it joins a flex or grid layout. */
+const joinFlowStyle = { position: null, left: null, top: null, right: null, bottom: null };
+
+/**
+ * A layer that filled its frame along a side keeps filling it in the frame it moves to, whichever way
+ * that one runs: a full-width row in a column becomes one that grows along a row. What it was told to
+ * hug, or a size of its own, stays as it is.
+ */
+function keepFillStyle(base, id, into) {
+  const t = node(into);
+  if (!t || base.nodes[id].parent === into) return {};
+  const fills = { width: sizeWord(base, id, "width") === "fill", height: sizeWord(base, id, "height") === "fill" };
+  const style = { flexGrow: null, flexBasis: null, flex: null, alignSelf: null };
+  if (isGrid(t)) {
+    // A grid stretches a layer across its cell by itself, when it has no size of its own.
+    for (const axis of ["width", "height"]) if (fills[axis] && (base.nodes[id].style[axis] === "100%" || !base.nodes[id].style[axis])) style[axis] = null;
+    return style;
+  }
+  const row = !(t.style.flexDirection ?? "row").startsWith("column");
+  for (const axis of ["width", "height"]) {
+    if (!fills[axis]) continue;
+    const main = (axis === "width") === row;
+    if (main) Object.assign(style, { flexGrow: "1", flexBasis: "0px", [axis]: null });
+    else Object.assign(style, { alignSelf: "stretch", [axis]: null });
+  }
+  return style;
+}
+
+/**
+ * Where something dragged to a point would land: the frame to go into (null: the page), and whether
+ * the pointer is near the edge of a frame that sits in a flex layout (then it goes beside that frame,
+ * in the same layout, not into it). A frame beside the dragged layers in their own flex layout only
+ * takes them after a pause over its middle, so dragging along a row reorders it rather than nesting.
+ */
+function dropFrameAt(clientX, clientY, ids, held) {
+  const f = frameAt(clientX, clientY, ids);
+  if (!f) return null;
+  const fn = node(f);
+  const p = fn.parent ? node(fn.parent) : null;
+  if (!p || !(isFlex(p) || isGrid(p)) || !inFlow(B.board, f) || ids.includes(fn.parent)) return f;
+  const c = getCanvasRect();
+  const r = screenBox(f);
+  if (!r) return f;
+  const row = isGrid(p) || !(p.style.flexDirection ?? "row").startsWith("column");
+  const size = row ? r.width : r.height;
+  const at = row ? clientX - c.left - r.x : clientY - c.top - r.y;
+  const edge = Math.max(6, Math.min(24, size * 0.25));
+  if (at < edge || at > size - edge) return fn.parent;
+  // A sibling in the same layout: into it only after the pointer rests over it.
+  const sibling = ids.some((id) => node(id)?.parent === fn.parent);
+  if (sibling && !held(f)) return fn.parent;
+  return f;
+}
+
+/** Where in a flex frame's flow a drop at a point goes, and the line that shows it (screen px). */
+function flowSlot(frameId, clientX, clientY, ids) {
+  const frame = node(frameId);
+  const c = getCanvasRect();
+  const row = !(frame.style.flexDirection ?? "row").startsWith("column");
+  const kids = (frame.children ?? []).filter((x) => !ids.includes(x) && !node(x)?.hidden && !(node(x)?.style.position === "absolute" || node(x)?.style.position === "fixed"));
+  const p = row ? clientX - c.left : clientY - c.top;
+  let index = kids.length;
+  let line = null;
+  for (let i = 0; i < kids.length; i++) {
+    const r = screenBox(kids[i]);
+    if (r && p < (row ? r.x + r.width / 2 : r.y + r.height / 2)) {
+      index = i;
+      line = row ? { x: r.x - 2, y: r.y, width: 3, height: r.height } : { x: r.x, y: r.y - 2, width: r.width, height: 3 };
+      break;
+    }
+  }
+  if (!line) {
+    const last = kids.length ? screenBox(kids[kids.length - 1]) : null;
+    const fr = screenBox(frameId);
+    line = last ? (row ? { x: last.x + last.width, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height, width: last.width, height: 3 }) : fr && { x: fr.x + 4, y: fr.y + 4, width: row ? 3 : Math.max(8, fr.width - 8), height: row ? Math.max(8, fr.height - 8) : 3 };
+  }
+  // Its index among all the frame's layers (hidden and absolute ones count too).
+  const all = (frame.children ?? []).filter((x) => !ids.includes(x));
+  return { index: index < kids.length ? all.indexOf(kids[index]) : all.length, line };
+}
+
+/**
+ * Drag layers, one or many, wherever they are: each move finds where a drop would land, the deepest
+ * frame under the pointer or the page. Into a flex frame, a line shows the slot; into a grid, the
+ * cell; into a frame laid out by hand (or onto the page), they go where they're dropped. Moved within
+ * the frame they're placed in by hand, they snap to its edges and their neighbours'. Artboards only
+ * move. Sizes a layout gave them are kept as they leave it, so nothing changes size on the way.
+ */
 function moveLayers(e, ids) {
   if (!ids.length) return;
+  if (ids.some(isVector)) return moveVectors(e, ids);
   const base = B.board;
   const z = B.view.z;
-  if (ids.some(isVector)) return moveVectors(e, ids);
-  // One layer placed by its frame's flex layout is moved among its siblings instead.
-  if (ids.length === 1 && inFlow(base, ids[0])) return reorder(e, ids[0]);
+  // Only the outermost of what's picked moves (a frame and something in it: the frame).
+  ids = ids.filter((id) => base.nodes[id] && !ancestors(base, id).some((a) => ids.includes(a)));
+  if (!ids.length) return;
+  // Frames of their own on the page: artboards, which go into another frame only if they fit in it.
+  const artboards = ids.every((id) => !base.nodes[id].parent && base.nodes[id].type === "frame");
+  const parent0 = base.nodes[ids[0]].parent ?? null;
+  const oneParent = ids.every((id) => (base.nodes[id].parent ?? null) === parent0);
   const free = ids.filter((id) => !inFlow(base, id));
+  const allFree = free.length === ids.length;
+  const boxes = Object.fromEntries(ids.map((id) => [id, worldBox(id)]));
   const starts = Object.fromEntries(free.map((id) => [id, placeOf(id)]));
-  // Edges to snap to: the other artboards (for artboards), else the parent's edges and centre.
-  const lone = free.length === 1 ? free[0] : null;
-  const loneBox = lone ? worldBox(lone) : null;
+  const grab = toWorld(e.clientX, e.clientY);
+  // Edges to snap to when moved within its own frame: the other artboards (for artboards), else the parent's edges and centre and its neighbours' edges.
+  const lone = ids.length === 1 && allFree ? ids[0] : null;
+  const loneBox = lone ? boxes[lone] : null;
   const targets = { x: [], y: [] };
   if (lone) {
-    const others = node(lone).parent ? [node(lone).parent] : currentPage().children.filter((x) => x !== lone);
+    const others = parent0 ? [parent0] : currentPage().children.filter((x) => x !== lone);
     for (const o of others) {
       const b = worldBox(o);
       if (!b) continue;
       targets.x.push(b.x, b.x + b.width / 2, b.x + b.width);
       targets.y.push(b.y, b.y + b.height / 2, b.y + b.height);
     }
-    for (const s of node(node(lone).parent ?? "")?.children ?? []) {
-      if (s === lone) continue;
-      const b = worldBox(s);
+    for (const sib of parent0 ? (node(parent0)?.children ?? []) : []) {
+      if (sib === lone) continue;
+      const b = worldBox(sib);
       if (!b) continue;
-      targets.x.push(b.x, b.x + b.width);
-      targets.y.push(b.y, b.y + b.height);
+      targets.x.push(b.x, b.x + b.width / 2, b.x + b.width);
+      targets.y.push(b.y, b.y + b.height / 2, b.y + b.height);
     }
   }
-  let ops = [];
-  drag(e, {
-    kind: "move",
-    move: (ev) => {
-      let dx = (ev.clientX - e.clientX) / z;
-      let dy = (ev.clientY - e.clientY) / z;
+  const els = ids.map((id) => elOf(id)).filter(Boolean);
+  const ghost = (dx, dy) => {
+    for (const el of els) {
+      el.style.translate = dx || dy ? `${dx}px ${dy}px` : "";
+      el.classList.toggle("bd-dragging", Boolean(dx || dy));
+    }
+  };
+  // A frame the pointer rests over (for going into a neighbour in the same layout).
+  let resting = { id: null, since: 0 };
+  const held = (id) => resting.id === id && performance.now() - resting.since >= 380;
+  let restTimer = 0;
+  // A frame whose layers are all placed by hand (most artboards) takes a drop where it's dropped, even
+  // if it's a flex frame; one whose layers flow (or an empty one) takes it into its flow.
+  const byHand = (f) => {
+    const fr = node(f);
+    if (!(isFlex(fr) || isGrid(fr))) return true;
+    const kids = (fr.children ?? []).filter((x) => !ids.includes(x)).map(node).filter(Boolean);
+    return kids.length > 0 && kids.every((k) => k.style.position === "absolute" || k.style.position === "fixed");
+  };
+  let plan = null;
+  let previewed = false;
+  let last = null;
+  const decide = (ev) => {
+    last = ev;
+    const w = toWorld(ev.clientX, ev.clientY);
+    let dx = w.x - grab.x;
+    let dy = w.y - grab.y;
+    // Where it would land.
+    let into = parent0;
+    if (!ev.altKey) {
+      const raw = frameAt(ev.clientX, ev.clientY, ids);
+      if (raw !== resting.id) {
+        resting = { id: raw, since: performance.now() };
+        clearTimeout(restTimer);
+        if (raw) restTimer = setTimeout(() => last && B.dragging && decide(last), 400);
+      }
+      into = dropFrameAt(ev.clientX, ev.clientY, ids, held);
+      // A frame of its own on the page (an artboard) goes into another frame only if it fits in it: artboards side by side never nest.
+      if (artboards && into) {
+        const tb = worldBox(into);
+        const g = unionOf(ids.map((id) => boxes[id]).filter(Boolean));
+        if (!tb || g.width > tb.width || g.height > tb.height) into = parent0;
+      }
+    }
+    const frame = into ? node(into) : null;
+    // Still in the frame (or on the page) where they're placed by hand: a plain move, snapping.
+    if (allFree && oneParent && into === parent0) {
       const guides = [];
       if (loneBox && !ev.metaKey) {
         const snap = (pos, size, list) => {
           let best = null;
           for (const t of list)
-            for (const [k, edge] of [[0, pos], [0.5, pos + size / 2], [1, pos + size]]) {
+            for (const edge of [pos, pos + size / 2, pos + size]) {
               const d = t - edge;
-              if (Math.abs(d) * z <= SNAP && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t, k };
+              if (Math.abs(d) * z <= SNAP && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
             }
           return best;
         };
@@ -2088,96 +2354,87 @@ function moveLayers(e, ids) {
         const sy = snap(loneBox.y + dy, loneBox.height, targets.y);
         if (sx) dx += sx.d;
         if (sy) dy += sy.d;
-        const c = canvasEl.current.getBoundingClientRect();
+        const c = getCanvasRect();
         const { x, y } = B.view;
         if (sx) guides.push({ axis: "x", at: sx.t * z + x, from: 0, to: c.height });
         if (sy) guides.push({ axis: "y", at: sy.t * z + y, from: 0, to: c.width });
       }
       dx = Math.round(dx);
       dy = Math.round(dy);
-      ops = free.map((id) => ({ op: "set", id, style: { left: `${starts[id].left + dx}px`, top: `${starts[id].top + dy}px` } }));
+      ghost(0, 0);
+      plan = { kind: "shift", ops: ids.map((id) => ({ op: "set", id, style: { left: `${starts[id].left + dx}px`, top: `${starts[id].top + dy}px` } })) };
       B.guides = guides;
-      preview(base, ops);
-    },
-    up: (ev, moved) => {
-      B.guides = [];
-      if (!moved || !ops.length) return notify();
+      B.drop = null;
+      previewed = true;
+      return preview(base, plan.ops);
+    }
+    // Anywhere else: the layers follow the pointer, and what's under it shows where they'd land.
+    if (previewed) {
       B.board = base;
-      commit(ops, { label: "Move" });
-    },
-  });
-}
-
-/**
- * Drag a layer along its flex frame: a line shows where it will go. Taken out past the frame's edge,
- * it goes into whichever frame it's over (at the pointer, if that frame isn't a flex one).
- */
-function reorder(e, id) {
-  const n = node(id);
-  const el = elOf(id);
-  el?.classList.add("bd-dragging");
-  const c = canvasEl.current.getBoundingClientRect();
-  let target = null;
-  const kind = "move";
-  const inside = (box, ev) => box && ev.clientX - c.left >= box.x && ev.clientX - c.left <= box.x + box.width && ev.clientY - c.top >= box.y && ev.clientY - c.top <= box.y + box.height;
+      previewed = false;
+    }
+    B.guides = [];
+    ghost(dx, dy);
+    if (frame && !byHand(into) && isGrid(frame) && ids.length === 1) {
+      const drop = gridDrop(into, ev.clientX, ev.clientY, ids[0]);
+      plan = drop ? { kind: "grid", into, drop, dx, dy } : null;
+      return bset({ drop: drop ? { grid: into, cell: drop.rect, into } : { into } });
+    }
+    if (frame && !byHand(into)) {
+      const slot = flowSlot(into, ev.clientX, ev.clientY, ids);
+      plan = { kind: "flow", into, index: slot.index, dx, dy };
+      return bset({ drop: { line: slot.line, into } });
+    }
+    plan = { kind: "place", into, dx, dy };
+    bset({ drop: into ? { into } : null });
+  };
   drag(e, {
-    kind,
-    move: (ev) => {
-      let frameId = n.parent;
-      if (!inside(screenBox(n.parent), ev)) {
-        const f = frameAt(ev.clientX, ev.clientY, id);
-        if (f) frameId = f;
-      }
-      const frame = node(frameId);
-      // Over a grid: the cell under the pointer.
-      if (isGrid(frame)) {
-        const drop = gridDrop(frameId, ev.clientX, ev.clientY, id);
-        target = drop && { grid: drop };
-        return bset({ drop: drop ? { grid: frameId, cell: drop.rect, into: frameId !== n.parent ? frameId : null } : null });
-      }
-      if (!isFlex(frame)) {
-        target = { parent: frameId, at: toWorld(ev.clientX, ev.clientY) };
-        return bset({ drop: { into: frameId } });
-      }
-      const fRow = !(frame.style.flexDirection ?? "row").startsWith("column");
-      const kids = (frame.children ?? []).filter((x) => x !== id && !node(x)?.hidden);
-      const p = fRow ? ev.clientX - c.left : ev.clientY - c.top;
-      let index = kids.length;
-      let line = null;
-      for (let i = 0; i < kids.length; i++) {
-        const r = screenBox(kids[i]);
-        if (r && p < (fRow ? r.x + r.width / 2 : r.y + r.height / 2)) {
-          index = i;
-          line = fRow ? { x: r.x - 2, y: r.y, width: 3, height: r.height } : { x: r.x, y: r.y - 2, width: r.width, height: 3 };
-          break;
-        }
-      }
-      if (!line) {
-        const last = kids.length ? screenBox(kids[kids.length - 1]) : null;
-        const fr = screenBox(frameId);
-        line = last ? (fRow ? { x: last.x + last.width, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height, width: last.width, height: 3 }) : fr && { x: fr.x + 4, y: fr.y + 4, width: fRow ? 3 : fr.width - 8, height: fRow ? fr.height - 8 : 3 };
-      }
-      // Its index among all the frame's layers (hidden ones count too).
-      const all = (frame.children ?? []).filter((x) => x !== id);
-      target = { parent: frameId, index: index < kids.length ? all.indexOf(kids[index]) : all.length };
-      bset({ drop: { line, into: frameId !== n.parent ? frameId : null } });
-    },
+    kind: "move",
+    move: decide,
     up: (ev, moved) => {
-      el?.classList.remove("bd-dragging");
+      clearTimeout(restTimer);
+      ghost(0, 0);
+      B.guides = [];
       bset({ drop: null });
-      if (!moved || !target) return;
-      if (target.grid) return commit(gridDropOps(target.grid, id), { label: "Move" });
-      if (target.at) {
-        // Into a frame laid out by hand: it sits where it was dropped.
-        const fb = worldBox(target.parent);
-        const me = worldBox(id);
-        const ops = [{ op: "move", id, parent: target.parent }, { op: "set", id, style: { position: "absolute", left: `${Math.round(target.at.x - fb.x - me.width / 2)}px`, top: `${Math.round(target.at.y - fb.y - me.height / 2)}px` } }];
-        if (!node(target.parent).style.position) ops.push({ op: "set", id: target.parent, style: { position: "relative" } });
-        return commit([...ops, ...leaveGridOps(id, target.parent)], { label: "Move" });
+      if (!moved || !plan) return notify();
+      if (previewed) B.board = base;
+      const ops = [];
+      if (plan.kind === "shift") ops.push(...plan.ops);
+      else if (plan.kind === "grid") {
+        const id = ids[0];
+        if (!inFlow(base, id)) ops.push({ op: "set", id, style: joinFlowStyle });
+        ops.push(...gridDropOps(plan.drop, id));
+      } else if (plan.kind === "flow") {
+        // In the order they're seen along the layout, at the slot.
+        const row = !(node(plan.into).style.flexDirection ?? "row").startsWith("column") || isGrid(node(plan.into));
+        const order = ids.slice().sort((a, b) => (row ? boxes[a].x - boxes[b].x || boxes[a].y - boxes[b].y : boxes[a].y - boxes[b].y || boxes[a].x - boxes[b].x));
+        // Dropped back where it was: nothing to do.
+        if (order.length === 1 && base.nodes[order[0]].parent === plan.into && inFlow(base, order[0]) && (base.nodes[plan.into].children ?? []).indexOf(order[0]) === plan.index) return notify();
+        if (order.length === 1) ops.push({ op: "move", id: order[0], parent: plan.into, index: plan.index });
+        else {
+          for (const id of order) ops.push({ op: "move", id, parent: plan.into });
+          order.forEach((id, i) => ops.push({ op: "move", id, parent: plan.into, index: plan.index + i }));
+        }
+        for (const id of order) {
+          ops.push({ op: "set", id, style: { ...(inFlow(base, id) ? keepFillStyle(base, id, plan.into) : joinFlowStyle) } });
+          ops.push(...leaveGridOps(id, plan.into));
+        }
+      } else {
+        // Into a frame laid out by hand, or onto the page: where they were dropped, the same size.
+        for (const id of ids) {
+          const b = boxes[id];
+          if (!b) continue;
+          const at = placeIn(plan.into, b.x + plan.dx, b.y + plan.dy);
+          const n = base.nodes[id];
+          if ((n.parent ?? null) !== plan.into) ops.push({ op: "move", id, parent: plan.into, ...(plan.into ? {} : { page: B.page }) });
+          const style = { left: `${at.left}px`, top: `${at.top}px`, right: null, bottom: null, position: plan.into ? "absolute" : null };
+          if (inFlow(base, id) || (n.parent ?? null) !== plan.into) Object.assign(style, leaveFlowStyle(base, id, b));
+          ops.push({ op: "set", id, style }, ...leaveGridOps(id, plan.into));
+        }
+        if (plan.into && !node(plan.into).style.position) ops.push({ op: "set", id: plan.into, style: { position: "relative" } });
       }
-      const was = (node(n.parent).children ?? []).indexOf(id);
-      if (target.parent === n.parent && target.index === was) return;
-      commit([{ op: "move", id, parent: target.parent, index: target.index }, ...leaveGridOps(id, target.parent)], { label: "Move" });
+      if (ops.length) commit(ops, { label: "Move" });
+      else notify();
     },
   });
 }
@@ -2418,16 +2675,20 @@ function scaleDrag(e, ids, h) {
 
 /** The frame a point is over (its deepest frame, not `except` or inside it), or null for the page. */
 function frameAt(clientX, clientY, except) {
+  const out = except == null ? [] : Array.isArray(except) ? except : [except];
   const hits = document.elementsFromPoint(clientX, clientY);
   for (const el of hits) {
     const h = el.closest?.("[data-bid]");
     if (!h || !h.closest(".bd-world")) continue;
     let id = h.dataset.bid;
+    // What's being dragged (and what's in it) isn't a place to drop: look under it.
+    if (out.includes(id) || ancestors(B.board, id).some((a) => out.includes(a))) continue;
     // Nothing goes into a component's copy (only its component changes it): what's drawn or
     // dropped on one lands beside it, in the frame holding the copy.
     const copy = instanceRootOf(B.board, id);
     if (copy) id = node(copy)?.parent;
-    while (id && (node(id)?.type !== "frame" || id === except || (except && ancestors(B.board, id).includes(except)))) id = node(id)?.parent;
+    // A frame used as a mask isn't drawn, so nothing goes into it: what holds it takes the drop.
+    while (id && (node(id)?.type !== "frame" || node(id)?.mask || out.includes(id) || ancestors(B.board, id).some((a) => out.includes(a)))) id = node(id)?.parent;
     if (id && !node(id)?.locked) return id;
   }
   return null;
@@ -2535,21 +2796,36 @@ function dblclick(e) {
   if (!hit) return;
   if (hit.dataset.lod === "1") {
     const cx = e.clientX, cy = e.clientY;
+    const ev = { metaKey: e.metaKey, ctrlKey: e.ctrlKey };
     ensureLiveRoots([hit.dataset.bid]);
     requestAnimationFrame(() => {
       const deep = document.elementFromPoint(cx, cy)?.closest?.("[data-bid]");
-      const target = deep ? deepestFor(deep.dataset.bid) : hit.dataset.bid;
-      if (!target) return;
-      select(target);
-      if (node(target)?.type === "text") startTextEdit(target);
+      goDeeper(ev, deep ? deep.dataset.bid : hit.dataset.bid);
     });
     return;
   }
-  // Straight to the deepest layer under the pointer, past every frame holding it (and into its words, if it's text).
-  const target = deepestFor(hit.dataset.bid);
-  if (!target) return;
-  select(target);
-  if (node(target)?.type === "text") startTextEdit(target);
+  goDeeper(e, hit.dataset.bid);
+}
+
+/**
+ * A double-click goes one level deeper, toward the layer under the pointer: from a card to the row in
+ * it, then to the button in the row, so you always know where you are. Words are the exception: a
+ * double-click on text goes straight into them, however deep they sit. ⌘ goes to the deepest layer.
+ */
+function goDeeper(e, hitId) {
+  const deepest = deepestFor(hitId);
+  if (!deepest) return;
+  const into = (id) => {
+    select(id);
+    if (node(id)?.type === "text") startTextEdit(id);
+  };
+  if (e.metaKey || e.ctrlKey || node(deepest).type === "text") return into(deepest);
+  const chain = [deepest, ...ancestors(B.board, deepest)].filter((x) => x === deepest || !node(x)?.locked);
+  const sel = B.sel.length === 1 ? B.sel[0] : null;
+  const at = sel ? chain.indexOf(sel) : -1;
+  // From what's selected, one step toward the pointer; with nothing on the way, what a click picks.
+  const target = at > 0 ? chain[at - 1] : at === 0 ? chain[0] : pickFor({}, hitId) ?? deepest;
+  into(target);
 }
 
 function contextMenu(e) {

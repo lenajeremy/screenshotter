@@ -1,15 +1,17 @@
 /**
- * Shapes: arrows, lines, ellipses, rectangles, triangles, stars, number badges, award laurels and
- * star ratings drawn over the scene, clean or hand-drawn. Pure geometry and SVG with no imports, so the Studio canvas draws them
+ * Shapes: arrows, lines, ellipses, rectangles, triangles, stars, number badges, award laurels, star
+ * ratings and sticky notes drawn over the scene, clean or hand-drawn. Pure geometry and SVG with no imports, so the Studio canvas draws them
  * with this same code (the server hands the compiled file to the browser as /ui/shapes.js).
  */
 
-export const SHAPE_TYPES = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge", "laurel", "rating", "burst", "ribbon", "bubble", "tag"] as const;
+export const SHAPE_TYPES = ["arrow", "line", "ellipse", "rect", "triangle", "star", "badge", "laurel", "rating", "burst", "ribbon", "bubble", "tag", "note"] as const;
 /** Shapes that carry words of their own (in \`text\`), fitted inside them. */
-export const WORD_SHAPES = ["laurel", "rating", "burst", "ribbon", "bubble", "tag"] as const;
+export const WORD_SHAPES = ["laurel", "rating", "burst", "ribbon", "bubble", "tag", "note"] as const;
 export type ShapeType = (typeof SHAPE_TYPES)[number];
 export const ARROW_HEADS = ["end", "start", "both", "none"] as const;
 export const DASHES = ["solid", "dashed", "dotted"] as const;
+/** What holds a sticky note on: a strip of tape, a pin, or nothing. */
+export const NOTE_ATTACH = ["tape", "pin", "none"] as const;
 
 export interface Point {
   x: number;
@@ -44,7 +46,7 @@ export interface ShapeSpec {
   labelColor: string;
   /** Laurels: the words inside the wreath (\n breaks a line). Ratings: the line under the stars. */
   text: string;
-  /** Laurels: a smaller line under the words. */
+  /** Laurels: a smaller line under the words. Sticky notes: who wrote it, signed in the corner. */
   caption: string;
   /** Ratings: how many of the five stars are filled, e.g. 4.8. */
   value: number;
@@ -55,6 +57,10 @@ export interface ShapeSpec {
   shadow: boolean;
   /** Soft focus: a fraction of the canvas width up to 0.5, or px. */
   blur: number;
+  /** Sticky notes: what holds it on, a curled corner, and how far the paper is turned (degrees). */
+  attach: (typeof NOTE_ATTACH)[number];
+  curl: boolean;
+  tilt: number;
 }
 
 /** What each type looks like when nothing is said: red marks for pointing, warm fills for decoration. */
@@ -72,7 +78,11 @@ export const SHAPE_DEFAULTS: Record<ShapeType, Partial<ShapeSpec>> = {
   ribbon: { fill: "#ffd60a", stroke: "none", size: 0.05, aspect: 4.2, text: "Try it free", labelColor: "#1d1d1f" },
   bubble: { fill: "#ffffff", stroke: "none", size: 0.07, aspect: 2.2, text: "So easy!", labelColor: "#1d1d1f" },
   tag: { fill: "#34c759", stroke: "none", size: 0.05, aspect: 2.4, text: "FREE", labelColor: "#ffffff" },
+  note: { fill: "#ffe682", stroke: "none", size: 0.24, aspect: 1, text: "Trying a calmer hero here.", labelColor: "#2b2719", attach: "tape", curl: true, shadow: true },
 };
+
+/** A sticky note's turn when none is set: a degree or two either way, picked by its seed. */
+export const noteTilt = (seed: number) => [-1.6, 1.2, -0.8, 1.8, -1.2, 0.7, -1.9][Math.abs(Math.round(seed)) % 7];
 
 export const isLine = (t: ShapeType) => t === "arrow" || t === "line";
 
@@ -115,6 +125,9 @@ export function shapeSpec(input: Loose, index = 0): ShapeSpec {
     opacity: pick("opacity", 1),
     shadow: pick("shadow", false),
     blur: Math.max(0, pick("blur", 0)),
+    attach: NOTE_ATTACH.includes(input.attach as never) ? (input.attach as ShapeSpec["attach"]) : (d.attach ?? "none"),
+    curl: pick("curl", false),
+    tilt: Math.max(-12, Math.min(12, input.tilt ?? (input.type === "note" ? noteTilt(pick("seed", index + 1)) : 0))),
   };
 }
 
@@ -416,6 +429,173 @@ function starPoints(w: number, h: number, n: number): Point[] {
   return pts;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Sticky notes
+
+/** The handwriting a note is written in (Gloria Hallelujah, from Google Fonts), with Mac and Windows hands behind it. */
+export const NOTE_FONT_FAMILY = "Gloria Hallelujah";
+const NOTE_FONT = "'Gloria Hallelujah','Bradley Hand','Segoe Print',cursive";
+/** Gloria Hallelujah's width in ems per character, measured over ordinary sentences, and the lines' spacing. */
+const NOTE_EM = 0.5;
+const NOTE_LEAD = 1.3;
+
+/**
+ * An id for an SVG definition made from what the definition is, so two notes with the same paper share one
+ * gradient (and the same id never names two different things, wherever the markup was made).
+ */
+function defId(prefix: string, ...parts: Array<string | number>): string {
+  let h = 2166136261;
+  for (const ch of parts.join("|")) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return `${prefix}${(h >>> 0).toString(36)}`;
+}
+
+/** Words wrapped to lines of at most `max` characters; a line break (\n) starts a new line; a word longer than a line is cut. */
+function wrapWords(text: string, max: number): string[] {
+  const out: string[] = [];
+  for (const para of text.split(/\\n|\n/)) {
+    let line = "";
+    for (let word of para.split(/\s+/).filter(Boolean)) {
+      while (word.length > max) {
+        if (line) out.push(line);
+        line = "";
+        out.push(word.slice(0, max));
+        word = word.slice(max);
+      }
+      if (!word) continue;
+      if (!line) line = word;
+      else if (line.length + 1 + word.length <= max) line += ` ${word}`;
+      else {
+        out.push(line);
+        line = word;
+      }
+    }
+    out.push(line);
+  }
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out;
+}
+
+/** Whether a colour (as hex) is dark enough to want light words on it. */
+function isDarkColour(c: string): boolean {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim());
+  if (!m) return false;
+  const hex = m[1].length === 3 ? [...m[1]].map((x) => x + x).join("") : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.42;
+}
+
+/**
+ * A sticky note: a square of paper, turned a little, its bottom lifted off the board (a soft shadow under
+ * it, deeper at the corners), held on with tape or a pin, a corner curling up if `curl`, and the words in
+ * handwriting with whoever wrote it signed in the corner.
+ */
+function noteSvg(s: ShapeSpec, w: number, h: number): string {
+  const a = (s.tilt * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(a));
+  const sin = Math.abs(Math.sin(a));
+  // The paper is as big as it can be with its turn still inside the layer's box.
+  const k = Math.min(w / (w * cos + h * sin), h / (w * sin + h * cos));
+  const pw = w * k;
+  const ph = h * k;
+  const side = Math.min(pw, ph);
+  const x0 = (w - pw) / 2;
+  const y0 = (h - ph) / 2;
+  const x1 = x0 + pw;
+  const y1 = y0 + ph;
+  const r = side * 0.014;
+  const c = s.curl ? side * 0.15 : 0;
+  const fill = s.fill === "none" ? "#ffe682" : s.fill;
+  const dark = isDarkColour(fill);
+  const paperId = defId("ntp", fill);
+  const backId = defId("ntb", fill);
+  const blurId = defId("nts", Math.round(side));
+  const softId = defId("ntf", Math.round(side));
+
+  // The paper, its bottom right corner rolled up when it curls (the edge there is the curl's fold).
+  const paper = c
+    ? `M${f(x0 + r)} ${f(y0)}H${f(x1 - r)}Q${f(x1)} ${f(y0)} ${f(x1)} ${f(y0 + r)}V${f(y1 - c)}Q${f(x1 - c * 0.3)} ${f(y1 - c * 0.3)} ${f(x1 - c)} ${f(y1)}H${f(x0 + r)}Q${f(x0)} ${f(y1)} ${f(x0)} ${f(y1 - r)}V${f(y0 + r)}Q${f(x0)} ${f(y0)} ${f(x0 + r)} ${f(y0)}Z`
+    : `M${f(x0 + r)} ${f(y0)}H${f(x1 - r)}Q${f(x1)} ${f(y0)} ${f(x1)} ${f(y0 + r)}V${f(y1 - r)}Q${f(x1)} ${f(y1)} ${f(x1 - r)} ${f(y1)}H${f(x0 + r)}Q${f(x0)} ${f(y1)} ${f(x0)} ${f(y1 - r)}V${f(y0 + r)}Q${f(x0)} ${f(y0)} ${f(x0 + r)} ${f(y0)}Z`;
+  // The curl: the paper's back, from the fold to a tip that leans in over the note.
+  const flap = c
+    ? `M${f(x1)} ${f(y1 - c)}Q${f(x1 - c * 0.3)} ${f(y1 - c * 0.3)} ${f(x1 - c)} ${f(y1)}Q${f(x1 - c * 0.86)} ${f(y1 - c * 0.42)} ${f(x1 - c * 0.92)} ${f(y1 - c * 0.92)}Q${f(x1 - c * 0.42)} ${f(y1 - c * 0.86)} ${f(x1)} ${f(y1 - c)}Z`
+    : "";
+
+  const defs =
+    `<defs><linearGradient id="${paperId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:color-mix(in oklab, ${esc(fill)} 90%, white)"/><stop offset="0.55" style="stop-color:${esc(fill)}"/><stop offset="1" style="stop-color:color-mix(in oklab, ${esc(fill)} 93%, black)"/></linearGradient>` +
+    `<linearGradient id="${backId}" x1="1" y1="1" x2="0" y2="0"><stop offset="0" style="stop-color:color-mix(in oklab, ${esc(fill)} 78%, black)"/><stop offset="0.6" style="stop-color:color-mix(in oklab, ${esc(fill)} 88%, white)"/><stop offset="1" style="stop-color:color-mix(in oklab, ${esc(fill)} 70%, white)"/></linearGradient>` +
+    `<filter id="${blurId}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${f(side * 0.022)}"/></filter>` +
+    `<filter id="${softId}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${f(side * 0.008)}"/></filter></defs>`;
+
+  // Shadows: a soft one under the lower half (its bottom is off the board), deeper at the two corners,
+  // and the curl's own over the paper and onto the board.
+  let shadow = "";
+  if (s.shadow) {
+    shadow += `<path d="M${f(x0 + pw * 0.03)} ${f(y0 + ph * 0.45)}H${f(x1 - pw * 0.03)}V${f(y1 + side * 0.012)}Q${f(x0 + pw / 2)} ${f(y1 - side * 0.01)} ${f(x0 + pw * 0.03)} ${f(y1 + side * 0.012)}Z" fill="#000" opacity="${dark ? 0.5 : 0.26}" filter="url(#${blurId})"/>`;
+    shadow += `<ellipse cx="${f(x0 + pw * 0.08)}" cy="${f(y1 - side * 0.004)}" rx="${f(pw * 0.07)}" ry="${f(side * 0.014)}" fill="#000" opacity="0.13" filter="url(#${softId})"/>`;
+    if (c) shadow += `<path d="M${f(x1 - c * 1.25)} ${f(y1 + side * 0.006)}Q${f(x1 + side * 0.01)} ${f(y1 + side * 0.01)} ${f(x1 + side * 0.008)} ${f(y1 - c * 1.25)}L${f(x1)} ${f(y1 - c)}Q${f(x1 - c * 0.3)} ${f(y1 - c * 0.3)} ${f(x1 - c)} ${f(y1)}Z" fill="#000" opacity="0.24" filter="url(#${softId})"/>`;
+    else shadow += `<ellipse cx="${f(x1 - pw * 0.08)}" cy="${f(y1 - side * 0.004)}" rx="${f(pw * 0.07)}" ry="${f(side * 0.014)}" fill="#000" opacity="0.13" filter="url(#${softId})"/>`;
+  }
+  let body = shadow + `<path d="${paper}" fill="url(#${paperId})"/>`;
+  // A hairline along the paper's edge, so a pale note still shows on a pale board.
+  body += `<path d="${paper}" fill="none" stroke="#000" stroke-opacity="${dark ? 0.3 : 0.07}" stroke-width="${f(Math.max(0.5, side * 0.003))}"/>`;
+  if (c) {
+    body += `<path d="${flap}" fill="#000" opacity="0.2" filter="url(#${softId})" transform="translate(${f(-c * 0.08)} ${f(-c * 0.05)})"/>`;
+    body += `<path d="${flap}" fill="url(#${backId})"/>`;
+  }
+
+  // The words: as big as they fit, between the margins, above the signature and clear of the curl.
+  const sign = s.caption.trim() ? (/^[—–-]/.test(s.caption.trim()) ? s.caption.trim() : `— ${s.caption.trim()}`) : "";
+  const padX = pw * 0.1;
+  const top = y0 + ph * (s.attach === "none" ? 0.1 : 0.15);
+  const sigSize = Math.max(6, Math.min(side * 0.062, 20));
+  const bottom = y1 - ph * 0.08 - (sign ? sigSize * 1.7 : 0) - (c && !sign ? c * 0.45 : 0);
+  const room = { w: pw - padX * 2, h: Math.max(side * 0.1, bottom - top) };
+  let size = Math.min(side * 0.13, 64);
+  let lines = wrapWords(s.text, Math.max(4, Math.floor(room.w / (size * NOTE_EM))));
+  while (size > side * 0.04 && lines.length * size * NOTE_LEAD > room.h) {
+    size *= 0.95;
+    lines = wrapWords(s.text, Math.max(4, Math.floor(room.w / (size * NOTE_EM))));
+  }
+  const ink = s.labelColor;
+  let y = top + size * 0.92;
+  for (const line of lines) {
+    if (line) body += `<text x="${f(x0 + padX)}" y="${f(y)}" font-family="${NOTE_FONT}" font-size="${f(size)}" fill="${esc(ink)}" fill-opacity="0.92">${esc(line)}</text>`;
+    y += size * NOTE_LEAD;
+  }
+  if (sign) {
+    const right = x1 - padX - (c ? c * 0.75 : 0);
+    body += `<text x="${f(right)}" y="${f(y1 - ph * 0.08)}" text-anchor="end" font-family="${NOTE_FONT}" font-size="${f(sigSize)}" fill="${esc(ink)}" fill-opacity="0.62">${esc(sign)}</text>`;
+  }
+
+  // What holds it on, over the top edge.
+  if (s.attach === "tape") {
+    const tw = pw * 0.34;
+    const th = side * 0.105;
+    const tx = x0 + pw / 2 - tw / 2;
+    const ty = y0 - th * 0.48;
+    const teeth = 5;
+    const jag = th * 0.09;
+    let d = `M${f(tx)} ${f(ty)}H${f(tx + tw)}`;
+    for (let i = 1; i <= teeth; i++) d += `L${f(tx + tw + (i % 2 ? jag : 0))} ${f(ty + (th * i) / teeth)}`;
+    d += `H${f(tx)}`;
+    for (let i = teeth - 1; i >= 0; i--) d += `L${f(tx + (i % 2 ? -jag : 0))} ${f(ty + (th * i) / teeth)}`;
+    d += "Z";
+    const turn = s.tilt > 0 ? -3.5 : 3;
+    body += `<g transform="rotate(${turn} ${f(tx + tw / 2)} ${f(ty + th / 2)})"><path d="${d}" fill="#000" opacity="0.08" transform="translate(0 ${f(side * 0.006)})" filter="url(#${softId})"/><path d="${d}" fill="#fffdf6" fill-opacity="${dark ? 0.34 : 0.52}" stroke="#000" stroke-opacity="0.05" stroke-width="0.6"/><rect x="${f(tx + tw * 0.06)}" y="${f(ty + th * 0.16)}" width="${f(tw * 0.88)}" height="${f(th * 0.12)}" rx="${f(th * 0.06)}" fill="#fff" fill-opacity="0.35"/></g>`;
+  } else if (s.attach === "pin") {
+    const cx = x0 + pw / 2;
+    const cy = y0 + side * 0.075;
+    const pr = side * 0.042;
+    body +=
+      `<ellipse cx="${f(cx + pr * 0.9)}" cy="${f(cy + pr * 1.1)}" rx="${f(pr * 0.95)}" ry="${f(pr * 0.55)}" fill="#000" opacity="0.3" filter="url(#${softId})"/>` +
+      `<path d="M${f(cx)} ${f(cy)}L${f(cx + pr * 0.55)} ${f(cy + pr * 1.25)}" stroke="#8a8f98" stroke-width="${f(pr * 0.16)}" stroke-linecap="round"/>` +
+      `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(pr)}" fill="#cf3338"/>` +
+      `<circle cx="${f(cx - pr * 0.12)}" cy="${f(cy - pr * 0.14)}" r="${f(pr * 0.76)}" fill="#ec4b50"/>` +
+      `<ellipse cx="${f(cx - pr * 0.36)}" cy="${f(cy - pr * 0.4)}" rx="${f(pr * 0.26)}" ry="${f(pr * 0.18)}" fill="#fff" opacity="0.75" transform="rotate(-35 ${f(cx - pr * 0.36)} ${f(cy - pr * 0.4)})"/>`;
+  }
+  return `${defs}<g transform="rotate(${f(s.tilt)} ${f(w / 2)} ${f(h / 2)})">${body}</g>`;
+}
+
 export interface ShapeRender {
   /** Where the SVG sits on the canvas (pixels) and its rotation about its centre. */
   left: number;
@@ -439,7 +619,7 @@ export function renderShape(s: ShapeSpec, W: number, H: number, opts: { hit?: nu
   const fill = s.fill !== "none";
   const strokeAttrs = stroke ? `stroke="${esc(s.stroke)}" stroke-width="${f(sw)}" stroke-linecap="round" stroke-linejoin="round"${dashAttr(s, sw)}` : `stroke="none"`;
   const soft = !s.blur ? 0 : s.blur <= 0.5 ? s.blur * W : s.blur;
-  const filter = [s.shadow ? `drop-shadow(0 ${f(H * 0.004)}px ${f(H * 0.01)}px rgba(0,0,0,0.35))` : "", soft > 0.05 ? `blur(${f(soft)}px)` : ""].filter(Boolean).join(" ") || undefined;
+  const filter = [s.shadow && s.type !== "note" ? `drop-shadow(0 ${f(H * 0.004)}px ${f(H * 0.01)}px rgba(0,0,0,0.35))` : "", soft > 0.05 ? `blur(${f(soft)}px)` : ""].filter(Boolean).join(" ") || undefined;
   const hitPath = (d: string, closedFill = false) =>
     opts.hit ? `<path class="hit" d="${d}" fill="${closedFill ? "transparent" : "none"}" stroke="transparent" stroke-width="${f(Math.max(opts.hit, sw))}" pointer-events="${closedFill ? "all" : "stroke"}"/>` : "";
   let body = "";
@@ -551,9 +731,10 @@ export function renderShape(s: ShapeSpec, W: number, H: number, opts: { hit?: nu
     case "burst":
     case "ribbon":
     case "bubble":
-    case "tag": {
+    case "tag":
+    case "note": {
       // Drawn whole: the shape and its words.
-      body = { laurel: laurelSvg, rating: ratingSvg, burst: burstSvg, ribbon: ribbonSvg, bubble: bubbleSvg, tag: tagSvg }[s.type](s, w, h);
+      body = { laurel: laurelSvg, rating: ratingSvg, burst: burstSvg, ribbon: ribbonSvg, bubble: bubbleSvg, tag: tagSvg, note: noteSvg }[s.type](s, w, h);
       if (opts.hit) body += `<rect class="hit" x="0" y="0" width="${f(w)}" height="${f(h)}" fill="transparent" stroke="none" pointer-events="all"/>`;
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${f(w)}" height="${f(h)}" viewBox="0 0 ${f(w)} ${f(h)}" style="display:block;overflow:visible"><g opacity="${s.opacity}">${body}</g></svg>`;
       return { left: s.x * W - w / 2, top: s.y * H - h / 2, width: w, height: h, rotate: s.rotate, filter, svg };

@@ -1410,6 +1410,8 @@ export function fontFamilies(board: Board, ids: string[]): Map<string, Set<strin
       for (const m of (n.text ?? "").matchAll(/font-family:\s*([^;"]+)/g)) note(m[1], undefined);
       for (const m of (n.text ?? "").matchAll(/font-weight:\s*(\d{3})/g)) note(f, m[1]);
     }
+    // A shape that writes its own words (a sticky note's handwriting) needs its font too.
+    if (n.type === "svg" && n.shape && n.svg) for (const m of n.svg.matchAll(/font-family="([^"]+)"/g)) note(m[1], undefined);
     for (const c of n.children ?? []) walk(c, f);
   };
   for (const id of ids) walk(id);
