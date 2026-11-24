@@ -903,6 +903,260 @@ const CHECKS: Record<string, Check> = {
     if (!gridParents.every(Boolean)) return `multi-layer grid drop: ${JSON.stringify(gridParents)}`;
     return "ok";
   },
+  async "figma: frame draw auto-adopts enclosed layers, Shift+A infers flex, arrow keys reorder in flex, and double-click handle hugs/fits"(page) {
+    const t = await openMaskBoard(
+      page,
+      `<div data-name="Board" style="position:relative;width:760px;height:420px;background:#ffffff">
+        <div data-name="CardA" style="position:absolute;left:80px;top:120px;width:100px;height:100px;background:#ef4444;border-radius:8px"></div>
+        <div data-name="CardB" style="position:absolute;left:220px;top:120px;width:100px;height:100px;background:#3b82f6;border-radius:8px"></div>
+        <div data-name="CardC" style="position:absolute;left:360px;top:120px;width:100px;height:100px;background:#10b981;border-radius:8px"></div>
+      </div>`,
+    );
+    const boardId = t.byName("Board");
+    const aId = t.byName("CardA");
+    const bId = t.byName("CardB");
+    const cId = t.byName("CardC");
+    const bb = await boxOf(page, boardId);
+    const k = bb.width / 760;
+    // 1. Draw Frame enclosing CardA and CardB completely, overlapping CardC only ~60%: ONLY CardA & CardB should preview + adopt!
+    await page.keyboard.press("f");
+    await page.waitForTimeout(100);
+    const fx0 = bb.x + 50 * k;
+    const fy0 = bb.y + 90 * k;
+    const fx1Partial = bb.x + 420 * k; // covers A (80..180) and B (220..320), only 60px of C (360..460)
+    const fy1 = bb.y + 250 * k;
+    await page.mouse.move(fx0, fy0);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(fx0 + ((fx1Partial - fx0) * i) / 8, fy0 + ((fy1 - fy0) * i) / 8);
+    await page.waitForTimeout(100);
+    const previewInfo = await S(page, () => ({
+      willWrap: document.querySelectorAll(".bd-will-wrap").length,
+      label: document.querySelector(".bd-draw-size")?.textContent ?? "",
+    }));
+    await picture(page, "figma-frame-wrap-preview");
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    const partialFrameId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    const partialParents = { a: nodeOf(t, aId).parent === partialFrameId, b: nodeOf(t, bId).parent === partialFrameId, c: nodeOf(t, cId).parent === boardId };
+    // Check visual coordinates preserved inside new frame (CardA was at left=80, frame at left=50 -> CardA left ≈ 30px).
+    const aLocalLeft = parseFloat(styleOf(t, aId).left ?? "0");
+    // 2. Undo, then draw Frame enclosing ALL 3 cards with 30px padding around them.
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(400);
+    await page.keyboard.press("f");
+    await page.waitForTimeout(100);
+    const fx1All = bb.x + 490 * k; // 460 + 30 = 490
+    await page.mouse.move(fx0, fy0);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(fx0 + ((fx1All - fx0) * i) / 8, fy0 + ((fy1 - fy0) * i) / 8);
+    await page.waitForTimeout(80);
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    const fullFrameId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    // 3. Double-click bottom-right resize handle on this FREE frame -> Resize to Fit children tightly (width ≈ 380, height ≈ 100)!
+    const seHandle = (await page.locator('.bd-handle[data-handle="se"]').boundingBox())!;
+    await page.mouse.dblclick(seHandle.x + seHandle.width / 2, seHandle.y + seHandle.height / 2);
+    await page.waitForTimeout(400);
+    const fitStyle = styleOf(t, fullFrameId!);
+    // Undo Resize to Fit so frame still has ~30px padding around all 3 cards before Shift+A!
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(400);
+    // 4. Press Shift+A -> infers flexDirection: row, gap: 40px, padding ≈ 30px, reading order A,B,C!
+    await page.keyboard.press("Shift+A");
+    await page.waitForTimeout(400);
+    const flexStyle = styleOf(t, fullFrameId!);
+    const flexOrderBefore = (nodeOf(t, fullFrameId!).children ?? []).map((cid) => nodeOf(t, cid).name).join(",");
+    // 5. Double-click east handle on the FLEX frame -> Hug contents (clears fixed width)!
+    const eHandle = (await page.locator('.bd-handle[data-handle="e"]').boundingBox())!;
+    await page.mouse.dblclick(eHandle.x + eHandle.width / 2, eHandle.y + eHandle.height / 2);
+    await page.waitForTimeout(400);
+    const huggedWidth = styleOf(t, fullFrameId!).width ?? null;
+    // 6. Select CardA inside the flex row, press ArrowRight -> reorders to CardB,CardA,CardC!
+    await sel(page, [aId]);
+    await page.waitForTimeout(150);
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(400);
+    const flexOrderAfter = (nodeOf(t, fullFrameId!).children ?? []).map((cid) => nodeOf(t, cid).name).join(",");
+    boards.deleteBoard(t.id);
+    if (previewInfo.willWrap !== 2 || !previewInfo.label.includes("2 layers")) return `wrap preview: ${JSON.stringify(previewInfo)}`;
+    if (!partialParents.a || !partialParents.b || !partialParents.c) return `partial wrap parents: ${JSON.stringify(partialParents)}`;
+    if (Math.abs(aLocalLeft - 30) > 2) return `adopted child local left=${aLocalLeft} (expected ~30)`;
+    if (Math.abs(parseFloat(fitStyle.width ?? "0") - 380) > 4 || Math.abs(parseFloat(fitStyle.height ?? "0") - 100) > 4) return `free frame dblclick fit: ${fitStyle.width} × ${fitStyle.height}`;
+    if (flexStyle.display !== "flex" || flexStyle.flexDirection !== "row" || flexStyle.gap !== "40px") return `Shift+A flex infer: ${JSON.stringify(flexStyle)}`;
+    if (!flexStyle.padding && !flexStyle.paddingTop) return `Shift+A didn't infer padding: ${JSON.stringify(flexStyle)}`;
+    if (huggedWidth !== null) return `flex dblclick east handle didn't hug width: ${huggedWidth}`;
+    if (flexOrderBefore !== "CardA,CardB,CardC" || flexOrderAfter !== "CardB,CardA,CardC") return `arrow reorder in flex: ${flexOrderBefore} -> ${flexOrderAfter}`;
+    return "ok";
+  },
+  async "figma: Option-drag duplicates, Space skips auto-nesting & shifts draw, corner radius handles, Smart Selection gap & reorder, and Cmd-marquee"(page) {
+    const t = await openMaskBoard(
+      page,
+      `<div data-name="Stage" style="position:relative;width:760px;height:440px;background:#ffffff">
+        <div data-name="S1" style="position:absolute;left:40px;top:40px;width:90px;height:90px;background:#6366f1"></div>
+        <div data-name="S2" style="position:absolute;left:160px;top:40px;width:90px;height:90px;background:#8b5cf6"></div>
+        <div data-name="S3" style="position:absolute;left:280px;top:40px;width:90px;height:90px;background:#ec4899"></div>
+        <div data-name="Target" style="position:absolute;left:40px;top:210px;width:240px;height:180px;background:#f4f4f5;border:1px solid #d4d4d8">
+          <div data-name="DeepChild" style="position:absolute;left:40px;top:40px;width:80px;height:60px;background:#f59e0b"></div>
+        </div>
+        <div data-name="Mover" style="position:absolute;left:440px;top:250px;width:80px;height:80px;background:#14b8a6"></div>
+      </div>`,
+    );
+    const stageId = t.byName("Stage");
+    const s1 = t.byName("S1");
+    const s2 = t.byName("S2");
+    const s3 = t.byName("S3");
+    const targetId = t.byName("Target");
+    const deepChild = t.byName("DeepChild");
+    const mover = t.byName("Mover");
+    const sb = await boxOf(page, stageId);
+    const k = sb.width / 760;
+
+    // 1. Corner radius handles on S1: uniform drag, ⌥ single-corner drag, double-click reset to 0.
+    await sel(page, [s1]);
+    await page.waitForTimeout(150);
+    const tl = (await page.locator('.bd-rad-h[data-radius="tl"]').boundingBox())!;
+    await page.mouse.move(tl.x + tl.width / 2, tl.y + tl.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) await page.mouse.move(tl.x + tl.width / 2 + (18 * k * i) / 6, tl.y + tl.height / 2 + (18 * k * i) / 6);
+    await page.waitForTimeout(80);
+    const radPill = await S(page, () => document.querySelector(".bd-rad-v")?.textContent ?? "");
+    await picture(page, "figma-radius");
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+    const radAll = parseFloat(styleOf(t, s1).borderRadius ?? "0");
+    // Option-drag bottom-right corner only.
+    const br = (await page.locator('.bd-rad-h[data-radius="br"]').boundingBox())!;
+    await page.mouse.move(br.x + br.width / 2, br.y + br.height / 2);
+    await page.keyboard.down("Alt");
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) await page.mouse.move(br.x + br.width / 2 - (10 * k * i) / 6, br.y + br.height / 2 - (10 * k * i) / 6);
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    await page.waitForTimeout(350);
+    const radSingle = { tl: styleOf(t, s1).borderTopLeftRadius, br: styleOf(t, s1).borderBottomRightRadius };
+    // Double-click corner dot resets radius to 0.
+    const tl2 = (await page.locator('.bd-rad-h[data-radius="tl"]').boundingBox())!;
+    await page.mouse.dblclick(tl2.x + tl2.width / 2, tl2.y + tl2.height / 2);
+    await page.waitForTimeout(350);
+    const radReset = styleOf(t, s1).borderRadius ?? styleOf(t, s1).borderTopLeftRadius ?? null;
+
+    // 2. Smart Selection on S1, S2, S3 (30px uniform gaps): pink gap handles & center reorder dots!
+    await sel(page, [s1, s2, s3]);
+    await page.waitForTimeout(180);
+    const smartUi = await S(page, () => ({
+      gaps: document.querySelectorAll(".bd-smart-gap-h").length,
+      dots: document.querySelectorAll(".bd-smart-dot").length,
+    }));
+    await picture(page, "figma-smart-selection");
+    // Drag first gap handle +20px -> gap becomes 50px (S1=40, S2=180, S3=320).
+    const sg = (await page.locator('.bd-smart-gap-h[data-smart-gap="0"]').boundingBox())!;
+    await page.mouse.move(sg.x + sg.width / 2, sg.y + sg.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) await page.mouse.move(sg.x + sg.width / 2 + (20 * k * i) / 6, sg.y + sg.height / 2);
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+    const smartGapLefts = [parseFloat(styleOf(t, s1).left ?? "0"), parseFloat(styleOf(t, s2).left ?? "0"), parseFloat(styleOf(t, s3).left ?? "0")];
+    // Drag S1's center dot past S3's center -> S1 swaps to the rightmost slot (S2=40, S3=180, S1=320).
+    const d1 = (await page.locator(`.bd-smart-dot[data-smart-dot="${s1}"]`).boundingBox())!;
+    const d3 = (await page.locator(`.bd-smart-dot[data-smart-dot="${s3}"]`).boundingBox())!;
+    await page.mouse.move(d1.x + d1.width / 2, d1.y + d1.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(d1.x + d1.width / 2 + ((d3.x + d3.width / 2 + 20 - (d1.x + d1.width / 2)) * i) / 8, d1.y + d1.height / 2);
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+    const smartSwapLefts = [parseFloat(styleOf(t, s2).left ?? "0"), parseFloat(styleOf(t, s3).left ?? "0"), parseFloat(styleOf(t, s1).left ?? "0")];
+
+    // 3. Option-drag Mover to the right by 120px -> original stays at 440px, duplicate created at ~560px & selected!
+    await sel(page, [mover]);
+    await page.waitForTimeout(150);
+    const mb = await boxOf(page, mover);
+    const countBeforeDup = (nodeOf(t, stageId).children ?? []).length;
+    await page.mouse.move(mb.x + mb.width / 2, mb.y + mb.height / 2);
+    await page.keyboard.down("Alt");
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(mb.x + mb.width / 2 + (120 * k * i) / 8, mb.y + mb.height / 2);
+    await page.waitForTimeout(100);
+    const dupMid = await S(page, () => ({
+      dupGhosts: document.querySelectorAll(".bd-ghost.dup").length,
+      copying: document.querySelector(".bd-canvas")?.classList.contains("copying") ?? false,
+    }));
+    await picture(page, "figma-alt-dup");
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    await page.waitForTimeout(400);
+    const countAfterDup = (nodeOf(t, stageId).children ?? []).length;
+    const dupSelId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    const origMoverLeft = styleOf(t, mover).left;
+    const dupMoverLeft = dupSelId ? parseFloat(styleOf(t, dupSelId).left ?? "0") : 0;
+
+    // 4. Drag Mover directly over Target while holding Space mid-drag -> stays in Stage (does NOT auto-nest into Target)!
+    await sel(page, [mover]);
+    await page.waitForTimeout(150);
+    const tb = await boxOf(page, targetId);
+    await page.mouse.move(mb.x + mb.width / 2, mb.y + mb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(mb.x + mb.width / 2 - 20 * k, mb.y + mb.height / 2);
+    await page.keyboard.down("Space");
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(
+        mb.x + mb.width / 2 - 20 * k + ((tb.x + tb.width * 0.7 - (mb.x + mb.width / 2 - 20 * k)) * i) / 8,
+        mb.y + mb.height / 2 + ((tb.y + tb.height * 0.6 - (mb.y + mb.height / 2)) * i) / 8,
+      );
+    }
+    await page.waitForTimeout(100);
+    await page.mouse.up();
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(400);
+    const moverParentAfterSpace = nodeOf(t, mover).parent;
+
+    // 5. Cmd-marquee across Target -> selects DeepChild directly!
+    await sel(page, []);
+    await page.waitForTimeout(120);
+    const dcb = await boxOf(page, deepChild);
+    await page.keyboard.down("Meta");
+    await page.mouse.move(sb.x + 12 * k, tb.y + 10 * k);
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) {
+      await page.mouse.move(sb.x + 12 * k + ((dcb.x + dcb.width + 10 - (sb.x + 12 * k)) * i) / 6, tb.y + 10 * k + ((dcb.y + dcb.height + 10 - (tb.y + 10 * k)) * i) / 6);
+    }
+    await page.mouse.up();
+    await page.keyboard.up("Meta");
+    await page.waitForTimeout(250);
+    const cmdMarqueeSel = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel.join(","));
+
+    // 6. Holding Space mid-draw with R tool shifts the drawn rectangle's origin!
+    await page.keyboard.press("r");
+    await page.waitForTimeout(80);
+    const rx0 = sb.x + 560 * k;
+    const ry0 = sb.y + 40 * k;
+    await page.mouse.move(rx0, ry0);
+    await page.mouse.down();
+    await page.mouse.move(rx0 + 60 * k, ry0 + 60 * k, { steps: 4 });
+    await page.keyboard.down("Space");
+    await page.mouse.move(rx0 + 110 * k, ry0 + 90 * k, { steps: 4 }); // shifts origin by (+50, +30) -> left ≈ 610, top ≈ 70, size ≈ 60×60
+    await page.keyboard.up("Space");
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+    const drawnId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    const drawnSt = drawnId ? styleOf(t, drawnId) : {};
+
+    boards.deleteBoard(t.id);
+    if (radAll < 10 || !radPill) return `corner radius drag: all=${radAll}, pill=${radPill}`;
+    if (!radSingle.tl || !radSingle.br || radSingle.tl === radSingle.br) return `⌥ single corner radius: ${JSON.stringify(radSingle)}`;
+    if (radReset !== null) return `dblclick radius reset left: ${radReset}`;
+    if (smartUi.gaps !== 2 || smartUi.dots !== 3) return `smart selection UI: ${JSON.stringify(smartUi)}`;
+    if (Math.abs(smartGapLefts[1] - 180) > 3 || Math.abs(smartGapLefts[2] - 320) > 3) return `smart gap drag lefts: ${JSON.stringify(smartGapLefts)}`;
+    if (Math.abs(smartSwapLefts[0] - 40) > 3 || Math.abs(smartSwapLefts[1] - 180) > 3 || Math.abs(smartSwapLefts[2] - 320) > 3) return `smart reorder lefts: ${JSON.stringify(smartSwapLefts)}`;
+    if (!dupMid.copying || dupMid.dupGhosts !== 1 || countAfterDup !== countBeforeDup + 1 || dupSelId === mover || origMoverLeft !== "440px" || Math.abs(dupMoverLeft - 560) > 4) {
+      return `⌥-drag duplicate: mid=${JSON.stringify(dupMid)}, count=${countBeforeDup}->${countAfterDup}, orig=${origMoverLeft}, dup=${dupMoverLeft}`;
+    }
+    if (moverParentAfterSpace !== stageId) return `Space mid-drag still nested into ${moverParentAfterSpace}`;
+    if (!cmdMarqueeSel.split(",").includes(deepChild)) return `⌘-marquee sel: ${cmdMarqueeSel} (expected ${deepChild})`;
+    if (Math.abs(parseFloat(drawnSt.left ?? "0") - 610) > 6 || Math.abs(parseFloat(drawnSt.top ?? "0") - 70) > 6 || Math.abs(parseFloat(drawnSt.width ?? "0") - 60) > 6) {
+      return `Space mid-draw origin shift: ${JSON.stringify(drawnSt)}`;
+    }
+    return "ok";
+  },
   async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {
     const t = await openTestBoard(page);
     const one = await boxOf(page, t.byName("Row One"));

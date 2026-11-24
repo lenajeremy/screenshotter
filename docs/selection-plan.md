@@ -77,3 +77,12 @@ Asked 2026-11-23: make clicking, dragging and dropping layers easy to understand
   - Multi-layer drops into grid frames append cleanly into flow cells.
   - `⌥` measurement upgraded with dashed alignment extension lines and edge offsets for side-by-side / stacked layers.
   - Refined blue padding & pink gap handles with smaller minimum threshold (8px) and multi-side highlighting for `⌥`/`⇧` drags.
+- Figma subtle canvas UX parity (studied live in Figma Design):
+  - **Frame draw auto-adoption:** Drawing a Frame (`F`) over free siblings highlights every completely enclosed layer live (`.bd-will-wrap` + `W × H · N layers`), creates the frame at the earliest sibling index, and atomically adopts them preserving exact coordinates & z-order.
+  - **Smart `Shift+A` auto-layout inference:** Adding Flex to a free frame with children infers `flexDirection` (`row`/`column`), reading order, average `gap`, inner `padding`, and cross-axis `alignItems`.
+  - **`⌥`-drag duplicate & `Space` ignore auto-nesting:** Holding `⌥` while dragging leaves originals untouched, shows copy cursor + snap/distance against originals, and commits cloned subtrees; holding `Space` mid-drag keeps the current parent without auto-nesting; holding `Shift` constrains movement to horizontal/vertical/45°.
+  - **Draw, resize & marquee modifiers:** `Space` mid-draw or mid-marquee slides the origin; `Shift` locks drawn frames/rectangles to 1:1; `⌥` draws or resizes symmetrically around center; `⌘`-marquee selects deepest intersecting layers.
+  - **Double-click resize handles:** Hugs width/height/both on Flex frames & Text; tightly fits children on Free frames without shifting child visual coordinates.
+  - **On-canvas corner radius handles:** 4 inset corner dots on selected frames (`>= 48×48`); drag rounds all corners with live value pill, `⌥`-drag rounds one corner, double-click resets to `0`.
+  - **Smart Selection handles:** When 3+ free siblings are evenly spaced (`<= 2.5px` variance), pink gap bars adjust spacing uniformly (`⌥` center-anchored) and center circles swap/reorder items while keeping spacing intact.
+  - **Arrow-key flex reorder:** Pressing `←`/`→` (row) or `↑`/`↓` (column) on a single selected Flex child reorders it along the flex axis.

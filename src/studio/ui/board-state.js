@@ -50,6 +50,10 @@ export const B = {
   dragging: null,
   /** Active flex padding/gap handle being dragged on the canvas, or null. */
   spacing: null,
+  /** Active corner-radius handle being dragged on the canvas, or null. */
+  radius: null,
+  /** Active Smart Selection gap/reorder drag state on the canvas, or null. */
+  smart: null,
   /** How much the selection is being scaled right now (the Scale tool), or null. */
   scaling: null,
   /** The point of the selection that stays put when the Scale panel scales it: [0, 0] its top left. */
@@ -101,7 +105,7 @@ export function bset(patch) {
  * What (nearly) only the canvas draws from, changing many times a second as the pointer moves:
  * keys of B, and "words", the words picked in a text being typed in (for the inspector).
  */
-export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "spacing", "words", "presence", "peers", "following"];
+export const CANVAS_ONLY = ["view", "hover", "guides", "drop", "spacing", "radius", "smart", "words", "presence", "peers", "following"];
 /**
  * Redraw the calling component whenever the board changes, except for changes to only the keys it
  * says it `ignore`s.

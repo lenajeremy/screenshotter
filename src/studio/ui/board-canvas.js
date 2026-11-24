@@ -3,7 +3,7 @@
 import { Component } from "preact";
 import { Presence, PresenceBar, agentArtboards, colourOf } from "./board-presence.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ancestors, cleanAttrs, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, rootOf, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
+import { ancestors, cleanAttrs, copyTree, fontFaceCss, fontFamilies, fontLinks, inFlow, instanceRootOf, isFlex, isGrid, mapCssUrls, newId, pxValue, rootOf, round, scaleOps, sizeWord, vectorFit, vectorTag, vectorTransform, videoSettings } from "./board-core.js";
 import { loadMaskFonts, maskActive, maskCss, maskOf, maskRuns, onMaskFonts, styleText } from "./board-core.js";
 import { mapSvgImages, shaderBoxStyle, svgImageAttrs } from "./board-core.js";
 import { CANVAS_ONLY } from "./board-state.js";
@@ -1452,7 +1452,7 @@ export function BoardCanvas() {
     Object.assign(virtStats, { active: false, totalRoots: page.children.length, live: page.children.length, lod: 0, virtual: 0, totalNodes: virtInfo.totalNodes, liveNodes: virtInfo.totalNodes });
   }
   const tokens = Object.fromEntries(b.board.tokens.map((t) => [t.name, t.value]));
-  return html`<div class="bd-canvas tool-${b.tool} ${spaceDown ? "panning" : ""}" ref=${ref}
+  return html`<div class="bd-canvas tool-${b.tool} ${spaceDown && (!b.dragging || b.dragging === "pan") ? "panning" : ""}" ref=${ref}
       onPointerDown=${down} onDblClick=${dblclick} onContextMenu=${contextMenu} onPointerMove=${hoverMove} onPointerLeave=${() => (B.hover && bset({ hover: null }), B.live && sendLivePresence({ cursor: null }, { immediate: true }))}
       onClickCapture=${(e) => e.target.closest("a") && e.preventDefault()}
       onDragOver=${(e) => e.preventDefault()} onDrop=${dropFiles}>
@@ -1680,6 +1680,340 @@ function ParentPins({ id, box }) {
   return lines.map((l) => html`<div key=${"pin-" + l.k} class="bd-cpin ${l.cls}" style=${{ left: l.x + "px", top: l.y + "px", width: l.w + "px", height: l.h + "px" }}></div>`);
 }
 
+const RADIUS_CORNERS = [
+  { key: "tl", prop: "borderTopLeftRadius", sx: 1, sy: 1 },
+  { key: "tr", prop: "borderTopRightRadius", sx: -1, sy: 1 },
+  { key: "br", prop: "borderBottomRightRadius", sx: -1, sy: -1 },
+  { key: "bl", prop: "borderBottomLeftRadius", sx: 1, sy: -1 },
+];
+
+/**
+ * Figma-style on-canvas corner radius handles: four delicate circular dots inset inside the corners
+ * of a selected frame/rectangle. Dragging adjusts all four corners; ⌥-dragging adjusts just that
+ * corner; double-clicking resets to 0.
+ */
+function RadiusHandles({ id, box, active }) {
+  const n = node(id);
+  const el = elOf(id);
+  if (!n || !el || n.type !== "frame" || box.width < 48 || box.height < 48) return null;
+  const z = B.view.z;
+  const cs = getComputedStyle(el);
+  const maxOff = Math.max(11, Math.min(box.width, box.height) / 2 - 9);
+  return RADIUS_CORNERS.map((c) => {
+    const r = parseFloat(cs[c.prop]) || 0;
+    const off = Math.max(11, Math.min(r * z, maxOff));
+    const x = c.sx > 0 ? box.x + off : box.x + box.width - off;
+    const y = c.sy > 0 ? box.y + off : box.y + box.height - off;
+    const on = Boolean(active && (active.all || active.corner === c.key));
+    return html`<div key=${"rad-" + c.key} class="bd-rad ${on ? "on" : ""}">
+      <div class="bd-rad-h" data-radius=${c.key} onDblClick=${(e) => resetRadius(e, id)} title="Drag to round corners (⌥ single corner, double-click to reset)" style=${{ left: x + "px", top: y + "px" }}></div>
+      ${on && active.corner === c.key && html`<div class="bd-rad-v" style=${{ left: x + "px", top: y - 16 + "px" }}>${Math.round(active.value)}</div>`}
+    </div>`;
+  });
+}
+
+function radiusDrag(e, id, cornerKey) {
+  e.stopPropagation();
+  const base = B.board;
+  const n = node(id);
+  const el = elOf(id);
+  const box = worldBox(id);
+  if (!n || !el || !box) return;
+  const cDef = RADIUS_CORNERS.find((c) => c.key === cornerKey);
+  if (!cDef) return;
+  const cs = getComputedStyle(el);
+  const r0 = Object.fromEntries(RADIUS_CORNERS.map((c) => [c.key, parseFloat(cs[c.prop]) || 0]));
+  const maxR = Math.floor(Math.min(box.width, box.height) / 2);
+  const z = B.view.z;
+  let ops = [];
+  drag(e, {
+    threshold: 1,
+    kind: "radius",
+    move: (ev) => {
+      const dx = ((ev.clientX - e.clientX) / z) * cDef.sx;
+      const dy = ((ev.clientY - e.clientY) / z) * cDef.sy;
+      // Diagonal projection inward increases radius, outward decreases.
+      const delta = (dx + dy) * 0.65;
+      const v = Math.max(0, Math.min(maxR, Math.round(r0[cornerKey] + delta)));
+      if (ev.altKey) {
+        B.radius = { corner: cornerKey, value: v, all: false };
+        const style = { borderRadius: null };
+        for (const c of RADIUS_CORNERS) style[c.prop] = `${c.key === cornerKey ? v : Math.round(r0[c.key])}px`;
+        ops = [{ op: "set", id, style }];
+      } else {
+        B.radius = { corner: cornerKey, value: v, all: true };
+        ops = [{ op: "set", id, style: { borderRadius: v ? `${v}px` : null, borderTopLeftRadius: null, borderTopRightRadius: null, borderBottomRightRadius: null, borderBottomLeftRadius: null } }];
+      }
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      B.radius = null;
+      if (!moved || !ops.length) {
+        B.board = base;
+        return notify();
+      }
+      B.board = base;
+      commit(ops, { label: "Corner radius" });
+    },
+    cancel: () => {
+      B.radius = null;
+      B.board = base;
+      notify();
+    },
+  });
+}
+
+function resetRadius(e, id) {
+  e.stopPropagation();
+  const n = node(id);
+  if (!n || n.locked) return;
+  commit([{ op: "set", id, style: { borderRadius: null, borderTopLeftRadius: null, borderTopRightRadius: null, borderBottomRightRadius: null, borderBottomLeftRadius: null } }], { label: "Corner radius" });
+}
+
+/**
+ * Figma Smart Selection detector: when 2+ unlocked free siblings in the same parent are laid out
+ * cleanly in a single row or column with uniform spacing (<= 2px variance), return their ordered
+ * boxes and inter-item gaps so pink spacing bars and center reorder circles can be dragged on canvas.
+ */
+function detectSmartSelection(ids) {
+  if (!ids || ids.length < 3) return null;
+  const p0 = node(ids[0])?.parent ?? null;
+  if (ids.some((id) => (node(id)?.parent ?? null) !== p0 || inFlow(B.board, id) || isVector(id))) return null;
+  const items = ids.map((id) => ({ id, w: worldBox(id), s: screenBox(id) })).filter((o) => o.w && o.s);
+  if (items.length !== ids.length) return null;
+  const checkAxis = (axis) => {
+    const isX = axis === "x";
+    const sorted = items.slice().sort((a, b) => (isX ? a.w.x - b.w.x : a.w.y - b.w.y));
+    const gaps = [];
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      const a = sorted[i].w;
+      const b = sorted[i + 1].w;
+      // Cross-axis must overlap; main-axis must not overlap.
+      const crossOverlap = isX ? Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) : Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      if (crossOverlap <= 2) return null;
+      const g = isX ? b.x - (a.x + a.width) : b.y - (a.y + a.height);
+      if (g < -0.5) return null;
+      gaps.push(g);
+    }
+    const minG = Math.min(...gaps);
+    const maxG = Math.max(...gaps);
+    if (maxG - minG > 2.5) return null;
+    const avg = gaps.reduce((sum, g) => sum + g, 0) / gaps.length;
+    const screenGaps = [];
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      const a = sorted[i].s;
+      const b = sorted[i + 1].s;
+      if (isX) {
+        const y0 = Math.min(a.y, b.y);
+        const y1 = Math.max(a.y + a.height, b.y + b.height);
+        screenGaps.push({ x: a.x + a.width, y: y0, width: Math.max(0, b.x - (a.x + a.width)), height: y1 - y0 });
+      } else {
+        const x0 = Math.min(a.x, b.x);
+        const x1 = Math.max(a.x + a.width, b.x + b.width);
+        screenGaps.push({ x: x0, y: a.y + a.height, width: x1 - x0, height: Math.max(0, b.y - (a.y + a.height)) });
+      }
+    }
+    return { axis, ordered: sorted, gap: Math.round(avg), gaps: screenGaps };
+  };
+  return checkAxis("x") || checkAxis("y");
+}
+
+function SmartHandles({ ids, active }) {
+  const smart = detectSmartSelection(ids);
+  if (!smart) return null;
+  const isX = smart.axis === "x";
+  return html`
+    ${smart.gaps.map((r, i) => {
+      const on = active?.kind === "gap";
+      const bar = isX ? { width: 3, height: Math.min(18, Math.max(10, r.height * 0.28)) } : { width: Math.min(18, Math.max(10, r.width * 0.28)), height: 3 };
+      return html`<div key=${"sg-" + i} class="bd-smart-gap ${on ? "on" : ""}">
+        <div class="bd-smart-gap-band" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>
+        <div class="bd-smart-gap-h" data-smart-gap=${i} title="Drag to adjust spacing between selected layers" style=${{ left: r.x + r.width / 2 - bar.width / 2 + "px", top: r.y + r.height / 2 - bar.height / 2 + "px", width: bar.width + "px", height: bar.height + "px", cursor: isX ? "ew-resize" : "ns-resize" }}></div>
+        <div class="bd-smart-gap-v" style=${{ left: r.x + r.width / 2 + "px", top: r.y + r.height / 2 + "px" }}>${Math.round(on ? active.value : smart.gap)}</div>
+      </div>`;
+    })}
+    ${smart.ordered.map((o, i) => {
+      const on = active?.kind === "reorder" && active.id === o.id;
+      return html`<div key=${"sd-" + o.id} class="bd-smart-dot ${on ? "on" : ""}" data-smart-dot=${o.id} data-smart-idx=${i} title="Drag to swap position" style=${{ left: o.s.x + o.s.width / 2 + "px", top: o.s.y + o.s.height / 2 + "px" }}></div>`;
+    })}
+  `;
+}
+
+function smartSpaceDrag(e, ids, gapIndex) {
+  e.stopPropagation();
+  e.preventDefault();
+  const smart = detectSmartSelection(ids);
+  if (!smart) return;
+  const base = B.board;
+  const isX = smart.axis === "x";
+  const z = B.view.z;
+  const starts = Object.fromEntries(smart.ordered.map((o) => [o.id, placeOf(o.id)]));
+  const gap0 = smart.gap;
+  let ops = [];
+  drag(e, {
+    threshold: 0,
+    kind: "smart",
+    move: (ev) => {
+      const delta = (isX ? ev.clientX - e.clientX : ev.clientY - e.clientY) / z;
+      const v = Math.max(0, Math.round(gap0 + delta));
+      const dGap = v - gap0;
+      const anchor = ev.altKey ? (smart.ordered.length - 1) / 2 : 0;
+      ops = smart.ordered.map((o, i) => {
+        const shift = Math.round((i - anchor) * dGap);
+        return { op: "set", id: o.id, style: isX ? { left: `${starts[o.id].left + shift}px` } : { top: `${starts[o.id].top + shift}px` } };
+      });
+      B.smart = { kind: "gap", value: v, index: gapIndex };
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      B.smart = null;
+      if (!moved || !ops.length) {
+        B.board = base;
+        return notify();
+      }
+      B.board = base;
+      commit(ops, { label: "Spacing" });
+    },
+    cancel: () => {
+      B.smart = null;
+      B.board = base;
+      notify();
+    },
+  });
+}
+
+function smartReorderDrag(e, ids, draggedId) {
+  e.stopPropagation();
+  e.preventDefault();
+  const smart = detectSmartSelection(ids);
+  if (!smart) return;
+  const base = B.board;
+  const isX = smart.axis === "x";
+  const z = B.view.z;
+  const starts = Object.fromEntries(smart.ordered.map((o) => [o.id, placeOf(o.id)]));
+  const origOrder = smart.ordered.map((o) => o.id);
+  const origIdx = origOrder.indexOf(draggedId);
+  if (origIdx < 0) return;
+  const firstStart = isX ? starts[origOrder[0]].left : starts[origOrder[0]].top;
+  const sizes = Object.fromEntries(smart.ordered.map((o) => [o.id, isX ? o.w.width : o.w.height]));
+  const c = getCanvasRect();
+  let curIdx = origIdx;
+  let ops = [];
+  drag(e, {
+    threshold: 2,
+    kind: "smart",
+    move: (ev) => {
+      const p = isX ? ev.clientX - c.left : ev.clientY - c.top;
+      let target = origOrder.length - 1;
+      for (let i = 0; i < smart.ordered.length; i++) {
+        const r = smart.ordered[i].s;
+        if (p < (isX ? r.x + r.width / 2 : r.y + r.height / 2)) {
+          target = i;
+          break;
+        }
+      }
+      curIdx = target;
+      const nextOrder = origOrder.filter((x) => x !== draggedId);
+      nextOrder.splice(curIdx, 0, draggedId);
+      let pos = firstStart;
+      ops = nextOrder.map((id) => {
+        const at = Math.round(pos);
+        pos += sizes[id] + smart.gap;
+        return { op: "set", id, style: isX ? { left: `${at}px` } : { top: `${at}px` } };
+      });
+      B.smart = { kind: "reorder", id: draggedId, to: curIdx };
+      preview(base, ops);
+    },
+    up: (ev, moved) => {
+      B.smart = null;
+      if (!moved || curIdx === origIdx || !ops.length) {
+        B.board = base;
+        return notify();
+      }
+      B.board = base;
+      commit(ops, { label: "Reorder" });
+    },
+    cancel: () => {
+      B.smart = null;
+      B.board = base;
+      notify();
+    },
+  });
+}
+
+/**
+ * Double-click a resize handle on canvas (as in Figma):
+ * - On a Flex frame or Text layer: sets that axis (or both axes for a corner) to Hug Contents.
+ * - On a Free frame with visible children: resizes that edge (or all four sides) tightly to fit its children.
+ */
+function hugOrFitHandle(e, id, h) {
+  e.stopPropagation();
+  const n = node(id);
+  if (!n || n.locked || isVector(id)) return;
+  const doX = h.includes("e") || h.includes("w");
+  const doY = h.includes("n") || h.includes("s");
+  if (n.type === "text" || isFlex(n)) {
+    const style = {};
+    const parent = n.parent ? node(n.parent) : null;
+    const parentRow = parent && isFlex(parent) && !(parent.style.flexDirection ?? "row").startsWith("column");
+    if (doX) {
+      style.width = null;
+      if (parentRow) Object.assign(style, { flexGrow: null, flexBasis: null, flex: null });
+      if (parent && !parentRow && n.style.alignSelf === "stretch") style.alignSelf = null;
+    }
+    if (doY) {
+      style.height = null;
+      if (parent && !parentRow && isFlex(parent)) Object.assign(style, { flexGrow: null, flexBasis: null, flex: null });
+      if (parentRow && n.style.alignSelf === "stretch") style.alignSelf = null;
+    }
+    return commit([{ op: "set", id, style }], { label: "Hug contents" });
+  }
+  if (n.type === "frame" && !isGrid(n) && n.children?.length) {
+    const fb = worldBox(id);
+    const el = elOf(id);
+    if (!fb || !el) return;
+    const kids = n.children.filter((c) => node(c) && !node(c).hidden);
+    const kBoxes = kids.map((c) => ({ id: c, b: worldBox(c) })).filter((o) => o.b);
+    if (!kBoxes.length) return;
+    const cs = getComputedStyle(el);
+    const px = (v) => parseFloat(v) || 0;
+    const bl = px(cs.borderLeftWidth), br = px(cs.borderRightWidth), bt = px(cs.borderTopWidth), bb = px(cs.borderBottomWidth);
+    const minX = Math.min(...kBoxes.map((o) => o.b.x));
+    const minY = Math.min(...kBoxes.map((o) => o.b.y));
+    const maxX = Math.max(...kBoxes.map((o) => o.b.x + o.b.width));
+    const maxY = Math.max(...kBoxes.map((o) => o.b.y + o.b.height));
+    const free = !inFlow(B.board, id);
+    const start = free ? placeOf(id) : null;
+    const style = {};
+    let dLeft = 0;
+    let dTop = 0;
+    const fitAll = isCorner(h);
+    const newLeft = fitAll || h.includes("w") ? minX - bl : fb.x;
+    const newRight = fitAll || h.includes("e") ? maxX + br : fb.x + fb.width;
+    const newTop = fitAll || h.includes("n") ? minY - bt : fb.y;
+    const newBottom = fitAll || h.includes("s") ? maxY + bb : fb.y + fb.height;
+    if (doX) {
+      dLeft = Math.round(newLeft - fb.x);
+      style.width = `${Math.max(1, Math.round(newRight - newLeft))}px`;
+      if (free && dLeft) style.left = `${Math.round(start.left + dLeft)}px`;
+    }
+    if (doY) {
+      dTop = Math.round(newTop - fb.y);
+      style.height = `${Math.max(1, Math.round(newBottom - newTop))}px`;
+      if (free && dTop) style.top = `${Math.round(start.top + dTop)}px`;
+    }
+    const ops = [{ op: "set", id, style }];
+    if (dLeft || dTop) {
+      for (const c of kids) {
+        if (inFlow(B.board, c)) continue;
+        const cp = placeOf(c);
+        ops.push({ op: "set", id: c, style: { left: `${Math.round(cp.left - dLeft)}px`, top: `${Math.round(cp.top - dTop)}px` } });
+      }
+    }
+    commit(ops, { label: "Resize to fit" });
+  }
+}
+
 function Overlay() {
   // It follows everything: the view, the pointer, the selection.
   const b = useBoard();
@@ -1747,12 +2081,14 @@ function Overlay() {
     ${hover && !altDown && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
     ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""} ${altDown && one === id && !busy ? "measuring" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
     ${!busy && html`<${MaskLines} />`}
-    ${box && !locked && !b.editing && (!busy || busy === "spacing") && (!altDown || busy === "spacing") && isFlex(node(one)) && html`<${SpacingHandles} id=${one} box=${box} active=${b.spacing} />`}
-    ${box && !locked && !b.editing && !busy &&
-    HANDLES.map((h) => html`<div key=${h} class="bd-handle ${isCorner(h) ? "corner" : "edge"} h-${h}" data-handle=${h} style=${handleStyle(box, h)}></div>`)}
+    ${box && !locked && !b.editing && picking() && (!busy || busy === "spacing") && isFlex(node(one)) && html`<${SpacingHandles} id=${one} box=${box} active=${b.spacing} />`}
+    ${box && !locked && !b.editing && picking() && (!busy || busy === "radius") && html`<${RadiusHandles} id=${one} box=${box} active=${b.radius} />`}
+    ${box && !locked && !b.editing && picking() && !busy &&
+    HANDLES.map((h) => html`<div key=${h} class="bd-handle ${isCorner(h) ? "corner" : "edge"} h-${h}" data-handle=${h} onDblClick=${(e) => hugOrFitHandle(e, one, h)} style=${handleStyle(box, h)}></div>`)}
     ${box && !b.editing && (!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}
     ${group && html`<div class="bd-group" style=${{ left: group.x + "px", top: group.y + "px", width: group.width + "px", height: group.height + "px" }}></div>
-      ${!busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle ${isCorner(h) ? "corner" : "edge"} h-${h}" data-handle=${h} data-group="1" style=${handleStyle(group, h)}></div>`)}
+      ${picking() && (!busy || busy === "smart") && html`<${SmartHandles} ids=${movable} active=${b.smart} />`}
+      ${picking() && !busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle ${isCorner(h) ? "corner" : "edge"} h-${h}" data-handle=${h} data-group="1" style=${handleStyle(group, h)}></div>`)}
       ${(!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: group.x + group.width / 2 + "px", top: group.y + group.height + 8 + "px" }}>${Math.round(group.width / b.view.z)} × ${Math.round(group.height / b.view.z)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}`}
     ${box && !busy && !b.editing && node(one)?.type === "video" && html`<${VideoBadge} key=${one} id=${one} box=${box} />`}
     ${altDown && one && !busy && html`<${Distances} from=${one} to=${b.hover && b.hover !== one ? b.hover : node(one)?.parent} />`}
@@ -1763,9 +2099,15 @@ function Overlay() {
         ${nm && r.width >= 36 && r.height >= 20 && b.drop.showTag !== false && html`<span class="bd-drop-tag">${nm}</span>`}
       </div>`;
     })()}
-    ${b.drop?.ghosts?.map((g, i) => html`<div key=${"gh" + i} class="bd-ghost" style=${{ left: g.x + "px", top: g.y + "px", width: g.width + "px", height: g.height + "px", borderRadius: g.radius || undefined }}></div>`)}
+    ${b.drop?.willWrap?.map((wid) => {
+      const r = screenBox(wid);
+      return r && html`<div key=${"ww" + wid} class="bd-will-wrap" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`;
+    })}
+    ${b.drop?.ghosts?.map((g, i) => html`<div key=${"gh" + i} class="bd-ghost ${b.drop.dup ? "dup" : ""}" style=${{ left: g.x + "px", top: g.y + "px", width: g.width + "px", height: g.height + "px", borderRadius: g.radius || undefined }}></div>`)}
     ${b.drop?.line && html`<div class="bd-drop-line ${b.drop.line.width > b.drop.line.height ? "h" : "v"}" style=${{ left: b.drop.line.x + "px", top: b.drop.line.y + "px", width: b.drop.line.width + "px", height: b.drop.line.height + "px" }}></div>`}
-    ${b.drop?.rect && html`<div class=${b.drop.kind === "marquee" ? "bd-marquee" : b.drop.kind === "comment" ? "bd-carea" : "bd-draw"} style=${{ left: b.drop.rect.x + "px", top: b.drop.rect.y + "px", width: b.drop.rect.width + "px", height: b.drop.rect.height + "px" }}></div>`}
+    ${b.drop?.rect && html`<div class=${b.drop.kind === "marquee" ? "bd-marquee" : b.drop.kind === "comment" ? "bd-carea" : "bd-draw"} style=${{ left: b.drop.rect.x + "px", top: b.drop.rect.y + "px", width: b.drop.rect.width + "px", height: b.drop.rect.height + "px" }}>
+      ${b.drop.label && html`<span class="bd-draw-size">${b.drop.label}</span>`}
+    </div>`}
     ${b.guides.map((g, i) =>
       g.kind === "dist"
         ? html`<div key=${"gd" + i} class="bd-snap-dist ${g.axis === "y" ? "v" : "h"}" style=${g.axis === "y" ? { left: g.x + "px", top: g.y + "px", height: Math.max(1, g.len) + "px" } : { left: g.x + "px", top: g.y + "px", width: Math.max(1, g.len) + "px" }}><span>${Math.round(g.v)}</span></div>`
@@ -2205,13 +2547,19 @@ function down(e) {
   if (B.tool === "comment") return comment(e);
   // Working on the design closes a comment's thread.
   if (B.thread || B.draft) closeThread();
+  if (B.tool === "frame" || B.tool === "rect" || B.tool === "text") return create(e);
   const space = e.target.closest?.("[data-space]");
   if (space && B.sel.length === 1) return spaceDrag(e, B.sel[0], space.dataset.space);
+  const rad = e.target.closest?.("[data-radius]");
+  if (rad && B.sel.length === 1) return radiusDrag(e, B.sel[0], rad.dataset.radius);
+  const smartGap = e.target.closest?.("[data-smart-gap]");
+  if (smartGap && B.sel.length > 1) return smartSpaceDrag(e, B.sel.filter((id) => !node(id)?.locked), Number(smartGap.dataset.smartGap));
+  const smartDot = e.target.closest?.("[data-smart-dot]");
+  if (smartDot && B.sel.length > 1) return smartReorderDrag(e, B.sel.filter((id) => !node(id)?.locked), smartDot.dataset.smartDot);
   const handle = e.target.closest?.("[data-handle]");
   if (handle && B.tool === "scale") return scaleDrag(e, handle.dataset.group ? B.sel.filter((id) => !node(id)?.locked) : B.sel.slice(0, 1), handle.dataset.handle);
   if (handle && handle.dataset.group) return resizeMany(e, B.sel.filter((id) => !node(id)?.locked), handle.dataset.handle);
   if (handle && B.sel.length === 1) return resize(e, B.sel[0], handle.dataset.handle);
-  if (B.tool === "frame" || B.tool === "rect" || B.tool === "text") return create(e);
   const label = e.target.closest?.("[data-label]");
   if (label) {
     const id = label.dataset.label;
@@ -2252,17 +2600,51 @@ function marquee(e, root, selectOnClick = false) {
   const c = canvasEl.current.getBoundingClientRect();
   const keep = e.shiftKey ? B.sel.slice() : [];
   if (!e.shiftKey && (!root || !selectOnClick)) select([]);
+  let x0 = e.clientX;
+  let y0 = e.clientY;
+  let prevX = e.clientX;
+  let prevY = e.clientY;
+  // Deep marquee (⌘ held): collect the deepest visible unlocked layers intersecting `r`.
+  const deepHits = (ids, r, out) => {
+    for (const id of ids) {
+      const n = node(id);
+      if (!n || n.hidden || n.locked) continue;
+      const b = screenBox(id);
+      if (!b || !(b.x < r.x + r.width && b.x + b.width > r.x && b.y < r.y + r.height && b.y + b.height > r.y)) continue;
+      const kids = (n.children ?? []).filter((k) => node(k) && !node(k).hidden && !node(k).locked);
+      if (kids.length) {
+        const before = out.length;
+        deepHits(kids, r, out);
+        if (out.length === before && n.parent) out.push(id);
+      } else {
+        out.push(id);
+      }
+    }
+  };
   drag(e, {
     kind: "marquee",
     move: (ev) => {
-      const r = { x: Math.min(e.clientX, ev.clientX) - c.left, y: Math.min(e.clientY, ev.clientY) - c.top, width: Math.abs(ev.clientX - e.clientX), height: Math.abs(ev.clientY - e.clientY) };
+      // Holding Space mid-marquee slides the entire marquee box without releasing (as in Figma).
+      if (spaceDown) {
+        x0 += ev.clientX - prevX;
+        y0 += ev.clientY - prevY;
+      }
+      prevX = ev.clientX;
+      prevY = ev.clientY;
+      const r = { x: Math.min(x0, ev.clientX) - c.left, y: Math.min(y0, ev.clientY) - c.top, width: Math.abs(ev.clientX - x0), height: Math.abs(ev.clientY - y0) };
       const candidates = root ? node(root).children ?? [] : currentPage().children;
-      const hits = candidates.filter((id) => {
-        const n = node(id);
-        if (!n || n.hidden || n.locked) return false;
-        const b = screenBox(id);
-        return b && b.x < r.x + r.width && b.x + b.width > r.x && b.y < r.y + r.height && b.y + b.height > r.y;
-      });
+      let hits;
+      if (ev.metaKey || ev.ctrlKey) {
+        hits = [];
+        deepHits(candidates, r, hits);
+      } else {
+        hits = candidates.filter((id) => {
+          const n = node(id);
+          if (!n || n.hidden || n.locked) return false;
+          const b = screenBox(id);
+          return b && b.x < r.x + r.width && b.x + b.width > r.x && b.y < r.y + r.height && b.y + b.height > r.y;
+        });
+      }
       B.drop = { kind: "marquee", rect: r };
       select([...new Set([...keep, ...hits])]);
     },
@@ -2807,14 +3189,34 @@ function moveLayers(e, ids) {
   let plan = null;
   let previewed = false;
   let last = null;
+  const cEl = canvasEl.current;
+  // Constrain movement to horizontal, vertical, or 45° diagonal when Shift is held (as in Figma).
+  const axisLock = (dx, dy) => {
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+    if (!ax && !ay) return [0, 0];
+    const ratio = Math.min(ax, ay) / Math.max(ax, ay);
+    if (ratio < 0.414) return ax >= ay ? [dx, 0] : [0, dy];
+    const d = (ax + ay) / 2;
+    return [Math.sign(dx) * d, Math.sign(dy) * d];
+  };
+  // Include original layer as a snap/distance target when Option-duplicating!
+  const dupRefsFor = (into) => {
+    const baseRefs = refsFor(into);
+    if (!loneBox || into !== parent0) return baseRefs;
+    return { parentBox: baseRefs.parentBox, sibs: [loneBox, ...baseRefs.sibs] };
+  };
   const decide = (ev) => {
     last = ev;
+    const dup = Boolean(ev.altKey || altDown);
+    cEl?.classList.toggle("copying", dup);
     const w = toWorld(ev.clientX, ev.clientY);
     let dx = w.x - grab.x;
     let dy = w.y - grab.y;
-    // Where it would land.
+    if (ev.shiftKey) [dx, dy] = axisLock(dx, dy);
+    // Where it would land (holding Space mid-drag ignores auto-nesting and stays in current parent, as in Figma).
     let into = parent0;
-    if (!ev.altKey) {
+    if (!spaceDown) {
       const raw = frameAt(ev.clientX, ev.clientY, ids);
       if (raw !== resting.id) {
         resting = { id: raw, since: performance.now() };
@@ -2830,8 +3232,8 @@ function moveLayers(e, ids) {
       }
     }
     const frame = into ? node(into) : null;
-    // Still in the frame (or on the page) where they're placed by hand: live move with smart guides.
-    if (allFree && oneParent && into === parent0) {
+    // Still in the frame (or on the page) where they're placed by hand (and not Option-duplicating): live move with smart guides.
+    if (!dup && allFree && oneParent && into === parent0) {
       let guides = [];
       if (loneBox) {
         const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, refsFor(parent0), z, ev.metaKey);
@@ -2842,50 +3244,66 @@ function moveLayers(e, ids) {
       dx = Math.round(dx);
       dy = Math.round(dy);
       dimOriginals(false);
-      plan = { kind: "shift", ops: ids.map((id) => ({ op: "set", id, style: { left: `${starts[id].left + dx}px`, top: `${starts[id].top + dy}px` } })) };
+      plan = { kind: "shift", dup: false, ops: ids.map((id) => ({ op: "set", id, style: { left: `${starts[id].left + dx}px`, top: `${starts[id].top + dy}px` } })) };
       B.guides = guides;
       B.drop = null;
       previewed = true;
       return preview(base, plan.ops);
     }
-    // Anywhere else: dim originals in place and float crisp unclipped overlay ghosts over all frames.
+    // Anywhere else (or Option-duplicating): float crisp unclipped overlay ghosts over all frames.
     if (previewed) {
       B.board = base;
       previewed = false;
     }
-    dimOriginals(true);
+    // Originals stay opaque & untouched when duplicating; dimmed when moving.
+    dimOriginals(!dup);
     if (frame && !byHand(into) && isGrid(frame)) {
       B.guides = [];
       const ghosts = makeGhosts(dx, dy);
       if (ids.length === 1) {
-        const drop = gridDrop(into, ev.clientX, ev.clientY, ids[0]);
-        plan = drop ? { kind: "grid", into, drop, dx, dy } : null;
-        return bset({ drop: drop ? { grid: into, cell: drop.rect, into, ghosts } : { into, ghosts } });
+        const drop = gridDrop(into, ev.clientX, ev.clientY, dup ? null : ids[0]);
+        plan = drop ? { kind: "grid", dup, into, drop, dx, dy } : null;
+        return bset({ drop: drop ? { grid: into, cell: drop.rect, into, ghosts, dup } : { into, ghosts, dup } });
       }
-      plan = { kind: "grid-many", into, dx, dy };
-      return bset({ drop: { grid: into, into, ghosts } });
+      plan = { kind: "grid-many", dup, into, dx, dy };
+      return bset({ drop: { grid: into, into, ghosts, dup } });
     }
     if (frame && !byHand(into)) {
       B.guides = [];
-      const slot = flowSlot(into, ev.clientX, ev.clientY, ids);
+      const slot = flowSlot(into, ev.clientX, ev.clientY, dup ? [] : ids);
       const ghosts = makeGhosts(dx, dy);
-      plan = { kind: "flow", into, index: slot.index, dx, dy };
-      return bset({ drop: { line: slot.line, into, ghosts, showTag: into !== parent0 } });
+      plan = { kind: "flow", dup, into, index: slot.index, dx, dy };
+      return bset({ drop: { line: slot.line, into, ghosts, dup, showTag: into !== parent0 } });
     }
-    // Free target frame (or page): snap single dragged layer against target's edges & children too!
+    // Free target frame (or page): snap single dragged layer against target's edges & children (plus original when duplicating).
     let guides = [];
     if (loneBox) {
-      const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, refsFor(into), z, ev.metaKey);
+      const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, dup ? dupRefsFor(into) : refsFor(into), z, ev.metaKey);
       dx += sn.dx;
       dy += sn.dy;
       guides = sn.guides;
     }
     B.guides = guides;
     const ghosts = makeGhosts(dx, dy);
-    plan = { kind: "place", into, dx, dy };
-    bset({ drop: into ? { into, ghosts, showTag: into !== parent0 } : { ghosts } });
+    plan = { kind: "place", dup, into, dx, dy };
+    bset({ drop: into ? { into, ghosts, dup, showTag: into !== parent0 } : { ghosts, dup } });
+  };
+  // Re-evaluate immediately if Space (ignore auto-nesting), Alt (duplicate), Shift (axis-lock), or Meta changes mid-drag.
+  const onModKey = (ev) => {
+    if (!last || !B.dragging) return;
+    if (ev.code === "Space" || ev.key === "Alt" || ev.key === "Shift" || ev.key === "Meta") {
+      decide({ clientX: last.clientX, clientY: last.clientY, altKey: ev.altKey, shiftKey: ev.shiftKey, metaKey: ev.metaKey });
+    }
+  };
+  addEventListener("keydown", onModKey);
+  addEventListener("keyup", onModKey);
+  const cleanupMods = () => {
+    removeEventListener("keydown", onModKey);
+    removeEventListener("keyup", onModKey);
+    cEl?.classList.remove("copying");
   };
   const reset = () => {
+    cleanupMods();
     clearTimeout(restTimer);
     dimOriginals(false);
     B.guides = [];
@@ -2904,6 +3322,7 @@ function moveLayers(e, ids) {
     },
     up: (ev, moved) => {
       const hadPreview = previewed;
+      cleanupMods();
       clearTimeout(restTimer);
       dimOriginals(false);
       B.guides = [];
@@ -2914,6 +3333,51 @@ function moveLayers(e, ids) {
       }
       if (hadPreview) B.board = base;
       const ops = [];
+      // Option-drag duplicate: clone every dragged subtree and place the clones at the drop target!
+      if (plan.dup) {
+        const made = [];
+        const addClone = (id, parent, index, stylePatch) => {
+          const clone = copyTree(base, id, parent);
+          const root = clone.nodes[clone.id];
+          if (!base.nodes[id].isComponent) root.name = base.nodes[id].name;
+          Object.assign(root.style, stylePatch);
+          for (const [k, v] of Object.entries(root.style)) if (v == null) delete root.style[k];
+          ops.push({ op: "add", nodes: clone.nodes, ids: [clone.id], parent, page: parent ? undefined : B.page, ...(index !== undefined ? { index } : {}) });
+          made.push(clone.id);
+        };
+        if (plan.kind === "grid") {
+          const id = ids[0];
+          const st = { ...(!inFlow(base, id) ? joinFlowStyle : {}), ...(plan.drop.style ?? {}) };
+          addClone(id, plan.into, plan.drop.reorder ? plan.drop.index : undefined, st);
+        } else if (plan.kind === "grid-many") {
+          const order = ids.slice().sort((a, b) => boxes[a].y - boxes[b].y || boxes[a].x - boxes[b].x);
+          for (const id of order) {
+            const st = { ...(inFlow(base, id) ? keepFillStyle(base, id, plan.into) : joinFlowStyle) };
+            intoGridStyle(st);
+            addClone(id, plan.into, undefined, st);
+          }
+        } else if (plan.kind === "flow") {
+          const row = !(node(plan.into).style.flexDirection ?? "row").startsWith("column") || isGrid(node(plan.into));
+          const order = ids.slice().sort((a, b) => (row ? boxes[a].x - boxes[b].x || boxes[a].y - boxes[b].y : boxes[a].y - boxes[b].y || boxes[a].x - boxes[b].x));
+          order.forEach((id, i) => {
+            const st = { ...(inFlow(base, id) ? keepFillStyle(base, id, plan.into) : joinFlowStyle), gridColumn: null, gridRow: null, gridArea: null };
+            addClone(id, plan.into, plan.index + i, st);
+          });
+        } else {
+          for (const id of ids) {
+            const b = boxes[id];
+            if (!b) continue;
+            const at = placeIn(plan.into, b.x + plan.dx, b.y + plan.dy);
+            const st = { left: `${at.left}px`, top: `${at.top}px`, right: null, bottom: null, position: plan.into ? "absolute" : null, gridColumn: null, gridRow: null, gridArea: null };
+            if (inFlow(base, id) || (base.nodes[id].parent ?? null) !== plan.into) Object.assign(st, leaveFlowStyle(base, id, b));
+            addClone(id, plan.into, undefined, st);
+          }
+          if (plan.into && !node(plan.into).style.position) ops.push({ op: "set", id: plan.into, style: { position: "relative" } });
+        }
+        if (ops.length && commit(ops, { label: "Duplicate" }) !== false) select(made);
+        else notify();
+        return;
+      }
       if (plan.kind === "shift") ops.push(...plan.ops);
       else if (plan.kind === "grid") {
         const id = ids[0];
@@ -3020,10 +3484,13 @@ function resize(e, id, h, keep = false) {
     move: (ev) => {
       const dx = (ev.clientX - e.clientX) / z;
       const dy = (ev.clientY - e.clientY) / z;
-      let w = box0.width + (h.includes("e") ? dx : h.includes("w") ? -dx : 0);
-      let hh = box0.height + (h.includes("s") ? dy : h.includes("n") ? -dy : 0);
+      // ⌥ resizes symmetrically from the layer's centre (as in Figma).
+      const center = Boolean(ev.altKey);
+      const mult = center ? 2 : 1;
+      let w = box0.width + mult * (h.includes("e") ? dx : h.includes("w") ? -dx : 0);
+      let hh = box0.height + mult * (h.includes("s") ? dy : h.includes("n") ? -dy : 0);
       const guides = [];
-      if (!ev.metaKey && !(ev.shiftKey && h.length === 2) && allRefs.length) {
+      if (!ev.metaKey && !center && !(ev.shiftKey && h.length === 2) && allRefs.length) {
         const { x: vx, y: vy } = B.view;
         const sx = (wx) => wx * z + vx;
         const sy = (wy) => wy * z + vy;
@@ -3094,8 +3561,13 @@ function resize(e, id, h, keep = false) {
         if (parent && !parentRow && isFlex(parent) && !free) Object.assign(style, { flexGrow: null, flexBasis: null, flex: null });
       }
       if (free) {
-        if (h.includes("w")) style.left = `${Math.round(start.left + box0.width - w)}px`;
-        if (h.includes("n")) style.top = `${Math.round(start.top + box0.height - hh)}px`;
+        if (center) {
+          if (h.includes("w") || h.includes("e") || ev.shiftKey) style.left = `${Math.round(start.left + (box0.width - w) / 2)}px`;
+          if (h.includes("n") || h.includes("s") || ev.shiftKey) style.top = `${Math.round(start.top + (box0.height - hh) / 2)}px`;
+        } else {
+          if (h.includes("w")) style.left = `${Math.round(start.left + box0.width - w)}px`;
+          if (h.includes("n")) style.top = `${Math.round(start.top + box0.height - hh)}px`;
+        }
       }
       B.guides = guides;
       ops = [{ op: "set", id, style }];
@@ -3137,8 +3609,10 @@ function resizeMany(e, ids, h, keep = false) {
     move: (ev) => {
       const dx = (ev.clientX - e.clientX) / z;
       const dy = (ev.clientY - e.clientY) / z;
-      let w = Math.max(4, g.width + (h.includes("e") ? dx : h.includes("w") ? -dx : 0));
-      let hh = Math.max(4, g.height + (h.includes("s") ? dy : h.includes("n") ? -dy : 0));
+      const center = Boolean(ev.altKey);
+      const mult = center ? 2 : 1;
+      let w = Math.max(4, g.width + mult * (h.includes("e") ? dx : h.includes("w") ? -dx : 0));
+      let hh = Math.max(4, g.height + mult * (h.includes("s") ? dy : h.includes("n") ? -dy : 0));
       if (keep || ev.shiftKey) {
         const k = Math.abs(w / g.width - 1) > Math.abs(hh / g.height - 1) ? w / g.width : hh / g.height;
         w = g.width * k;
@@ -3146,8 +3620,8 @@ function resizeMany(e, ids, h, keep = false) {
       }
       const sx = w / g.width;
       const sy = hh / g.height;
-      const gx = h.includes("w") ? g.x + g.width - w : g.x;
-      const gy = h.includes("n") ? g.y + g.height - hh : g.y;
+      const gx = center ? g.x + (g.width - w) / 2 : h.includes("w") ? g.x + g.width - w : g.x;
+      const gy = center ? g.y + (g.height - hh) / 2 : h.includes("n") ? g.y + g.height - hh : g.y;
       ops = list.map((id) => {
         const b = boxes[id];
         const n = node(id);
@@ -3172,9 +3646,16 @@ function resizeMany(e, ids, h, keep = false) {
       preview(base, ops);
     },
     up: (ev, moved) => {
-      if (!moved || !ops.length) return;
+      if (!moved || !ops.length) {
+        B.board = base;
+        return notify();
+      }
       B.board = base;
       commit(ops, { label: "Resize" });
+    },
+    cancel: () => {
+      B.board = base;
+      notify();
     },
   });
 }
@@ -3286,27 +3767,152 @@ function frameAt(clientX, clientY, except) {
 
 let counter = { frame: 0, rect: 0, text: 0 };
 
+/**
+ * Resolve the target parent and every sibling layer completely enclosed inside a drawn Frame rect
+ * (in world coords), matching Figma's auto-wrap rule:
+ * - If the draw started inside a layer that is now completely enclosed by `wr`, climb to its parent.
+ * - Within a free-laid-out parent (or the page), every visible, unlocked sibling wholly contained
+ *   inside `wr` (with 1.5px tolerance) will be automatically adopted as a child of the new frame.
+ */
+function frameWrapTarget(startInto, wr) {
+  let parent = startInto;
+  const enclosed = (b) => b && b.x >= wr.x - 1.5 && b.y >= wr.y - 1.5 && b.x + b.width <= wr.x + wr.width + 1.5 && b.y + b.height <= wr.y + wr.height + 1.5;
+  while (parent) {
+    const pb = worldBox(parent);
+    if (!pb || !enclosed(pb)) break;
+    parent = node(parent)?.parent ?? null;
+  }
+  const pn = parent ? node(parent) : null;
+  const freeParent = !pn || (!(isFlex(pn) || isGrid(pn)) || (pn.children ?? []).every((c) => { const cn = node(c); return !cn || cn.style.position === "absolute" || cn.style.position === "fixed"; }));
+  if (!freeParent) return { parent, wrap: [] };
+  const sibs = parent ? (pn.children ?? []) : currentPage().children;
+  const wrap = [];
+  for (const cid of sibs) {
+    const cn = node(cid);
+    if (!cn || cn.hidden || cn.locked) continue;
+    const cb = worldBox(cid);
+    if (cb && cb.width > 0 && cb.height > 0 && enclosed(cb)) wrap.push(cid);
+  }
+  return { parent, wrap };
+}
+
 function create(e) {
   const tool = B.tool;
   const c = canvasEl.current.getBoundingClientRect();
-  const p0 = toWorld(e.clientX, e.clientY);
-  const into = frameAt(e.clientX, e.clientY);
+  let x0 = e.clientX;
+  let y0 = e.clientY;
+  let prevX = e.clientX;
+  let prevY = e.clientY;
+  const startInto = frameAt(e.clientX, e.clientY);
   let rect = null;
+  let worldRect = null;
+  let wrapPlan = { parent: startInto, wrap: [] };
+  const computeDraw = (ev) => {
+    if (spaceDown) {
+      x0 += ev.clientX - prevX;
+      y0 += ev.clientY - prevY;
+    }
+    prevX = ev.clientX;
+    prevY = ev.clientY;
+    let dx = ev.clientX - x0;
+    let dy = ev.clientY - y0;
+    // Shift locks Frame/Rectangle to 1:1 square (as in Figma).
+    if (ev.shiftKey && tool !== "text") {
+      const m = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = (dx < 0 ? -1 : 1) * m;
+      dy = (dy < 0 ? -1 : 1) * m;
+    }
+    let sx1, sy1, sx2, sy2;
+    // Option draws symmetrically from centre (as in Figma).
+    if (ev.altKey && tool !== "text") {
+      sx1 = x0 - Math.abs(dx);
+      sy1 = y0 - Math.abs(dy);
+      sx2 = x0 + Math.abs(dx);
+      sy2 = y0 + Math.abs(dy);
+    } else {
+      sx1 = Math.min(x0, x0 + dx);
+      sy1 = Math.min(y0, y0 + dy);
+      sx2 = Math.max(x0, x0 + dx);
+      sy2 = Math.max(y0, y0 + dy);
+    }
+    rect = { x: sx1 - c.left, y: sy1 - c.top, width: sx2 - sx1, height: sy2 - sy1 };
+    const pA = toWorld(sx1, sy1);
+    const pB = toWorld(sx2, sy2);
+    worldRect = { x: pA.x, y: pA.y, width: pB.x - pA.x, height: pB.y - pA.y };
+    wrapPlan = tool === "frame" && rect.width > 3 && rect.height > 3 ? frameWrapTarget(startInto, worldRect) : { parent: startInto, wrap: [] };
+    const wPx = Math.round(worldRect.width);
+    const hPx = Math.round(worldRect.height);
+    const label = wrapPlan.wrap.length ? `${wPx} × ${hPx} · ${wrapPlan.wrap.length} ${wrapPlan.wrap.length === 1 ? "layer" : "layers"}` : `${wPx} × ${hPx}`;
+    bset({ drop: { kind: "draw", rect, into: wrapPlan.parent, willWrap: wrapPlan.wrap.length ? wrapPlan.wrap : null, label } });
+  };
+  const onModKey = (ev) => {
+    if (!rect || !B.dragging) return;
+    if (ev.key === "Shift" || ev.key === "Alt") computeDraw({ clientX: prevX, clientY: prevY, shiftKey: ev.shiftKey, altKey: ev.altKey });
+  };
+  addEventListener("keydown", onModKey);
+  addEventListener("keyup", onModKey);
+  const cleanupMods = () => {
+    removeEventListener("keydown", onModKey);
+    removeEventListener("keyup", onModKey);
+  };
   drag(e, {
     threshold: 2,
     kind: "draw",
-    move: (ev) => {
-      rect = { x: Math.min(e.clientX, ev.clientX) - c.left, y: Math.min(e.clientY, ev.clientY) - c.top, width: Math.abs(ev.clientX - e.clientX), height: Math.abs(ev.clientY - e.clientY) };
-      bset({ drop: { kind: "draw", rect, into } });
-    },
+    move: computeDraw,
+    cancel: () => (cleanupMods(), bset({ drop: null })),
     up: (ev, moved) => {
+      cleanupMods();
       bset({ drop: null });
-      const p1 = toWorld(ev.clientX, ev.clientY);
-      const dragged = moved && rect && rect.width > 3 && rect.height > 3;
-      const w = dragged ? Math.round(Math.abs(p1.x - p0.x)) : null;
-      const h = dragged ? Math.round(Math.abs(p1.y - p0.y)) : null;
-      const origin = { x: Math.round(Math.min(p0.x, p1.x)), y: Math.round(Math.min(p0.y, p1.y)) };
+      const dragged = moved && rect && worldRect && rect.width > 3 && rect.height > 3;
+      const p0 = toWorld(x0, y0);
+      const w = dragged ? Math.round(worldRect.width) : null;
+      const h = dragged ? Math.round(worldRect.height) : null;
+      const origin = dragged ? { x: Math.round(worldRect.x), y: Math.round(worldRect.y) } : { x: Math.round(p0.x), y: Math.round(p0.y) };
       const id = newId();
+      // Drawing a Frame around existing layers: auto-adopt them into the new frame preserving visual position & z-order!
+      if (tool === "frame" && dragged && wrapPlan.wrap.length) {
+        const into = wrapPlan.parent;
+        const artboard = !into;
+        const wrapIds = wrapPlan.wrap;
+        const childBoxes = Object.fromEntries(wrapIds.map((cid) => [cid, worldBox(cid)]));
+        const sibs = into ? (node(into)?.children ?? []) : currentPage().children;
+        const firstIdx = Math.min(...wrapIds.map((cid) => sibs.indexOf(cid)).filter((i) => i >= 0));
+        const posStyle = into ? { position: "absolute", ...(() => { const at = placeIn(into, origin.x, origin.y); return { left: `${at.left}px`, top: `${at.top}px` }; })() } : { left: `${origin.x}px`, top: `${origin.y}px` };
+        const frame = {
+          id,
+          type: "frame",
+          name: artboard ? `Artboard ${++counter.frame}` : `Frame ${++counter.frame}`,
+          parent: into,
+          style: {
+            position: into ? "absolute" : "relative",
+            ...posStyle,
+            width: `${w}px`,
+            height: `${h}px`,
+            ...(artboard ? { backgroundColor: "#ffffff", overflow: "hidden" } : {}),
+          },
+          children: [],
+        };
+        const ops = [];
+        if (into && !node(into).style.position) ops.push({ op: "set", id: into, style: { position: "relative" } });
+        ops.push({ op: "add", nodes: { [id]: frame }, ids: [id], parent: into, page: into ? undefined : currentPage().id, index: firstIdx >= 0 ? firstIdx : undefined });
+        wrapIds.forEach((cid, k) => {
+          const cb = childBoxes[cid];
+          ops.push({ op: "move", id: cid, parent: id, index: k });
+          if (cb) {
+            ops.push({
+              op: "set",
+              id: cid,
+              style: { position: "absolute", left: `${Math.round(cb.x - origin.x)}px`, top: `${Math.round(cb.y - origin.y)}px`, right: null, bottom: null },
+            });
+          }
+        });
+        if (commit(ops, { label: "Draw frame" }) !== false) {
+          select(id);
+          bset({ open: new Set([...B.open, id]), tool: "move" });
+        }
+        return;
+      }
+      const into = startInto;
       let layer;
       if (tool === "text") {
         layer = { id, type: "text", name: "Text", parent: null, style: { fontSize: "16px", ...(into ? {} : { color: "#111111", fontFamily: "Inter, system-ui, sans-serif" }), ...(w ? { width: `${w}px` } : {}) }, text: "Text" };
@@ -3340,14 +3946,15 @@ export function placeNew(layers, into, at, ev) {
     ops.push({ op: "add", nodes, ids: tops, parent: null, page: currentPage().id });
   } else {
     const f = node(into);
+    const handLaid = (f.children ?? []).length > 0 && (f.children ?? []).every((c) => { const cn = node(c); return !cn || cn.style.position === "absolute" || cn.style.position === "fixed"; });
     for (const id of tops) nodes[id] = { ...nodes[id], parent: into };
-    if (isGrid(f)) {
+    if (isGrid(f) && !handLaid) {
       // In a grid: the cell under the point, for the first of them; the rest follow it.
       const spot = gridAddPlace(into, ev);
       for (const id of tops) intoGridStyle(nodes[id].style);
       if (spot) patchStyle(nodes[tops[0]].style, spot.style);
       ops.push({ op: "add", nodes, ids: tops, parent: into, index: spot?.reorder ? spot.index : undefined });
-    } else if (isFlex(f)) {
+    } else if (isFlex(f) && !handLaid) {
       // Where among its layers the point falls.
       const row = !(f.style.flexDirection ?? "row").startsWith("column");
       const c = canvasEl.current.getBoundingClientRect();

@@ -834,13 +834,74 @@ export function flattenVector(id) {
   }
 }
 
-/** Lay a frame's layers out by hand (each where it is now) or with flex. */
+/** Lay a frame's layers out by hand (each where it is now) or with flex (inferring direction, order, gap, padding & alignment, as Figma's ⇧A does). */
 export function setFlex(id, on) {
   const n = node(id);
   if (!n || n.type !== "frame") return;
   if (on) {
-    const ops = [{ op: "set", id, style: { display: "flex", flexDirection: n.style.flexDirection ?? "column" } }];
-    for (const c of n.children ?? []) ops.push({ op: "set", id: c, style: { position: null, left: null, top: null, right: null, bottom: null } });
+    const fb = worldBox(id);
+    const el = elOf(id);
+    const kids = (n.children ?? []).filter((c) => node(c));
+    const drawn = fb && el ? kids.filter((c) => !node(c).hidden).map((c) => ({ id: c, b: worldBox(c) })).filter((o) => o.b) : [];
+    const style = { display: "flex", flexDirection: n.style.flexDirection ?? "column" };
+    const ops = [];
+    if (drawn.length && fb && el) {
+      const minX = Math.min(...drawn.map((o) => o.b.x));
+      const minY = Math.min(...drawn.map((o) => o.b.y));
+      const maxX = Math.max(...drawn.map((o) => o.b.x + o.b.width));
+      const maxY = Math.max(...drawn.map((o) => o.b.y + o.b.height));
+      const maxW = Math.max(...drawn.map((o) => o.b.width));
+      const maxH = Math.max(...drawn.map((o) => o.b.height));
+      const row = drawn.length > 1 ? maxX - minX - maxW > maxY - minY - maxH : !(n.style.flexDirection ?? "column").startsWith("column");
+      style.flexDirection = row ? "row" : "column";
+      const ordered = drawn.slice().sort((a, b) => (row ? a.b.x - b.b.x || a.b.y - b.b.y : a.b.y - b.b.y || a.b.x - b.b.x));
+      const gaps = ordered
+        .slice(1)
+        .map((o, i) => (row ? o.b.x - (ordered[i].b.x + ordered[i].b.width) : o.b.y - (ordered[i].b.y + ordered[i].b.height)))
+        .filter((g) => g >= 0);
+      const gap = gaps.length ? Math.round(gaps.reduce((a, g) => a + g, 0) / gaps.length) : 0;
+      if (gap > 0 && !n.style.gap) style.gap = `${gap}px`;
+      // Infer padding when children sit inside the frame's inner border box and frame has no padding yet.
+      const cs = getComputedStyle(el);
+      const px = (v) => parseFloat(v) || 0;
+      const inL = fb.x + px(cs.borderLeftWidth);
+      const inT = fb.y + px(cs.borderTopWidth);
+      const inR = fb.x + fb.width - px(cs.borderRightWidth);
+      const inB = fb.y + fb.height - px(cs.borderBottomWidth);
+      const hasPad = n.style.padding || n.style.paddingTop || n.style.paddingRight || n.style.paddingBottom || n.style.paddingLeft;
+      if (!hasPad) {
+        const pt = Math.round(minY - inT);
+        const pr = Math.round(inR - maxX);
+        const pb = Math.round(inB - maxY);
+        const pl = Math.round(minX - inL);
+        if (pt >= 0 && pr >= 0 && pb >= 0 && pl >= 0 && (pt > 0 || pr > 0 || pb > 0 || pl > 0)) {
+          if (pt === pr && pr === pb && pb === pl) style.padding = `${pt}px`;
+          else if (pt === pb && pl === pr) style.padding = `${pt}px ${pl}px`;
+          else Object.assign(style, { paddingTop: `${pt}px`, paddingRight: `${pr}px`, paddingBottom: `${pb}px`, paddingLeft: `${pl}px` });
+        }
+      }
+      // Infer cross-axis alignment if 2+ children share centres or trailing edges.
+      if (ordered.length > 1 && !n.style.alignItems) {
+        const starts = ordered.map((o) => (row ? o.b.y : o.b.x));
+        const mids = ordered.map((o) => (row ? o.b.y + o.b.height / 2 : o.b.x + o.b.width / 2));
+        const ends = ordered.map((o) => (row ? o.b.y + o.b.height : o.b.x + o.b.width));
+        const spread = (arr) => Math.max(...arr) - Math.min(...arr);
+        if (spread(starts) <= 4) style.alignItems = "flex-start";
+        else if (spread(mids) <= 4) style.alignItems = "center";
+        else if (spread(ends) <= 4) style.alignItems = "flex-end";
+      }
+      // Reorder children in reading order along the inferred flex axis.
+      const orderIds = [...ordered.map((o) => o.id), ...kids.filter((c) => !ordered.some((o) => o.id === c))];
+      const curOrder = kids.slice();
+      orderIds.forEach((cid, k) => {
+        if (curOrder[k] === cid) return;
+        curOrder.splice(curOrder.indexOf(cid), 1);
+        curOrder.splice(k, 0, cid);
+        ops.push({ op: "move", id: cid, parent: id, index: k });
+      });
+    }
+    ops.unshift({ op: "set", id, style });
+    for (const c of kids) ops.push({ op: "set", id: c, style: { position: null, left: null, top: null, right: null, bottom: null } });
     return commit(ops, { label: "Add flex" });
   }
   const fb = worldBox(id);
@@ -940,7 +1001,33 @@ const toggleAll = (key) => {
 };
 
 function nudge(dx, dy) {
-  const ids = sel().filter((id) => !inFlow(B.board, id) && !node(id).locked);
+  const s = sel().filter((id) => !node(id).locked);
+  if (!s.length) return;
+  // In a flex layout, arrow keys along the layout's axis reorder the layer (as in Figma's Auto Layout).
+  if (s.length === 1 && inFlow(B.board, s[0])) {
+    const id = s[0];
+    const p = node(id)?.parent;
+    const pn = p ? node(p) : null;
+    if (pn && isFlex(pn)) {
+      const dir = pn.style.flexDirection ?? "row";
+      const col = dir.startsWith("column");
+      const rev = dir.endsWith("-reverse");
+      const delta = col ? Math.sign(dy) : Math.sign(dx);
+      if (delta !== 0) {
+        const step = rev ? -delta : delta;
+        const all = pn.children ?? [];
+        const flow = all.filter((c) => !node(c)?.hidden && inFlow(B.board, c));
+        const fi = flow.indexOf(id);
+        const ni = fi + step;
+        if (fi >= 0 && ni >= 0 && ni < flow.length) {
+          const targetIndex = all.indexOf(flow[ni]);
+          commit([{ op: "move", id, parent: p, index: targetIndex }], { label: "Reorder" });
+        }
+        return;
+      }
+    }
+  }
+  const ids = s.filter((id) => !inFlow(B.board, id));
   if (!ids.length) return;
   commit(shiftSteps(ids, dx, dy), { key: `nudge:${ids.join()}`, label: "Move" });
 }
