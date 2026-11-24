@@ -7,7 +7,7 @@
 // It takes over from the Swift shell in app/ (same behaviour, same calls), with Chromium drawing the
 // canvas: WebKit couldn't keep zooming and heavy boards at 60 fps (docs/perf) and capped high-zoom
 // text rasterization.
-import { app, autoUpdater, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } from "electron";
+import { app, autoUpdater, BrowserWindow, ClipboardItem, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -367,16 +367,16 @@ const calls = {
     return { path: r.filePaths[0] };
   },
   openURL: ({ url }) => (/^(https?|mailto):/i.test(url ?? "") && shell.openExternal(url), true),
-  copyFile: ({ path: p }) => {
+  copyFile: async ({ path: p }) => {
     if (!p || !existsSync(p)) return { error: "The file isn't there any more." };
     const image = nativeImage.createFromPath(p);
     // A picture is copied as one (it pastes as a picture anywhere); anything else as the file.
-    if (!image.isEmpty()) clipboard.writeImage(image);
-    else clipboard.writeBuffer("public.file-url", Buffer.from(`file://${encodeURI(p)}`));
+    if (!image.isEmpty()) await clipboard.write([new ClipboardItem({ "image/png": new Blob([new Uint8Array(image.toPNG())], { type: "image/png" }) })]);
+    else await clipboard.write([new ClipboardItem({ 'electron application/osclipboard;format="public.file-url"': new Blob([`file://${encodeURI(p)}`], { type: "application/octet-stream" }) })]);
     return true;
   },
-  copyText: ({ text }) => (clipboard.writeText(text ?? ""), true),
-  readText: () => ({ text: clipboard.readText() }),
+  copyText: async ({ text }) => (await clipboard.writeText(text ?? ""), true),
+  readText: async () => ({ text: await clipboard.readText() }),
   restartEngine: () => (restartSoon(), true),
   // Electron carries its own Node: there's none to choose.
   chooseNode: () => true,
@@ -455,46 +455,94 @@ async function post(name, body) {
   throw new Error(json?.error ?? "The engine didn't take it. Try again.");
 }
 
-/** ⌘V: Figma designs, pictures and files on the clipboard go onto the board; text goes where it always does. */
+/** ⌘V: Figma designs, pictures and files on the clipboard go onto the board; text and board layers paste through Chromium. */
 async function paste() {
   const wc = win?.webContents;
   if (!wc) return;
-  // Frames copied in Figma carry their design data inside HTML.
-  const html = clipboard.readHTML();
-  if (html && html.includes("(figma)")) {
-    const typing = await wc.executeJavaScript("Boolean(window.studio && window.studio.isTyping())").catch(() => false);
-    if (!typing) {
-      command("pasteFigma", html);
-      return;
-    }
-    return wc.paste();
-  }
-  const files = clipboardFiles();
-  const image = files.length ? null : clipboard.readImage();
-  const hasImport = files.some((f) => IMPORTABLE.test(f) || IS_FIG.test(f)) || (image && !image.isEmpty());
-  if (hasImport) {
-    const typing = await wc.executeJavaScript("Boolean(window.studio && window.studio.isTyping())").catch(() => false);
-    if (!(typing && clipboard.readText())) {
-      if (files.length) return upload(files);
-      if (!engine.url) return;
-      try {
-        command("imported", [await post("pasted.png", image.toPNG())]);
-      } catch (e) {
-        command("error", `Couldn't add the picture. ${e.message}`);
+  try {
+    const items = await clipboard.read();
+    const html =
+      (await clipboardTextOf(items, "text/html")) ||
+      (await clipboardTextOf(items, 'electron application/osclipboard;format="Apple HTML pasteboard type"')) ||
+      (await clipboardTextOf(items, 'electron application/osclipboard;format="public.html"'));
+    // Frames copied in Figma carry their design data inside HTML.
+    if (html && html.includes("(figma)")) {
+      const typing = await wc.executeJavaScript("Boolean(window.studio && window.studio.isTyping())").catch(() => false);
+      if (!typing) {
+        command("pasteFigma", html);
+        return;
       }
-      return;
+      return wc.paste();
     }
+    const files = await clipboardFiles(items);
+    const png = files.length ? null : await clipboardPng(items);
+    const hasImport = files.some((f) => IMPORTABLE.test(f) || IS_FIG.test(f)) || Boolean(png?.length);
+    if (hasImport) {
+      const typing = await wc.executeJavaScript("Boolean(window.studio && window.studio.isTyping())").catch(() => false);
+      const plain = typing ? await clipboard.readText().catch(() => "") : "";
+      if (!(typing && plain)) {
+        if (files.length) return upload(files);
+        if (!engine.url) return;
+        try {
+          command("imported", [await post("pasted.png", png)]);
+        } catch (e) {
+          command("error", `Couldn't add the picture. ${e.message}`);
+        }
+        return;
+      }
+    }
+  } catch {
+    // Fall through so plain/HTML paste always reaches the page even if reading an exotic clipboard format fails.
   }
   wc.paste();
 }
 
+async function clipboardTextOf(items, type) {
+  for (const item of items) {
+    if (!item.types.includes(type)) continue;
+    try {
+      const blob = await item.getType(type);
+      return await blob.text();
+    } catch {}
+  }
+  return "";
+}
+
+async function clipboardPng(items) {
+  for (const item of items) {
+    if (!item.types.includes("image/png")) continue;
+    try {
+      const blob = await item.getType("image/png");
+      const buf = Buffer.from(await blob.arrayBuffer());
+      if (buf.length) return buf;
+    } catch {}
+  }
+  return null;
+}
+
 /** Files copied in Finder (or another app), as paths. */
-function clipboardFiles() {
+async function clipboardFiles(items) {
   const out = [];
-  for (const format of clipboard.availableFormats()) if (format === "text/uri-list") for (const u of clipboard.read("text/uri-list").split(/\r?\n/)) if (u.startsWith("file://")) out.push(decodeURI(u.slice(7)));
+  const uris = await clipboardTextOf(items, "text/uri-list");
+  if (uris) {
+    for (const u of uris.split(/\r?\n/)) {
+      if (!u.startsWith("file://")) continue;
+      try {
+        out.push(decodeURI(new URL(u).pathname));
+      } catch {
+        out.push(decodeURI(u.slice(7)));
+      }
+    }
+  }
   if (!out.length) {
-    const one = clipboard.read("public.file-url");
-    if (one.startsWith("file://")) out.push(decodeURI(new URL(one).pathname));
+    const one = await clipboardTextOf(items, 'electron application/osclipboard;format="public.file-url"');
+    if (one.startsWith("file://")) {
+      try {
+        out.push(decodeURI(new URL(one).pathname));
+      } catch {
+        out.push(decodeURI(one.slice(7)));
+      }
+    }
   }
   return out;
 }

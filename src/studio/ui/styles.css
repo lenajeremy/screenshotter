@@ -2600,6 +2600,13 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .bd-app .bd-right .seg button { height: 22px; padding: 0 6px; gap: 4px; border-radius: 5px; color: var(--text-2); font: 500 11px/16px var(--sans); letter-spacing: inherit; }
 .bd-app .bd-right .seg button.on { color: var(--text); }
 .bd-app .bd-right .seg button svg { width: 12px; height: 12px; }
+.bd-app .bd-right .bd-xform { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; height: 24px; border-radius: var(--r); overflow: hidden; min-width: 0; }
+.bd-app .bd-right .bd-xform button { display: grid; place-items: center; width: 100%; height: 24px; padding: 0; margin: 0; border: 0; border-radius: 0; background: var(--fill); box-shadow: none; color: var(--text); cursor: pointer; transition: background 0.12s, color 0.12s; }
+.bd-app .bd-right .bd-xform button:hover { background: rgb(var(--ink) / 0.1); }
+.bd-app .bd-right .bd-xform button:active { background: rgb(var(--ink) / 0.16); }
+.bd-app .bd-right .bd-xform button.on { background: rgb(var(--ink) / 0.15); color: var(--text); }
+.bd-app .bd-right .bd-xform button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.bd-app .bd-right .bd-xform button svg { width: 16px; height: 16px; }
 .bd-app .bd-right .seg .thumb { top: 1px; bottom: 1px; border-radius: 5px; background: var(--panel); box-shadow: 0 0 0 0.5px var(--line-3); }
 .bd-app .bd-check { gap: 8px; min-height: 24px; font-size: 11px; color: var(--text); }
 .bd-app .bd-check input { appearance: none; -webkit-appearance: none; flex: none; width: 14px; height: 14px; margin: 0; border-radius: 4px; background: transparent center / 10px 10px no-repeat; box-shadow: inset 0 0 0 1px var(--line-3); transition: background-color 0.12s, box-shadow 0.12s; }

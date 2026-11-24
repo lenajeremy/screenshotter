@@ -937,14 +937,13 @@ const CHECKS: Record<string, Check> = {
     await page.mouse.up();
     await page.waitForTimeout(400);
     const partialFrameId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    const frameToolStuck = await S(page, async () => (await import("/ui/board-state.js" as string)).B.tool);
     const partialParents = { a: nodeOf(t, aId).parent === partialFrameId, b: nodeOf(t, bId).parent === partialFrameId, c: nodeOf(t, cId).parent === boardId };
     // Check visual coordinates preserved inside new frame (CardA was at left=80, frame at left=50 -> CardA left ≈ 30px).
     const aLocalLeft = parseFloat(styleOf(t, aId).left ?? "0");
-    // 2. Undo, then draw Frame enclosing ALL 3 cards with 30px padding around them.
+    // 2. Undo, then draw Frame enclosing ALL 3 cards WITHOUT re-selecting Frame tool (verifying sticky tools!).
     await page.keyboard.press("Meta+z");
     await page.waitForTimeout(400);
-    await page.keyboard.press("f");
-    await page.waitForTimeout(100);
     const fx1All = bb.x + 490 * k; // 460 + 30 = 490
     await page.mouse.move(fx0, fy0);
     await page.mouse.down();
@@ -953,6 +952,9 @@ const CHECKS: Record<string, Check> = {
     await page.mouse.up();
     await page.waitForTimeout(400);
     const fullFrameId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    // Press Escape to return from Frame tool back to Move tool before resizing.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(100);
     // 3. Double-click bottom-right resize handle on this FREE frame -> Resize to Fit children tightly (width ≈ 380, height ≈ 100)!
     const seHandle = (await page.locator('.bd-handle[data-handle="se"]').boundingBox())!;
     await page.mouse.dblclick(seHandle.x + seHandle.width / 2, seHandle.y + seHandle.height / 2);
@@ -978,6 +980,7 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(400);
     const flexOrderAfter = (nodeOf(t, fullFrameId!).children ?? []).map((cid) => nodeOf(t, cid).name).join(",");
     boards.deleteBoard(t.id);
+    if (frameToolStuck !== "frame") return `Frame tool didn't stay active after drawing: ${frameToolStuck}`;
     if (previewInfo.willWrap !== 2 || !previewInfo.label.includes("2 layers")) return `wrap preview: ${JSON.stringify(previewInfo)}`;
     if (!partialParents.a || !partialParents.b || !partialParents.c) return `partial wrap parents: ${JSON.stringify(partialParents)}`;
     if (Math.abs(aLocalLeft - 30) > 2) return `adopted child local left=${aLocalLeft} (expected ~30)`;
@@ -1124,7 +1127,7 @@ const CHECKS: Record<string, Check> = {
     await page.waitForTimeout(250);
     const cmdMarqueeSel = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel.join(","));
 
-    // 6. Holding Space mid-draw with R tool shifts the drawn rectangle's origin!
+    // 6. Holding Space mid-draw with R tool shifts the drawn rectangle's origin, and R stays active to draw multiple rectangles in a row!
     await page.keyboard.press("r");
     await page.waitForTimeout(80);
     const rx0 = sb.x + 560 * k;
@@ -1138,7 +1141,46 @@ const CHECKS: Record<string, Check> = {
     await page.mouse.up();
     await page.waitForTimeout(350);
     const drawnId = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    const rectToolAfterFirst = await S(page, async () => (await import("/ui/board-state.js" as string)).B.tool);
     const drawnSt = drawnId ? styleOf(t, drawnId) : {};
+    // Immediately draw a second rectangle without pressing R again!
+    await page.mouse.move(sb.x + 610 * k, sb.y + 160 * k);
+    await page.mouse.down();
+    await page.mouse.move(sb.x + 670 * k, sb.y + 210 * k, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+    const drawnId2 = await S(page, async () => (await import("/ui/board-state.js" as string)).B.sel[0] ?? null);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(100);
+    const toolAfterEsc = await S(page, async () => (await import("/ui/board-state.js" as string)).B.tool);
+
+    // 7. Multi-layer snapping: dragging 2 selected layers near Stage's centre snaps the group to centre AND shows both X and Y snap guides!
+    await sel(page, [s2, s3]);
+    await page.waitForTimeout(150);
+    const s2b = await boxOf(page, s2);
+    const s3b = await boxOf(page, s3);
+    const grpMidX = (Math.min(s2b.x, s3b.x) + Math.max(s2b.x + s2b.width, s3b.x + s3b.width)) / 2;
+    const grpMidY = (Math.min(s2b.y, s3b.y) + Math.max(s2b.y + s2b.height, s3b.y + s3b.height)) / 2;
+    const stageMidX = sb.x + sb.width / 2;
+    const stageMidY = sb.y + sb.height / 2;
+    // Drag to within 2px of Stage's exact centre so snapping kicks in.
+    const dragDx = stageMidX - grpMidX + 2;
+    const dragDy = stageMidY - grpMidY - 2;
+    await page.mouse.move(s2b.x + s2b.width / 2, s2b.y + s2b.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(s2b.x + s2b.width / 2 + (dragDx * i) / 8, s2b.y + s2b.height / 2 + (dragDy * i) / 8);
+    await page.waitForTimeout(100);
+    const multiSnapGuides = await S(page, () => ({
+      x: document.querySelectorAll(".bd-guide.x").length,
+      y: document.querySelectorAll(".bd-guide.y").length,
+    }));
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+    const s2Left = parseFloat(styleOf(t, s2).left ?? "0");
+    const s3Left = parseFloat(styleOf(t, s3).left ?? "0");
+    const s2Top = parseFloat(styleOf(t, s2).top ?? "0");
+    const multiGroupMidX = (Math.min(s2Left, s3Left) + Math.max(s2Left + 90, s3Left + 90)) / 2;
+    const multiGroupMidY = s2Top + 45;
 
     boards.deleteBoard(t.id);
     if (radAll < 10 || !radPill) return `corner radius drag: all=${radAll}, pill=${radPill}`;
@@ -1155,6 +1197,140 @@ const CHECKS: Record<string, Check> = {
     if (Math.abs(parseFloat(drawnSt.left ?? "0") - 610) > 6 || Math.abs(parseFloat(drawnSt.top ?? "0") - 70) > 6 || Math.abs(parseFloat(drawnSt.width ?? "0") - 60) > 6) {
       return `Space mid-draw origin shift: ${JSON.stringify(drawnSt)}`;
     }
+    if (rectToolAfterFirst !== "rect" || !drawnId2 || drawnId2 === drawnId || toolAfterEsc !== "move") {
+      return `sticky rect tool: afterFirst=${rectToolAfterFirst}, id1=${drawnId}, id2=${drawnId2}, afterEsc=${toolAfterEsc}`;
+    }
+    if (multiSnapGuides.x < 1 || multiSnapGuides.y < 1 || Math.abs(multiGroupMidX - 380) > 2 || Math.abs(multiGroupMidY - 220) > 2) {
+      return `multi-layer centre snap: guides=${JSON.stringify(multiSnapGuides)}, mid=(${multiGroupMidX}, ${multiGroupMidY}) expected (380, 220)`;
+    }
+    return "ok";
+  },
+  async "grid: moving elements across rows works in CSS grids (rectangles, pinned/mixed, implicit cols, multi-select), wrapped flex grids, flex rows, and Shift+G"(page) {
+    const dragPts = async (from: { x: number; y: number }, to: { x: number; y: number }, pause = 0) => {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      for (let i = 1; i <= 10; i++) await page.mouse.move(from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
+      if (pause) await page.waitForTimeout(pause);
+      await page.mouse.up();
+      await page.waitForTimeout(450);
+    };
+    const mid = (b: { x: number; y: number; width: number; height: number }) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+
+    // 1. CSS Grid of 6 empty rectangles (0 children): dragging R5 (Row 2 Col 2) onto the dead center of R2 (Row 1 Col 2) and pausing 350ms moves R5 to (2,1) — NEVER nests inside R2!
+    const t1 = await openMaskBoard(
+      page,
+      `<div data-name="G" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;padding:16px;width:540px;background:#fff">
+        <div data-name="R1" style="height:80px;background:#ef4444"></div>
+        <div data-name="R2" style="height:80px;background:#f97316"></div>
+        <div data-name="R3" style="height:80px;background:#eab308"></div>
+        <div data-name="R4" style="height:80px;background:#22c55e"></div>
+        <div data-name="R5" style="height:80px;background:#3b82f6"></div>
+        <div data-name="R6" style="height:80px;background:#8b5cf6"></div>
+      </div>`,
+    );
+    const g1 = t1.byName("G");
+    const r2 = t1.byName("R2");
+    const r5 = t1.byName("R5");
+    await sel(page, [r5]);
+    await page.waitForTimeout(150);
+    await dragPts(mid(await boxOf(page, r5)), mid(await boxOf(page, r2)), 350);
+    const afterRectGrid = childNames(t1, g1);
+    const r5Parent = nodeOf(t1, r5).parent;
+    // Also test implicit columns (grid-auto-flow: column with only 1 explicit col track): dragging R6 onto col 2 row 1 keeps col 2 (not clamped to col 1)!
+    await commitOps(page, [{ op: "set", id: g1, style: { gridTemplateColumns: "1fr", gridTemplateRows: "repeat(2, 80px)", gridAutoFlow: "column", gridAutoColumns: "1fr" } }]);
+    await page.waitForTimeout(400);
+    const r6 = t1.byName("R6");
+    const r1 = t1.byName("R1");
+    await sel(page, [r6]);
+    await page.waitForTimeout(150);
+    // In column flow with 2 rows: col1=[R1,R5], col2=[R2,R3], col3=[R4,R6]. Drag R6 onto R2 (col 2, row 1)!
+    await dragPts(mid(await boxOf(page, r6)), mid(await boxOf(page, r2)));
+    const afterImplicitCol = childNames(t1, g1);
+    boards.deleteBoard(t1.id);
+
+    // 2. Wrapped Flex grid (flex-wrap: wrap, 3 rows × 3 cols): dragging W9 (Row 3 Col 3) onto W5 (Row 2 Col 2) lands in Row 2 Col 2 (index 4), NOT Row 1!
+    const t2 = await openMaskBoard(
+      page,
+      `<div data-name="Wrap" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:12px;padding:12px;width:360px;background:#fff">
+        ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<div data-name="W${n}" style="width:100px;height:80px;background:#6366f1;flex-shrink:0"></div>`).join("")}
+      </div>`,
+    );
+    const wrapId = t2.byName("Wrap");
+    const w5 = t2.byName("W5");
+    const w9 = t2.byName("W9");
+    await sel(page, [w9]);
+    await page.waitForTimeout(150);
+    const w5b = await boxOf(page, w5);
+    await dragPts(mid(await boxOf(page, w9)), { x: w5b.x + 25, y: w5b.y + w5b.height / 2 });
+    const afterWrap = childNames(t2, wrapId);
+    boards.deleteBoard(t2.id);
+
+    // 3. Flex column of Flex rows: dragging M5 (from RowB) onto M2 (middle of RowA) inserts into RowA beside M2 (does NOT nest inside M2)!
+    const t3 = await openMaskBoard(
+      page,
+      `<div data-name="Stack" style="display:flex;flex-direction:column;gap:16px;padding:16px;width:420px;background:#fff">
+        <div data-name="RowA" style="display:flex;flex-direction:row;gap:12px">
+          <div data-name="M1" style="width:110px;height:70px;background:#f87171"></div>
+          <div data-name="M2" style="width:110px;height:70px;background:#fb923c"></div>
+          <div data-name="M3" style="width:110px;height:70px;background:#facc15"></div>
+        </div>
+        <div data-name="RowB" style="display:flex;flex-direction:row;gap:12px">
+          <div data-name="M4" style="width:110px;height:70px;background:#4ade80"></div>
+          <div data-name="M5" style="width:110px;height:70px;background:#60a5fa"></div>
+          <div data-name="M6" style="width:110px;height:70px;background:#c084fc"></div>
+        </div>
+      </div>`,
+    );
+    const rowA = t3.byName("RowA");
+    const m2 = t3.byName("M2");
+    const m5 = t3.byName("M5");
+    await sel(page, [m5]);
+    await page.waitForTimeout(150);
+    const m2b = await boxOf(page, m2);
+    await dragPts(mid(await boxOf(page, m5)), { x: m2b.x + 35, y: m2b.y + m2b.height / 2 });
+    const afterFlexRows = childNames(t3, rowA);
+    const m5Parent = nodeOf(t3, m5).parent;
+    boards.deleteBoard(t3.id);
+
+    // 4. Default flex-column frame with 6 absolute items in a 3×2 grid -> Shift+G infers 3 columns (not 1fr)!
+    const t4 = await openMaskBoard(
+      page,
+      `<div data-name="Canvas" style="position:relative;width:520px;height:300px;background:#fff">
+        ${[0, 1, 2, 3, 4, 5].map((i) => `<div data-name="P${i}" style="position:absolute;left:${20 + (i % 3) * 140}px;top:${20 + Math.floor(i / 3) * 110}px;width:120px;height:90px;background:#38bdf8"></div>`).join("")}
+      </div>`,
+    );
+    const canvasId = t4.byName("Canvas");
+    await sel(page, [canvasId]);
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Shift+g");
+    await page.waitForTimeout(450);
+    const gridCols = styleOf(t4, canvasId).gridTemplateColumns ?? "";
+    // 5. Transform controls in Layout panel: Rotate 90°, Flip horizontal (button + Shift+H), Flip vertical (button + Shift+V), preserving combined transform.
+    const p0 = t4.byName("P0");
+    await sel(page, [p0]);
+    await page.waitForTimeout(200);
+    await page.locator('.bd-xform button[data-xform="rotate90"]').click();
+    await page.waitForTimeout(200);
+    await page.locator('.bd-xform button[data-xform="flipH"]').click();
+    await page.waitForTimeout(200);
+    await page.locator('.bd-xform button[data-xform="flipV"]').click();
+    await page.waitForTimeout(200);
+    await picture(page, "inspector-transform-controls");
+    const tfCombined = styleOf(t4, p0).transform ?? "";
+    await page.keyboard.press("Shift+h");
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Shift+v");
+    await page.waitForTimeout(200);
+    const tfUnflipped = styleOf(t4, p0).transform ?? "";
+    boards.deleteBoard(t4.id);
+
+    if (r5Parent !== g1 || afterRectGrid !== "R1,R5,R2,R3,R4,R6") return `CSS grid of rectangles: parent=${r5Parent === g1}, order=${afterRectGrid}`;
+    if (afterImplicitCol !== "R1,R5,R6,R2,R3,R4") return `implicit column grid drag: ${afterImplicitCol}`;
+    if (afterWrap !== "W1,W2,W3,W4,W9,W5,W6,W7,W8") return `flex-wrap grid drag: ${afterWrap}`;
+    if (m5Parent !== rowA || afterFlexRows !== "M1,M5,M2,M3") return `flex-rows cross-row drag: parent=${m5Parent === rowA}, rowA=${afterFlexRows}`;
+    if (gridCols !== "repeat(3, 1fr)") return `Shift+G on hand-laid flex frame gave columns="${gridCols}"`;
+    if (tfCombined !== "rotate(90deg) scaleX(-1) scaleY(-1)") return `rotate90/flipH/flipV wrote "${tfCombined}"`;
+    if (tfUnflipped !== "rotate(90deg)") return `Shift+H / Shift+V toggle left "${tfUnflipped}"`;
     return "ok";
   },
   async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {

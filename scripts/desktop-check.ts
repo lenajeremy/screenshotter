@@ -161,6 +161,65 @@ try {
     return r.file.includes("Import Images…") ? true : `File: ${r.file.join(", ")}`;
   });
 
+  await check("Edit → Paste works in text inputs, copies & pastes board frames, and native copyText/readText answer", async () => {
+    const clip = await page.evaluate(async () => {
+      const { native } = await import("/ui/store.js" as string);
+      await native.call("copyText", { text: "GlassinePasteOK" });
+      return (await native.call("readText"))?.text ?? "";
+    });
+    if (clip !== "GlassinePasteOK") return `native copyText/readText gave "${clip}"`;
+    const nameInp = page.locator("input.scene-name");
+    await nameInp.click();
+    await nameInp.fill("");
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.find((i) => i.label === "Edit")?.submenu?.items.find((i) => i.label === "Paste")?.click());
+    await sleep(300);
+    const pastedVal = await nameInp.inputValue();
+    await nameInp.fill("Desktop check");
+    await nameInp.blur();
+    await sleep(200);
+    if (pastedVal !== "GlassinePasteOK") return `Edit → Paste into input gave "${pastedVal}"`;
+    // Copy & paste a child frame (Card), then a top-level artboard (Phone), through the real Edit → Paste menu.
+    const cardId = Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === "Card")!.id;
+    const phoneId = Object.values(boards.getBoard(b.id).nodes).find((n) => n.name === "Phone")!.id;
+    await page.evaluate(async (id: string) => (await import("/ui/board-state.js" as string)).select(id), cardId);
+    await sleep(150);
+    const countBefore = Object.keys(boards.getBoard(b.id).nodes).length;
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.copy());
+    await sleep(200);
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.find((i) => i.label === "Edit")?.submenu?.items.find((i) => i.label === "Paste")?.click());
+    await sleep(700);
+    const countAfterCard = Object.keys(boards.getBoard(b.id).nodes).length;
+    if (countAfterCard !== countBefore + 1) return `pasting Card left node count ${countBefore} -> ${countAfterCard}`;
+    await page.evaluate(async (id: string) => (await import("/ui/board-state.js" as string)).select(id), phoneId);
+    await sleep(150);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.copy());
+    await sleep(200);
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.find((i) => i.label === "Edit")?.submenu?.items.find((i) => i.label === "Paste")?.click());
+    await sleep(800);
+    const rootsAfterPhone = boards.getBoard(b.id).pages[0].children.length;
+    if (rootsAfterPhone !== 2) return `pasting Phone left ${rootsAfterPhone} artboards`;
+    // Verify Figma clipboard HTML routes through Edit → Paste to studio.command("pasteFigma", html).
+    await page.evaluate(() => {
+      const s = (window as unknown as { studio: { command: (n: string, a?: unknown) => unknown } }).studio;
+      const own = s.command;
+      s.command = (n: string, a?: unknown) => {
+        if (n === "pasteFigma") {
+          (window as unknown as { __figmaPaste?: string }).__figmaPaste = String(a ?? "");
+          return;
+        }
+        return own(n, a);
+      };
+    });
+    await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+      const figHtml = `<meta charset='utf-8'><span data-metadata="<!--(figmeta)e30=(/figmeta)-->"></span><span data-buffer="<!--(figma)TESTDATA(/figma)-->"></span>`;
+      await clipboard.write([new ClipboardItem({ "text/html": new Blob([figHtml], { type: "text/html" }) })]);
+    });
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items.find((i) => i.label === "Edit")?.submenu?.items.find((i) => i.label === "Paste")?.click());
+    await sleep(300);
+    const figmaGot = await page.evaluate(() => (window as unknown as { __figmaPaste?: string }).__figmaPaste ?? "");
+    return figmaGot.includes("(figma)TESTDATA(/figma)") ? true : `Edit → Paste Figma HTML gave "${figmaGot.slice(0, 80)}"`;
+  });
+
   await check("links to other sites open in the browser, not the app", async () => {
     const before = page.url();
     const opened = await app.evaluate(({ shell }) => {

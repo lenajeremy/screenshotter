@@ -673,7 +673,7 @@ const outermost = () => {
 
 export function startTextEdit(id) {
   if (node(id)?.type !== "text" || node(id)?.locked) return;
-  bset({ editing: id, sel: [id], tool: "move" });
+  bset({ editing: id, sel: [id] });
 }
 
 export function deleteSelection() {
@@ -973,6 +973,57 @@ export function distributeSelection(axis) {
   commit(ops, { label: "Distribute" });
 }
 
+/** Parse rotation (deg) and horizontal/vertical flips from a layer's CSS transform. */
+export function transformOf(n) {
+  const t = n?.style?.transform ?? "";
+  const rot = /rotate\((-?[\d.]+)deg\)/.exec(t);
+  const deg = rot ? Number(rot[1]) : 0;
+  const sc = /scale\((-?[\d.]+)(?:\s*,\s*(-?[\d.]+))?\)/.exec(t);
+  const sx = /scaleX\((-?[\d.]+)\)/.exec(t);
+  const sy = /scaleY\((-?[\d.]+)\)/.exec(t);
+  const flipX = sx ? Number(sx[1]) < 0 : sc ? Number(sc[1]) < 0 : false;
+  const flipY = sy ? Number(sy[1]) < 0 : sc ? Number(sc[2] ?? sc[1]) < 0 : false;
+  return { deg, flipX, flipY };
+}
+
+/** Serialize rotation and flips back to CSS transform (null when identity). */
+export function formatTransform({ deg = 0, flipX = false, flipY = false }) {
+  const parts = [];
+  const d = Math.round(deg * 10) / 10;
+  if (d) parts.push(`rotate(${d}deg)`);
+  if (flipX) parts.push("scaleX(-1)");
+  if (flipY) parts.push("scaleY(-1)");
+  return parts.length ? parts.join(" ") : null;
+}
+
+/** Rotate the selected layer(s) 90° clockwise, preserving any flips. */
+export function rotateBy90(list = sel()) {
+  const ids = list.filter((id) => node(id) && !node(id).locked && node(id).type !== "vector");
+  if (!ids.length) return;
+  commit(
+    ids.map((id) => {
+      const tf = transformOf(node(id));
+      const deg = ((tf.deg + 90) % 360 + 360) % 360;
+      return { op: "set", id, style: { transform: formatTransform({ ...tf, deg }) } };
+    }),
+    { label: "Rotate 90°" },
+  );
+}
+
+/** Mirror the selected layer(s) horizontally ("x") or vertically ("y"), preserving rotation. */
+export function flipSelection(axis, list = sel()) {
+  const ids = list.filter((id) => node(id) && !node(id).locked && node(id).type !== "vector");
+  if (!ids.length) return;
+  commit(
+    ids.map((id) => {
+      const tf = transformOf(node(id));
+      const next = axis === "x" ? { ...tf, flipX: !tf.flipX } : { ...tf, flipY: !tf.flipY };
+      return { op: "set", id, style: { transform: formatTransform(next) } };
+    }),
+    { label: axis === "x" ? "Flip horizontal" : "Flip vertical" },
+  );
+}
+
 /** Whether the selection can be lined up (layers placed by hand, not by a flex layout). */
 export const canAlign = () => {
   const ids = outermost().filter((id) => !inFlow(B.board, id));
@@ -1227,19 +1278,25 @@ function pasteLayers(from) {
     commit([{ op: "add", nodes, ids: made, parent: null, page: currentPage().id }], { label: "Paste" });
   } else {
     const f = node(t.into);
+    const handLaid = (f.children ?? []).length > 0 && (f.children ?? []).every((c) => { const cn = node(c); return !cn || cn.style.position === "absolute" || cn.style.position === "fixed"; });
     for (const id of made) {
       const s = nodes[id].style;
       nodes[id].parent = t.into;
       if (vec) continue;
-      if (isGrid(f)) intoGridStyle(s);
-      else if (isFlex(f)) {
+      if (isGrid(f) && !handLaid) intoGridStyle(s);
+      else if (isFlex(f) && !handLaid) {
         delete s.left;
         delete s.top;
         if (s.position === "absolute") delete s.position;
-      } else if (!s.position) {
-        s.position = "absolute";
-        s.left ??= "16px";
-        s.top ??= "16px";
+      } else {
+        if (!s.position) {
+          s.position = "absolute";
+          s.left ??= "16px";
+          s.top ??= "16px";
+        } else if (t.after && pxValue(s.left) !== undefined && pxValue(s.top) !== undefined) {
+          s.left = `${Math.round(pxValue(s.left) + 16)}px`;
+          s.top = `${Math.round(pxValue(s.top) + 16)}px`;
+        }
       }
     }
     const index = t.after ? (f.children ?? []).indexOf(t.after) + 1 : undefined;
@@ -1617,6 +1674,8 @@ function onKey(e) {
   // ⇧G makes a grid (of the frame, or round the selection); ⌥⇧G lays a grid's layers out by hand.
   if (e.shiftKey && !e.altKey && (k === "g" || e.code === "KeyG")) return take(), gridShortcut();
   if (e.shiftKey && e.altKey && e.code === "KeyG") return take(), B.sel.length === 1 && isGrid(node(B.sel[0])) && setLayout(B.sel.slice(0, 1), "free");
+  if (e.shiftKey && !e.altKey && (k === "h" || e.code === "KeyH")) return take(), flipSelection("x");
+  if (e.shiftKey && !e.altKey && (k === "v" || e.code === "KeyV")) return take(), flipSelection("y");
   if (k === "]") return take(), restack("front");
   if (k === "[") return take(), restack("back");
   if (TOOL_KEYS[k] && !e.altKey) return take(), bset({ tool: TOOL_KEYS[k] });

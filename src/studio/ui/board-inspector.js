@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { attrText, camel, cleanAttrs, freeSpot, inFlow, instanceRootOf, instancesOf, isFlex, newId, pageOf, parseHtml, parseStyle, pxValue, renameTokenOps, round, serializeSvg, sizeWord, styleText, subtree, vectorName, videoSettings } from "./board-core.js";
 import { B, CANVAS_ONLY, bset, commit as commitOps, currentPage, node, select, useBoard } from "./board-state.js";
 import { fit, scalePlan, shiftSteps, toggleVideo, useVideo, vectorSpace, vectorStep, worldBox } from "./board-canvas.js";
-import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, goToComponent, layerIcon, placeCopy, resetCopy, selectCopies, setFlex, splitVector, stopComponent } from "./board.js";
+import { alignSelection, canAlign, detachCopy, distributeSelection, flattenVector, flipSelection, formatTransform, goToComponent, layerIcon, placeCopy, resetCopy, rotateBy90, selectCopies, setFlex, splitVector, stopComponent, transformOf } from "./board.js";
 import { maskSelection, removeMask, setMaskType, useAsMask } from "./board.js";
 import { maskOf, maskedBy } from "./board-core.js";
 import { styleWords, wordState, words } from "./board-canvas.js";
@@ -395,8 +395,7 @@ function ScaleSection() {
 }
 
 function rotationOf(n) {
-  const m = /rotate\((-?[\d.]+)deg\)/.exec(n.style.transform ?? "");
-  return m ? Number(m[1]) : 0;
+  return transformOf(n).deg;
 }
 
 function LayoutSection() {
@@ -421,6 +420,8 @@ function LayoutSection() {
   const x = pos("x");
   const y = pos("y");
   const rot = shared(rotationOf);
+  const flipX = shared((m) => transformOf(m).flipX);
+  const flipY = shared((m) => transformOf(m).flipY);
   return html`<${Section} title="Layout">
     ${canAlign() && html`<${AlignRow} many=${list.length > 2} />`}
     ${free &&
@@ -434,10 +435,19 @@ function LayoutSection() {
     </div>
     <div class="grid2">
       <${Num} label=${html`<${Icon} n="rotate" s=${12} />`} title="Rotation" value=${rot === "mixed" ? undefined : rot} unit="°" placeholder="—"
-        onChange=${(v) => commit(list.map((id) => ({ op: "set", id, style: { transform: v ? `rotate(${round(v, 1)}deg)` : null } })), { key: `rot:${list.join()}`, label: "Rotate" })} />
-      ${n.type === "frame" && html`<label class="bd-check"><input type="checkbox" checked=${shared((m) => m.style.overflow === "hidden" || m.style.overflow === "clip") === true}
-          onChange=${(e) => setStyle({ overflow: e.target.checked ? "hidden" : null })} />Clip content</label>`}
+        onChange=${(v) =>
+          commit(
+            list.map((id) => ({ op: "set", id, style: { transform: formatTransform({ ...transformOf(node(id)), deg: v || 0 }) } })),
+            { key: `rot:${list.join()}`, label: "Rotate" },
+          )} />
+      <div class="bd-xform" role="group" aria-label="Transform">
+        <button type="button" data-xform="rotate90" title="Rotate 90° clockwise" onClick=${() => rotateBy90(list)}><${Icon} n="rotate90" s=${16} w=${1.55} /></button>
+        <button type="button" class=${flipX === true ? "on" : ""} data-xform="flipH" aria-pressed=${flipX === true} title="Flip horizontal (⇧H)" onClick=${() => flipSelection("x", list)}><${Icon} n="flipH" s=${16} w=${1.55} /></button>
+        <button type="button" class=${flipY === true ? "on" : ""} data-xform="flipV" aria-pressed=${flipY === true} title="Flip vertical (⇧V)" onClick=${() => flipSelection("y", list)}><${Icon} n="flipV" s=${16} w=${1.55} /></button>
+      </div>
     </div>
+    ${n.type === "frame" && html`<label class="bd-check"><input type="checkbox" checked=${shared((m) => m.style.overflow === "hidden" || m.style.overflow === "clip") === true}
+        onChange=${(e) => setStyle({ overflow: e.target.checked ? "hidden" : null })} />Clip content</label>`}
   <//>`;
 }
 
@@ -1480,7 +1490,6 @@ function FramePresets() {
     const spot = freeSpot(B.board, page.id, w);
     const id = newId();
     commit([{ op: "add", nodes: { [id]: { id, type: "frame", name, parent: null, style: { display: "flex", flexDirection: "column", width: `${w}px`, height: `${h}px`, backgroundColor: "#ffffff", overflow: "hidden", left: `${spot.left}px`, top: `${spot.top}px` }, children: [] } }, ids: [id], parent: null, page: page.id }], { label: "Add artboard" });
-    bset({ tool: "move" });
     select(id);
     requestAnimationFrame(() => fit([id]));
   };

@@ -13,7 +13,7 @@ import { Icon } from "./icons.js";
 import { api, fileUrl, toast } from "./store.js";
 import { openLayerMenu, startTextEdit } from "./board.js";
 import { CommentLayer, closeThread, layersIn, startDraft } from "./board-comments.js";
-import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
+import { GridOverlay, gridAddPlace, gridDrop, gridDropOps, gridManyDrop, inGrid, intoGridStyle, leaveGridOps, patchStyle, resizeInGrid } from "./board-grid.js";
 import { ShaderCanvas } from "./board-shaders.js";
 import { detachElementEffects, syncElementEffects } from "./board-effects.js";
 
@@ -2528,7 +2528,10 @@ function down(e) {
   if (e.button === 2) return;
   const c = canvasEl.current;
   if (B.editing && e.target.closest?.(`[data-bid="${B.editing}"]`)) return;
-  if (B.editing) finishText(B.editing, elOf(B.editing));
+  if (B.editing) {
+    finishText(B.editing, elOf(B.editing));
+    if (B.tool === "text" || B.tool === "frame" || B.tool === "rect") return;
+  }
   document.activeElement?.blur?.();
   // Pan: the hand tool, space held, or the middle button.
   if (e.button === 1 || B.tool === "hand" || spaceDown) {
@@ -2820,54 +2823,134 @@ function dropFrameAt(clientX, clientY, ids, held) {
   const fn = node(f);
   const p = fn.parent ? node(fn.parent) : null;
   if (!p || !(isFlex(p) || isGrid(p)) || !inFlow(B.board, f) || ids.includes(fn.parent)) return f;
+  // Dragging layer(s) already inside a CSS Grid over another cell of that same grid:
+  // ALWAYS target the grid itself so moving between cells/rows never nests one item inside another.
+  const sibling = ids.some((id) => node(id)?.parent === fn.parent);
+  if (isGrid(p) && sibling) return fn.parent;
   const c = getCanvasRect();
   const r = screenBox(f);
   if (!r) return f;
-  const row = isGrid(p) || !(p.style.flexDirection ?? "row").startsWith("column");
+  // A plain leaf shape (0 children, not a grid) inside a flex/grid layout shouldn't swallow dragged items unless paused on.
+  const isLeafBox = !(fn.children?.length ?? 0) && !isGrid(fn);
+  if (isGrid(p)) {
+    if (isLeafBox && !isFlex(fn)) return fn.parent;
+    const ex = Math.max(6, Math.min(24, r.width * 0.25));
+    const ey = Math.max(6, Math.min(24, r.height * 0.25));
+    const ax = clientX - c.left - r.x;
+    const ay = clientY - c.top - r.y;
+    if (ax < ex || ax > r.width - ex || ay < ey || ay > r.height - ey) return fn.parent;
+    return isLeafBox && !held(f) ? fn.parent : f;
+  }
+  const row = !(p.style.flexDirection ?? "row").startsWith("column");
   const size = row ? r.width : r.height;
   const at = row ? clientX - c.left - r.x : clientY - c.top - r.y;
   const edge = Math.max(6, Math.min(24, size * 0.25));
   if (at < edge || at > size - edge) return fn.parent;
-  // A sibling in the same layout: into it immediately if empty, else after resting briefly over its middle.
-  const sibling = ids.some((id) => node(id)?.parent === fn.parent);
-  if (sibling && (fn.children?.length ?? 0) > 0 && !held(f)) return fn.parent;
+  // A cousin across sibling flex rows (e.g. a multi-row card grid) or a sibling/leaf box requires a brief rest before nesting inside it;
+  // an unrelated container or grid (like dragging a chip into a Cards grid) accepts the drop immediately.
+  const cousin = !sibling && p.parent && ids.some((id) => { const ip = node(id)?.parent; return ip && ip !== fn.parent && node(ip)?.parent === p.parent; });
+  if ((sibling || cousin || isLeafBox) && !held(f)) return fn.parent;
   return f;
 }
 
-/** Where in a flex frame's flow a drop at a point goes, and the line that shows it (centered in the gap, screen px). */
+/** Where in a flex frame's flow a drop at a point goes, and the line that shows it (centered in the gap, screen px). Supports 2D wrapped flex grids. */
 function flowSlot(frameId, clientX, clientY, ids) {
   const frame = node(frameId);
   const c = getCanvasRect();
   const row = !(frame.style.flexDirection ?? "row").startsWith("column");
+  const wrap = (frame.style.flexWrap ?? "").startsWith("wrap");
   const kids = (frame.children ?? []).filter((x) => !ids.includes(x) && !node(x)?.hidden && !(node(x)?.style.position === "absolute" || node(x)?.style.position === "fixed"));
-  const p = row ? clientX - c.left : clientY - c.top;
+  const px = clientX - c.left;
+  const py = clientY - c.top;
+  const p = row ? px : py;
   let index = kids.length;
   let line = null;
-  for (let i = 0; i < kids.length; i++) {
-    const r = screenBox(kids[i]);
-    if (r && p < (row ? r.x + r.width / 2 : r.y + r.height / 2)) {
-      index = i;
-      const prev = i > 0 ? screenBox(kids[i - 1]) : null;
-      if (row) {
-        const at = prev ? (prev.x + prev.width + r.x) / 2 - 1.5 : r.x - 2;
-        const y0 = prev ? Math.min(prev.y, r.y) : r.y;
-        const y1 = prev ? Math.max(prev.y + prev.height, r.y + r.height) : r.y + r.height;
-        line = { x: at, y: y0, width: 3, height: Math.max(8, y1 - y0) };
+  // Wrapped flex grid: group children into visual lines along the cross axis, pick the line under the pointer, then pick the slot within that line.
+  const wrappedLines = () => {
+    if (!wrap || !kids.length) return null;
+    const items = kids.map((k, i) => ({ k, i, r: screenBox(k) })).filter((o) => o.r);
+    if (!items.length) return null;
+    const lines = [];
+    for (const item of items) {
+      const c0 = row ? item.r.y : item.r.x;
+      const c1 = row ? item.r.y + item.r.height : item.r.x + item.r.width;
+      const cur = lines[lines.length - 1];
+      if (cur && c0 < cur.c1 - 2 && c1 > cur.c0 + 2) {
+        cur.items.push(item);
+        cur.c0 = Math.min(cur.c0, c0);
+        cur.c1 = Math.max(cur.c1, c1);
       } else {
-        const at = prev ? (prev.y + prev.height + r.y) / 2 - 1.5 : r.y - 2;
-        const x0 = prev ? Math.min(prev.x, r.x) : r.x;
-        const x1 = prev ? Math.max(prev.x + prev.width, r.x + r.width) : r.x + r.width;
-        line = { x: x0, y: at, width: Math.max(8, x1 - x0), height: 3 };
+        lines.push({ items: [item], c0, c1 });
       }
-      break;
     }
-  }
-  if (!line) {
-    const last = kids.length ? screenBox(kids[kids.length - 1]) : null;
-    const fr = screenBox(frameId);
-    line = last
-      ? (row ? { x: last.x + last.width + 1, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height + 1, width: last.width, height: 3 })
-      : fr && { x: fr.x + 6, y: fr.y + 6, width: row ? 3 : Math.max(8, fr.width - 12), height: row ? Math.max(8, fr.height - 12) : 3 };
+    return lines.length > 1 ? lines : null;
+  };
+  const lines = wrappedLines();
+  if (lines) {
+    const pc = row ? py : px;
+    let pick = lines[lines.length - 1];
+    for (let li = 0; li < lines.length; li++) {
+      const next = lines[li + 1];
+      if (!next || pc < (lines[li].c1 + next.c0) / 2) {
+        pick = lines[li];
+        break;
+      }
+    }
+    const items = pick.items;
+    let found = false;
+    for (let j = 0; j < items.length; j++) {
+      const r = items[j].r;
+      if (p < (row ? r.x + r.width / 2 : r.y + r.height / 2)) {
+        index = items[j].i;
+        const prev = j > 0 ? items[j - 1].r : null;
+        if (row) {
+          const at = prev ? (prev.x + prev.width + r.x) / 2 - 1.5 : r.x - 2;
+          const y0 = prev ? Math.min(prev.y, r.y) : r.y;
+          const y1 = prev ? Math.max(prev.y + prev.height, r.y + r.height) : r.y + r.height;
+          line = { x: at, y: y0, width: 3, height: Math.max(8, y1 - y0) };
+        } else {
+          const at = prev ? (prev.y + prev.height + r.y) / 2 - 1.5 : r.y - 2;
+          const x0 = prev ? Math.min(prev.x, r.x) : r.x;
+          const x1 = prev ? Math.max(prev.x + prev.width, r.x + r.width) : r.x + r.width;
+          line = { x: x0, y: at, width: Math.max(8, x1 - x0), height: 3 };
+        }
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      const lastItem = items[items.length - 1];
+      index = lastItem.i + 1;
+      const last = lastItem.r;
+      line = row ? { x: last.x + last.width + 1, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height + 1, width: last.width, height: 3 };
+    }
+  } else {
+    for (let i = 0; i < kids.length; i++) {
+      const r = screenBox(kids[i]);
+      if (r && p < (row ? r.x + r.width / 2 : r.y + r.height / 2)) {
+        index = i;
+        const prev = i > 0 ? screenBox(kids[i - 1]) : null;
+        if (row) {
+          const at = prev ? (prev.x + prev.width + r.x) / 2 - 1.5 : r.x - 2;
+          const y0 = prev ? Math.min(prev.y, r.y) : r.y;
+          const y1 = prev ? Math.max(prev.y + prev.height, r.y + r.height) : r.y + r.height;
+          line = { x: at, y: y0, width: 3, height: Math.max(8, y1 - y0) };
+        } else {
+          const at = prev ? (prev.y + prev.height + r.y) / 2 - 1.5 : r.y - 2;
+          const x0 = prev ? Math.min(prev.x, r.x) : r.x;
+          const x1 = prev ? Math.max(prev.x + prev.width, r.x + r.width) : r.x + r.width;
+          line = { x: x0, y: at, width: Math.max(8, x1 - x0), height: 3 };
+        }
+        break;
+      }
+    }
+    if (!line) {
+      const last = kids.length ? screenBox(kids[kids.length - 1]) : null;
+      const fr = screenBox(frameId);
+      line = last
+        ? (row ? { x: last.x + last.width + 1, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height + 1, width: last.width, height: 3 })
+        : fr && { x: fr.x + 6, y: fr.y + 6, width: row ? 3 : Math.max(8, fr.width - 12), height: row ? Math.max(8, fr.height - 12) : 3 };
+    }
   }
   // Its index among all the frame's layers (hidden and absolute ones count too).
   const all = (frame.children ?? []).filter((x) => !ids.includes(x));
@@ -3145,8 +3228,7 @@ function moveLayers(e, ids) {
   const radii = Object.fromEntries(ids.map((id) => [id, elOf(id) ? getComputedStyle(elOf(id)).borderRadius : ""]));
   const starts = Object.fromEntries(free.map((id) => [id, placeOf(id)]));
   const grab = toWorld(e.clientX, e.clientY);
-  const lone = ids.length === 1 ? ids[0] : null;
-  const loneBox = lone ? boxes[lone] : null;
+  const dragBox = unionOf(ids.map((id) => boxes[id]).filter(Boolean));
   // Cache snap references per target container so pointermove stays fast.
   const refCache = new Map();
   const refsFor = (into) => {
@@ -3200,11 +3282,11 @@ function moveLayers(e, ids) {
     const d = (ax + ay) / 2;
     return [Math.sign(dx) * d, Math.sign(dy) * d];
   };
-  // Include original layer as a snap/distance target when Option-duplicating!
+  // Include original layer(s) as a snap/distance target when Option-duplicating!
   const dupRefsFor = (into) => {
     const baseRefs = refsFor(into);
-    if (!loneBox || into !== parent0) return baseRefs;
-    return { parentBox: baseRefs.parentBox, sibs: [loneBox, ...baseRefs.sibs] };
+    if (!dragBox || into !== parent0) return baseRefs;
+    return { parentBox: baseRefs.parentBox, sibs: [dragBox, ...baseRefs.sibs] };
   };
   const decide = (ev) => {
     last = ev;
@@ -3235,8 +3317,8 @@ function moveLayers(e, ids) {
     // Still in the frame (or on the page) where they're placed by hand (and not Option-duplicating): live move with smart guides.
     if (!dup && allFree && oneParent && into === parent0) {
       let guides = [];
-      if (loneBox) {
-        const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, refsFor(parent0), z, ev.metaKey);
+      if (dragBox) {
+        const sn = computeSnap({ ...dragBox, x: dragBox.x + dx, y: dragBox.y + dy }, refsFor(parent0), z, ev.metaKey);
         dx += sn.dx;
         dy += sn.dy;
         guides = sn.guides;
@@ -3265,8 +3347,9 @@ function moveLayers(e, ids) {
         plan = drop ? { kind: "grid", dup, into, drop, dx, dy } : null;
         return bset({ drop: drop ? { grid: into, cell: drop.rect, into, ghosts, dup } : { into, ghosts, dup } });
       }
-      plan = { kind: "grid-many", dup, into, dx, dy };
-      return bset({ drop: { grid: into, into, ghosts, dup } });
+      const mdrop = gridManyDrop(into, ev.clientX, ev.clientY, ids, oneParent && parent0 === into ? { x: e.clientX, y: e.clientY } : null);
+      plan = { kind: "grid-many", dup, into, mdrop, dx, dy };
+      return bset({ drop: mdrop?.rect ? { grid: into, cell: mdrop.rect, into, ghosts, dup } : { grid: into, into, ghosts, dup } });
     }
     if (frame && !byHand(into)) {
       B.guides = [];
@@ -3275,10 +3358,10 @@ function moveLayers(e, ids) {
       plan = { kind: "flow", dup, into, index: slot.index, dx, dy };
       return bset({ drop: { line: slot.line, into, ghosts, dup, showTag: into !== parent0 } });
     }
-    // Free target frame (or page): snap single dragged layer against target's edges & children (plus original when duplicating).
+    // Free target frame (or page): snap dragged layer(s) against target's edges, centre & children (plus original when duplicating).
     let guides = [];
-    if (loneBox) {
-      const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, dup ? dupRefsFor(into) : refsFor(into), z, ev.metaKey);
+    if (dragBox) {
+      const sn = computeSnap({ ...dragBox, x: dragBox.x + dx, y: dragBox.y + dy }, dup ? dupRefsFor(into) : refsFor(into), z, ev.metaKey);
       dx += sn.dx;
       dy += sn.dy;
       guides = sn.guides;
@@ -3385,11 +3468,21 @@ function moveLayers(e, ids) {
         ops.push(...gridDropOps(plan.drop, id));
       } else if (plan.kind === "grid-many") {
         const order = ids.slice().sort((a, b) => boxes[a].y - boxes[b].y || boxes[a].x - boxes[b].x);
-        for (const id of order) {
-          if (base.nodes[id].parent !== plan.into) ops.push({ op: "move", id, parent: plan.into });
-          const st = { ...(inFlow(base, id) ? keepFillStyle(base, id, plan.into) : joinFlowStyle) };
-          intoGridStyle(st);
-          ops.push({ op: "set", id, style: st });
+        if (plan.mdrop?.mode === "shift") {
+          for (const p of plan.mdrop.placements) {
+            const gc = p.columnSpan > 1 ? `${p.col} / span ${p.columnSpan}` : `${p.col}`;
+            const gr = p.rowSpan > 1 ? `${p.row} / span ${p.rowSpan}` : `${p.row}`;
+            ops.push({ op: "set", id: p.id, style: { gridColumn: gc, gridRow: gr, gridArea: null } });
+          }
+        } else {
+          const baseIdx = plan.mdrop?.index ?? (node(plan.into)?.children ?? []).filter((c) => !order.includes(c)).length;
+          for (const id of order) ops.push({ op: "move", id, parent: plan.into });
+          order.forEach((id, i) => {
+            ops.push({ op: "move", id, parent: plan.into, index: baseIdx + i });
+            const st = { ...(inFlow(base, id) ? keepFillStyle(base, id, plan.into) : joinFlowStyle) };
+            if (base.nodes[id].parent !== plan.into) intoGridStyle(st);
+            ops.push({ op: "set", id, style: st });
+          });
         }
       } else if (plan.kind === "flow") {
         // In the order they're seen along the layout, at the slot.
@@ -3499,7 +3592,7 @@ function resize(e, id, h, keep = false) {
           const edge = h.includes("e") ? box0.x + w : box0.x + box0.width - w;
           let best = null;
           for (const r of allRefs)
-            for (const t of [r.x, r.x + r.width]) {
+            for (const t of [r.x, r.x + r.width / 2, r.x + r.width]) {
               const d = t - edge;
               if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
             }
@@ -3509,7 +3602,7 @@ function resize(e, id, h, keep = false) {
             let y1 = y0 + hh;
             const pts = [[sx(best.t), sy(y0)], [sx(best.t), sy(y1)]];
             for (const r of allRefs) {
-              if (Math.abs(r.x - best.t) <= 0.75 / z || Math.abs(r.x + r.width - best.t) <= 0.75 / z) {
+              if (Math.abs(r.x - best.t) <= 0.75 / z || Math.abs(r.x + r.width / 2 - best.t) <= 0.75 / z || Math.abs(r.x + r.width - best.t) <= 0.75 / z) {
                 y0 = Math.min(y0, r.y);
                 y1 = Math.max(y1, r.y + r.height);
                 if (r !== refs.parentBox) pts.push([sx(best.t), sy(r.y)], [sx(best.t), sy(r.y + r.height)]);
@@ -3518,12 +3611,12 @@ function resize(e, id, h, keep = false) {
             guides.push({ axis: "x", at: sx(best.t), from: sy(y0), to: sy(y1), pts });
           }
         }
-        // Snap active vertical edge (n or s) to parent/sibling edges.
+        // Snap active vertical edge (n or s) to parent/sibling edges & centres.
         if (h.includes("n") || h.includes("s")) {
           const edge = h.includes("s") ? box0.y + hh : box0.y + box0.height - hh;
           let best = null;
           for (const r of allRefs)
-            for (const t of [r.y, r.y + r.height]) {
+            for (const t of [r.y, r.y + r.height / 2, r.y + r.height]) {
               const d = t - edge;
               if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
             }
@@ -3533,7 +3626,7 @@ function resize(e, id, h, keep = false) {
             let x1 = x0 + w;
             const pts = [[sx(x0), sy(best.t)], [sx(x1), sy(best.t)]];
             for (const r of allRefs) {
-              if (Math.abs(r.y - best.t) <= 0.75 / z || Math.abs(r.y + r.height - best.t) <= 0.75 / z) {
+              if (Math.abs(r.y - best.t) <= 0.75 / z || Math.abs(r.y + r.height / 2 - best.t) <= 0.75 / z || Math.abs(r.y + r.height - best.t) <= 0.75 / z) {
                 x0 = Math.min(x0, r.x);
                 x1 = Math.max(x1, r.x + r.width);
                 if (r !== refs.parentBox) pts.push([sx(r.x), sy(best.t)], [sx(r.x + r.width), sy(best.t)]);
@@ -3602,6 +3695,10 @@ function resizeMany(e, ids, h, keep = false) {
   const starts = Object.fromEntries(list.filter((id) => !inFlow(base, id) && !isVector(id)).map((id) => [id, placeOf(id)]));
   const spaces = Object.fromEntries(list.filter(isVector).map((id) => [id, vectorSpace(id)]).filter(([, sp]) => sp));
   const z = B.view.z;
+  const p0 = base.nodes[list[0]]?.parent ?? null;
+  const refs = list.every((id) => (base.nodes[id]?.parent ?? null) === p0) ? snapRefsFor(p0, list) : { parentBox: null, sibs: [] };
+  const allRefs = refs.parentBox ? [refs.parentBox, ...refs.sibs] : refs.sibs;
+  const tol = SNAP / z;
   let ops = [];
   drag(e, {
     threshold: 0,
@@ -3613,6 +3710,58 @@ function resizeMany(e, ids, h, keep = false) {
       const mult = center ? 2 : 1;
       let w = Math.max(4, g.width + mult * (h.includes("e") ? dx : h.includes("w") ? -dx : 0));
       let hh = Math.max(4, g.height + mult * (h.includes("s") ? dy : h.includes("n") ? -dy : 0));
+      const guides = [];
+      if (!ev.metaKey && !center && !(keep || ev.shiftKey) && allRefs.length) {
+        const { x: vx, y: vy } = B.view;
+        const sx0 = (wx) => wx * z + vx;
+        const sy0 = (wy) => wy * z + vy;
+        if (h.includes("e") || h.includes("w")) {
+          const edge = h.includes("e") ? g.x + w : g.x + g.width - w;
+          let best = null;
+          for (const r of allRefs)
+            for (const t of [r.x, r.x + r.width / 2, r.x + r.width]) {
+              const d = t - edge;
+              if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
+            }
+          if (best) {
+            w = Math.max(4, w + (h.includes("e") ? best.d : -best.d));
+            let y0 = h.includes("n") ? g.y + g.height - hh : g.y;
+            let y1 = y0 + hh;
+            const pts = [[sx0(best.t), sy0(y0)], [sx0(best.t), sy0(y1)]];
+            for (const r of allRefs) {
+              if (Math.abs(r.x - best.t) <= 0.75 / z || Math.abs(r.x + r.width / 2 - best.t) <= 0.75 / z || Math.abs(r.x + r.width - best.t) <= 0.75 / z) {
+                y0 = Math.min(y0, r.y);
+                y1 = Math.max(y1, r.y + r.height);
+                if (r !== refs.parentBox) pts.push([sx0(best.t), sy0(r.y)], [sx0(best.t), sy0(r.y + r.height)]);
+              }
+            }
+            guides.push({ axis: "x", at: sx0(best.t), from: sy0(y0), to: sy0(y1), pts });
+          }
+        }
+        if (h.includes("n") || h.includes("s")) {
+          const edge = h.includes("s") ? g.y + hh : g.y + g.height - hh;
+          let best = null;
+          for (const r of allRefs)
+            for (const t of [r.y, r.y + r.height / 2, r.y + r.height]) {
+              const d = t - edge;
+              if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
+            }
+          if (best) {
+            hh = Math.max(4, hh + (h.includes("s") ? best.d : -best.d));
+            let x0 = h.includes("w") ? g.x + g.width - w : g.x;
+            let x1 = x0 + w;
+            const pts = [[sx0(x0), sy0(best.t)], [sx0(x1), sy0(best.t)]];
+            for (const r of allRefs) {
+              if (Math.abs(r.y - best.t) <= 0.75 / z || Math.abs(r.y + r.height / 2 - best.t) <= 0.75 / z || Math.abs(r.y + r.height - best.t) <= 0.75 / z) {
+                x0 = Math.min(x0, r.x);
+                x1 = Math.max(x1, r.x + r.width);
+                if (r !== refs.parentBox) pts.push([sx0(r.x), sy0(best.t)], [sx0(r.x + r.width), sy0(best.t)]);
+              }
+            }
+            guides.push({ axis: "y", at: sy0(best.t), from: sx0(x0), to: sx0(x1), pts });
+          }
+        }
+      }
       if (keep || ev.shiftKey) {
         const k = Math.abs(w / g.width - 1) > Math.abs(hh / g.height - 1) ? w / g.width : hh / g.height;
         w = g.width * k;
@@ -3622,6 +3771,7 @@ function resizeMany(e, ids, h, keep = false) {
       const sy = hh / g.height;
       const gx = center ? g.x + (g.width - w) / 2 : h.includes("w") ? g.x + g.width - w : g.x;
       const gy = center ? g.y + (g.height - hh) / 2 : h.includes("n") ? g.y + g.height - hh : g.y;
+      B.guides = guides;
       ops = list.map((id) => {
         const b = boxes[id];
         const n = node(id);
@@ -3646,6 +3796,7 @@ function resizeMany(e, ids, h, keep = false) {
       preview(base, ops);
     },
     up: (ev, moved) => {
+      B.guides = [];
       if (!moved || !ops.length) {
         B.board = base;
         return notify();
@@ -3654,6 +3805,7 @@ function resizeMany(e, ids, h, keep = false) {
       commit(ops, { label: "Resize" });
     },
     cancel: () => {
+      B.guides = [];
       B.board = base;
       notify();
     },
@@ -3908,7 +4060,7 @@ function create(e) {
         });
         if (commit(ops, { label: "Draw frame" }) !== false) {
           select(id);
-          bset({ open: new Set([...B.open, id]), tool: "move" });
+          bset({ open: new Set([...B.open, id]) });
         }
         return;
       }
@@ -3923,7 +4075,6 @@ function create(e) {
         layer = { id, type: "frame", name: artboard ? `Artboard ${++counter.frame}` : `Frame ${++counter.frame}`, parent: null, style: { display: "flex", flexDirection: "column", width: `${w ?? (artboard ? 390 : 160)}px`, height: `${h ?? (artboard ? 844 : 120)}px`, ...(artboard ? { backgroundColor: "#ffffff", overflow: "hidden" } : { flexShrink: "0" }) }, children: [] };
       }
       placeNew([layer], into, origin, ev);
-      bset({ tool: "move" });
       if (tool === "text") startTextEdit(id);
     },
   });

@@ -86,3 +86,5 @@ Asked 2026-11-23: make clicking, dragging and dropping layers easy to understand
   - **On-canvas corner radius handles:** 4 inset corner dots on selected frames (`>= 48×48`); drag rounds all corners with live value pill, `⌥`-drag rounds one corner, double-click resets to `0`.
   - **Smart Selection handles:** When 3+ free siblings are evenly spaced (`<= 2.5px` variance), pink gap bars adjust spacing uniformly (`⌥` center-anchored) and center circles swap/reorder items while keeping spacing intact.
   - **Arrow-key flex reorder:** Pressing `←`/`→` (row) or `↑`/`↓` (column) on a single selected Flex child reorders it along the flex axis.
+  - **Multi-layer snapping:** Dragging or resizing multiple selected layers snaps their combined bounding box to container edges, container centre, siblings, and equal spacing with the same bounded red guides & anchor dots as single-layer drags.
+  - **Sticky tools:** Selected drawing & scale tools (`F`, `R`, `T`, `K`) stay active until you switch back (`V`, `Escape`, or the bottom toolbar).

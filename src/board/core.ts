@@ -2998,6 +2998,8 @@ export function flexToGrid(board: Board, id: string): { frame: Record<string, st
   if (!n || !isFlex(n) || (n.style.flexWrap ?? "nowrap").startsWith("wrap")) return null;
   const column = (n.style.flexDirection ?? "row").startsWith("column");
   const kids = (n.children ?? []).filter((c) => board.nodes[c] && !board.nodes[c].hidden && board.nodes[c].style.position !== "absolute" && board.nodes[c].style.position !== "fixed");
+  // Empty flex frames (or frames whose children are all placed by hand) should be planned from their 2D boxes / default 2×2, not turned into a 1-column grid.
+  if (!kids.length) return null;
   const grow = (c: string) => pxValue(board.nodes[c].style.flexGrow) ?? (/^\s*\d/.test(board.nodes[c].style.flex ?? "") ? Number.parseFloat(board.nodes[c].style.flex!) : 0);
   const tracks = kids.map((c) => (grow(c) > 0 ? `${round(grow(c), 2)}fr` : "auto"));
   const stretchMain = tracks.some((t) => t.endsWith("fr"));

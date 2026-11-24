@@ -429,8 +429,8 @@ export function childCell(cid, geo) {
   const c = canvasEl.current.getBoundingClientRect();
   const r = el?.getBoundingClientRect();
   const fromBox = (tracks, edge) => trackAt(tracks, edge) + 1;
-  const column = typeof pc.start === "number" && pc.start > 0 ? pc.start : r ? fromBox(geo.cols, r.left - c.left + 1) : 1;
-  const row = typeof pr.start === "number" && pr.start > 0 ? pr.start : r ? fromBox(geo.rows, r.top - c.top + 1) : 1;
+  const column = typeof pc.start === "number" && pc.start > 0 ? pc.start : r ? fromBox(geo.cols, r.left - c.left + Math.min(r.width / 2, 8)) : 1;
+  const row = typeof pr.start === "number" && pr.start > 0 ? pr.start : r ? fromBox(geo.rows, r.top - c.top + Math.min(r.height / 2, 8)) : 1;
   return { column, row, columnSpan: placementSpan(pc), rowSpan: placementSpan(pr), explicit: typeof pc.start === "number" || typeof pr.start === "number" };
 }
 
@@ -469,7 +469,7 @@ export function gridDrop(gridId, clientX, clientY, moving = null, spans = null) 
   const kids = gridKids(gridId).filter((c) => c !== moving);
   const mine = moving ? node(moving) : null;
   const span = spans ?? (mine ? { columnSpan: placementSpan(parsePlacement(mine.style.gridColumn)), rowSpan: placementSpan(parsePlacement(mine.style.gridRow)) } : { columnSpan: 1, rowSpan: 1 });
-  const columns = Math.max(1, geo.explicitCols || geo.cols.length);
+  const columns = Math.max(1, geo.cols.length, geo.explicitCols);
   let column = trackAt(geo.cols, x) + 1;
   let row = trackAt(geo.rows, y) + 1;
   // Below the last row: a new one (rows come as they're needed).
@@ -502,13 +502,12 @@ export function gridDrop(gridId, clientX, clientY, moving = null, spans = null) 
       }
     }
   }
-  // Pinned to the cell; one pinned there already takes the moving layer's old cell.
+  // Pinned to the cell; whatever sits in that cell swaps into the moving layer's old cell.
   const style = { ...free, gridColumn: placementCss({ start: column, span: columnSpan }), gridRow: placementCss({ start: row, span: span.rowSpan }) };
   let swap = null;
   if (mine && sameParent && kids.some(pinned)) {
     const old = childCell(moving, geo);
     const there = kids.find((c) => {
-      if (!pinned(c)) return false;
       const k = childCell(c, geo);
       return column >= k.column && column < k.column + k.columnSpan && row >= k.row && row < k.row + k.rowSpan;
     });
@@ -518,6 +517,53 @@ export function gridDrop(gridId, clientX, clientY, moving = null, spans = null) 
     }
   }
   return { grid: gridId, cell, rect, style, swap, reorder: false };
+}
+
+/** Plan a multi-layer drop onto a CSS grid at (clientX, clientY), optionally from a starting grab point inside the same grid. */
+export function gridManyDrop(gridId, clientX, clientY, ids, fromClient = null) {
+  const geo = gridGeometry(gridId);
+  if (!geo) return null;
+  const cv = canvasEl.current.getBoundingClientRect();
+  const columns = Math.max(1, geo.cols.length, geo.explicitCols);
+  const targetCol = Math.min(columns, trackAt(geo.cols, clientX - cv.left) + 1);
+  let targetRow = trackAt(geo.rows, clientY - cv.top) + 1;
+  const last = geo.rows[geo.rows.length - 1];
+  if (last && clientY - cv.top > last.b + Math.max(geo.rowGap, 6) && geo.model.flow === "row") targetRow = geo.rows.length + 1;
+  const rect = cellRect(geo, { column: targetCol, row: targetRow, columnSpan: 1, rowSpan: 1 });
+  const pinned = (c) => {
+    const s = node(c)?.style ?? {};
+    return Boolean(s.gridArea) || typeof parsePlacement(s.gridColumn).start === "number" || typeof parsePlacement(s.gridRow).start === "number";
+  };
+  const others = gridKids(gridId).filter((c) => !ids.includes(c));
+  const sameGrid = ids.every((id) => node(id)?.parent === gridId);
+  if (sameGrid && fromClient && (others.some(pinned) || ids.some(pinned))) {
+    const fromCol = Math.min(columns, trackAt(geo.cols, fromClient.x - cv.left) + 1);
+    const fromRow = trackAt(geo.rows, fromClient.y - cv.top) + 1;
+    const dCol = targetCol - fromCol;
+    const dRow = targetRow - fromRow;
+    const placements = ids.map((id) => {
+      const cur = childCell(id, geo);
+      const col = Math.max(1, Math.min(Math.max(1, columns - cur.columnSpan + 1), cur.column + dCol));
+      const row = Math.max(1, cur.row + dRow);
+      return { id, col, row, columnSpan: cur.columnSpan, rowSpan: cur.rowSpan };
+    });
+    return { grid: gridId, rect, mode: "shift", placements };
+  }
+  const list = (node(gridId)?.children ?? []).filter((c) => !ids.includes(c));
+  const spansOf = (c) => ({ columnSpan: Math.min(columns, placementSpan(parsePlacement(node(c).style.gridColumn))), rowSpan: placementSpan(parsePlacement(node(c).style.gridRow)) });
+  const transpose = geo.model.flow === "column";
+  const count = transpose ? Math.max(1, geo.rows.length, geo.explicitRows) : columns;
+  let index = list.length;
+  for (let k = 0; k <= others.length; k++) {
+    const seq = [...others.slice(0, k).map(spansOf), { columnSpan: 1, rowSpan: 1 }, ...others.slice(k).map(spansOf)];
+    const placed = autoPlace(transpose ? seq.map((s) => ({ columnSpan: s.rowSpan, rowSpan: s.columnSpan })) : seq, count, geo.model.dense);
+    const at = transpose ? { column: placed[k].row, row: placed[k].column } : placed[k];
+    if (at.column === targetCol && at.row === targetRow) {
+      index = k < others.length ? list.indexOf(others[k]) : list.length;
+      break;
+    }
+  }
+  return { grid: gridId, rect, mode: "order", index };
 }
 
 /** The steps a drop makes: the layer into its place, pinned or in order, and a swap if there's one. */
