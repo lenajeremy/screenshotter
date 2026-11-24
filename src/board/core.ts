@@ -106,6 +106,8 @@ export interface BoardFont {
   /** "400", "700", "100 900" (a variable font's range)… */
   weight?: string;
   style?: string;
+  /** "condensed", "semi-condensed", "expanded"… */
+  stretch?: string;
   /** The font file (woff2, woff, ttf or otf), in the library. */
   src: string;
   unicodeRange?: string;
@@ -1366,7 +1368,7 @@ export function tokenCss(board: Board): string {
   return board.tokens.map((t) => `${t.name}:${t.value}`).join(";");
 }
 
-const fontKey = (f: BoardFont) => [f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.unicodeRange ?? ""].join("|");
+const fontKey = (f: BoardFont) => [f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.stretch ?? "", f.unicodeRange ?? ""].join("|");
 const FONT_FORMAT: Record<string, string> = { woff2: "woff2", woff: "woff", ttf: "truetype", otf: "opentype" };
 
 /** The board's own typefaces as @font-face rules, their files from `src` (a URL the page can load). */
@@ -1379,6 +1381,7 @@ export function fontFaceCss(board: Board, src: (file: string) => string): string
       const parts = [`font-family:${q(f.family)}`, `src:url(${q(src(f.src))})${format}`, `font-display:block`];
       if (f.weight && /^[\d\s]+$|^(normal|bold)$/.test(f.weight)) parts.push(`font-weight:${f.weight}`);
       if (f.style && /^(normal|italic|oblique)/.test(f.style)) parts.push(`font-style:${f.style}`);
+      if (f.stretch && /^(ultra|extra|semi)?-?(condensed|expanded)|normal|\d+%$/.test(f.stretch)) parts.push(`font-stretch:${f.stretch}`);
       if (f.unicodeRange && /^[U+0-9A-Fa-f?,\s-]+$/.test(f.unicodeRange)) parts.push(`unicode-range:${f.unicodeRange}`);
       return `@font-face{${parts.join(";")}}`;
     })

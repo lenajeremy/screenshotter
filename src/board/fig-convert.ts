@@ -10,6 +10,8 @@ import path from "node:path";
 import { libraryFolder } from "../util/files.js";
 import type { FigArchive } from "./fig-file.js";
 import { ellipseOutline, lineOutline, networkOutline, rectOutline, starOutline, type Outline } from "./fig-geometry.js";
+import { fallbackFamilyOf, fontItalicOf, fontStretchOf, fontWeightOf } from "./fig-fonts.js";
+import { filteredImageKey, hashHexOf, paintAdjustOf } from "./fig-images.js";
 import { pathKit, type SkPath } from "./pathkit.js";
 
 type G = { sessionID: number; localID: number };
@@ -83,10 +85,45 @@ function overrideWith(n: FNode, props: Record<string, any>) {
   Object.assign(n, props);
 }
 
+/** Extract a Figma component property value (handling both `value` and `varValue` representations). */
+function propValue(a: any): { boolValue?: boolean; textValue?: any; guidValue?: G } | undefined {
+  if (!a) return undefined;
+  const v = a.value ?? {};
+  const vv = a.varValue?.value ?? {};
+  const boolValue = v.boolValue !== undefined ? v.boolValue : vv.boolValue;
+  const textValue = v.textValue ?? vv.textDataValue;
+  const guidValue = v.guidValue ?? vv.guidValue;
+  if (boolValue === undefined && textValue === undefined && guidValue === undefined) return undefined;
+  return { boolValue, textValue, guidValue };
+}
+
 /** A copy of `n` with its instances expanded: the component's layers, overridden as the instance says. */
-export function resolveTree(d: FigDoc, n: FNode, scope: Ov[] = [], prefix = "", depth = 0): FNode {
+export function resolveTree(d: FigDoc, n: FNode, scope: Ov[] = [], prefix = "", depth = 0, propVals: Map<string, ReturnType<typeof propValue>> = new Map()): FNode {
   const out: FNode = { ...n, id: prefix + n.id, children: [] };
-  for (const o of scope) if (o.path.length === 1 && o.path[0] === n.key) overrideWith(out, o.props);
+  const hadTextChars = out.textData?.characters;
+  // Apply component property bindings from enclosing instance(s) before explicit symbol/derived overrides.
+  let propChangedText = false;
+  if (Array.isArray(out.componentPropRefs) && propVals.size) {
+    for (const ref of out.componentPropRefs) {
+      const val = propVals.get(gid(ref.defID));
+      if (!val) continue;
+      if (ref.componentPropNodeField === "VISIBLE" && val.boolValue !== undefined) out.visible = val.boolValue;
+      else if (ref.componentPropNodeField === "TEXT_DATA" && val.textValue) {
+        out.textData = { ...(out.textData ?? {}), ...val.textValue };
+        if (val.textValue.characters !== undefined && val.textValue.characters !== hadTextChars) propChangedText = true;
+      } else if (ref.componentPropNodeField === "OVERRIDDEN_SYMBOL_ID" && val.guidValue) {
+        out.overriddenSymbolID = val.guidValue;
+      }
+    }
+  }
+  let scopeSetDerivedText = false;
+  for (const o of scope) {
+    if (o.path.length === 1 && o.path[0] === n.key) {
+      if (o.props.derivedTextData) scopeSetDerivedText = true;
+      overrideWith(out, o.props);
+    }
+  }
+  if (propChangedText && !scopeSetDerivedText) delete out.derivedTextData;
   if (out.type === "INSTANCE" && depth < 24) {
     const symId = gid(out.overriddenSymbolID ?? out.symbolData?.symbolID);
     const sym = d.byId.get(symId);
@@ -100,12 +137,24 @@ export function resolveTree(d: FigDoc, n: FNode, scope: Ov[] = [], prefix = "", 
       const mine: Record<string, any> = {};
       for (const [k, v] of Object.entries(out)) if (v !== undefined && k !== "children") mine[k] = v;
       Object.assign(out, base, mine);
+      // Merge component property defaults from the symbol, then overrides from this instance (and enclosing exposed props).
+      const nextProps = new Map(propVals);
+      for (const def of sym.componentPropDefs ?? []) {
+        const k = gid(def.id);
+        const v = propValue({ value: def.initialValue, varValue: def.varValue });
+        if (k && v && !nextProps.has(k)) nextProps.set(k, v);
+      }
+      for (const a of out.componentPropAssignments ?? []) {
+        const k = gid(a.defID);
+        const v = propValue(a);
+        if (k && v) nextProps.set(k, v);
+      }
       for (const o of inner) if (o.path.length === 1 && o.path[0] === sym.key) overrideWith(out, o.props);
-      out.children = sym.children.map((c) => resolveTree(d, c, inner, `${out.id}/`, depth + 1));
+      out.children = sym.children.map((c) => resolveTree(d, c, inner, `${out.id}/`, depth + 1, nextProps));
       return out;
     }
   }
-  out.children = n.children.map((c) => resolveTree(d, c, scope, prefix, depth + 1));
+  out.children = n.children.map((c) => resolveTree(d, c, scope, prefix, depth + 1, propVals));
   return out;
 }
 
@@ -119,6 +168,8 @@ export interface Ctx {
   fonts: Map<string, Set<string>>;
   /** Picture hash → file in the library. */
   pictures: Map<string, string>;
+  /** Pre-baked filtered/adjusted pictures (keyed by filteredImageKey). */
+  filteredPictures: Map<string, string>;
   uid: number;
 }
 
@@ -163,6 +214,16 @@ function invert(t: M): M {
   const det = t.m00 * t.m11 - t.m01 * t.m10 || 1e-9;
   return { m00: t.m11 / det, m01: -t.m01 / det, m02: (t.m01 * t.m12 - t.m11 * t.m02) / det, m10: -t.m10 / det, m11: t.m00 / det, m12: (t.m10 * t.m02 - t.m00 * t.m12) / det };
 }
+function matMul(a: M, b: M): M {
+  return {
+    m00: a.m00 * b.m00 + a.m01 * b.m10,
+    m01: a.m00 * b.m01 + a.m01 * b.m11,
+    m02: a.m00 * b.m02 + a.m01 * b.m12 + a.m02,
+    m10: a.m10 * b.m00 + a.m11 * b.m10,
+    m11: a.m10 * b.m01 + a.m11 * b.m11,
+    m12: a.m10 * b.m02 + a.m11 * b.m12 + a.m12,
+  };
+}
 const apply = (t: M, x: number, y: number) => ({ x: t.m00 * x + t.m01 * y + t.m02, y: t.m10 * x + t.m11 * y + t.m12 });
 
 /** A gradient's line (or ellipse) in the node's own pixels: Figma's paint transform maps the node to the gradient's unit square. */
@@ -175,12 +236,18 @@ function gradientGeometry(p: any, w: number, h: number) {
   return { start: at(0, 0.5), end: at(1, 0.5), center: at(0.5, 0.5), rx: at(1, 0.5), ry: at(0.5, 1) };
 }
 
-function stopsCss(p: any, map: (t: number) => number = (t) => t) {
-  return (p.stops ?? []).map((s: any) => `${rgba(s.color, p.opacity ?? 1)} ${Math.round(map(s.position) * 10000) / 100}%`).join(", ");
+function stopsCss(p: any, map: (t: number) => number = (t) => t, alphaMask = false) {
+  return (p.stops ?? [])
+    .map((s: any) => {
+      const a = Math.round((s.color?.a ?? 1) * (p.opacity ?? 1) * 1000) / 1000;
+      const col = alphaMask ? `rgba(0, 0, 0, ${a})` : rgba(s.color, p.opacity ?? 1);
+      return `${col} ${Math.round(map(s.position) * 10000) / 100}%`;
+    })
+    .join(", ");
 }
 
 /** A gradient as CSS for a w×h box, the same line and stops as Figma's. */
-function gradientCss(p: any, w: number, h: number): string | undefined {
+function gradientCss(p: any, w: number, h: number, alphaMask = false): string | undefined {
   if (!p.stops?.length) return undefined;
   const g = gradientGeometry(p, w, h);
   if (p.type === "GRADIENT_LINEAR") {
@@ -195,15 +262,18 @@ function gradientCss(p: any, w: number, h: number): string | undefined {
     const sy = h / 2 - (uy * L) / 2;
     const map = (t: number) => ((g.start.x + t * dx - sx) * ux + (g.start.y + t * dy - sy) * uy) / L;
     const deg = Math.round(((Math.atan2(uy, ux) * 180) / Math.PI + 90) * 100) / 100;
-    return `linear-gradient(${deg}deg, ${stopsCss(p, map)})`;
+    return `linear-gradient(${deg}deg, ${stopsCss(p, map, alphaMask)})`;
   }
-  const rx = Math.hypot(g.rx.x - g.center.x, g.rx.y - g.center.y);
-  const ry = Math.hypot(g.ry.x - g.center.x, g.ry.y - g.center.y);
+  const vx = { x: g.rx.x - g.center.x, y: g.rx.y - g.center.y };
+  const vy = { x: g.ry.x - g.center.x, y: g.ry.y - g.center.y };
   if (p.type === "GRADIENT_ANGULAR") {
-    const from = Math.round(((Math.atan2(g.rx.y - g.center.y, g.rx.x - g.center.x) * 180) / Math.PI + 90) * 100) / 100;
-    return `conic-gradient(from ${from}deg at ${px(g.center.x)} ${px(g.center.y)}, ${stopsCss(p)})`;
+    const from = Math.round(((Math.atan2(vx.y, vx.x) * 180) / Math.PI + 90) * 100) / 100;
+    return `conic-gradient(from ${from}deg at ${px(g.center.x)} ${px(g.center.y)}, ${stopsCss(p, undefined, alphaMask)})`;
   }
-  return `radial-gradient(${px(rx)} ${px(ry)} at ${px(g.center.x)} ${px(g.center.y)}, ${stopsCss(p)})`;
+  // Project ellipse semi-axes onto X and Y so 90°-rotated radial gradients keep their true orientation.
+  const rx = Math.hypot(vx.x, vy.x);
+  const ry = Math.hypot(vx.y, vy.y);
+  return `radial-gradient(${px(rx)} ${px(ry)} at ${px(g.center.x)} ${px(g.center.y)}, ${stopsCss(p, undefined, alphaMask)})`;
 }
 
 const MIME: Array<[number[], string]> = [
@@ -246,7 +316,7 @@ function fillCss(c: Ctx, list: any[], w: number, h: number, out: Record<string, 
     const before = layers.length;
     paintLayer(p, i);
     // Each layer blends into what's under it as the paint says (a green multiplied over a photo).
-    if (layers.length > before) blends.push(BLEND[p.blendMode] ?? "normal");
+    if (layers.length > before) blends.push(BG_BLEND[p.blendMode] ?? "normal");
   }
   function paintLayer(p: any, i: number) {
     if (p.type === "SOLID") {
@@ -258,8 +328,10 @@ function fillCss(c: Ctx, list: any[], w: number, h: number, out: Record<string, 
         places.push("0 0");
         repeats.push("no-repeat");
       }
-    } else if (p.type === "IMAGE") {
-      const file = picture(c, p.image?.hash);
+    } else if (p.type === "IMAGE" || p.type === "VIDEO") {
+      const hex = hashHexOf(p.image?.hash) || hashHexOf(p.imageThumbnail?.hash);
+      const adj = paintAdjustOf(p);
+      const file = (adj && hex ? c.filteredPictures.get(filteredImageKey(hex, adj)) : undefined) ?? picture(c, p.image?.hash ?? p.imageThumbnail?.hash);
       if (!file) return;
       layers.push(`url("${file}")`);
       const mode = p.imageScaleMode ?? "FILL";
@@ -303,16 +375,23 @@ function fillCss(c: Ctx, list: any[], w: number, h: number, out: Record<string, 
 
 const BLEND: Record<string, string> = {
   MULTIPLY: "multiply", SCREEN: "screen", OVERLAY: "overlay", DARKEN: "darken", LIGHTEN: "lighten", COLOR_DODGE: "color-dodge", COLOR_BURN: "color-burn",
+  LINEAR_DODGE: "plus-lighter", LINEAR_BURN: "color-burn",
   HARD_LIGHT: "hard-light", SOFT_LIGHT: "soft-light", DIFFERENCE: "difference", EXCLUSION: "exclusion", HUE: "hue", SATURATION: "saturation", COLOR: "color", LUMINOSITY: "luminosity",
 };
+const BG_BLEND: Record<string, string> = { ...BLEND, LINEAR_DODGE: "color-dodge" };
 
 /** Shadows (strokes inside or outside, drop and inner shadows), blurs, corners, opacity, blend. */
-function lookCss(c: Ctx, n: FNode, out: Record<string, string>, text = false) {
+function lookCss(c: Ctx, n: FNode, out: Record<string, string>, text = false, w = 0, h = 0) {
   const shadows: string[] = [];
   // Strokes, drawn as shadows so they take no room, as in Figma.
   const sp = shown(paints(c, n, "stroke")).filter((p) => p.type === "SOLID");
   const sw = n.strokeWeight ?? 0;
-  if (!text && sp.length && (sw > 0 || n.borderStrokeWeightsIndependent)) {
+  if (text && sp.length && sw > 0) {
+    const col = rgba(sp[sp.length - 1].color, sp[sp.length - 1].opacity ?? 1);
+    const outside = n.strokeAlign === "OUTSIDE";
+    out.WebkitTextStroke = `${px(outside ? sw * 2 : sw)} ${col}`;
+    if (outside) out.paintOrder = "stroke fill";
+  } else if (!text && sp.length && (sw > 0 || n.borderStrokeWeightsIndependent)) {
     const col = rgba(sp[sp.length - 1].color, sp[sp.length - 1].opacity ?? 1);
     if (n.dashPattern?.length) out.outline = `${px(sw)} dashed ${col}`;
     else if (n.borderStrokeWeightsIndependent) {
@@ -329,13 +408,37 @@ function lookCss(c: Ctx, n: FNode, out: Record<string, string>, text = false) {
     else shadows.push(`inset 0 0 0 ${px(sw)} ${col}`);
   }
   const fx: any[] = shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]);
+  let hasBgBlur = false;
+  let fgBlur = 0;
   for (const e of [...fx].reverse()) {
     if (e.type === "DROP_SHADOW" || e.type === "INNER_SHADOW") {
       const s = `${e.type === "INNER_SHADOW" ? "inset " : ""}${px(e.offset?.x ?? 0)} ${px(e.offset?.y ?? 0)} ${px(e.radius ?? 0)}${text ? "" : ` ${px(e.spread ?? 0)}`} ${rgba(e.color)}`;
       if (!(text && e.type === "INNER_SHADOW")) shadows.push(s);
-    } else if (e.type === "FOREGROUND_BLUR") out.filter = `blur(${px((e.radius ?? 0) / 2)})`;
-    else if (e.type === "BACKGROUND_BLUR") out.backdropFilter = `blur(${px((e.radius ?? 0) / 2)})`;
+    } else if (e.type === "FOREGROUND_BLUR") fgBlur = e.radius ?? 0;
+    else if (e.type === "BACKGROUND_BLUR") {
+      hasBgBlur = true;
+      out.backdropFilter = `blur(${px((e.radius ?? 0) / 2)})`;
+    }
   }
+  // In Figma, BACKGROUND_BLUR is weighted by the fill's alpha mask: a radial/linear gradient with
+  // alpha=0 stops leaves the transparent zone crisp instead of blurring the entire bounding box.
+  let maskedBgBlur = false;
+  if (!text && hasBgBlur && !(n.children?.length) && w > 0 && h > 0) {
+    const fills = shown(paints(c, n, "fill"));
+    const grad = fills.length === 1 && fills[0].type?.startsWith("GRADIENT") ? fills[0] : null;
+    if (grad?.stops?.length) {
+      const alphas = grad.stops.map((s: any) => (s.color?.a ?? 1) * (grad.opacity ?? 1));
+      if (Math.min(...alphas) < 0.05 && Math.max(...alphas) > 0.2) {
+        const m = gradientCss(grad, w, h, true);
+        if (m) {
+          out.webkitMaskImage = m;
+          out.maskImage = m;
+          maskedBgBlur = true;
+        }
+      }
+    }
+  }
+  if (fgBlur > 0 && !maskedBgBlur) out.filter = `blur(${px(fgBlur / 2)})`;
   if (shadows.length) out[text ? "textShadow" : "boxShadow"] = shadows.join(", ");
   if (!text) {
     if (n.rectangleCornerRadiiIndependent) {
@@ -678,7 +781,7 @@ function shapePaths(c: Ctx, n: FNode, defs: string[]): string {
 
 const VECTORISH = new Set(["VECTOR", "STAR", "LINE", "REGULAR_POLYGON", "BOOLEAN_OPERATION"]);
 const BOXES = new Set(["FRAME", "SYMBOL", "INSTANCE", "SECTION"]);
-const hasImage = (c: Ctx, n: FNode) => shown(paints(c, n, "fill")).some((p) => p.type === "IMAGE");
+const hasImage = (c: Ctx, n: FNode) => shown(paints(c, n, "fill")).some((p) => p.type === "IMAGE" || p.type === "VIDEO");
 const autoLayout = (n: FNode) => n.stackMode === "HORIZONTAL" || n.stackMode === "VERTICAL";
 
 /** A group made only of shapes (an icon, a logo): drawn as one SVG. */
@@ -724,18 +827,6 @@ function svgNode(c: Ctx, n: FNode, defs: string[]): string {
 // ---------------------------------------------------------------------------------------------
 // Text
 
-const WEIGHTS: Array<[RegExp, number]> = [
-  [/thin|hairline/i, 100],
-  [/extra ?light|ultra ?light/i, 200],
-  [/light/i, 300],
-  [/medium/i, 500],
-  [/semi ?bold|demi ?bold/i, 600],
-  [/extra ?bold|ultra ?bold/i, 800],
-  [/black|heavy/i, 900],
-  [/bold/i, 700],
-];
-const weightOf = (style = "") => WEIGHTS.find(([re]) => re.test(style))?.[1] ?? 400;
-
 const TEXT_KEYS = ["fontName", "fontSize", "lineHeight", "letterSpacing", "textCase", "textDecoration"];
 /** A node's (or run's) type: its shared text style's when it uses one this file holds, else its own. */
 function withTextStyle(c: Ctx, s: any): any {
@@ -746,17 +837,31 @@ function withTextStyle(c: Ctx, s: any): any {
   return out;
 }
 
-/** A run's text style as CSS: family, weight, size, spacing, line height, case, decoration, colour. */
+/** Look up Figma's recorded fontWeight/fontStyle from derivedTextData.fontMetaData for exact weights. */
+function fontMetaFor(node: any, fam: string, style: string): any | undefined {
+  const list: any[] = node?.derivedTextData?.fontMetaData ?? [];
+  const fl = fam.toLowerCase();
+  const sl = (style ?? "").toLowerCase();
+  return list.find((m) => m?.key?.family?.toLowerCase() === fl && (m?.key?.style ?? "").toLowerCase() === sl);
+}
+
+/** A run's text style as CSS: family, weight, stretch, size, spacing, line height, case, decoration, colour. */
 function textStyleCss(c: Ctx, s0: any, out: Record<string, string>, base?: any) {
   const s = withTextStyle(c, s0);
   const fam = s.fontName?.family;
   if (fam) {
-    const w = weightOf(s.fontName.style);
-    const italic = /italic|oblique/i.test(s.fontName.style ?? "");
-    out.fontFamily = /[\s,]/.test(fam) ? `"${fam}"` : fam;
+    const styleName = s.fontName.style ?? "";
+    const meta = fontMetaFor(base ?? s0, fam, styleName);
+    const w = typeof meta?.fontWeight === "number" && meta.fontWeight >= 100 ? Math.round(meta.fontWeight / 100) * 100 : fontWeightOf(styleName);
+    const italic = meta?.fontStyle === "ITALIC" || fontItalicOf(styleName);
+    const stretch = fontStretchOf(styleName);
+    const quoted = /[\s,]/.test(fam) ? `"${fam}"` : fam;
+    out.fontFamily = `${quoted}, ${fallbackFamilyOf(fam)}`;
     out.fontWeight = String(w);
     if (italic) out.fontStyle = "italic";
     else if (base) out.fontStyle = "normal";
+    if (stretch) out.fontStretch = stretch;
+    else if (base) out.fontStretch = "normal";
     if (!c.fonts.has(fam)) c.fonts.set(fam, new Set());
     c.fonts.get(fam)!.add(`${w}${italic ? "i" : ""}`);
   }
@@ -811,34 +916,74 @@ function lineHeights(n: FNode): { least: number; at: (i: number) => number | und
   };
 }
 
-/** The words, each run of another style a span (and each line its own height, when `lines` says). */
+/** The words, each run of another style a span (and paragraph spacing / lists when set). */
 function textHtml(c: Ctx, n: FNode, lines: ReturnType<typeof lineHeights> = null): string {
   const td = n.textData ?? {};
   const chars: string = td.characters ?? n.characters ?? "";
   const ids: number[] = td.characterStyleIDs ?? [];
   const table = new Map<number, any>((td.styleOverrideTable ?? []).map((s: any) => [s.styleID, s]));
-  const runs: Array<{ text: string; id: number; lh?: number }> = [];
-  for (let i = 0; i < chars.length; i++) {
-    const id = ids[i] ?? 0;
-    const lh = lines?.at(i);
-    const last = runs[runs.length - 1];
-    if (last && last.id === id && last.lh === lh) last.text += chars[i];
-    else runs.push({ text: chars[i], id, lh });
-  }
-  const words = (t: string) => esc(t).replace(/\u2028|\n/g, "<br>");
-  return runs
-    .map((r) => {
-      const s = r.id ? table.get(r.id) : undefined;
-      const o: Record<string, string> = {};
-      if (s) {
-        textStyleCss(c, s, o, n);
-        const sp = styleNode(c, s.styleIdForFill)?.fillPaints ?? s.fillPaints;
-        if (sp) textPaintCss(c, sp, n.size?.x ?? 0, n.size?.y ?? 0, o);
+  const paraGap = n.paragraphSpacing ?? 0;
+  const tdLines: any[] = td.lines ?? [];
+  const hasLists = tdLines.some((l) => l.lineType === "UNORDERED_LIST" || l.lineType === "ORDERED_LIST");
+
+  const renderRange = (start: number, end: number): string => {
+    const runs: Array<{ text: string; id: number; lh?: number }> = [];
+    for (let i = start; i < end; i++) {
+      const id = ids[i] ?? 0;
+      const lh = lines?.at(i);
+      const last = runs[runs.length - 1];
+      if (last && last.id === id && last.lh === lh) last.text += chars[i];
+      else runs.push({ text: chars[i], id, lh });
+    }
+    const words = (t: string) => esc(t).replace(/\u2028|\n/g, "<br>");
+    return runs
+      .map((r) => {
+        const s = r.id ? table.get(r.id) : undefined;
+        const o: Record<string, string> = {};
+        if (s) {
+          textStyleCss(c, s, o, n);
+          const sp = styleNode(c, s.styleIdForFill)?.fillPaints ?? s.fillPaints;
+          if (sp) textPaintCss(c, sp, n.size?.x ?? 0, n.size?.y ?? 0, o);
+        }
+        if (r.lh) o.lineHeight = px(r.lh);
+        return Object.keys(o).length ? `<span style="${attr(css(o))}">${words(r.text)}</span>` : words(r.text);
+      })
+      .join("");
+  };
+
+  if ((paraGap > 0 && chars.includes("\n")) || hasLists) {
+    const parts: string[] = [];
+    let start = 0;
+    let lineIdx = 0;
+    let ordNum = 0;
+    for (let i = 0; i <= chars.length; i++) {
+      if (i < chars.length && chars[i] !== "\n") continue;
+      const li = tdLines[lineIdx];
+      const lt = li?.lineType;
+      const indent = (li?.indentationLevel ?? 0) * 18;
+      let prefix = "";
+      if (lt === "UNORDERED_LIST") {
+        ordNum = 0;
+        prefix = "• ";
+      } else if (lt === "ORDERED_LIST") {
+        ordNum = li?.isFirstLineOfList ? (li?.listStartOffset || 1) : ordNum + 1;
+        prefix = `${ordNum}. `;
+      } else {
+        ordNum = 0;
       }
-      if (r.lh) o.lineHeight = px(r.lh);
-      return Object.keys(o).length ? `<span style="${attr(css(o))}">${words(r.text)}</span>` : words(r.text);
-    })
-    .join("");
+      const isLast = i === chars.length;
+      const body = renderRange(start, i) || "&nbsp;";
+      const st: Record<string, string> = { display: "block" };
+      if (!isLast && paraGap > 0) st.marginBottom = px(paraGap);
+      if (indent > 0) st.paddingLeft = px(indent);
+      parts.push(`<span style="${attr(css(st))}">${prefix}${body}</span>`);
+      start = i + 1;
+      lineIdx++;
+    }
+    return parts.join("");
+  }
+
+  return renderRange(0, chars.length);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -846,19 +991,125 @@ function textHtml(c: Ctx, n: FNode, lines: ReturnType<typeof lineHeights> = null
 
 const ALIGN: Record<string, string> = { MIN: "flex-start", CENTER: "center", MAX: "flex-end", BASELINE: "baseline", SPACE_EVENLY: "space-between", SPACE_BETWEEN: "space-between" };
 const hugs = (v?: string) => v === "RESIZE_TO_FIT" || v === "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE";
+const isSpaceBetween = (v?: string) => v === "SPACE_EVENLY" || v === "SPACE_BETWEEN";
+
+/** Convert Figma's GLASS effect (both .fig kiwi fields and REST fields) to Glassine's data-glass config. */
+function glassAttrOf(c: Ctx, n: FNode): string {
+  const fxList: any[] = shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]);
+  const glassFx = fxList.find((e) => e.type === "GLASS");
+  if (!glassFx) return "";
+  const refrRaw = glassFx.refractionIntensity ?? glassFx.refraction ?? 0.6;
+  const depthRaw = glassFx.refractionRadius !== undefined ? Math.min(100, Math.round(glassFx.refractionRadius * 2.5)) : Math.round((glassFx.depth ?? 0.65) * ((glassFx.depth ?? 0.65) > 1 ? 1 : 100));
+  const dispRaw = glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.4;
+  const splayRaw = glassFx.splay ?? 0;
+  const specRaw = glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8;
+  let angle = Math.round(glassFx.specularAngle ?? glassFx.lightAngle ?? -60);
+  if (angle > 180) angle -= 360;
+  return ` data-glass="${attr(
+    JSON.stringify({
+      refraction: Math.round(refrRaw * (refrRaw > 1 ? 1 : 100)),
+      depth: depthRaw,
+      dispersion: Math.round(dispRaw * (dispRaw > 1 ? 1 : 100)),
+      frost: Math.round(Math.min(100, (glassFx.radius ?? glassFx.frost ?? 0) * 2)),
+      splay: Math.round(splayRaw * (splayRaw > 1 ? 1 : 100)),
+      lightAngle: angle,
+      lightIntensity: Math.round(specRaw * (specRaw > 1 ? 1 : 100)),
+    }),
+  )}"`;
+}
+
+/** Non-interactive CSS gradient stroke ring overlay for boxes with GRADIENT stroke paints. */
+function gradientStrokeOverlay(c: Ctx, n: FNode, w: number, h: number): string {
+  const sw = n.strokeWeight ?? 0;
+  const grads = shown(paints(c, n, "stroke")).filter((p) => p.type?.startsWith("GRADIENT"));
+  if (!grads.length || !(sw > 0 || n.borderStrokeWeightsIndependent)) return "";
+  const g = gradientCss(grads[grads.length - 1], w, h);
+  if (!g) return "";
+  const align = n.strokeAlign ?? "INSIDE";
+  const pad = n.borderStrokeWeightsIndependent
+    ? [n.borderTopWeight ?? 0, n.borderRightWeight ?? 0, n.borderBottomWeight ?? 0, n.borderLeftWeight ?? 0].map(px).join(" ")
+    : px(sw);
+  const inset = align === "OUTSIDE" ? px(-sw) : align === "CENTER" ? px(-sw / 2) : "0px";
+  const ov: Record<string, string> = {
+    position: "absolute",
+    inset,
+    borderRadius: "inherit",
+    padding: pad,
+    backgroundImage: g,
+    WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+    WebkitMaskComposite: "xor",
+    mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+    maskComposite: "exclude",
+    pointerEvents: "none",
+    boxSizing: "border-box",
+  };
+  return `<div data-name="Stroke" style="${attr(css(ov))}"></div>`;
+}
+
+/** Normalize a flipped or rotated root artboard into upright coordinates by folding its linear transform into its children. */
+function normalizeRoot(n: FNode): FNode {
+  const t: M = n.transform ?? ID;
+  const rootTurned = Math.abs(t.m01) > 1e-4 || Math.abs(t.m10) > 1e-4 || t.m00 < 0 || t.m11 < 0;
+  if (!rootTurned || autoLayout(n)) return n;
+  const w = n.size?.x ?? 0;
+  const h = n.size?.y ?? 0;
+  const b = turnedBounds(t, w, h);
+  const R: M = { m00: t.m00, m01: t.m01, m02: -b.x, m10: t.m10, m11: t.m11, m12: -b.y };
+  return {
+    ...n,
+    size: { x: b.w, y: b.h },
+    transform: { m00: 1, m01: 0, m02: t.m02 + b.x, m10: 0, m11: 1, m12: t.m12 + b.y },
+    children: n.children.map((k) => ({ ...k, transform: matMul(R, k.transform ?? ID) })),
+  };
+}
+
+/** Whether any visible descendant uses a non-normal blend mode that a CSS transform on a pass-through group would isolate. */
+function hasBlendedChild(n: FNode): boolean {
+  for (const k of n.children ?? []) {
+    if (k.visible === false) continue;
+    if (k.blendMode && BLEND[k.blendMode]) return true;
+    if (BOXES.has(k.type) && (!k.blendMode || k.blendMode === "PASS_THROUGH") && hasBlendedChild(k)) return true;
+  }
+  return false;
+}
 
 /** One node (and what's in it) as HTML. `parent` is the node it sits in (null for an artboard). */
-export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
-  if (n.visible === false) return "";
+export function nodeHtml(c: Ctx, n0: FNode, parent: FNode | null, extraStyle?: Record<string, string>): string {
+  if (n0.visible === false) return "";
+  const n = parent === null ? normalizeRoot(n0) : n0;
   const w = n.size?.x ?? 0;
   const h = n.size?.y ?? 0;
   const t: M = n.transform ?? ID;
-  const st: Record<string, string> = {};
+  const st: Record<string, string> = extraStyle ? { ...extraStyle } : {};
   const inFlow = Boolean(parent && autoLayout(parent) && n.stackPositioning !== "ABSOLUTE");
   // Turned or flipped: where its box lands once turned (Figma lays a turned layer out by that box).
   const turned = Boolean(parent) && (Math.abs(t.m01) > 1e-4 || Math.abs(t.m10) > 1e-4 || t.m00 < 0 || t.m11 < 0);
   const bounds = turnedBounds(t, w, h);
   const drawnAsSvg = VECTORISH.has(n.type) || (n.type === "ELLIPSE" && !fullEllipse(n)) || (BOXES.has(n.type) && onlyShapes(c, n) && w <= 480 && h <= 480 && Boolean(parent));
+  // A rotated/flipped pass-through group containing blended children must not carry a CSS transform
+  // (which forces a stacking context and isolates mix-blend-mode): push its transform onto its children.
+  if (
+    parent &&
+    !inFlow &&
+    turned &&
+    BOXES.has(n.type) &&
+    !autoLayout(n) &&
+    !drawnAsSvg &&
+    !n.mask &&
+    (!n.blendMode || n.blendMode === "PASS_THROUGH") &&
+    (n.opacity === undefined || n.opacity >= 1) &&
+    (n.frameMaskDisabled !== false || n.resizeToFit) &&
+    !shown(paints(c, n, "fill")).length &&
+    !shown(paints(c, n, "stroke")).length &&
+    !shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]).length &&
+    !n.children.some((k) => k.visible !== false && k.mask) &&
+    hasBlendedChild(n)
+  ) {
+    const kids = n.children.filter((k) => k.visible !== false);
+    const wrap: Record<string, string> = { position: "absolute", left: "0px", top: "0px", width: "0px", height: "0px", overflow: "visible", ...(extraStyle ?? {}) };
+    const inner = kids.map((k) => nodeHtml(c, { ...k, transform: matMul(t, k.transform ?? ID) }, n)).join("");
+    return `<div data-name="${attr(n.name ?? n.type)}" style="${attr(css(wrap))}">${inner}</div>`;
+  }
   if (turned && drawnAsSvg) {
     // Shapes take the turn inside their SVG: their box is the turned shape's.
     if (parent && !inFlow) {
@@ -888,7 +1139,7 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
     // Placed so its centre is the holder's (turned about its centre, its turned box is the holder).
     const centred = { ...t, m02: bounds.w / 2 - (t.m00 * w + t.m01 * h) / 2, m12: bounds.h / 2 - (t.m10 * w + t.m11 * h) / 2 };
     const inner = nodeHtml(c, { ...n, transform: centred, stackChildPrimaryGrow: undefined, stackChildAlignSelf: undefined, stackPositioning: "ABSOLUTE" }, { ...(parent as FNode), stackMode: "NONE" });
-    const hold: Record<string, string> = { position: "relative", width: px(bounds.w), height: px(bounds.h), flexShrink: "0" };
+    const hold: Record<string, string> = { position: "relative", width: px(bounds.w), height: px(bounds.h), flexShrink: "0", ...(extraStyle ?? {}) };
     return `<div data-name="${attr(n.name ?? n.type)}" style="${attr(css(hold))}">${inner}</div>`;
   }
   // Size: fixed, hugging what's in it, or filling its auto layout frame.
@@ -910,7 +1161,7 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
   if (inFlow && parent) {
     const row = parent.stackMode === "HORIZONTAL";
     // A negative gap (layers overlapping in auto layout), which CSS's gap can't be: a negative margin.
-    if (parent.stackSpacing < 0 && parent.stackPrimaryAlignItems !== "SPACE_EVENLY") {
+    if (parent.stackSpacing < 0 && !isSpaceBetween(parent.stackPrimaryAlignItems)) {
       const flow = parent.children.filter((k) => k.visible !== false && k.stackPositioning !== "ABSOLUTE");
       const i = flow.findIndex((k) => k.id === n.id);
       if (i > 0) {
@@ -938,29 +1189,55 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
   }
   if (fixW) st.width = px(w);
   if (fixH) st.height = px(h);
+  if (n.minWidth > 0) st.minWidth = px(n.minWidth);
+  if (n.maxWidth > 0) st.maxWidth = px(n.maxWidth);
+  if (n.minHeight > 0) st.minHeight = px(n.minHeight);
+  if (n.maxHeight > 0) st.maxHeight = px(n.maxHeight);
   const name = ` data-name="${attr(n.name ?? n.type)}"`;
-  const mask = n.mask ? " data-mask" : "";
+  // Figma's default maskType when unset is OUTLINE (vector), not ALPHA.
+  const maskKind = n.maskType === "ALPHA" ? "alpha" : n.maskType === "LUMINANCE" ? "luminance" : "vector";
+  const mask = n.mask ? ` data-mask="${maskKind}"` : "";
 
   // Shapes and icons: SVG from Figma's own geometry.
   if (drawnAsSvg) return svgHtml(c, n, parent, st, inFlow, { x: 0, y: 0, w, h }, null);
 
   if (isText) {
     let perLine: ReturnType<typeof lineHeights> = null;
-    textStyleCss(c, n, st);
+    textStyleCss(c, n, st, n);
     // Figma draws type without the Mac's extra weight (light words on dark looked bold beside it).
     st.WebkitFontSmoothing = "antialiased";
     // Figma's own line height for "auto", from how it laid the text out.
-    const derived = n.derivedTextData?.baselines?.[0]?.lineHeight;
+    const baselines: any[] = n.derivedTextData?.baselines ?? [];
+    const derived = baselines[0]?.lineHeight;
     perLine = st.lineHeight === "normal" ? lineHeights(n) : null;
     if (perLine) st.lineHeight = px(perLine.least);
     else if (st.lineHeight === "normal" && derived) st.lineHeight = px(derived);
+    if (n.leadingTrim === "CAP_HEIGHT") {
+      st.textBoxTrim = "trim-both";
+      st.textBoxEdge = "cap alphabetic";
+    }
     textPaintCss(c, paints(c, n, "fill"), w, h, st);
-    lookCss(c, n, st, true);
+    lookCss(c, n, st, true, w, h);
     const align = n.textAlignHorizontal;
     if (align && align !== "LEFT") st.textAlign = align === "JUSTIFIED" ? "justify" : align.toLowerCase();
-    if (n.textAutoResize === "TRUNCATE" || n.textTruncation === "ENABLED") (st.overflow = "hidden"), (st.textOverflow = "ellipsis");
+    const chars: string = n.textData?.characters ?? n.characters ?? "";
+    const truncated = n.textAutoResize === "TRUNCATE" || n.textTruncation === "ENABLED";
+    if (truncated && n.maxLines > 0) {
+      st.display = "-webkit-box";
+      st.WebkitBoxOrient = "vertical";
+      st.WebkitLineClamp = String(n.maxLines);
+      st.overflow = "hidden";
+    } else if (truncated) {
+      st.overflow = "hidden";
+      st.textOverflow = "ellipsis";
+      if (baselines.length === 1 && !chars.includes("\n")) st.whiteSpace = "nowrap";
+    } else if (baselines.length === 1 && !chars.includes("\n") && !st.whiteSpace && w > 0) {
+      // Single-line text in Figma: guard against 0.5px browser metric rounding causing spurious line wrap.
+      const lineW = baselines[0]?.width ?? 0;
+      if (lineW > 0 && w - lineW < 8) st.whiteSpace = "nowrap";
+    }
     const v = n.textAlignVertical;
-    if (st.height && v && v !== "TOP") {
+    if (st.height && v && v !== "TOP" && !(truncated && n.maxLines > 0)) {
       st.display = "flex";
       st.flexDirection = "column";
       st.justifyContent = v === "CENTER" ? "center" : "flex-end";
@@ -971,7 +1248,7 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
 
   // Boxes: frames, components, rectangles, ellipses.
   fillCss(c, paints(c, n, "fill"), w, h, st);
-  lookCss(c, n, st);
+  lookCss(c, n, st, false, w, h);
   if (n.type === "ELLIPSE") st.borderRadius = "50%";
   const box = BOXES.has(n.type);
   if (box && n.frameMaskDisabled === false && !n.resizeToFit) st.overflow = "hidden";
@@ -982,33 +1259,28 @@ export function nodeHtml(c: Ctx, n: FNode, parent: FNode | null): string {
     if (n.stackWrap === "WRAP") {
       st.flexWrap = "wrap";
       if (n.stackCounterSpacing) st.rowGap = px(n.stackCounterSpacing);
-      if (n.stackSpacing > 0 && n.stackPrimaryAlignItems !== "SPACE_EVENLY") st.columnGap = px(n.stackSpacing);
-    } else if (n.stackSpacing > 0 && n.stackPrimaryAlignItems !== "SPACE_EVENLY") st.gap = px(n.stackSpacing);
+      if (n.stackSpacing > 0 && !isSpaceBetween(n.stackPrimaryAlignItems)) st.columnGap = px(n.stackSpacing);
+    } else if (n.stackSpacing > 0 && !isSpaceBetween(n.stackPrimaryAlignItems)) st.gap = px(n.stackSpacing);
     const jc = ALIGN[n.stackPrimaryAlignItems ?? "MIN"];
     if (jc && jc !== "flex-start") st.justifyContent = jc;
     st.alignItems = ALIGN[n.stackCounterAlignItems ?? "MIN"] ?? "flex-start";
-    const pad = [n.stackVerticalPadding, n.stackPaddingRight, n.stackPaddingBottom, n.stackHorizontalPadding].map((v) => v ?? 0);
+    // Symmetric padding fallback: Figma leaves stackPaddingRight/Bottom unset when equal to left/top.
+    const padT = n.stackVerticalPadding ?? 0;
+    const padL = n.stackHorizontalPadding ?? 0;
+    const padR = n.stackPaddingRight ?? padL;
+    const padB = n.stackPaddingBottom ?? padT;
+    const pad = [padT, padR, padB, padL];
     if (pad.some((v) => v)) st.padding = pad.map(px).join(" ");
     st.boxSizing = "border-box";
+    if (n.stackReverseZIndex) st.isolation = "isolate";
   }
   const kids = n.children.filter((k) => k.visible !== false);
-  if (kids.some((k) => !autoLayout(n) || k.stackPositioning === "ABSOLUTE")) st.position ||= "relative";
-  const fxList: any[] = shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]);
-  const glassFx = fxList.find((e) => e.type === "GLASS");
-  const glassAttr = glassFx
-    ? ` data-glass="${attr(
-        JSON.stringify({
-          refraction: Math.round((glassFx.refraction ?? 0.8) * (glassFx.refraction > 1 ? 1 : 100)),
-          depth: Math.round((glassFx.depth ?? 0.65) * (glassFx.depth > 1 ? 1 : 100)),
-          dispersion: Math.round((glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.5) * ((glassFx.chromaticAberration ?? glassFx.dispersion ?? 0.5) > 1 ? 1 : 100)),
-          frost: Math.round(Math.min(100, (glassFx.radius ?? glassFx.frost ?? 0) * 2)),
-          splay: Math.round((glassFx.splay ?? 0) * ((glassFx.splay ?? 0) > 1 ? 1 : 100)),
-          lightAngle: Math.round(glassFx.specularAngle ?? glassFx.lightAngle ?? -60),
-          lightIntensity: Math.round((glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8) * ((glassFx.specularIntensity ?? glassFx.lightIntensity ?? 0.8) > 1 ? 1 : 100)),
-        }),
-      )}"`
-    : "";
-  return `<div${name}${mask}${glassAttr} style="${attr(css(st))}">${kids.map((k) => nodeHtml(c, k, n)).join("")}</div>`;
+  const gradStroke = gradientStrokeOverlay(c, n, w, h);
+  if (gradStroke || kids.some((k) => !autoLayout(n) || k.stackPositioning === "ABSOLUTE")) st.position ||= "relative";
+  const glassAttr = glassAttrOf(c, n);
+  const revZ = Boolean(autoLayout(n) && n.stackReverseZIndex);
+  const inner = kids.map((k, idx) => nodeHtml(c, k, n, revZ ? { zIndex: String(kids.length - idx) } : undefined)).join("");
+  return `<div${name}${mask}${glassAttr} style="${attr(css(st))}">${inner}${gradStroke}</div>`;
 }
 
 /** The box a w×h layer covers once its transform's turn (no move) is applied. */
@@ -1071,9 +1343,19 @@ function svgHtml(c: Ctx, n: FNode, parent: FNode | null, st: Record<string, stri
   if (turn) body = `<g transform="matrix(${num(turn.m00)} ${num(turn.m10)} ${num(turn.m01)} ${num(turn.m11)} ${num(-b.x)} ${num(-b.y)})">${body}</g>`;
   if (n.opacity !== undefined && n.opacity < 1) st.opacity = num(n.opacity);
   if (n.blendMode && BLEND[n.blendMode]) st.mixBlendMode = BLEND[n.blendMode];
+  // Apply Figma effects on vector/SVG layers (blur, drop-shadow, background blur).
+  const svgFx: any[] = shown((styleNode(c, n.styleIdForEffect)?.effects ?? n.effects) as any[]);
+  const filters: string[] = [];
+  for (const e of svgFx) {
+    if (e.type === "FOREGROUND_BLUR" && e.radius > 0) filters.push(`blur(${px(e.radius / 2)})`);
+    else if (e.type === "DROP_SHADOW") filters.push(`drop-shadow(${px(e.offset?.x ?? 0)} ${px(e.offset?.y ?? 0)} ${px((e.radius ?? 0) / 2)} ${rgba(e.color)})`);
+    else if (e.type === "BACKGROUND_BLUR" && e.radius > 0) st.backdropFilter = `blur(${px(e.radius / 2)})`;
+  }
+  if (filters.length) st.filter = filters.join(" ");
   st.overflow = "visible";
   const name = ` data-name="${attr(n.name ?? n.type)}"`;
-  return `<svg${name}${n.mask ? " data-mask" : ""} xmlns="http://www.w3.org/2000/svg" width="${num(b.w + 2 * pad)}" height="${num(b.h + 2 * pad)}" viewBox="${num(-pad)} ${num(-pad)} ${num(b.w + 2 * pad)} ${num(b.h + 2 * pad)}" fill="none" style="${attr(css(st))}">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${body}</svg>`;
+  const maskKind = n.maskType === "ALPHA" ? "alpha" : n.maskType === "LUMINANCE" ? "luminance" : "vector";
+  return `<svg${name}${n.mask ? ` data-mask="${maskKind}"` : ""}${glassAttrOf(c, n)} xmlns="http://www.w3.org/2000/svg" width="${num(b.w + 2 * pad)}" height="${num(b.h + 2 * pad)}" viewBox="${num(-pad)} ${num(-pad)} ${num(b.w + 2 * pad)} ${num(b.h + 2 * pad)}" fill="none" style="${attr(css(st))}">${defs.length ? `<defs>${defs.join("")}</defs>` : ""}${body}</svg>`;
 }
 
 /** A frame's own fill, as an SVG rectangle (when it's drawn as one SVG with what's in it). */
@@ -1087,12 +1369,18 @@ function fillBox(c: Ctx, n: FNode, w: number, h: number, defs: string[]): string
     .join("");
 }
 
-export function newCtx(d: FigDoc): Ctx {
-  return { d, warnings: new Set(), fonts: new Map(), pictures: new Map(), uid: 0 };
+export function newCtx(d: FigDoc, filteredPictures: Map<string, string> = new Map()): Ctx {
+  return { d, warnings: new Set(), fonts: new Map(), pictures: new Map(), filteredPictures, uid: 0 };
 }
 
 /** A frame's absolute place on its page (to keep frames where they are relative to each other). */
-export const placeOf = (n: FNode) => ({ x: n.transform?.m02 ?? 0, y: n.transform?.m12 ?? 0, w: n.size?.x ?? 0, h: n.size?.y ?? 0 });
+export const placeOf = (n: FNode) => {
+  const t: M = n.transform ?? ID;
+  const w = n.size?.x ?? 0;
+  const h = n.size?.y ?? 0;
+  const b = turnedBounds(t, w, h);
+  return { x: t.m02 + b.x, y: t.m12 + b.y, w: b.w, h: b.h };
+};
 
 /** A stable short hash, for ids. */
 export const shortHash = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 10);

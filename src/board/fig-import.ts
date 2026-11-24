@@ -12,6 +12,8 @@ import { forLatin, saveAsset } from "./web-import.js";
 import { readFigClipboard, readFigFile, type FigArchive } from "./fig-file.js";
 import { loadPathKit } from "./pathkit.js";
 import { copiedRoots, figDoc, newCtx, nodeHtml, placeOf, resolveTree, type FigDoc, type FNode } from "./fig-convert.js";
+import { synthesizeFigFonts } from "./fig-fonts.js";
+import { bakeFilteredImages } from "./fig-images.js";
 
 type Progress = (fraction: number, step?: string) => void;
 
@@ -31,8 +33,8 @@ export interface FigImportResult {
 const MAX_FRAMES = 80;
 const FRAMES = new Set(["FRAME", "SECTION", "SYMBOL", "INSTANCE"]);
 
-/** The fonts a design uses, from Google Fonts where it has them (others need to be on this Mac). */
-async function googleFonts(used: Map<string, Set<string>>, warnings: Set<string>): Promise<BoardFont[]> {
+/** The fonts a design uses: Google Fonts where available, plus .otf subsets synthesized from Figma's stored glyph outlines for commercial/custom fonts. */
+async function googleFonts(d: FigDoc, used: Map<string, Set<string>>, warnings: Set<string>): Promise<BoardFont[]> {
   const out: BoardFont[] = [];
   const missing: string[] = [];
   for (const [family, variants] of used) {
@@ -71,7 +73,15 @@ async function googleFonts(used: Map<string, Set<string>>, warnings: Set<string>
       }
     }
   }
-  if (missing.length) warnings.add(`${missing.join(", ")} ${missing.length === 1 ? "isn't" : "aren't"} on Google Fonts: ${missing.length === 1 ? "it shows" : "they show"} right where ${missing.length === 1 ? "it's" : "they're"} installed on this Mac.`);
+  if (missing.length) {
+    const synthesized = synthesizeFigFonts(d, new Set(missing));
+    out.push(...synthesized);
+    const covered = new Set(synthesized.map((f) => f.family.toLowerCase()));
+    const stillMissing = missing.filter((f) => !covered.has(f.toLowerCase()));
+    if (stillMissing.length) {
+      warnings.add(`${stillMissing.join(", ")} ${stillMissing.length === 1 ? "isn't" : "aren't"} on Google Fonts: ${stillMissing.length === 1 ? "it shows" : "they show"} right where ${stillMissing.length === 1 ? "it's" : "they're"} installed on this Mac.`);
+    }
+  }
   return out;
 }
 
@@ -98,7 +108,10 @@ async function bringPictures(d: FigDoc, fileKey: string | undefined, warnings: S
     if (!v || typeof v !== "object" || depth > 12) return;
     if (Array.isArray(v)) return v.forEach((x) => look(x, depth + 1));
     const o = v as Record<string, any>;
-    if (o.type === "IMAGE" && o.image?.hash) wanted.add(typeof o.image.hash === "string" ? o.image.hash : Buffer.from(Object.values(o.image.hash) as number[]).toString("hex"));
+    if ((o.type === "IMAGE" || o.type === "VIDEO") && (o.image?.hash || o.imageThumbnail?.hash)) {
+      const h = o.image?.hash ?? o.imageThumbnail?.hash;
+      wanted.add(typeof h === "string" ? h : Buffer.from(Object.values(h) as number[]).toString("hex"));
+    }
     for (const [k, x] of Object.entries(o)) if (k !== "children" && x && typeof x === "object" && !(x instanceof Uint8Array)) look(x, depth + 1);
   };
   for (const n of d.byId.values()) look(n, 0);
@@ -169,22 +182,37 @@ export async function importFig(boardId: string | null | undefined, o: FigImport
   }
   groups = groups.filter((g) => g.roots.length);
   if (!groups.length) throw new Error("There's nothing there to bring in.");
-  let total = 0;
-  for (const g of groups) {
-    const room = Math.max(0, MAX_FRAMES - total);
-    if (g.roots.length > room) ctx.warnings.add(`There are more than ${MAX_FRAMES} frames: the first ${MAX_FRAMES} came in.`);
-    g.roots = g.roots.slice(0, room);
-    total += g.roots.length;
+  const sum = groups.reduce((a, g) => a + g.roots.length, 0);
+  if (sum > MAX_FRAMES) {
+    ctx.warnings.add(`There are more than ${MAX_FRAMES} frames: the first ${MAX_FRAMES} came in.`);
+    // Water-filling cap so a single huge dump page doesn't starve later pages (e.g. Thumbnail).
+    let lo = 1;
+    let hi = Math.max(...groups.map((g) => g.roots.length));
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      const used = groups.reduce((a, g) => a + Math.min(g.roots.length, mid), 0);
+      if (used <= MAX_FRAMES) lo = mid;
+      else hi = mid - 1;
+    }
+    let rem = MAX_FRAMES;
+    for (const g of groups) {
+      const take = Math.min(g.roots.length, lo, rem);
+      g.roots = g.roots.slice(0, take);
+      rem -= take;
+    }
   }
   groups = groups.filter((g) => g.roots.length);
   progress(0.3, "Making the layers");
+  const resolvedGroups = groups.map((g) => ({ name: g.name, items: g.roots.map((r) => ({ raw: r, tree: resolveTree(d, r) })) }));
+  const filteredPictures = await bakeFilteredImages(d, resolvedGroups.flatMap((g) => g.items.map((x) => x.tree))).catch(() => new Map<string, string>());
+  for (const [k, v] of filteredPictures) ctx.filteredPictures.set(k, v);
   const fresh = !boardId;
   const id = boardId || createBoard(name, by).id;
   const board = getBoard(id);
   const ops: Op[] = [];
   const artboards: { id: string; name: string; page: string }[] = [];
   let layers = 0;
-  groups.forEach((g, gi) => {
+  resolvedGroups.forEach((g, gi) => {
     // On a new board, each Figma page is a page of its own (the first named after it); else this page.
     let pid: string;
     if (fresh && gi > 0) {
@@ -194,11 +222,10 @@ export async function importFig(boardId: string | null | undefined, o: FigImport
       pid = o.page && board.pages.some((p) => p.id === o.page) ? o.page : board.pages[0].id;
       if (fresh && g.name) ops.push({ op: "setPage", id: pid, name: g.name });
     }
-    const x0 = Math.min(...g.roots.map((r) => placeOf(r).x));
-    const y0 = Math.min(...g.roots.map((r) => placeOf(r).y));
+    const x0 = Math.min(...g.items.map((r) => placeOf(r.raw).x));
+    const y0 = Math.min(...g.items.map((r) => placeOf(r.raw).y));
     const spot = gi === 0 ? freeSpot(board, pid, 0) : { left: 0, top: 0 };
-    for (const r of g.roots) {
-      const tree = resolveTree(d, r);
+    for (const { raw: r, tree } of g.items) {
       const made = htmlToNodes(nodeHtml(ctx, tree, null), { wholeSvg: true });
       for (const w of made.warnings) ctx.warnings.add(w);
       const root = made.roots[0];
@@ -215,9 +242,9 @@ export async function importFig(boardId: string | null | undefined, o: FigImport
     }
   });
   progress(0.7, "Bringing its fonts");
-  const fonts = await googleFonts(ctx.fonts, ctx.warnings);
-  const have = new Set((board.fonts ?? []).map((f) => [f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.unicodeRange ?? ""].join("|")));
-  for (const font of fonts) if (!have.has([font.family.toLowerCase(), font.weight ?? "", font.style ?? "", font.unicodeRange ?? ""].join("|"))) ops.unshift({ op: "font", font });
+  const fonts = await googleFonts(d, ctx.fonts, ctx.warnings);
+  const have = new Set((board.fonts ?? []).map((f) => [f.family.toLowerCase(), f.weight ?? "", f.style ?? "", f.stretch ?? "", f.unicodeRange ?? ""].join("|")));
+  for (const font of fonts) if (!have.has([font.family.toLowerCase(), font.weight ?? "", font.style ?? "", font.stretch ?? "", font.unicodeRange ?? ""].join("|"))) ops.unshift({ op: "font", font });
   changeBoard(id, ops, by);
   progress(1, "Done");
   return { board: id, name, artboards, pages: groups.length, layers, pictures: ctx.pictures.size, fonts: fonts.length, warnings: [...ctx.warnings].slice(0, 12) };
