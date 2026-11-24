@@ -1493,7 +1493,33 @@ export function BoardCanvas() {
 // ---------------------------------------------------------------------------------------------
 // What's drawn over the design: selection, handles, labels, guides
 
-const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const HANDLES = ["n", "e", "s", "w", "nw", "ne", "se", "sw"];
+const isCorner = (h) => h.length === 2;
+/** Position a resize handle on `box`: 4 crisp corner squares + 4 invisible full-edge hit strips. */
+function handleStyle(box, h) {
+  if (isCorner(h)) {
+    return {
+      left: box.x + (h.includes("w") ? 0 : box.width) + "px",
+      top: box.y + (h.includes("n") ? 0 : box.height) + "px",
+    };
+  }
+  if (h === "n" || h === "s") {
+    const w = Math.max(8, box.width - 10);
+    return {
+      left: box.x + (box.width - w) / 2 + "px",
+      top: box.y + (h === "n" ? 0 : box.height) - 4 + "px",
+      width: w + "px",
+      height: "8px",
+    };
+  }
+  const hh = Math.max(8, box.height - 10);
+  return {
+    left: box.x + (h === "w" ? 0 : box.width) - 4 + "px",
+    top: box.y + (box.height - hh) / 2 + "px",
+    width: "8px",
+    height: hh + "px",
+  };
+}
 /** The tools that pick and move layers: Move, and Scale (whose handles scale instead of resizing). */
 const picking = () => B.tool === "move" || B.tool === "scale";
 
@@ -1509,9 +1535,9 @@ function sizeLabel(id, box) {
 }
 
 /**
- * The spacing of a selected flex frame, on the canvas: a short bar in the middle of each side's padding
- * and of each gap between its layers. Pointing at one shades the space it sets and shows its size;
- * dragging it changes it (padding: ⌥ both sides, ⇧ all four).
+ * The spacing of a selected flex frame, on the canvas: a subtle bar in the middle of each side's padding
+ * (blue) and of each gap between its layers (pink). Pointing at one shades the space it sets and shows
+ * its size; dragging it changes it (padding: ⌥ both sides, ⇧ all four, highlighting all changed sides).
  */
 function SpacingHandles({ id, box, active }) {
   const n = node(id);
@@ -1524,7 +1550,6 @@ function SpacingHandles({ id, box, active }) {
   const pad = { top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft) };
   const inner = { x: box.x + bw.left * z, y: box.y + bw.top * z, width: box.width - (bw.left + bw.right) * z, height: box.height - (bw.top + bw.bottom) * z };
   const spaces = [];
-  // Padding: only where there's room for a handle beside the resize handles.
   const bands = {
     top: { x: inner.x, y: inner.y, width: inner.width, height: pad.top * z },
     bottom: { x: inner.x, y: inner.y + inner.height - pad.bottom * z, width: inner.width, height: pad.bottom * z },
@@ -1532,8 +1557,7 @@ function SpacingHandles({ id, box, active }) {
     right: { x: inner.x + inner.width - pad.right * z, y: inner.y, width: pad.right * z, height: inner.height },
   };
   for (const side of ["top", "bottom", "left", "right"]) {
-    // Beneath the resize handles, and only with room to stay clear of them.
-    if (pad[side] * z < 14 || inner.width < 48 || inner.height < 48) continue;
+    if (pad[side] * z < 8 || inner.width < 32 || inner.height < 32) continue;
     spaces.push({ key: `pad-${side}`, rect: bands[side], value: pad[side], across: side === "top" || side === "bottom" });
   }
   // Gaps between the layers in its flow (not when they're spread out, where the gap isn't what sets the space).
@@ -1548,14 +1572,15 @@ function SpacingHandles({ id, box, active }) {
       const c = kids[i + 1];
       const r = row ? { x: a.x + a.width, y: content.y, width: c.x - (a.x + a.width), height: content.height } : { x: content.x, y: a.y + a.height, width: content.width, height: c.y - (a.y + a.height) };
       // A wrapped line's first layer starts back at the beginning: that's not a gap to show.
-      if ((row ? r.width : r.height) < 6 || (row ? r.width : r.height) > gap * z + 2) continue;
+      if ((row ? r.width : r.height) < 4 || (row ? r.width : r.height) > gap * z + 2) continue;
       spaces.push({ key: `gap-${i}`, rect: r, value: gap, across: !row, gap: true });
     }
   }
   return spaces.map((sp) => {
-    const on = active && (active.which === sp.key || (sp.gap && active.which === "gap"));
+    const on = Boolean(active && (sp.gap ? active.which === "gap" : active.sides ? active.sides.includes(sp.key) : active.which === sp.key));
     const r = sp.rect;
-    const bar = sp.across ? { width: 16, height: 4 } : { width: 4, height: 16 };
+    const len = sp.gap ? 14 : 16;
+    const bar = sp.across ? { width: Math.min(len, Math.max(8, r.width - 8)), height: 3 } : { width: 3, height: Math.min(len, Math.max(8, r.height - 8)) };
     return html`<div key=${sp.key} class="bd-space ${sp.gap ? "gap" : "pad"} ${on ? "on" : ""}">
       <div class="bd-space-band" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>
       <div class="bd-space-h" data-space=${sp.gap ? "gap" : sp.key} title=${sp.gap ? "Drag to change the gap" : "Drag to change the padding (⌥ both sides, ⇧ all four)"} style=${{ left: r.x + r.width / 2 - bar.width / 2 + "px", top: r.y + r.height / 2 - bar.height / 2 + "px", width: bar.width + "px", height: bar.height + "px", cursor: sp.across ? "ns-resize" : "ew-resize" }}></div>
@@ -1595,20 +1620,64 @@ function spaceDrag(e, id, which) {
         const d = side === "top" ? dy : side === "bottom" ? -dy : side === "left" ? dx : -dx;
         const v = Math.max(0, Math.round(pad[side] + d));
         const next = { ...pad, [side]: v };
-        if (ev.shiftKey) for (const k of Object.keys(next)) next[k] = v;
-        else if (ev.altKey) next[opposite[side]] = v;
-        B.spacing = { which, value: v };
+        let sides = [which];
+        if (ev.shiftKey) {
+          for (const k of Object.keys(next)) next[k] = v;
+          sides = ["pad-top", "pad-right", "pad-bottom", "pad-left"];
+        } else if (ev.altKey) {
+          next[opposite[side]] = v;
+          sides = [which, `pad-${opposite[side]}`];
+        }
+        B.spacing = { which, value: v, sides };
         ops = [{ op: "set", id, style: { padding: null, paddingTop: `${next.top}px`, paddingRight: `${next.right}px`, paddingBottom: `${next.bottom}px`, paddingLeft: `${next.left}px` } }];
       }
       preview(base, ops);
     },
     up: (ev, moved) => {
       B.spacing = null;
-      if (!moved || !ops.length) return notify();
+      if (!moved || !ops.length) {
+        B.board = base;
+        return notify();
+      }
       B.board = base;
       commit(ops, { label: which === "gap" ? "Gap" : "Padding" });
     },
+    cancel: () => {
+      B.spacing = null;
+      B.board = base;
+      notify();
+    },
   });
+}
+
+/** Subtle dashed constraint lines from a selected free child to its parent's anchored edges (as Paper shows). */
+function ParentPins({ id, box }) {
+  const n = node(id);
+  if (!n?.parent || inFlow(B.board, id)) return null;
+  const pb = screenBox(n.parent);
+  if (!pb) return null;
+  // Only when the layer sits inside its parent's bounds.
+  if (box.x + box.width < pb.x || box.x > pb.x + pb.width || box.y + box.height < pb.y || box.y > pb.y + pb.height) return null;
+  const lines = [];
+  const pinRight = Boolean(n.style.right && !n.style.left);
+  const pinBottom = Boolean(n.style.bottom && !n.style.top);
+  const midY = box.y + box.height / 2;
+  const midX = box.x + box.width / 2;
+  if (pinRight) {
+    const w = pb.x + pb.width - (box.x + box.width);
+    if (w > 3) lines.push({ k: "r", cls: "h", x: box.x + box.width, y: midY, w, h: 1 });
+  } else {
+    const w = box.x - pb.x;
+    if (w > 3) lines.push({ k: "l", cls: "h", x: pb.x, y: midY, w, h: 1 });
+  }
+  if (pinBottom) {
+    const h = pb.y + pb.height - (box.y + box.height);
+    if (h > 3) lines.push({ k: "b", cls: "v", x: midX, y: box.y + box.height, w: 1, h });
+  } else {
+    const h = box.y - pb.y;
+    if (h > 3) lines.push({ k: "t", cls: "v", x: midX, y: pb.y, w: 1, h });
+  }
+  return lines.map((l) => html`<div key=${"pin-" + l.k} class="bd-cpin ${l.cls}" style=${{ left: l.x + "px", top: l.y + "px", width: l.w + "px", height: l.h + "px" }}></div>`);
 }
 
 function Overlay() {
@@ -1627,6 +1696,34 @@ function Overlay() {
   const locked = one && node(one)?.locked;
   const movable = b.sel.length > 1 && !b.editing ? b.sel.filter((id) => !node(id)?.locked) : [];
   const group = movable.length > 1 ? unionOf(movable.map(screenBox).filter(Boolean)) : null;
+  // Direct children of a hovered container frame: subtle dashed outlines show what a double-click enters.
+  const hoverKids = [];
+  if (hover && !altDown && !cmdDown) {
+    const hn = node(b.hover);
+    if (hn?.type === "frame" && hn.parent && hn.children?.length) {
+      for (const cid of hn.children) {
+        if (hoverKids.length >= 32) break;
+        const cn = node(cid);
+        if (!cn || cn.hidden) continue;
+        const r = screenBox(cid);
+        if (r && r.width >= 3 && r.height >= 3) hoverKids.push([cid, r]);
+      }
+    }
+  }
+  // Immediate nested parent container of the current selection: dashed scope outline so nesting depth always reads.
+  const parentScopes = [];
+  if (!busy && !altDown && b.sel.length) {
+    const seen = new Set();
+    for (const sid of b.sel) {
+      const p = node(sid)?.parent;
+      if (!p || seen.has(p) || b.sel.includes(p)) continue;
+      const pn = node(p);
+      if (!pn?.parent) continue;
+      seen.add(p);
+      const r = screenBox(p);
+      if (r) parentScopes.push([p, r]);
+    }
+  }
   // Each agent marks the artboard it's on now (its latest move), in its own colour and with its name.
   const onIt = agentArtboards();
   const cr = getCanvasRect();
@@ -1639,30 +1736,42 @@ function Overlay() {
       // When dozens of artboards are zoomed tiny (< 28 px wide), skip unreadable overlapping labels unless selected/hovered/active.
       if (roots.length > 20 && r.width < 28 && !selected && b.hover !== id && !agent) return null;
       const writing = agent && !["look", "read"].includes(agent.doing);
-      return html`<div key=${id} class="bd-label ${selected ? "on" : ""} ${agent ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px", "--c": agent ? colourOf(agent.key) : undefined }} data-label=${id}>
+      return html`<div key=${id} class="bd-label ${selected ? "on" : ""} ${b.hover === id ? "hovered" : ""} ${agent ? "working" : ""}" style=${{ left: r.x + "px", top: r.y - 22 + "px", maxWidth: Math.max(40, r.width) + "px", "--c": agent ? colourOf(agent.key) : undefined }} data-label=${id}>
         ${agent && html`<span class="bd-agent"><i></i>${agent.name}</span>`}<span class="t">${b.board.nodes[id].name}</span></div>
         ${writing && html`<div class="bd-working" style=${{ left: r.x - 2 + "px", top: r.y - 2 + "px", width: r.width + 4 + "px", height: r.height + 4 + "px", "--c": colourOf(agent.key) }}></div>`}`;
     })}
     <${GridOverlay} />
-    ${hover && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
-    ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
+    ${parentScopes.map(([id, r]) => html`<div key=${"ps" + id} class="bd-parent-scope" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
+    ${box && !busy && !altDown && !b.editing && html`<${ParentPins} id=${one} box=${box} />`}
+    ${hoverKids.map(([id, r]) => html`<div key=${"hk" + id} class="bd-hover-child" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
+    ${hover && !altDown && html`<div class="bd-hover" style=${{ left: hover.x + "px", top: hover.y + "px", width: hover.width + "px", height: hover.height + "px" }}></div>`}
+    ${sel.map(([id, r]) => html`<div key=${id} class="bd-sel ${node(id)?.locked ? "locked" : ""} ${altDown && one === id && !busy ? "measuring" : ""}" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`)}
     ${!busy && html`<${MaskLines} />`}
-    ${box && !locked && !b.editing && (!busy || busy === "spacing") && isFlex(node(one)) && html`<${SpacingHandles} id=${one} box=${box} active=${b.spacing} />`}
+    ${box && !locked && !b.editing && (!busy || busy === "spacing") && (!altDown || busy === "spacing") && isFlex(node(one)) && html`<${SpacingHandles} id=${one} box=${box} active=${b.spacing} />`}
     ${box && !locked && !b.editing && !busy &&
-    HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} style=${{ left: box.x + (h.includes("w") ? 0 : h.includes("e") ? box.width : box.width / 2) + "px", top: box.y + (h.includes("n") ? 0 : h.includes("s") ? box.height : box.height / 2) + "px" }}></div>`)}
+    HANDLES.map((h) => html`<div key=${h} class="bd-handle ${isCorner(h) ? "corner" : "edge"} h-${h}" data-handle=${h} style=${handleStyle(box, h)}></div>`)}
     ${box && !b.editing && (!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: box.x + box.width / 2 + "px", top: box.y + box.height + 8 + "px" }}>${sizeLabel(one, box)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}
     ${group && html`<div class="bd-group" style=${{ left: group.x + "px", top: group.y + "px", width: group.width + "px", height: group.height + "px" }}></div>
-      ${!busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle h-${h}" data-handle=${h} data-group="1" style=${{ left: group.x + (h.includes("w") ? 0 : h.includes("e") ? group.width : group.width / 2) + "px", top: group.y + (h.includes("n") ? 0 : h.includes("s") ? group.height : group.height / 2) + "px" }}></div>`)}
+      ${!busy && HANDLES.map((h) => html`<div key=${h} class="bd-handle ${isCorner(h) ? "corner" : "edge"} h-${h}" data-handle=${h} data-group="1" style=${handleStyle(group, h)}></div>`)}
       ${(!busy || busy === "resize" || busy === "scale") && html`<div class="bd-size" style=${{ left: group.x + group.width / 2 + "px", top: group.y + group.height + 8 + "px" }}>${Math.round(group.width / b.view.z)} × ${Math.round(group.height / b.view.z)}${busy === "scale" && b.scaling ? ` · ${Math.round(b.scaling * 100)}%` : ""}</div>`}`}
     ${box && !busy && !b.editing && node(one)?.type === "video" && html`<${VideoBadge} key=${one} id=${one} box=${box} />`}
     ${altDown && one && !busy && html`<${Distances} from=${one} to=${b.hover && b.hover !== one ? b.hover : node(one)?.parent} />`}
-    ${b.drop?.line && html`<div class="bd-drop-line" style=${{ left: b.drop.line.x + "px", top: b.drop.line.y + "px", width: b.drop.line.width + "px", height: b.drop.line.height + "px" }}></div>`}
     ${b.drop?.into && (() => {
       const r = screenBox(b.drop.into);
-      return r && html`<div class="bd-drop-into" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}></div>`;
+      const nm = node(b.drop.into)?.name;
+      return r && html`<div class="bd-drop-into" style=${{ left: r.x + "px", top: r.y + "px", width: r.width + "px", height: r.height + "px" }}>
+        ${nm && r.width >= 36 && r.height >= 20 && b.drop.showTag !== false && html`<span class="bd-drop-tag">${nm}</span>`}
+      </div>`;
     })()}
+    ${b.drop?.ghosts?.map((g, i) => html`<div key=${"gh" + i} class="bd-ghost" style=${{ left: g.x + "px", top: g.y + "px", width: g.width + "px", height: g.height + "px", borderRadius: g.radius || undefined }}></div>`)}
+    ${b.drop?.line && html`<div class="bd-drop-line ${b.drop.line.width > b.drop.line.height ? "h" : "v"}" style=${{ left: b.drop.line.x + "px", top: b.drop.line.y + "px", width: b.drop.line.width + "px", height: b.drop.line.height + "px" }}></div>`}
     ${b.drop?.rect && html`<div class=${b.drop.kind === "marquee" ? "bd-marquee" : b.drop.kind === "comment" ? "bd-carea" : "bd-draw"} style=${{ left: b.drop.rect.x + "px", top: b.drop.rect.y + "px", width: b.drop.rect.width + "px", height: b.drop.rect.height + "px" }}></div>`}
-    ${b.guides.map((g, i) => html`<div key=${i} class="bd-guide ${g.axis}" style=${g.axis === "x" ? { left: g.at + "px", top: g.from + "px", height: g.to - g.from + "px" } : { top: g.at + "px", left: g.from + "px", width: g.to - g.from + "px" }}></div>`)}
+    ${b.guides.map((g, i) =>
+      g.kind === "dist"
+        ? html`<div key=${"gd" + i} class="bd-snap-dist ${g.axis === "y" ? "v" : "h"}" style=${g.axis === "y" ? { left: g.x + "px", top: g.y + "px", height: Math.max(1, g.len) + "px" } : { left: g.x + "px", top: g.y + "px", width: Math.max(1, g.len) + "px" }}><span>${Math.round(g.v)}</span></div>`
+        : html`<div key=${"g" + i} class="bd-guide ${g.axis}" style=${g.axis === "x" ? { left: g.at + "px", top: g.from + "px", height: Math.max(1, g.to - g.from) + "px" } : { top: g.at + "px", left: g.from + "px", width: Math.max(1, g.to - g.from) + "px" }}></div>
+            ${g.pts?.map(([px, py], j) => html`<div key=${"gp" + i + "-" + j} class="bd-guide-pt" style=${{ left: px + "px", top: py + "px" }}></div>`)}`
+    )}
     <${CommentLayer} />
   </div>`;
 }
@@ -1749,32 +1858,91 @@ const unionOf = (boxes) => {
   return { x, y, width: Math.max(...boxes.map((r) => r.x + r.width)) - x, height: Math.max(...boxes.map((r) => r.y + r.height)) - y };
 };
 
-/** ⌥ held: how far the selected layer is from another (or, inside it, from its edges). */
+/** ⌥ held: distances from the selected layer to another (or to its parent's edges), with dashed alignment extensions. */
 function Distances({ from, to }) {
   const a = from && screenBox(from);
   const b = to && screenBox(to);
   if (!a || !b) return null;
   const z = B.view.z;
   const lines = [];
-  const inside = a.x >= b.x - 0.5 && a.y >= b.y - 0.5 && a.x + a.width <= b.x + b.width + 0.5 && a.y + a.height <= b.y + b.height + 0.5;
-  const midY = a.y + a.height / 2;
-  const midX = a.x + a.width / 2;
+  const exts = [];
+  const aInB = a.x >= b.x - 0.5 && a.y >= b.y - 0.5 && a.x + a.width <= b.x + b.width + 0.5 && a.y + a.height <= b.y + b.height + 0.5;
+  const bInA = !aInB && b.x >= a.x - 0.5 && b.y >= a.y - 0.5 && b.x + b.width <= a.x + a.width + 0.5 && b.y + b.height <= a.y + a.height + 0.5;
   const h = (x1, x2, y) => x2 - x1 > 0.5 && lines.push({ x: x1, y, w: x2 - x1, h: 0, v: (x2 - x1) / z });
   const v = (y1, y2, x) => y2 - y1 > 0.5 && lines.push({ x, y: y1, w: 0, h: y2 - y1, v: (y2 - y1) / z });
-  if (inside) {
-    h(b.x, a.x, midY);
-    h(a.x + a.width, b.x + b.width, midY);
-    v(b.y, a.y, midX);
-    v(a.y + a.height, b.y + b.height, midX);
+  const extH = (x1, x2, y) => x2 - x1 > 1 && exts.push({ axis: "h", x: x1, y, len: x2 - x1 });
+  const extV = (y1, y2, x) => y2 - y1 > 1 && exts.push({ axis: "v", x, y: y1, len: y2 - y1 });
+  if (aInB || bInA) {
+    const inner = aInB ? a : b;
+    const outer = aInB ? b : a;
+    const midY = inner.y + inner.height / 2;
+    const midX = inner.x + inner.width / 2;
+    h(outer.x, inner.x, midY);
+    h(inner.x + inner.width, outer.x + outer.width, midY);
+    v(outer.y, inner.y, midX);
+    v(inner.y + inner.height, outer.y + outer.height, midX);
   } else {
-    const oy = Math.max(a.y, b.y) < Math.min(a.y + a.height, b.y + b.height) ? (Math.max(a.y, b.y) + Math.min(a.y + a.height, b.y + b.height)) / 2 : midY;
-    const ox = Math.max(a.x, b.x) < Math.min(a.x + a.width, b.x + b.width) ? (Math.max(a.x, b.x) + Math.min(a.x + a.width, b.x + b.width)) / 2 : midX;
-    if (a.x + a.width <= b.x) h(a.x + a.width, b.x, oy);
-    else if (b.x + b.width <= a.x) h(b.x + b.width, a.x, oy);
-    if (a.y + a.height <= b.y) v(a.y + a.height, b.y, ox);
-    else if (b.y + b.height <= a.y) v(b.y + b.height, a.y, ox);
+    const midY = a.y + a.height / 2;
+    const midX = a.x + a.width / 2;
+    const oyLo = Math.max(a.y, b.y);
+    const oyHi = Math.min(a.y + a.height, b.y + b.height);
+    const oxLo = Math.max(a.x, b.x);
+    const oxHi = Math.min(a.x + a.width, b.x + b.width);
+    const oy = oyLo < oyHi ? (oyLo + oyHi) / 2 : midY;
+    const ox = oxLo < oxHi ? (oxLo + oxHi) / 2 : midX;
+    const sepX = a.x + a.width <= b.x ? [a.x + a.width, b.x] : b.x + b.width <= a.x ? [b.x + b.width, a.x] : null;
+    const sepY = a.y + a.height <= b.y ? [a.y + a.height, b.y] : b.y + b.height <= a.y ? [b.y + b.height, a.y] : null;
+    if (sepX) {
+      h(sepX[0], sepX[1], oy);
+      if (oyLo >= oyHi) extV(Math.min(oy, b.y), Math.max(oy, b.y + b.height), sepX[0] === b.x + b.width ? b.x + b.width : b.x);
+    }
+    if (sepY) {
+      v(sepY[0], sepY[1], ox);
+      if (oxLo >= oxHi) extH(Math.min(ox, b.x), Math.max(ox, b.x + b.width), sepY[0] === b.y + b.height ? b.y + b.height : b.y);
+    }
+    // Side-by-side: show top and bottom edge alignment offsets with dashed extension lines (as Paper does).
+    if (sepX && !sepY) {
+      const dt = b.y - a.y;
+      if (Math.abs(dt) > 0.5) {
+        const yMin = Math.min(a.y, b.y);
+        const yMax = Math.max(a.y, b.y);
+        const at = dt > 0 ? b.x + b.width / 2 : a.x + a.width / 2;
+        v(yMin, yMax, at);
+        extH(Math.min(a.x, b.x), Math.max(a.x + a.width, b.x + b.width), yMin);
+      }
+      const ab = a.y + a.height;
+      const bb = b.y + b.height;
+      if (Math.abs(bb - ab) > 0.5) {
+        const yMin = Math.min(ab, bb);
+        const yMax = Math.max(ab, bb);
+        const at = bb > ab ? a.x + a.width / 2 : b.x + b.width / 2;
+        v(yMin, yMax, at);
+        extH(Math.min(a.x, b.x), Math.max(a.x + a.width, b.x + b.width), yMax);
+      }
+    }
+    // Stacked: show left and right edge alignment offsets with dashed extension lines.
+    if (sepY && !sepX) {
+      const dl = b.x - a.x;
+      if (Math.abs(dl) > 0.5) {
+        const xMin = Math.min(a.x, b.x);
+        const xMax = Math.max(a.x, b.x);
+        const at = dl > 0 ? b.y + b.height / 2 : a.y + a.height / 2;
+        h(xMin, xMax, at);
+        extV(Math.min(a.y, b.y), Math.max(a.y + a.height, b.y + b.height), xMin);
+      }
+      const ar = a.x + a.width;
+      const br = b.x + b.width;
+      if (Math.abs(br - ar) > 0.5) {
+        const xMin = Math.min(ar, br);
+        const xMax = Math.max(ar, br);
+        const at = br > ar ? a.y + a.height / 2 : b.y + b.height / 2;
+        h(xMin, xMax, at);
+        extV(Math.min(a.y, b.y), Math.max(a.y + a.height, b.y + b.height), xMax);
+      }
+    }
   }
-  return html`${!inside && html`<div class="bd-measure-box" style=${{ left: b.x + "px", top: b.y + "px", width: b.width + "px", height: b.height + "px" }}></div>`}
+  return html`<div class="bd-measure-box" style=${{ left: b.x + "px", top: b.y + "px", width: b.width + "px", height: b.height + "px" }}></div>
+    ${exts.map((e, i) => html`<div key=${"me" + i} class="bd-measure-ext ${e.axis}" style=${e.axis === "h" ? { left: e.x + "px", top: e.y + "px", width: e.len + "px" } : { left: e.x + "px", top: e.y + "px", height: e.len + "px" }}></div>`)}
     ${lines.map((l, i) => html`<div key=${i} class="bd-measure ${l.h ? "v" : "h"}" style=${{ left: l.x + "px", top: l.y + "px", width: Math.max(1, l.w) + "px", height: Math.max(1, l.h) + "px" }}>
       <span style=${l.h ? { top: "50%", left: "6px" } : { left: "50%", top: "6px" }}>${Math.round(l.v)}</span></div>`)}`;
 }
@@ -1785,6 +1953,8 @@ function Distances({ from, to }) {
 let spaceDown = false;
 /** ⌥ held: distances from the selection to the layer under the pointer. */
 let altDown = false;
+/** ⌘/Ctrl held: deep-pick preview under the pointer. */
+let cmdDown = false;
 addEventListener("keydown", (e) => {
   if (e.key === "Alt" && !altDown && B.id) {
     altDown = true;
@@ -1798,10 +1968,11 @@ addEventListener("keyup", (e) => {
   }
 });
 addEventListener("blur", () => {
-  if (altDown) {
-    altDown = false;
-    notify();
-  }
+  const had = altDown || cmdDown || spaceDown;
+  altDown = false;
+  cmdDown = false;
+  spaceDown = false;
+  if (had) notify();
 });
 addEventListener("keydown", (e) => {
   if (e.code === "Space" && !e.repeat && B.id && !B.editing && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
@@ -1815,12 +1986,6 @@ addEventListener("keyup", (e) => {
     spaceDown = false;
     notify();
   }
-});
-// Space let go in another app (⌘Tab while panning) never reaches this one: leaving clears it.
-addEventListener("blur", () => {
-  if (!spaceDown) return;
-  spaceDown = false;
-  notify();
 });
 
 /**
@@ -1840,41 +2005,69 @@ export function layersAt(clientX, clientY) {
 /** The deepest layer a press on `id` can pick (a locked one passes it to what holds it). */
 const deepestFor = (id) => [id, ...ancestors(B.board, id)].find((x) => !node(x)?.locked) ?? null;
 
-/** The layer a click on `id` (the deepest one hit) means, by how deep the selection already is. */
+/**
+ * The layer a hover or click on `id` (the deepest one hit) means, following Paper & Figma's
+ * ancestor-scope rule: every artboard root and every ancestor of the current selection is an
+ * "open" container, so siblings AND ancestors' siblings (uncles) are directly reachable in one
+ * click, while clicking inside a selected container keeps that container targeted for dragging.
+ */
 export function pickFor(e, id) {
   const board = B.board;
   const chain = [id, ...ancestors(board, id)].filter((x) => !board.nodes[x]?.locked || x === id);
   if (!chain.length) return null;
-  if (e.metaKey || e.ctrlKey) return chain[0];
-  // Keep to the level being worked at: a layer beside (or inside) what's selected.
+  if (e?.metaKey || e?.ctrlKey) return deepestFor(id) ?? chain[0];
+  const scopes = new Set();
+  const root = chain[chain.length - 1];
+  if (root && node(root)?.type === "frame" && !node(root)?.parent) scopes.add(root);
   for (const s of B.sel) {
-    const sn = node(s);
-    if (!sn?.parent) continue;
-    const at = chain.findIndex((x) => node(x)?.parent === sn.parent);
-    if (at >= 0) return chain[at];
-    const inside = chain.findIndex((x) => node(x)?.parent === s);
-    if (inside >= 0) return chain[inside];
+    for (const a of ancestors(board, s)) scopes.add(a);
   }
-  // Else what sits directly on the artboard (or the artboard, clicked on its own background).
+  for (const x of chain) {
+    const xn = node(x);
+    if (!xn || xn.locked) continue;
+    if (xn.parent && scopes.has(xn.parent)) return x;
+  }
   return chain.length >= 2 ? chain[chain.length - 2] : chain[0];
 }
 
-// Where the pointer last was, so holding ⌘ can show the deepest layer there without a move.
+/** Whether hovering `id` is empty background inside a populated artboard (which doesn't flash a hover ring; artboards are picked by their title label). */
+function isArtboardBg(hitId, pickedId, deep) {
+  if (deep || !pickedId || hitId !== pickedId) return false;
+  const n = node(pickedId);
+  return Boolean(n && !n.parent && n.type === "frame" && (n.children?.length ?? 0) > 0 && !B.sel.includes(pickedId));
+}
+
+// Where the pointer last was, so holding ⌘ or changing selection updates hover immediately without a move.
 let pointer = null;
 function hoverAt(clientX, clientY, deep) {
   const el = document.elementFromPoint(clientX, clientY);
   if (!el?.closest?.(".bd-canvas") || el.closest("[data-label]")) return;
   const hit = el.closest("[data-bid]");
-  const id = hit ? (deep ? deepestFor(hit.dataset.bid) : pickFor({}, hit.dataset.bid)) : null;
+  let id = hit ? (deep ? deepestFor(hit.dataset.bid) : pickFor({}, hit.dataset.bid)) : null;
+  if (hit && !altDown && isArtboardBg(hit.dataset.bid, id, deep)) id = null;
   if (id !== B.hover) bset({ hover: id });
 }
 for (const [type, deep] of [["keydown", true], ["keyup", false]])
   addEventListener(type, (e) => {
-    if ((e.key === "Meta" || e.key === "Control") && B.id && picking() && pointer && !B.dragging) hoverAt(pointer.x, pointer.y, deep);
+    if (e.key === "Meta" || e.key === "Control") {
+      cmdDown = deep;
+      if (B.id && picking() && pointer && !B.dragging) {
+        hoverAt(pointer.x, pointer.y, deep);
+        notify(["hover"]);
+      }
+    }
   });
+// Keep hover in sync when selection changes via keyboard (Enter / Shift+Enter / Esc / Tab) or double-click.
+let lastSelRef = B.sel;
+onBoard(() => {
+  if (B.sel === lastSelRef) return;
+  lastSelRef = B.sel;
+  if (B.id && picking() && pointer && !B.dragging) requestAnimationFrame(() => pointer && !B.dragging && hoverAt(pointer.x, pointer.y, cmdDown));
+}, CANVAS_ONLY);
 
 function hoverMove(e) {
   pointer = { x: e.clientX, y: e.clientY };
+  cmdDown = Boolean(e.metaKey || e.ctrlKey);
   if (B.live && canvasEl.current) {
     const w = toWorld(e.clientX, e.clientY);
     sendLivePresence({ cursor: { x: Math.round(w.x), y: Math.round(w.y) }, page: B.page, tool: B.tool });
@@ -1883,7 +2076,8 @@ function hoverMove(e) {
   const hit = e.target.closest?.("[data-bid]");
   const label = e.target.closest?.("[data-label]");
   // With the comment tool, the layer a click would pin a comment to (until one is being written).
-  const id = B.tool === "comment" ? (hit && !B.draft && !B.thread ? commentTarget(hit.dataset.bid) : null) : label ? label.dataset.label : hit ? pickFor(e, hit.dataset.bid) : null;
+  let id = B.tool === "comment" ? (hit && !B.draft && !B.thread ? commentTarget(hit.dataset.bid) : null) : label ? label.dataset.label : hit ? pickFor(e, hit.dataset.bid) : null;
+  if (B.tool !== "comment" && !label && hit && !altDown && isArtboardBg(hit.dataset.bid, id, cmdDown)) id = null;
   if (id !== B.hover) bset({ hover: id });
 }
 
@@ -1935,27 +2129,57 @@ function comment(e) {
   });
 }
 
-/** Follow a press until it lets go. `kind` says what the drag is, so the overlay can step aside. */
-function drag(e, { move, up, threshold = 3, kind = null }) {
+/** Follow a press until it lets go (or is cancelled by Escape / pointercancel / blur). */
+function drag(e, { move, up, cancel, threshold = 3, kind = null }) {
   const x0 = e.clientX;
   const y0 = e.clientY;
+  const pid = e.pointerId;
   let live = threshold === 0;
+  let done = false;
   if (live && kind) B.dragging = kind;
+  const cleanup = () => {
+    removeEventListener("pointermove", onMove);
+    removeEventListener("pointerup", onUp);
+    removeEventListener("pointercancel", onCancel);
+    removeEventListener("blur", onCancel);
+    removeEventListener("keydown", onKey, true);
+    B.dragging = null;
+  };
   const onMove = (ev) => {
+    if (pid != null && ev.pointerId != null && ev.pointerId !== pid) return;
     if (!live && Math.hypot(ev.clientX - x0, ev.clientY - y0) < threshold) return;
     if (!live && kind) B.dragging = kind;
     live = true;
     move(ev);
   };
   const onUp = (ev) => {
-    removeEventListener("pointermove", onMove);
-    removeEventListener("pointerup", onUp);
-    B.dragging = null;
+    if (done) return;
+    if (pid != null && ev.pointerId != null && ev.pointerId !== pid) return;
+    done = true;
+    cleanup();
     up(ev, live);
     notify();
   };
+  const onCancel = (ev) => {
+    if (done) return;
+    done = true;
+    cleanup();
+    if (cancel) cancel(ev);
+    else up(ev, false);
+    notify();
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape" && live) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onCancel(ev);
+    }
+  };
   addEventListener("pointermove", onMove);
   addEventListener("pointerup", onUp);
+  addEventListener("pointercancel", onCancel);
+  addEventListener("blur", onCancel);
+  addEventListener("keydown", onKey, true);
 }
 
 function down(e) {
@@ -1974,8 +2198,10 @@ function down(e) {
       kind: "pan",
       move: (ev) => bset({ view: { ...v0, x: v0.x + ev.clientX - e.clientX, y: v0.y + ev.clientY - e.clientY } }),
       up: () => c.classList.remove("grabbing"),
+      cancel: () => c.classList.remove("grabbing"),
     });
   }
+  if (e.button !== 0) return;
   if (B.tool === "comment") return comment(e);
   // Working on the design closes a comment's thread.
   if (B.thread || B.draft) closeThread();
@@ -1994,7 +2220,7 @@ function down(e) {
     return moveLayers(e, B.sel.slice());
   }
   const hit = e.target.closest?.("[data-bid]");
-  if (!hit) return marquee(e, null);
+  if (!hit) return marquee(e, null, false);
   if (hit.dataset.lod === "1" && (e.metaKey || e.ctrlKey)) {
     const cx = e.clientX, cy = e.clientY;
     ensureLiveRoots([hit.dataset.bid]);
@@ -2006,10 +2232,13 @@ function down(e) {
     return;
   }
   const id = pickFor(e, hit.dataset.bid);
-  if (!id) return marquee(e, null);
+  if (!id) return marquee(e, null, false);
   const n = node(id);
-  // A press on an artboard's own background: click selects it, a drag selects what's inside.
-  if (!n.parent && hit.dataset.bid === id && !B.sel.includes(id) && !e.shiftKey) return marquee(e, id);
+  // Press on an artboard's empty background: dragging marquee-selects its children; clicking deselects
+  // (populated artboards are picked by their title label, as in Paper/Figma; empty frames still select on click).
+  if (!n.parent && n.type === "frame" && hit.dataset.bid === id && !B.sel.includes(id) && !e.shiftKey) {
+    return marquee(e, id, (n.children?.length ?? 0) === 0);
+  }
   if (e.shiftKey) {
     select(id, { toggle: true });
     return;
@@ -2019,10 +2248,10 @@ function down(e) {
   moveLayers(e, B.sel.filter((x) => !node(x)?.locked));
 }
 
-function marquee(e, root) {
+function marquee(e, root, selectOnClick = false) {
   const c = canvasEl.current.getBoundingClientRect();
   const keep = e.shiftKey ? B.sel.slice() : [];
-  if (!e.shiftKey && !root) select([]);
+  if (!e.shiftKey && (!root || !selectOnClick)) select([]);
   drag(e, {
     kind: "marquee",
     move: (ev) => {
@@ -2039,8 +2268,9 @@ function marquee(e, root) {
     },
     up: (ev, moved) => {
       bset({ drop: null });
-      if (!moved && root) select(root);
+      if (!moved && root && selectOnClick) select(root);
     },
+    cancel: () => bset({ drop: null }),
   });
 }
 
@@ -2199,7 +2429,8 @@ function keepFillStyle(base, id, into) {
  * Where something dragged to a point would land: the frame to go into (null: the page), and whether
  * the pointer is near the edge of a frame that sits in a flex layout (then it goes beside that frame,
  * in the same layout, not into it). A frame beside the dragged layers in their own flex layout only
- * takes them after a pause over its middle, so dragging along a row reorders it rather than nesting.
+ * takes them after a brief pause over its middle (unless empty), so dragging along a row reorders it
+ * cleanly rather than accidentally nesting.
  */
 function dropFrameAt(clientX, clientY, ids, held) {
   const f = frameAt(clientX, clientY, ids);
@@ -2215,13 +2446,13 @@ function dropFrameAt(clientX, clientY, ids, held) {
   const at = row ? clientX - c.left - r.x : clientY - c.top - r.y;
   const edge = Math.max(6, Math.min(24, size * 0.25));
   if (at < edge || at > size - edge) return fn.parent;
-  // A sibling in the same layout: into it only after the pointer rests over it.
+  // A sibling in the same layout: into it immediately if empty, else after resting briefly over its middle.
   const sibling = ids.some((id) => node(id)?.parent === fn.parent);
-  if (sibling && !held(f)) return fn.parent;
+  if (sibling && (fn.children?.length ?? 0) > 0 && !held(f)) return fn.parent;
   return f;
 }
 
-/** Where in a flex frame's flow a drop at a point goes, and the line that shows it (screen px). */
+/** Where in a flex frame's flow a drop at a point goes, and the line that shows it (centered in the gap, screen px). */
 function flowSlot(frameId, clientX, clientY, ids) {
   const frame = node(frameId);
   const c = getCanvasRect();
@@ -2234,26 +2465,285 @@ function flowSlot(frameId, clientX, clientY, ids) {
     const r = screenBox(kids[i]);
     if (r && p < (row ? r.x + r.width / 2 : r.y + r.height / 2)) {
       index = i;
-      line = row ? { x: r.x - 2, y: r.y, width: 3, height: r.height } : { x: r.x, y: r.y - 2, width: r.width, height: 3 };
+      const prev = i > 0 ? screenBox(kids[i - 1]) : null;
+      if (row) {
+        const at = prev ? (prev.x + prev.width + r.x) / 2 - 1.5 : r.x - 2;
+        const y0 = prev ? Math.min(prev.y, r.y) : r.y;
+        const y1 = prev ? Math.max(prev.y + prev.height, r.y + r.height) : r.y + r.height;
+        line = { x: at, y: y0, width: 3, height: Math.max(8, y1 - y0) };
+      } else {
+        const at = prev ? (prev.y + prev.height + r.y) / 2 - 1.5 : r.y - 2;
+        const x0 = prev ? Math.min(prev.x, r.x) : r.x;
+        const x1 = prev ? Math.max(prev.x + prev.width, r.x + r.width) : r.x + r.width;
+        line = { x: x0, y: at, width: Math.max(8, x1 - x0), height: 3 };
+      }
       break;
     }
   }
   if (!line) {
     const last = kids.length ? screenBox(kids[kids.length - 1]) : null;
     const fr = screenBox(frameId);
-    line = last ? (row ? { x: last.x + last.width, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height, width: last.width, height: 3 }) : fr && { x: fr.x + 4, y: fr.y + 4, width: row ? 3 : Math.max(8, fr.width - 8), height: row ? Math.max(8, fr.height - 8) : 3 };
+    line = last
+      ? (row ? { x: last.x + last.width + 1, y: last.y, width: 3, height: last.height } : { x: last.x, y: last.y + last.height + 1, width: last.width, height: 3 })
+      : fr && { x: fr.x + 6, y: fr.y + 6, width: row ? 3 : Math.max(8, fr.width - 12), height: row ? Math.max(8, fr.height - 12) : 3 };
   }
   // Its index among all the frame's layers (hidden and absolute ones count too).
   const all = (frame.children ?? []).filter((x) => !ids.includes(x));
-  return { index: index < kids.length ? all.indexOf(kids[index]) : all.length, line };
+  const fullIndex = index < kids.length ? all.indexOf(kids[index]) : all.length;
+  // Suppress the marker when dropping a single in-flow layer right back into its own slot.
+  const noop = ids.length === 1 && node(ids[0])?.parent === frameId && inFlow(B.board, ids[0]) && (frame.children ?? []).indexOf(ids[0]) === fullIndex;
+  return { index: fullIndex, line: noop ? null : line, noop };
+}
+
+/** Gather world boxes of the reference targets inside `into` (parent + visible siblings, excluding `except`). */
+function snapRefsFor(into, except) {
+  const parentBox = into ? worldBox(into) : null;
+  const list = into ? (node(into)?.children ?? []) : currentPage().children;
+  const sibs = [];
+  for (const id of list) {
+    if (except.includes(id)) continue;
+    const n = node(id);
+    if (!n || n.hidden) continue;
+    const b = worldBox(id);
+    if (b && b.width > 0 && b.height > 0) sibs.push(b);
+  }
+  return { parentBox, sibs };
+}
+
+/**
+ * Smart snapping for a moving layer box (world coords) against its parent and siblings:
+ * - Edges snap to edges, centres snap to centres (never noisy centre-to-outer-edge snaps).
+ * - Guides are bounded strictly to the union span of the aligned boxes, with anchor dots at each alignment point.
+ * - Equal spacing between (or beside) siblings snaps and renders twin distance pills.
+ * - Live neighbour distance pill shows along the guide when snapped to a sibling.
+ */
+function computeSnap(box, refs, z, skip) {
+  if (skip || !box) return { dx: 0, dy: 0, guides: [] };
+  const { parentBox, sibs } = refs;
+  const all = parentBox ? [parentBox, ...sibs] : sibs;
+  if (!all.length) return { dx: 0, dy: 0, guides: [] };
+  const tol = SNAP / z;
+  const { x: vx, y: vy } = B.view;
+  const sx = (wx) => wx * z + vx;
+  const sy = (wy) => wy * z + vy;
+
+  const findAxis = (axis) => {
+    const isX = axis === "x";
+    const p0 = isX ? box.x : box.y;
+    const sz = isX ? box.width : box.height;
+    const myEdges = [p0, p0 + sz];
+    const myMid = p0 + sz / 2;
+    let best = null;
+    for (const ref of all) {
+      const r0 = isX ? ref.x : ref.y;
+      const rsz = isX ? ref.width : ref.height;
+      for (const t of [r0, r0 + rsz]) {
+        for (const e of myEdges) {
+          const d = t - e;
+          if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t, center: false };
+        }
+      }
+      const dm = r0 + rsz / 2 - myMid;
+      if (Math.abs(dm) <= tol && (!best || Math.abs(dm) < Math.abs(best.d))) best = { d: dm, t: r0 + rsz / 2, center: true };
+    }
+    return best;
+  };
+
+  let dx = 0;
+  let dy = 0;
+  const snapX = findAxis("x");
+  const snapY = findAxis("y");
+  if (snapX) dx = snapX.d;
+  if (snapY) dy = snapY.d;
+
+  const guides = [];
+  let eqX = null;
+  let eqY = null;
+
+  // Equal-spacing snap on any axis that didn't already snap to an edge/centre.
+  const findEqual = (axis, moved) => {
+    const isX = axis === "x";
+    const m0 = isX ? moved.x : moved.y;
+    const m1 = m0 + (isX ? moved.width : moved.height);
+    const c0 = isX ? moved.y : moved.x;
+    const c1 = c0 + (isX ? moved.height : moved.width);
+    const near = sibs
+      .filter((r) => {
+        const rc0 = isX ? r.y : r.x;
+        const rc1 = rc0 + (isX ? r.height : r.width);
+        return Math.max(c0, rc0) < Math.min(c1, rc1);
+      })
+      .sort((a, b) => (isX ? a.x - b.x : a.y - b.y));
+    if (near.length < 2) return null;
+    // Between two siblings (L, R)
+    let left = null;
+    let right = null;
+    for (const r of near) {
+      const r0 = isX ? r.x : r.y;
+      const r1 = r0 + (isX ? r.width : r.height);
+      if (r1 <= m0 + tol) left = r;
+      else if (r0 >= m1 - tol && !right) right = r;
+    }
+    if (left && right) {
+      const l1 = isX ? left.x + left.width : left.y + left.height;
+      const r0 = isX ? right.x : right.y;
+      const target = (l1 + r0 - (m1 - m0)) / 2;
+      const gap = target - l1;
+      if (gap >= 2 && Math.abs(target - m0) <= tol) {
+        return { d: target - m0, gap, pairs: [[left, moved, l1, target], [moved, right, target + (m1 - m0), r0]] };
+      }
+    }
+    // Beside an adjacent pair (A, B) with gap G
+    for (let i = 0; i + 1 < near.length; i++) {
+      const A = near[i];
+      const B2 = near[i + 1];
+      const a1 = isX ? A.x + A.width : A.y + A.height;
+      const b0 = isX ? B2.x : B2.y;
+      const b1 = b0 + (isX ? B2.width : B2.height);
+      const G = b0 - a1;
+      if (G < 2) continue;
+      // Right/below B2
+      const after = b1 + G;
+      if (Math.abs(after - m0) <= tol) {
+        return { d: after - m0, gap: G, pairs: [[A, B2, a1, b0], [B2, moved, b1, after]] };
+      }
+      // Left/above A
+      const a0 = isX ? A.x : A.y;
+      const before = a0 - G - (m1 - m0);
+      if (Math.abs(before - m0) <= tol) {
+        return { d: before - m0, gap: G, pairs: [[moved, A, before + (m1 - m0), a0], [A, B2, a1, b0]] };
+      }
+    }
+    return null;
+  };
+
+  if (!snapX) {
+    eqX = findEqual("x", { ...box, x: box.x + dx, y: box.y + dy });
+    if (eqX) dx += eqX.d;
+  }
+  if (!snapY) {
+    eqY = findEqual("y", { ...box, x: box.x + dx, y: box.y + dy });
+    if (eqY) dy += eqY.d;
+  }
+
+  const finalBox = { x: box.x + dx, y: box.y + dy, width: box.width, height: box.height };
+  const eps = 0.75 / z;
+
+  // Emit bounded alignment guides + exact anchor points.
+  if (snapX) {
+    const t = snapX.t;
+    let minY = finalBox.y;
+    let maxY = finalBox.y + finalBox.height;
+    const pts = [];
+    const addPts = (b) => {
+      const mid = b.y + b.height / 2;
+      if (Math.abs(b.x + b.width / 2 - t) <= eps) pts.push([sx(t), sy(mid)]);
+      else pts.push([sx(t), sy(b.y)], [sx(t), sy(b.y + b.height)]);
+    };
+    addPts(finalBox);
+    const matchedSibs = [];
+    for (const ref of all) {
+      if (Math.abs(ref.x - t) <= eps || Math.abs(ref.x + ref.width - t) <= eps || Math.abs(ref.x + ref.width / 2 - t) <= eps) {
+        minY = Math.min(minY, ref.y);
+        maxY = Math.max(maxY, ref.y + ref.height);
+        if (ref !== parentBox) {
+          addPts(ref);
+          matchedSibs.push(ref);
+        }
+      }
+    }
+    guides.push({ axis: "x", at: sx(t), from: sy(minY), to: sy(maxY), pts });
+    // Live vertical distance to the closest disjoint matched sibling along this X guide.
+    if (!eqY && matchedSibs.length) {
+      let bestGap = null;
+      for (const r of matchedSibs) {
+        if (finalBox.y >= r.y + r.height + 1) {
+          const g = finalBox.y - (r.y + r.height);
+          if (!bestGap || g < bestGap.v) bestGap = { y1: r.y + r.height, y2: finalBox.y, v: g, ref: r };
+        } else if (r.y >= finalBox.y + finalBox.height + 1) {
+          const g = r.y - (finalBox.y + finalBox.height);
+          if (!bestGap || g < bestGap.v) bestGap = { y1: finalBox.y + finalBox.height, y2: r.y, v: g, ref: r };
+        }
+      }
+      if (bestGap) {
+        const oxLo = Math.max(finalBox.x, bestGap.ref.x);
+        const oxHi = Math.min(finalBox.x + finalBox.width, bestGap.ref.x + bestGap.ref.width);
+        const cx = oxLo < oxHi ? (oxLo + oxHi) / 2 : t;
+        guides.push({ kind: "dist", axis: "y", x: sx(cx), y: sy(bestGap.y1), len: (bestGap.y2 - bestGap.y1) * z, v: bestGap.v });
+      }
+    }
+  }
+
+  if (snapY) {
+    const t = snapY.t;
+    let minX = finalBox.x;
+    let maxX = finalBox.x + finalBox.width;
+    const pts = [];
+    const addPts = (b) => {
+      const mid = b.x + b.width / 2;
+      if (Math.abs(b.y + b.height / 2 - t) <= eps) pts.push([sx(mid), sy(t)]);
+      else pts.push([sx(b.x), sy(t)], [sx(b.x + b.width), sy(t)]);
+    };
+    addPts(finalBox);
+    const matchedSibs = [];
+    for (const ref of all) {
+      if (Math.abs(ref.y - t) <= eps || Math.abs(ref.y + ref.height - t) <= eps || Math.abs(ref.y + ref.height / 2 - t) <= eps) {
+        minX = Math.min(minX, ref.x);
+        maxX = Math.max(maxX, ref.x + ref.width);
+        if (ref !== parentBox) {
+          addPts(ref);
+          matchedSibs.push(ref);
+        }
+      }
+    }
+    guides.push({ axis: "y", at: sy(t), from: sx(minX), to: sx(maxX), pts });
+    if (!eqX && matchedSibs.length) {
+      let bestGap = null;
+      for (const r of matchedSibs) {
+        if (finalBox.x >= r.x + r.width + 1) {
+          const g = finalBox.x - (r.x + r.width);
+          if (!bestGap || g < bestGap.v) bestGap = { x1: r.x + r.width, x2: finalBox.x, v: g, ref: r };
+        } else if (r.x >= finalBox.x + finalBox.width + 1) {
+          const g = r.x - (finalBox.x + finalBox.width);
+          if (!bestGap || g < bestGap.v) bestGap = { x1: finalBox.x + finalBox.width, x2: r.x, v: g, ref: r };
+        }
+      }
+      if (bestGap) {
+        const oyLo = Math.max(finalBox.y, bestGap.ref.y);
+        const oyHi = Math.min(finalBox.y + finalBox.height, bestGap.ref.y + bestGap.ref.height);
+        const cy = oyLo < oyHi ? (oyLo + oyHi) / 2 : t;
+        guides.push({ kind: "dist", axis: "x", x: sx(bestGap.x1), y: sy(cy), len: (bestGap.x2 - bestGap.x1) * z, v: bestGap.v });
+      }
+    }
+  }
+
+  // Equal-spacing twin distance pills.
+  if (eqX) {
+    for (const [b1, b2, x1, x2] of eqX.pairs) {
+      const lo = Math.max(b1.y, b2.y);
+      const hi = Math.min(b1.y + b1.height, b2.y + b2.height);
+      const cy = lo < hi ? (lo + hi) / 2 : finalBox.y + finalBox.height / 2;
+      guides.push({ kind: "dist", axis: "x", x: sx(x1), y: sy(cy), len: (x2 - x1) * z, v: eqX.gap });
+    }
+  }
+  if (eqY) {
+    for (const [b1, b2, y1, y2] of eqY.pairs) {
+      const lo = Math.max(b1.x, b2.x);
+      const hi = Math.min(b1.x + b1.width, b2.x + b2.width);
+      const cx = lo < hi ? (lo + hi) / 2 : finalBox.x + finalBox.width / 2;
+      guides.push({ kind: "dist", axis: "y", x: sx(cx), y: sy(y1), len: (y2 - y1) * z, v: eqY.gap });
+    }
+  }
+
+  return { dx, dy, guides };
 }
 
 /**
  * Drag layers, one or many, wherever they are: each move finds where a drop would land, the deepest
- * frame under the pointer or the page. Into a flex frame, a line shows the slot; into a grid, the
- * cell; into a frame laid out by hand (or onto the page), they go where they're dropped. Moved within
- * the frame they're placed in by hand, they snap to its edges and their neighbours'. Artboards only
- * move. Sizes a layout gave them are kept as they leave it, so nothing changes size on the way.
+ * frame under the pointer or the page. Into a flex frame, a gap-centered line shows the slot; into a
+ * grid, the cell; into a frame laid out by hand (or onto the page), they go where they're dropped with
+ * bounded smart guides & equal-spacing snapping. Dragged layers dim in place while an unclipped overlay
+ * ghost follows the pointer cleanly across clipped frames and stacking contexts. Escape cancels cleanly.
  */
 function moveLayers(e, ids) {
   if (!ids.length) return;
@@ -2270,38 +2760,41 @@ function moveLayers(e, ids) {
   const free = ids.filter((id) => !inFlow(base, id));
   const allFree = free.length === ids.length;
   const boxes = Object.fromEntries(ids.map((id) => [id, worldBox(id)]));
+  const radii = Object.fromEntries(ids.map((id) => [id, elOf(id) ? getComputedStyle(elOf(id)).borderRadius : ""]));
   const starts = Object.fromEntries(free.map((id) => [id, placeOf(id)]));
   const grab = toWorld(e.clientX, e.clientY);
-  // Edges to snap to when moved within its own frame: the other artboards (for artboards), else the parent's edges and centre and its neighbours' edges.
-  const lone = ids.length === 1 && allFree ? ids[0] : null;
+  const lone = ids.length === 1 ? ids[0] : null;
   const loneBox = lone ? boxes[lone] : null;
-  const targets = { x: [], y: [] };
-  if (lone) {
-    const others = parent0 ? [parent0] : currentPage().children.filter((x) => x !== lone);
-    for (const o of others) {
-      const b = worldBox(o);
-      if (!b) continue;
-      targets.x.push(b.x, b.x + b.width / 2, b.x + b.width);
-      targets.y.push(b.y, b.y + b.height / 2, b.y + b.height);
-    }
-    for (const sib of parent0 ? (node(parent0)?.children ?? []) : []) {
-      if (sib === lone) continue;
-      const b = worldBox(sib);
-      if (!b) continue;
-      targets.x.push(b.x, b.x + b.width / 2, b.x + b.width);
-      targets.y.push(b.y, b.y + b.height / 2, b.y + b.height);
-    }
-  }
+  // Cache snap references per target container so pointermove stays fast.
+  const refCache = new Map();
+  const refsFor = (into) => {
+    const key = into ?? "__page__";
+    if (!refCache.has(key)) refCache.set(key, snapRefsFor(into, ids));
+    return refCache.get(key);
+  };
   const els = ids.map((id) => elOf(id)).filter(Boolean);
-  const ghost = (dx, dy) => {
-    for (const el of els) {
-      el.style.translate = dx || dy ? `${dx}px ${dy}px` : "";
-      el.classList.toggle("bd-dragging", Boolean(dx || dy));
-    }
+  const dimOriginals = (on) => {
+    for (const el of els) el.classList.toggle("bd-dragging", on);
+  };
+  const makeGhosts = (dx, dy) => {
+    const { x: vx, y: vy } = B.view;
+    return ids
+      .map((id) => {
+        const b = boxes[id];
+        if (!b) return null;
+        return {
+          x: (b.x + dx) * z + vx,
+          y: (b.y + dy) * z + vy,
+          width: Math.max(2, b.width * z),
+          height: Math.max(2, b.height * z),
+          radius: radii[id]?.replace(/(-?[\d.]+)px/g, (_, v) => `${Number(v) * z}px`),
+        };
+      })
+      .filter(Boolean);
   };
   // A frame the pointer rests over (for going into a neighbour in the same layout).
   let resting = { id: null, since: 0 };
-  const held = (id) => resting.id === id && performance.now() - resting.since >= 380;
+  const held = (id) => resting.id === id && performance.now() - resting.since >= 260;
   let restTimer = 0;
   // A frame whose layers are all placed by hand (most artboards) takes a drop where it's dropped, even
   // if it's a flex frame; one whose layers flow (or an empty one) takes it into its flow.
@@ -2326,7 +2819,7 @@ function moveLayers(e, ids) {
       if (raw !== resting.id) {
         resting = { id: raw, since: performance.now() };
         clearTimeout(restTimer);
-        if (raw) restTimer = setTimeout(() => last && B.dragging && decide(last), 400);
+        if (raw) restTimer = setTimeout(() => last && B.dragging && decide(last), 280);
       }
       into = dropFrameAt(ev.clientX, ev.clientY, ids, held);
       // A frame of its own on the page (an artboard) goes into another frame only if it fits in it: artboards side by side never nest.
@@ -2337,73 +2830,103 @@ function moveLayers(e, ids) {
       }
     }
     const frame = into ? node(into) : null;
-    // Still in the frame (or on the page) where they're placed by hand: a plain move, snapping.
+    // Still in the frame (or on the page) where they're placed by hand: live move with smart guides.
     if (allFree && oneParent && into === parent0) {
-      const guides = [];
-      if (loneBox && !ev.metaKey) {
-        const snap = (pos, size, list) => {
-          let best = null;
-          for (const t of list)
-            for (const edge of [pos, pos + size / 2, pos + size]) {
-              const d = t - edge;
-              if (Math.abs(d) * z <= SNAP && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
-            }
-          return best;
-        };
-        const sx = snap(loneBox.x + dx, loneBox.width, targets.x);
-        const sy = snap(loneBox.y + dy, loneBox.height, targets.y);
-        if (sx) dx += sx.d;
-        if (sy) dy += sy.d;
-        const c = getCanvasRect();
-        const { x, y } = B.view;
-        if (sx) guides.push({ axis: "x", at: sx.t * z + x, from: 0, to: c.height });
-        if (sy) guides.push({ axis: "y", at: sy.t * z + y, from: 0, to: c.width });
+      let guides = [];
+      if (loneBox) {
+        const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, refsFor(parent0), z, ev.metaKey);
+        dx += sn.dx;
+        dy += sn.dy;
+        guides = sn.guides;
       }
       dx = Math.round(dx);
       dy = Math.round(dy);
-      ghost(0, 0);
+      dimOriginals(false);
       plan = { kind: "shift", ops: ids.map((id) => ({ op: "set", id, style: { left: `${starts[id].left + dx}px`, top: `${starts[id].top + dy}px` } })) };
       B.guides = guides;
       B.drop = null;
       previewed = true;
       return preview(base, plan.ops);
     }
-    // Anywhere else: the layers follow the pointer, and what's under it shows where they'd land.
+    // Anywhere else: dim originals in place and float crisp unclipped overlay ghosts over all frames.
     if (previewed) {
       B.board = base;
       previewed = false;
     }
-    B.guides = [];
-    ghost(dx, dy);
-    if (frame && !byHand(into) && isGrid(frame) && ids.length === 1) {
-      const drop = gridDrop(into, ev.clientX, ev.clientY, ids[0]);
-      plan = drop ? { kind: "grid", into, drop, dx, dy } : null;
-      return bset({ drop: drop ? { grid: into, cell: drop.rect, into } : { into } });
+    dimOriginals(true);
+    if (frame && !byHand(into) && isGrid(frame)) {
+      B.guides = [];
+      const ghosts = makeGhosts(dx, dy);
+      if (ids.length === 1) {
+        const drop = gridDrop(into, ev.clientX, ev.clientY, ids[0]);
+        plan = drop ? { kind: "grid", into, drop, dx, dy } : null;
+        return bset({ drop: drop ? { grid: into, cell: drop.rect, into, ghosts } : { into, ghosts } });
+      }
+      plan = { kind: "grid-many", into, dx, dy };
+      return bset({ drop: { grid: into, into, ghosts } });
     }
     if (frame && !byHand(into)) {
+      B.guides = [];
       const slot = flowSlot(into, ev.clientX, ev.clientY, ids);
+      const ghosts = makeGhosts(dx, dy);
       plan = { kind: "flow", into, index: slot.index, dx, dy };
-      return bset({ drop: { line: slot.line, into } });
+      return bset({ drop: { line: slot.line, into, ghosts, showTag: into !== parent0 } });
     }
+    // Free target frame (or page): snap single dragged layer against target's edges & children too!
+    let guides = [];
+    if (loneBox) {
+      const sn = computeSnap({ ...loneBox, x: loneBox.x + dx, y: loneBox.y + dy }, refsFor(into), z, ev.metaKey);
+      dx += sn.dx;
+      dy += sn.dy;
+      guides = sn.guides;
+    }
+    B.guides = guides;
+    const ghosts = makeGhosts(dx, dy);
     plan = { kind: "place", into, dx, dy };
-    bset({ drop: into ? { into } : null });
+    bset({ drop: into ? { into, ghosts, showTag: into !== parent0 } : { ghosts } });
+  };
+  const reset = () => {
+    clearTimeout(restTimer);
+    dimOriginals(false);
+    B.guides = [];
+    bset({ drop: null });
+    if (previewed) {
+      B.board = base;
+      previewed = false;
+    }
   };
   drag(e, {
     kind: "move",
     move: decide,
+    cancel: () => {
+      reset();
+      notify();
+    },
     up: (ev, moved) => {
+      const hadPreview = previewed;
       clearTimeout(restTimer);
-      ghost(0, 0);
+      dimOriginals(false);
       B.guides = [];
       bset({ drop: null });
-      if (!moved || !plan) return notify();
-      if (previewed) B.board = base;
+      if (!moved || !plan) {
+        if (hadPreview) B.board = base;
+        return notify();
+      }
+      if (hadPreview) B.board = base;
       const ops = [];
       if (plan.kind === "shift") ops.push(...plan.ops);
       else if (plan.kind === "grid") {
         const id = ids[0];
         if (!inFlow(base, id)) ops.push({ op: "set", id, style: joinFlowStyle });
         ops.push(...gridDropOps(plan.drop, id));
+      } else if (plan.kind === "grid-many") {
+        const order = ids.slice().sort((a, b) => boxes[a].y - boxes[b].y || boxes[a].x - boxes[b].x);
+        for (const id of order) {
+          if (base.nodes[id].parent !== plan.into) ops.push({ op: "move", id, parent: plan.into });
+          const st = { ...(inFlow(base, id) ? keepFillStyle(base, id, plan.into) : joinFlowStyle) };
+          intoGridStyle(st);
+          ops.push({ op: "set", id, style: st });
+        }
       } else if (plan.kind === "flow") {
         // In the order they're seen along the layout, at the slot.
         const row = !(node(plan.into).style.flexDirection ?? "row").startsWith("column") || isGrid(node(plan.into));
@@ -2487,6 +3010,9 @@ function resize(e, id, h, keep = false) {
   const ratio = box0.width / Math.max(1, box0.height);
   const parent = n.parent ? node(n.parent) : null;
   const parentRow = parent && isFlex(parent) && !(parent.style.flexDirection ?? "row").startsWith("column");
+  const refs = snapRefsFor(n.parent ?? null, [id]);
+  const allRefs = refs.parentBox ? [refs.parentBox, ...refs.sibs] : refs.sibs;
+  const tol = SNAP / z;
   let ops = [];
   drag(e, {
     threshold: 0,
@@ -2496,6 +3022,60 @@ function resize(e, id, h, keep = false) {
       const dy = (ev.clientY - e.clientY) / z;
       let w = box0.width + (h.includes("e") ? dx : h.includes("w") ? -dx : 0);
       let hh = box0.height + (h.includes("s") ? dy : h.includes("n") ? -dy : 0);
+      const guides = [];
+      if (!ev.metaKey && !(ev.shiftKey && h.length === 2) && allRefs.length) {
+        const { x: vx, y: vy } = B.view;
+        const sx = (wx) => wx * z + vx;
+        const sy = (wy) => wy * z + vy;
+        // Snap active horizontal edge (w or e) to parent/sibling edges.
+        if (h.includes("e") || h.includes("w")) {
+          const edge = h.includes("e") ? box0.x + w : box0.x + box0.width - w;
+          let best = null;
+          for (const r of allRefs)
+            for (const t of [r.x, r.x + r.width]) {
+              const d = t - edge;
+              if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
+            }
+          if (best) {
+            w += h.includes("e") ? best.d : -best.d;
+            let y0 = h.includes("n") ? box0.y + box0.height - hh : box0.y;
+            let y1 = y0 + hh;
+            const pts = [[sx(best.t), sy(y0)], [sx(best.t), sy(y1)]];
+            for (const r of allRefs) {
+              if (Math.abs(r.x - best.t) <= 0.75 / z || Math.abs(r.x + r.width - best.t) <= 0.75 / z) {
+                y0 = Math.min(y0, r.y);
+                y1 = Math.max(y1, r.y + r.height);
+                if (r !== refs.parentBox) pts.push([sx(best.t), sy(r.y)], [sx(best.t), sy(r.y + r.height)]);
+              }
+            }
+            guides.push({ axis: "x", at: sx(best.t), from: sy(y0), to: sy(y1), pts });
+          }
+        }
+        // Snap active vertical edge (n or s) to parent/sibling edges.
+        if (h.includes("n") || h.includes("s")) {
+          const edge = h.includes("s") ? box0.y + hh : box0.y + box0.height - hh;
+          let best = null;
+          for (const r of allRefs)
+            for (const t of [r.y, r.y + r.height]) {
+              const d = t - edge;
+              if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, t };
+            }
+          if (best) {
+            hh += h.includes("s") ? best.d : -best.d;
+            let x0 = h.includes("w") ? box0.x + box0.width - w : box0.x;
+            let x1 = x0 + w;
+            const pts = [[sx(x0), sy(best.t)], [sx(x1), sy(best.t)]];
+            for (const r of allRefs) {
+              if (Math.abs(r.y - best.t) <= 0.75 / z || Math.abs(r.y + r.height - best.t) <= 0.75 / z) {
+                x0 = Math.min(x0, r.x);
+                x1 = Math.max(x1, r.x + r.width);
+                if (r !== refs.parentBox) pts.push([sx(r.x), sy(best.t)], [sx(r.x + r.width), sy(best.t)]);
+              }
+            }
+            guides.push({ axis: "y", at: sy(best.t), from: sx(x0), to: sx(x1), pts });
+          }
+        }
+      }
       if (ev.shiftKey && h.length === 2) {
         if (Math.abs(dx) > Math.abs(dy)) hh = w / ratio;
         else w = hh * ratio;
@@ -2517,13 +3097,23 @@ function resize(e, id, h, keep = false) {
         if (h.includes("w")) style.left = `${Math.round(start.left + box0.width - w)}px`;
         if (h.includes("n")) style.top = `${Math.round(start.top + box0.height - hh)}px`;
       }
+      B.guides = guides;
       ops = [{ op: "set", id, style }];
       preview(base, ops);
     },
     up: (ev, moved) => {
-      if (!moved || !ops.length) return;
+      B.guides = [];
+      if (!moved || !ops.length) {
+        B.board = base;
+        return notify();
+      }
       B.board = base;
       commit(ops, { label: "Resize" });
+    },
+    cancel: () => {
+      B.guides = [];
+      B.board = base;
+      notify();
     },
   });
 }

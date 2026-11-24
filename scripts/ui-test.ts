@@ -712,6 +712,197 @@ const CHECKS: Record<string, Check> = {
     if (gap !== "20px" || shownGap !== "20") return `the gap after dragging: ${gap} (shown ${shownGap})`;
     return st.paddingTop === "26px" && st.paddingBottom === "26px" && st.paddingLeft === "16px" && shownPad === "26" ? "ok" : `padding after an ⌥-drag of the top: ${st.paddingTop} ${st.paddingRight} ${st.paddingBottom} ${st.paddingLeft} (shown ${shownPad})`;
   },
+  async "selection: Paper-style hover children, parent scope, uncle clicks, empty artboard deselect, Shift+Enter, and ⌥ alignment offsets"(page) {
+    const t = await openMaskBoard(page, DRAG_STAGE);
+    const stage = t.byName("Stage");
+    const column = t.byName("Column");
+    const title = t.byName("Title");
+    const inner = t.byName("Inner");
+    const loose = t.byName("Loose");
+    const state = () => S(page, async () => {
+      const m = await import("/ui/board-state.js" as string);
+      return {
+        sel: m.B.sel.map((id: string) => m.B.board.nodes[id]?.name ?? null).join(","),
+        hover: m.B.hover ? m.B.board.nodes[m.B.hover]?.name ?? null : null,
+        hoverKids: document.querySelectorAll(".bd-hover-child").length,
+        parentScopes: document.querySelectorAll(".bd-parent-scope").length,
+        pins: document.querySelectorAll(".bd-cpin").length,
+        measures: document.querySelectorAll(".bd-measure").length,
+        measureExts: document.querySelectorAll(".bd-measure-ext").length,
+      };
+    });
+    // 1. Idle hover over a nested layer highlights its outermost container AND shows dashed outlines for its direct children.
+    const ib = await boxOf(page, inner);
+    await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2, { steps: 3 });
+    await page.waitForTimeout(160);
+    const sHover = await state();
+    await picture(page, "paper-hover-children");
+    // 2. Hovering empty background inside a populated artboard doesn't flash a hover outline on the artboard.
+    const sb = await boxOf(page, stage);
+    await page.mouse.move(sb.x + sb.width - 30, sb.y + sb.height - 30);
+    await page.waitForTimeout(120);
+    const sBgHover = await state();
+    // 3. Click Column (shows parent pin lines), dblclick into Box (shows dashed parent scope on Column), dblclick into Inner (shows dashed parent scope on Box).
+    await page.mouse.click(ib.x + ib.width / 2, ib.y + ib.height / 2);
+    await page.waitForTimeout(150);
+    const sCol = await state();
+    await page.mouse.dblclick(ib.x + ib.width / 2, ib.y + ib.height / 2);
+    await page.waitForTimeout(150);
+    await page.mouse.dblclick(ib.x + ib.width / 2, ib.y + ib.height / 2);
+    await page.waitForTimeout(150);
+    const sInner = await state();
+    await picture(page, "paper-nested-scope");
+    // 4. Ancestor-scope picking: while Inner (inside Box inside Column) is selected, hovering & clicking uncle Title picks Title directly (never kicking back out to Column).
+    const tb = await boxOf(page, title);
+    await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 3 });
+    await page.waitForTimeout(150);
+    const sUncleHover = await state();
+    await page.mouse.click(tb.x + tb.width / 2, tb.y + tb.height / 2);
+    await page.waitForTimeout(150);
+    const sUncleClick = await state();
+    // 5. Keyboard hierarchy navigation: Shift+Enter steps up to parent Column; Enter enters its children; clicking empty artboard space deselects.
+    await page.keyboard.press("Shift+Enter");
+    await page.waitForTimeout(150);
+    const sUp = await state();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(150);
+    const sDown = await state();
+    await page.mouse.click(sb.x + sb.width - 30, sb.y + sb.height - 30);
+    await page.waitForTimeout(150);
+    const sEmptyClick = await state();
+    // 6. ⌥ measurement between side-by-side siblings shows distance AND dashed alignment extension lines.
+    await sel(page, [column]);
+    await page.waitForTimeout(150);
+    const lb = await boxOf(page, loose);
+    await page.keyboard.down("Alt");
+    await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2, { steps: 3 });
+    await page.waitForTimeout(180);
+    const sAlt = await state();
+    await picture(page, "paper-alt-measure");
+    await page.keyboard.up("Alt");
+    boards.deleteBoard(t.id);
+    if (sHover.hover !== "Column" || sHover.hoverKids !== 3) return `hover over Inner: ${JSON.stringify(sHover)}`;
+    if (sBgHover.hover !== null) return `empty artboard background hovered: ${sBgHover.hover}`;
+    if (sCol.sel !== "Column" || sCol.pins < 2) return `Column selected pins: ${JSON.stringify(sCol)}`;
+    if (sInner.sel !== "Inner" || sInner.parentScopes !== 1) return `Inner selected scope: ${JSON.stringify(sInner)}`;
+    if (sUncleHover.hover !== "Title" || sUncleClick.sel !== "Title") return `uncle hover/click: ${JSON.stringify({ sUncleHover, sUncleClick })}`;
+    if (sUp.sel !== "Column" || sDown.sel !== "Title,Box,Footer") return `Shift+Enter / Enter: ${JSON.stringify({ sUp, sDown })}`;
+    if (sEmptyClick.sel !== "") return `empty artboard click left selected: ${sEmptyClick.sel}`;
+    if (sAlt.measures < 2 || sAlt.measureExts < 1) return `⌥ measurement: ${JSON.stringify(sAlt)}`;
+    return "ok";
+  },
+  async "dragging: bounded snap guides with dots, equal spacing, unclipped overlay ghost, drop tag, Escape cancel, and multi-layer grid drop"(page) {
+    const t = await openMaskBoard(page, DRAG_STAGE);
+    const stage = t.byName("Stage");
+    const column = t.byName("Column");
+    const box = t.byName("Box");
+    const inner = t.byName("Inner");
+    const loose = t.byName("Loose");
+    const sb = await boxOf(page, stage);
+    const cb = await boxOf(page, column);
+    const lb = await boxOf(page, loose);
+    // 1. Drag Loose up so its top aligns with Column's top: bounded horizontal guide (< canvas width), anchor dots, and live distance pill; Escape cancels cleanly.
+    await sel(page, [loose]);
+    await page.waitForTimeout(150);
+    const startX = lb.x + lb.width / 2;
+    const startY = lb.y + lb.height / 2;
+    const alignY = startY + (cb.y - lb.y);
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(startX, startY + ((alignY - startY) * i) / 8);
+    await page.waitForTimeout(120);
+    const snapInfo = await S(page, () => {
+      const cw = document.querySelector(".bd-canvas")!.getBoundingClientRect().width;
+      const ys = [...document.querySelectorAll(".bd-guide.y")].map((g) => g.getBoundingClientRect().width);
+      return {
+        guides: ys.length,
+        bounded: ys.length > 0 && ys.every((w) => w < cw - 40),
+        pts: document.querySelectorAll(".bd-guide-pt").length,
+        dists: document.querySelectorAll(".bd-snap-dist").length,
+      };
+    });
+    await picture(page, "paper-drag-snap");
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    const afterEsc = styleOf(t, loose);
+    // 2. Drag Inner out of Box (clipped with overflow:hidden) over Column: unclipped overlay ghost + drop-target tag + gap-centered drop line.
+    boards.changeBoard(t.id, [{ op: "set", id: box, style: { overflow: "hidden" } }], "studio");
+    await page.waitForTimeout(250);
+    await sel(page, [inner]);
+    await page.waitForTimeout(150);
+    const ib = await boxOf(page, inner);
+    const titleBox = await boxOf(page, t.byName("Title"));
+    await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(
+        ib.x + ib.width / 2 + ((titleBox.x + titleBox.width / 2 - (ib.x + ib.width / 2)) * i) / 8,
+        ib.y + ib.height / 2 + ((titleBox.y + titleBox.height + 2 - (ib.y + ib.height / 2)) * i) / 8,
+      );
+    }
+    await page.waitForTimeout(120);
+    const ghostInfo = await S(page, () => ({
+      ghosts: document.querySelectorAll(".bd-ghost").length,
+      dropInto: document.querySelectorAll(".bd-drop-into").length,
+      dropTag: document.querySelector(".bd-drop-tag")?.textContent ?? "",
+      dropLine: document.querySelectorAll(".bd-drop-line").length,
+    }));
+    await picture(page, "paper-drag-ghost");
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+    boards.deleteBoard(t.id);
+    // 3. Equal spacing snap on 3 free siblings.
+    const eq = await openMaskBoard(
+      page,
+      `<div data-name="Eq" style="position:relative;width:700px;height:300px;background:#fff"><div data-name="A" style="position:absolute;left:40px;top:80px;width:80px;height:80px;background:#ddd"></div><div data-name="B" style="position:absolute;left:180px;top:80px;width:80px;height:80px;background:#ddd"></div><div data-name="C" style="position:absolute;left:420px;top:80px;width:80px;height:80px;background:#4c8dff"></div></div>`,
+    );
+    const eqC = eq.byName("C");
+    const eqB = await boxOf(page, eq.byName("B"));
+    const eqCBox = await boxOf(page, eqC);
+    const k = (await boxOf(page, eq.byName("Eq"))).width / 700;
+    // Gap between A (40..120) and B (180..260) is 60px -> C equal-spaced sits at left=320px (drag dx = -98px, within snap of -100px).
+    await sel(page, [eqC]);
+    await page.waitForTimeout(150);
+    await page.mouse.move(eqCBox.x + eqCBox.width / 2, eqCBox.y + eqCBox.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(eqCBox.x + eqCBox.width / 2 - (98 * k * i) / 8, eqCBox.y + eqCBox.height / 2);
+    await page.waitForTimeout(100);
+    const eqDists = await S(page, () => [...document.querySelectorAll(".bd-snap-dist span")].map((s) => s.textContent));
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    const eqLeft = styleOf(eq, eqC).left;
+    boards.deleteBoard(eq.id);
+    // 4. Multi-layer drag into a grid frame.
+    const gm = await openMaskBoard(
+      page,
+      `<div data-name="Desk" style="position:relative;width:760px;height:400px;background:#fff"><div data-name="Grid" style="position:absolute;left:40px;top:40px;width:360px;height:280px;display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;background:#f4f4f5"><div data-name="Cell1" style="height:80px;background:#ccc"></div></div><div data-name="P1" style="position:absolute;left:480px;top:60px;width:80px;height:60px;background:#f87171"></div><div data-name="P2" style="position:absolute;left:480px;top:150px;width:80px;height:60px;background:#60a5fa"></div></div>`,
+    );
+    const gridId = gm.byName("Grid");
+    const p1 = gm.byName("P1");
+    const p2 = gm.byName("P2");
+    await sel(page, [p1, p2]);
+    await page.waitForTimeout(150);
+    const p1b = await boxOf(page, p1);
+    const gb = await boxOf(page, gridId);
+    await page.mouse.move(p1b.x + p1b.width / 2, p1b.y + p1b.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(p1b.x + p1b.width / 2 + ((gb.x + gb.width / 2 - (p1b.x + p1b.width / 2)) * i) / 10, p1b.y + p1b.height / 2 + ((gb.y + gb.height / 2 - (p1b.y + p1b.height / 2)) * i) / 10);
+    }
+    await page.waitForTimeout(100);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    const gridParents = [nodeOf(gm, p1).parent === gridId, nodeOf(gm, p2).parent === gridId];
+    boards.deleteBoard(gm.id);
+    if (!snapInfo.guides || !snapInfo.bounded || snapInfo.pts < 2 || snapInfo.dists < 1) return `bounded snap guides: ${JSON.stringify(snapInfo)}`;
+    if (afterEsc.left !== "500px" || afterEsc.top !== "300px") return `Escape didn't cancel drag: ${afterEsc.left}, ${afterEsc.top}`;
+    if (ghostInfo.ghosts !== 1 || ghostInfo.dropInto !== 1 || ghostInfo.dropTag !== "Column" || ghostInfo.dropLine !== 1) return `overlay ghost/drop: ${JSON.stringify(ghostInfo)}`;
+    if (eqLeft !== "320px" || eqDists.filter((d) => d === "60").length < 2) return `equal spacing: left=${eqLeft}, dists=${JSON.stringify(eqDists)}`;
+    if (!gridParents.every(Boolean)) return `multi-layer grid drop: ${JSON.stringify(gridParents)}`;
+    return "ok";
+  },
   async "on a board, double-click goes in, a drag reorders a flex row and undo puts it back"(page) {
     const t = await openTestBoard(page);
     const one = await boxOf(page, t.byName("Row One"));

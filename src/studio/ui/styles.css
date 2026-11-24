@@ -996,27 +996,56 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 .bd-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .bd-label { position: absolute; display: flex; align-items: center; gap: 6px; height: 20px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; pointer-events: auto; cursor: default; user-select: none; -webkit-user-select: none; }
 .bd-label .t { overflow: hidden; text-overflow: ellipsis; }
-.bd-label:hover, .bd-label.on { color: var(--iris-fg); }
+.bd-label:hover, .bd-label.on, .bd-label.hovered { color: var(--iris-fg); }
 .bd-agent { display: inline-flex; align-items: center; gap: 5px; height: 17px; padding: 0 7px 0 6px; border-radius: 999px; background: var(--c, var(--lime)); color: #fff; font-size: 10.5px; font-weight: 650; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
 .bd-agent i { flex: none; background: #fff; }
 /* The artboard an agent is writing to, outlined in that agent's colour. */
 .bd-working { position: absolute; border-radius: 2px; box-shadow: 0 0 0 1.5px var(--c, rgb(var(--accent-rgb) / 0.75)); pointer-events: none; transition: opacity 0.4s ease; }
+/* Nested structure cues (after Paper): dashed children on hover, dashed parent scope on selection, subtle pins on free children. */
+.bd-hover-child { position: absolute; border: 1px dashed color-mix(in srgb, var(--iris) 55%, transparent); pointer-events: none; }
+.bd-parent-scope { position: absolute; border: 1px dashed color-mix(in srgb, var(--iris) 60%, transparent); pointer-events: none; }
+.bd-cpin { position: absolute; pointer-events: none; opacity: 0.55; }
+.bd-cpin.h { border-top: 1px dashed var(--iris); height: 0 !important; }
+.bd-cpin.v { border-left: 1px dashed var(--iris); width: 0 !important; }
 .bd-hover { position: absolute; box-shadow: 0 0 0 1.5px var(--iris); }
-.bd-sel { position: absolute; box-shadow: 0 0 0 1.5px var(--iris); }
-.bd-sel.locked { box-shadow: 0 0 0 1.5px var(--text-3); }
-.bd-handle { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; background: #fff; border-radius: 2px; box-shadow: 0 0 0 1.5px var(--iris); pointer-events: auto; }
+.bd-sel { position: absolute; box-shadow: 0 0 0 1.25px var(--iris); }
+.bd-sel.locked { box-shadow: 0 0 0 1.25px var(--text-3); }
+.bd-sel.measuring { box-shadow: 0 0 0 1.25px var(--guide); }
+/* 4 crisp corner squares + 4 full-edge invisible hit strips, so small layers & padding handles stay uncluttered. */
+.bd-handle { position: absolute; pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; }
+.bd-handle.corner { width: 8px; height: 8px; margin: -4px 0 0 -4px; background: #fff; border-radius: 1.5px; box-shadow: 0 0 0 1.5px var(--iris); z-index: 2; }
+.bd-handle.edge { background: transparent; z-index: 1; }
 .bd-handle.h-n, .bd-handle.h-s { cursor: ns-resize; }
 .bd-handle.h-e, .bd-handle.h-w { cursor: ew-resize; }
 .bd-handle.h-nw, .bd-handle.h-se { cursor: nwse-resize; }
 .bd-handle.h-ne, .bd-handle.h-sw { cursor: nesw-resize; }
 .bd-size { position: absolute; transform: translateX(-50%); padding: 2px 6px; border-radius: 4px; background: var(--iris-strong); color: #fff; font: 600 10.5px var(--mono); white-space: nowrap; }
+.bd-ghost { position: absolute; background: rgba(76, 141, 255, 0.16); box-shadow: 0 0 0 1.5px var(--iris); pointer-events: none; }
 .bd-drop-line { position: absolute; background: var(--iris); border-radius: 2px; }
-.bd-drop-into { position: absolute; box-shadow: 0 0 0 2px var(--iris), inset 0 0 0 9999px rgba(76, 141, 255, 0.06); border-radius: 2px; }
+.bd-drop-line::before, .bd-drop-line::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--iris); }
+.bd-drop-line.h::before { left: -3px; top: -1.5px; }
+.bd-drop-line.h::after { right: -3px; top: -1.5px; }
+.bd-drop-line.v::before { top: -3px; left: -1.5px; }
+.bd-drop-line.v::after { bottom: -3px; left: -1.5px; }
+.bd-drop-into { position: absolute; box-shadow: 0 0 0 1.5px var(--iris), inset 0 0 0 9999px rgba(76, 141, 255, 0.05); border-radius: 2px; }
+.bd-drop-tag { position: absolute; left: 0; top: -20px; padding: 1px 6px; border-radius: 4px; background: var(--iris-strong); color: #fff; font: 600 10px/15px var(--sans); white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .bd-marquee { position: absolute; background: rgba(76, 141, 255, 0.1); box-shadow: inset 0 0 0 1px var(--iris); }
 .bd-draw { position: absolute; box-shadow: 0 0 0 1.5px var(--iris); background: rgba(76, 141, 255, 0.06); }
 .bd-guide { position: absolute; background: var(--guide); }
 .bd-guide.x { width: 1px; }
 .bd-guide.y { height: 1px; }
+.bd-guide-pt { position: absolute; width: 5px; height: 5px; margin: -2px 0 0 -2px; border-radius: 50%; background: var(--guide); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75); pointer-events: none; }
+.bd-snap-dist { position: absolute; background: var(--guide); pointer-events: none; }
+.bd-snap-dist.h { height: 1px; }
+.bd-snap-dist.v { width: 1px; }
+.bd-snap-dist::before, .bd-snap-dist::after { content: ""; position: absolute; background: var(--guide); }
+.bd-snap-dist.h::before { left: 0; top: -3px; width: 1px; height: 7px; }
+.bd-snap-dist.h::after { right: 0; top: -3px; width: 1px; height: 7px; }
+.bd-snap-dist.v::before { top: 0; left: -3px; height: 1px; width: 7px; }
+.bd-snap-dist.v::after { bottom: 0; left: -3px; height: 1px; width: 7px; }
+.bd-snap-dist span { position: absolute; padding: 1px 4px; border-radius: 3px; background: var(--guide); color: #fff; font: 600 10px/13px var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bd-snap-dist.h span { left: 50%; top: 5px; transform: translateX(-50%); }
+.bd-snap-dist.v span { top: 50%; left: 6px; transform: translateY(-50%); }
 .bd-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: var(--text-3); font-size: 12.5px; max-width: 320px; line-height: 1.5; pointer-events: none; }
 .bd-empty b { color: var(--text); font: 650 15px var(--display); }
 
@@ -1093,9 +1122,12 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; }
 
 .bd-group { position: absolute; outline: 1px dashed var(--iris); }
 .bd-measure { position: absolute; background: var(--guide); }
-.bd-measure span { position: absolute; transform: translate(-50%, 0); padding: 1px 5px; border-radius: 4px; background: var(--guide); color: #fff; font: 600 10.5px var(--mono); white-space: nowrap; }
+.bd-measure span { position: absolute; transform: translate(-50%, 0); padding: 1px 5px; border-radius: 4px; background: var(--guide); color: #fff; font: 600 10.5px var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bd-measure.v span { transform: translate(0, -50%); }
 .bd-measure-box { position: absolute; box-shadow: 0 0 0 1px var(--guide); }
+.bd-measure-ext { position: absolute; pointer-events: none; opacity: 0.7; }
+.bd-measure-ext.h { border-top: 1px dashed var(--guide); height: 0; }
+.bd-measure-ext.v { border-left: 1px dashed var(--guide); width: 0; }
 
 /* Align, fills, shadows, words */
 .bd-align { display: flex; align-items: center; gap: 0; padding: 2px; border-radius: var(--r-ctl); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
@@ -2887,11 +2919,17 @@ button[data-clicked]:focus-visible, [role="tab"][data-clicked]:focus-visible { o
 /* A sticky note's words in the Design panel: a few lines, growing if pulled. */
 .bd-app .bd-note-words { display: block; width: 100%; height: auto; min-height: 62px; margin: 2px 0 8px; padding: 6px 8px; resize: vertical; line-height: 1.45; white-space: pre-wrap; }
 
-/* A selected flex frame's spacing: a bar in the middle of each padding side and each gap. Pointing at
-   one shades the space it sets and shows its size; it stays shown while it's dragged. */
-.bd-space-band { position: absolute; pointer-events: none; opacity: 0; background: repeating-linear-gradient(-45deg, rgb(255 92 138 / 0.26) 0 1.5px, transparent 1.5px 6px); box-shadow: inset 0 0 0 1px rgb(255 92 138 / 0.55); transition: opacity 0.12s; }
-.bd-space-h { position: absolute; pointer-events: auto; border-radius: 2px; background: #ff5c8a; box-shadow: 0 0 0 1.5px #ffffff; transition: transform 0.12s; }
-.bd-space-h::before { content: ""; position: absolute; inset: -5px; }
-.bd-space-v { position: absolute; transform: translate(10px, -50%); padding: 1px 5px; border-radius: 4px; background: #ff5c8a; color: #ffffff; font: 600 10px/14px var(--sans); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.12s; font-variant-numeric: tabular-nums; }
+/* A selected flex frame's spacing: subtle blue bars for padding, warm pink bars for gaps. Pointing
+   at one shades the space it sets and shows its size; dragging lights up every side being changed. */
+.bd-space-band { position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.12s; }
+.bd-space.pad .bd-space-band { background: repeating-linear-gradient(-45deg, rgb(76 141 255 / 0.22) 0 1.5px, transparent 1.5px 6px); box-shadow: inset 0 0 0 1px rgb(76 141 255 / 0.45); }
+.bd-space.gap .bd-space-band { background: repeating-linear-gradient(-45deg, rgb(255 77 141 / 0.24) 0 1.5px, transparent 1.5px 6px); box-shadow: inset 0 0 0 1px rgb(255 77 141 / 0.5); }
+.bd-space-h { position: absolute; pointer-events: auto; border-radius: 999px; opacity: 0.72; touch-action: none; -webkit-user-select: none; user-select: none; transition: transform 0.12s, opacity 0.12s; }
+.bd-space.pad .bd-space-h { background: var(--iris); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85); }
+.bd-space.gap .bd-space-h { background: var(--guide); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85); }
+.bd-space-h::before { content: ""; position: absolute; inset: -6px; }
+.bd-space-v { position: absolute; transform: translate(10px, -50%); padding: 1px 5px; border-radius: 4px; color: #ffffff; font: 600 10px/14px var(--sans); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.12s; font-variant-numeric: tabular-nums; }
+.bd-space.pad .bd-space-v { background: var(--iris-strong); }
+.bd-space.gap .bd-space-v { background: var(--guide); }
 .bd-space:has(.bd-space-h:hover) .bd-space-band, .bd-space.on .bd-space-band, .bd-space:has(.bd-space-h:hover) .bd-space-v, .bd-space.on .bd-space-v { opacity: 1; }
-.bd-space:has(.bd-space-h:hover) .bd-space-h, .bd-space.on .bd-space-h { transform: scale(1.15); }
+.bd-space:has(.bd-space-h:hover) .bd-space-h, .bd-space.on .bd-space-h { opacity: 1; transform: scale(1.2); }

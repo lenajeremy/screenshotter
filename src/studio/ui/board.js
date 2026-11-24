@@ -956,22 +956,28 @@ function selectParent() {
   if (B.tool !== "move") return bset({ tool: "move" });
   const s = sel();
   if (!s.length) return;
-  const p = node(s[0]).parent;
-  select(p ? [p] : []);
+  const parents = [...new Set(s.map((id) => node(id)?.parent).filter((p) => p && node(p)))];
+  select(parents);
 }
 
 function selectChildren() {
   const s = sel();
-  if (s.length !== 1) return;
-  const n = node(s[0]);
-  if (n.type === "text") return startTextEdit(n.id);
-  if (n.children?.length) select(n.children.filter((c) => !node(c).hidden));
+  if (!s.length) return;
+  if (s.length === 1 && node(s[0])?.type === "text") return startTextEdit(s[0]);
+  const kids = [];
+  for (const id of s) {
+    const n = node(id);
+    if (!n?.children?.length) continue;
+    for (const c of n.children) if (node(c) && !node(c).hidden && !node(c).locked) kids.push(c);
+  }
+  if (kids.length) select(kids);
 }
 
 function selectNextSibling(back) {
   const s = sel();
   if (s.length !== 1) return;
-  const sibs = siblingsOf(B.board, s[0]);
+  const sibs = siblingsOf(B.board, s[0]).filter((id) => id === s[0] || (node(id) && !node(id).hidden));
+  if (sibs.length < 2) return;
   const i = sibs.indexOf(s[0]);
   select(sibs[(i + (back ? -1 : 1) + sibs.length) % sibs.length]);
 }
@@ -1530,8 +1536,8 @@ function onKey(e) {
   if (k === "backspace" || k === "delete") return take(), deleteSelection();
   if (k === "escape" && (B.thread || B.draft)) return take(), closeThread();
   if (k === "escape" && B.tool === "comment") return take(), bset({ tool: "move", hover: null });
-  if (k === "escape") return take(), selectParent();
-  if (k === "enter") return take(), selectChildren();
+  if (k === "escape") return take(), !B.dragging && selectParent();
+  if (k === "enter") return take(), e.shiftKey ? selectParent() : selectChildren();
   if (k === "tab") return take(), selectNextSibling(e.shiftKey);
   const step = e.shiftKey ? 10 : 1;
   if (k === "arrowleft") return take(), nudge(-step, 0);

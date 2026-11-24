@@ -64,8 +64,16 @@ Asked 2026-11-23: make clicking, dragging and dropping layers easy to understand
 - 5 (commit 671fb38): pink padding and gap handles on a selected flex frame, drawn under the resize
   handles; value shown on hover and while dragging.
 
-## Still to do
+## Done (2026-11-24)
 
-- 4: guides that end at the layers they line up with, distances between neighbours while moving, and
-  equal-spacing marks.
-- Multi-layer moves into a grid go in as a flow (appended); a single layer gets its cell.
+- Paper-parity hover, nested navigation, drag/drop, guides & spacing polish:
+  - Ancestor-scope picking (`pickFor`): every artboard root and every ancestor of the current selection is an open container, so siblings and ancestors' siblings (uncles) are directly hoverable and clickable in one click, while clicking inside a selected frame keeps it targeted for dragging.
+  - Hovering a container frame shows dashed outlines of its direct visible children; selecting a nested layer shows a dashed scope outline around its immediate nested parent; selecting a free child shows subtle dashed pin lines to its parent's anchored edges.
+  - Empty background inside a populated artboard doesn't flash a hover ring and deselects on click (dragging still marquee-selects children); artboards are picked by their title label (empty 0-child frames still select on click).
+  - Selection chrome refined to 4 crisp corner squares + 4 full-edge transparent resize strips, keeping small layers and padding handles uncluttered.
+  - `Shift+Enter` selects parent(s); `Enter` enters visible unlocked children of selected container(s); `Tab`/`Shift+Tab` skips hidden siblings; `Escape` cancels any in-progress drag cleanly.
+  - Unclipped floating overlay ghosts (`.bd-ghost`) replace `el.style.translate`, with target-container name badges (`.bd-drop-tag`) and gap-centered flex insertion lines (suppressing no-op markers).
+  - Bounded smart snapping guides with anchor dots, equal-spacing snapping with twin distance pills, and live neighbour distances — working on both same-parent moves, cross-frame free drops, and resizing.
+  - Multi-layer drops into grid frames append cleanly into flow cells.
+  - `⌥` measurement upgraded with dashed alignment extension lines and edge offsets for side-by-side / stacked layers.
+  - Refined blue padding & pink gap handles with smaller minimum threshold (8px) and multi-side highlighting for `⌥`/`⇧` drags.
